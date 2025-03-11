@@ -1,0 +1,68 @@
+{
+  "name": "@pydantic/logfire-cf-workers",
+  "description": "Cloudflare workers integration for Logfire - https://pydantic.dev/logfire",
+  "author": {
+    "name": "The Pydantic Team",
+    "email": "engineering@pydantic.dev",
+    "url": "https://pydantic.dev"
+  },
+  "sideEffects": false,
+  "homepage": "https://pydantic.dev/logfire",
+  "license": "MIT",
+  "keywords": [
+    "logfire",
+    "observability",
+    "opentelemetry",
+    "tracing",
+    "profiling",
+    "stats",
+    "monitoring"
+  ],
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "scripts": {
+    "dev": "vite build",
+    "build": "vite build",
+    "lint": "eslint",
+    "preview": "vite preview",
+    "typecheck": "tsc",
+    "prepack": "cp ../../LICENSE .",
+    "postpack": "rm LICENSE"
+  },
+  "devDependencies": {
+    "@microlabs/otel-cf-workers": "^1.0.0-rc.49",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.57.2",
+    "@opentelemetry/sdk-trace-base": "^1.30.1",
+    "@pydantic/logfire-tooling-config": "*",
+    "eslint": "^9.22.0",
+    "prettier": "3.5.3",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.0",
+    "vite-plugin-dts": "^4.5.3",
+    "vitest": "^3.0.8"
+  },
+  "peerDependencies": {
+    "@microlabs/otel-cf-workers": "^1.0.0-rc.49",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.57.2",
+    "@opentelemetry/sdk-trace-base": "^1.30.1"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ]
+}

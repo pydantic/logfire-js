@@ -1,0 +1,40 @@
+{
+  "name": "@pydantic/logfire-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "dev": "turbo watch dev",
+    "build": "turbo build",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "release": "turbo build && npx @changesets/cli publish",
+    "changeset-add": "npx @changesets/cli add",
+    "ci": "turbo typecheck lint"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "workspaces": [
+    "examples/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "@changesets/cli": "^2.27.12",
+    "turbo": "^2.4.4"
+  },
+  "engines": {
+    "node": "22"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "onFail": "error"
+    },
+    "packageManager": {
+      "name": "npm",
+      "onFail": "error"
+    }
+  },
+  "packageManager": "npm@10.9.2"
+}

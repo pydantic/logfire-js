@@ -1,0 +1,25 @@
+{
+  "name": "@pydantic/logfire-node-example",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-strip-types --disable-warning=ExperimentalWarning index.ts",
+    "start-and-throw-error": "TRIGGER_ERROR=true node --experimental-strip-types --disable-warning=ExperimentalWarning index.ts",
+    "debug": "node --experimental-strip-types --disable-warning=ExperimentalWarning --inspect-brk index.ts",
+    "typecheck": "tsc"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "logfire": "*"
+  },
+  "devDependencies": {
+    "@opentelemetry/semantic-conventions": "^1.30.0",
+    "@tsconfig/node22": "^22.0.0",
+    "typescript": "^5.8.2"
+  }
+}
