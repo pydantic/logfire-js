@@ -32,9 +32,9 @@ Add your [Logfire write token](https://logfire.pydantic.dev/docs/how-to-guides/c
 `wrangler.jsonc`:
 
 ```json
-	"vars": {
-		"LOGFIRE_TOKEN": "your-write-token",
-	},
+  "vars": {
+    "LOGFIRE_TOKEN": "your-write-token",
+  },
 ```
 
 `wrangler.toml`:
@@ -53,23 +53,23 @@ import { tracerConfig } from '@pydantic/logfire-cf-workers';
 import * as logfire from '@pydantic/logfire-api';
 
 export interface Env {
-	LOGFIRE_TOKEN: string;
-	LOGFIRE_BASE_URL: string;
-	OTEL_TEST: KVNamespace;
+  LOGFIRE_TOKEN: string;
+  LOGFIRE_BASE_URL: string;
+  OTEL_TEST: KVNamespace;
 }
 
 const handler = {
-	async fetch(): Promise<Response> {
-		logfire.info('Logfire: info from inside the worker body');
-		return new Response('Hello World!');
-	},
+  async fetch(): Promise<Response> {
+    logfire.info('Logfire: info from inside the worker body');
+    return new Response('Hello World!');
+  },
 } satisfies ExportedHandler<Env>;
 
 const config: ResolveConfigFn = (env: Env, _trigger) => {
-	return {
-		service: { name: 'cloudflare-worker', namespace: '', version: '1.0.0' },
-		...tracerConfig(env),
-	};
+  return {
+    service: { name: 'cloudflare-worker', namespace: '', version: '1.0.0' },
+    ...tracerConfig(env),
+  };
 };
 
 export default instrument(handler, config);
@@ -154,9 +154,9 @@ logfire.configure()
 The `logfire.configure` call should happen before the actual express module imports, so your NPM start script should look something like this (`package.json`):
 
 ```json
-  "scripts": {
-    "start": "npx ts-node --require ./instrumentation.ts app.ts"
-  },
+"scripts": {
+  "start": "npx ts-node --require ./instrumentation.ts app.ts"
+},
 ```
 
 #### Configuring the instrumentation
@@ -180,7 +180,11 @@ The following methods create spans with the respective log levels (ordered by se
 Each method accepts a message, attributes, and, optionally options that let you specify the span tags. The attributes values must be serializable to JSON.
 
 ```ts
-function info(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
+function info(
+  message: string, 
+  attributes?: Record<string, unknown>, 
+  options?: LogOptions
+): void
 ```
 
 ## Contributing
