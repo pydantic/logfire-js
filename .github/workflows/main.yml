@@ -25,7 +25,7 @@ jobs:
 
       - name: Release
         id: changesets
-        if: github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/main'
         uses: changesets/action@v1
         with:
           publish: npm run release
