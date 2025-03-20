@@ -9,6 +9,9 @@
   "sideEffects": false,
   "homepage": "https://pydantic.dev/logfire",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "logfire",
     "observability",

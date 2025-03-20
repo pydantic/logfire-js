@@ -1,5 +1,6 @@
 {
   "name": "@pydantic/logfire-cf-workers",
+  "private": false,
   "description": "Cloudflare workers integration for Logfire - https://pydantic.dev/logfire",
   "author": {
     "name": "The Pydantic Team",
@@ -9,6 +10,9 @@
   "sideEffects": false,
   "homepage": "https://pydantic.dev/logfire",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "logfire",
     "observability",
