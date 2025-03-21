@@ -58,59 +58,37 @@ Run the script above with `node hello.js`, and you should see the span being log
 
 ### Cloudflare Workers
 
-First, install the `@microlabs/otel-cf-workers` [NPM package](https://github.com/evanderkoogh/otel-cf-workers) and the `@pydantic/logfire-cf-workers @pydantic/logfire-api` NPM package:
+First, install the `@pydantic/logfire-cf-workers @pydantic/logfire-api` NPM packages:
 
 ```sh
-npm install @microlabs/otel-cf-workers @opentelemetry/api @pydantic/logfire-cf-workers @pydantic/logfire-api
+npm install @pydantic/logfire-cf-workers @pydantic/logfire-api
 ```
-As per the otel-cf-workers package instructions, add `compatibility_flags = [ "nodejs_compat" ]` to your wrangler.toml or `"compatibility_flags": ["nodejs_compat"]` if you're using `wrangler.jsonc`.
+Next, add `compatibility_flags = [ "nodejs_compat" ]` to your wrangler.toml or `"compatibility_flags": ["nodejs_compat"]` if you're using `wrangler.jsonc`.
 
-Add your [Logfire write token](https://logfire.pydantic.dev/docs/how-to-guides/create-write-tokens/) to your Wrangler file:
+Add your [Logfire write token](https://logfire.pydantic.dev/docs/how-to-guides/create-write-tokens/) to your `.dev.vars` file. Check the [Cloudflare documentation for further details on how to manage and deploy the secrets](https://developers.cloudflare.com/workers/configuration/secrets/).
 
-`wrangler.jsonc`:
-
-```json
-  "vars": {
-    "LOGFIRE_TOKEN": "your-write-token",
-  },
-```
-
-`wrangler.toml`:
-
-```toml
-[vars]
-LOGFIRE_WRITE_TOKEN="your-write-token"
+```sh
+LOGFIRE_TOKEN=your-write-token
 ```
 
 Next, add the necessary instrumentation around your handler. The `tracerConfig` function will extract your write token from the `env` object and provide the necessary configuration for the instrumentation:
 
 ```ts
-import { instrument, ResolveConfigFn } from '@microlabs/otel-cf-workers';
-import { tracerConfig } from '@pydantic/logfire-cf-workers';
-// Optional, if you want to manually create spans. Regular OTel API can be used as well.
 import * as logfire from '@pydantic/logfire-api';
-
-export interface Env {
-  LOGFIRE_TOKEN: string;
-  LOGFIRE_BASE_URL: string;
-  OTEL_TEST: KVNamespace;
-}
+import { instrument } from '@pydantic/logfire-cf-workers';
 
 const handler = {
-  async fetch(): Promise<Response> {
-    logfire.info('Logfire: info from inside the worker body');
-    return new Response('Hello World!');
-  },
-} satisfies ExportedHandler<Env>;
+	async fetch(): Promise<Response> {
+		logfire.info('info span from inside the worker body');
+		return new Response('Hello World!');
+	},
+} satisfies ExportedHandler;
 
-const config: ResolveConfigFn = (env: Env, _trigger) => {
-  return {
-    service: { name: 'cloudflare-worker', namespace: '', version: '1.0.0' },
-    ...tracerConfig(env),
-  };
-};
-
-export default instrument(handler, config);
+export default instrument(handler, {
+	serviceName: 'cloudflare-worker',
+	serviceNamespace: '',
+	serviceVersion: '1.0.0',
+});
 ```
 
 A working example can be found in the `examples/cloudflare-worker` directory. 

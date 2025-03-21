@@ -48,9 +48,11 @@
     "prepack": "cp ../../LICENSE .",
     "postpack": "rm LICENSE"
   },
+  "dependencies": {
+    "@microlabs/otel-cf-workers": "^1.0.0-rc.49"
+  },
   "devDependencies": {
-    "@microlabs/otel-cf-workers": "^1.0.0-rc.49",
-    "@opentelemetry/exporter-trace-otlp-proto": "^0.57.2",
+    "@cloudflare/workers-types": "4.20250311.0",
     "@opentelemetry/sdk-trace-base": "^1.30.1",
     "@pydantic/logfire-tooling-config": "*",
     "eslint": "^9.22.0",
@@ -59,11 +61,6 @@
     "vite": "^6.2.0",
     "vite-plugin-dts": "^4.5.3",
     "vitest": "^3.0.8"
-  },
-  "peerDependencies": {
-    "@microlabs/otel-cf-workers": "^1.0.0-rc.49",
-    "@opentelemetry/exporter-trace-otlp-proto": "^0.57.2",
-    "@opentelemetry/sdk-trace-base": "^1.30.1"
   },
   "files": [
     "dist",

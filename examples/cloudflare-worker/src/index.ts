@@ -10,28 +10,18 @@
  *
  * Learn more at https://developers.cloudflare.com/workers/
  */
-import { instrument, ResolveConfigFn } from '@microlabs/otel-cf-workers';
-import { tracerConfig } from '@pydantic/logfire-cf-workers';
 import * as logfire from '@pydantic/logfire-api';
-
-export interface Env {
-	LOGFIRE_TOKEN: string;
-	LOGFIRE_BASE_URL: string;
-	OTEL_TEST: KVNamespace;
-}
+import { instrument } from '@pydantic/logfire-cf-workers';
 
 const handler = {
 	async fetch(): Promise<Response> {
 		logfire.info('info span from inside the worker body');
 		return new Response('Hello World!');
 	},
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler;
 
-const config: ResolveConfigFn = (env: Env, _trigger) => {
-	return {
-		service: { name: 'cloudflare-worker', namespace: '', version: '1.0.0' },
-		...tracerConfig(env),
-	};
-};
-
-export default instrument(handler, config);
+export default instrument(handler, {
+	serviceName: 'cloudflare-worker',
+	serviceNamespace: '',
+	serviceVersion: '1.0.0',
+});
