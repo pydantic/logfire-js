@@ -18,6 +18,44 @@ This repo contains the JavaScript SDK for `logfire` and its documentation; the s
 
 Depending on your environment, you can integrate Logfire in several ways. Follow the specific instructions below:
 
+### Basic Node.js script
+
+Using logfire from your Node.js script is as simple as [getting a write token](https://logfire.pydantic.dev/docs/how-to-guides/create-write-tokens/), installing the package, calling configure, and using the provided API. Let's create an empty project:
+
+```sh
+mkdir test-logfire-js;
+cd test-logfire-js; 
+npm init -y es6 # makes the package.json with `type: module`
+npm install logfire
+```
+
+Then, create the following `hello.js` script in the directory:
+
+
+```js
+import * as logfire from 'logfire'
+
+logfire.configure({
+  token: 'test-e2e-write-token',
+  advanced: {
+    baseUrl: 'http://localhost:8000'
+  },
+  serviceName: 'example-node-script',
+  serviceVersion: '1.0.0',
+})
+
+
+logfire.info('Hello from Node.js', {
+  'attribute-key': 'attribute-value'
+}, {
+  tags: ['example', 'example2']
+})
+```
+
+Run the script above with `node hello.js`, and you should see the span being logged in the live view of your Logfire project.
+
+
+
 ### Cloudflare Workers
 
 First, install the `@microlabs/otel-cf-workers` [NPM package](https://github.com/evanderkoogh/otel-cf-workers) and the `@pydantic/logfire-cf-workers @pydantic/logfire-api` NPM package:

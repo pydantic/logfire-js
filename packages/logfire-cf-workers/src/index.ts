@@ -24,7 +24,7 @@ export function filterEmptyAttributes(spans: ReadableSpan[]) {
     for (const attrKey of Object.keys(span.attributes)) {
       const attrVal = span.attributes[attrKey]
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (attrVal === undefined || span.attributes[attrKey] === null) {
+      if (attrVal === undefined || attrVal === null) {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete span.attributes[attrKey]
       }
