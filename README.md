@@ -61,6 +61,9 @@ Run the script above with `node hello.js`, and you should see the span being log
 
 First, install the `@pydantic/logfire-cf-workers @pydantic/logfire-api` NPM packages:
 
+> [!NOTE]  
+> `@pydantic/logfire-cf-workers` wraps the [`@microlabs/otel-cf-workers`](https://github.com/evanderkoogh/otel-cf-workers) NPM package.
+
 ```sh
 npm install @pydantic/logfire-cf-workers @pydantic/logfire-api
 ```
