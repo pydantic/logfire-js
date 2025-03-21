@@ -13,6 +13,7 @@ What sets Logfire apart:
 
 This repo contains the JavaScript SDK for `logfire` and its documentation; the server application for recording and displaying data is closed source.
 
+<img width="1394" alt="Logfire UI with Next.js traces" src="https://github.com/user-attachments/assets/a2a1167b-6bf7-4d6a-8d59-81cb2433c8e9" />
 
 ## Usage
 
