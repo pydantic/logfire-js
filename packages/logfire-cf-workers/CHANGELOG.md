@@ -1,5 +1,11 @@
 # @pydantic/logfire-cf-workers
 
+## 0.2.2
+
+### Patch Changes
+
+- 11c5ac2: Embed microlabs as a dependency
+
 ## 0.2.1
 
 ### Patch Changes

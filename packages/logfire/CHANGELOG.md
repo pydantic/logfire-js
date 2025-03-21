@@ -1,5 +1,11 @@
 # logfire
 
+## 0.2.2
+
+### Patch Changes
+
+- a391811: Fix for a peer package
+
 ## 0.2.1
 
 ### Patch Changes
