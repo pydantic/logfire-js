@@ -45,6 +45,7 @@ function getConfig(config: LogfireCloudflareConfigOptions) {
 }
 
 export function instrument<T>(handler: T, config: LogfireCloudflareConfigOptions): T {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
   return microlabsInstrument(handler, getConfig(config))
 }
 
