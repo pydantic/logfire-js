@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.3.0
+
+### Minor Changes
+
+- 6fa1410: API updates, fixes for span kind
+
 ## 0.2.1
 
 ### Patch Changes

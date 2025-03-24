@@ -1,5 +1,16 @@
 # @pydantic/logfire-cf-workers
 
+## 0.3.0
+
+### Minor Changes
+
+- 6fa1410: API updates, fixes for span kind
+
+### Patch Changes
+
+- Updated dependencies [6fa1410]
+  - @pydantic/logfire-api@0.3.0
+
 ## 0.2.2
 
 ### Patch Changes
