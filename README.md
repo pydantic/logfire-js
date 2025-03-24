@@ -99,7 +99,7 @@ A working example can be found in the `examples/cloudflare-worker` directory.
 
 ### Next.js / Vercel
 
-Vercel provides a comprehensive OpenTelemetry integration through the `@vercel/otel` package. After following [their integration instructions](https://vercel.com/docs/otel), Add the following two env variables to your project:
+Vercel provides a comprehensive OpenTelemetry integration through the `@vercel/otel` package. After following [their integration instructions](https://vercel.com/docs/otel), Add the following env variables to your project:
 
 ```sh
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://logfire-api.pydantic.dev/v1/traces
@@ -108,6 +108,9 @@ OTEL_EXPORTER_OTLP_HEADERS='Authorization=your-write-token'
 ```
 
 The above will point the instrumentation to Logfire.
+
+> [!NOTE]
+> The Vercel production deployments have a caching mechanism that might prevent the changes from taking effect immediately or spans being reported. If you are not seeing spans in Logfire, you can [clear the data cache for your project](https://vercel.com/docs/data-cache/manage-data-cache).
 
 Optionally, you can use the Logfire API package for creating manual spans. Install the `@pydantic/logfire-api` NPM package and call the respective methods from your server-side code:
 
