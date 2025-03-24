@@ -1,5 +1,5 @@
 /* eslint-disable perfectionist/sort-objects */
-import { context as ContextAPI, Span, SpanOptions, SpanStatusCode, trace as TraceAPI } from '@opentelemetry/api'
+import { context as ContextAPI, Span, SpanStatusCode, trace as TraceAPI } from '@opentelemetry/api'
 import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 
 export * from './AttributeScrubber'
