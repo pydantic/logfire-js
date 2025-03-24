@@ -1,15 +1,11 @@
 /* eslint-disable perfectionist/sort-objects */
-import { context as ContextAPI, Span, SpanStatusCode, trace as TraceAPI } from '@opentelemetry/api'
+import { context as ContextAPI, Span, SpanOptions, SpanStatusCode, trace as TraceAPI } from '@opentelemetry/api'
 import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 
 export * from './AttributeScrubber'
 export { serializeAttributes } from './serializeAttributes'
 
 const DEFAULT_OTEL_SCOPE = 'logfire'
-
-export interface LogOptions {
-  tags?: string[]
-}
 
 export interface LogfireApiConfigOptions {
   otelScope?: string
@@ -27,8 +23,15 @@ export const Level = {
 
 export type LogFireLevel = (typeof Level)[keyof typeof Level]
 
+export interface LogOptions {
+  level?: LogFireLevel
+  log?: true
+  tags?: string[]
+}
+
 const LOGFIRE_ATTRIBUTES_NAMESPACE = 'logfire'
 const ATTRIBUTES_LEVEL_KEY = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.level_num`
+const ATTRIBUTES_SPAN_TYPE_KEY = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.span_type`
 export const ATTRIBUTES_TAGS_KEY = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.tags`
 
 const currentLogfireApiConfig: LogfireApiConfigOptions = {}
@@ -53,7 +56,11 @@ const logfireApiConfig = {
   },
 }
 
-function startSpan(level: LogFireLevel, message: string, attributes: Record<string, unknown> = {}, { tags = [] }: LogOptions = {}): Span {
+export function startSpan(
+  message: string,
+  attributes: Record<string, unknown> = {},
+  { log, tags = [], level = Level.Info }: LogOptions = {}
+): Span {
   const span = logfireApiConfig.tracer.startSpan(
     message,
     {
@@ -61,6 +68,7 @@ function startSpan(level: LogFireLevel, message: string, attributes: Record<stri
         ...attributes,
         [ATTRIBUTES_LEVEL_KEY]: level,
         [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
+        [ATTRIBUTES_SPAN_TYPE_KEY]: log ? 'log' : 'span',
       },
     },
     logfireApiConfig.context
@@ -69,11 +77,10 @@ function startSpan(level: LogFireLevel, message: string, attributes: Record<stri
   return span
 }
 
-export function startActiveSpan<F extends (span: Span) => unknown>(
-  level: LogFireLevel,
+export function span<F extends (span: Span) => unknown>(
   message: string,
   attributes: Record<string, unknown> = {},
-  { tags = [] }: LogOptions = {},
+  { tags = [], level = Level.Info }: LogOptions = {},
   callback: F
 ) {
   return logfireApiConfig.tracer.startActiveSpan<F>(
@@ -89,40 +96,40 @@ export function startActiveSpan<F extends (span: Span) => unknown>(
   )
 }
 
-export function log(level: LogFireLevel, message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
-  startSpan(level, message, attributes, options).end()
+export function log(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+  startSpan(message, attributes, { ...options, log: true }).end()
 }
 
 export function debug(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
-  log(Level.Debug, message, attributes, options)
+  log(message, attributes, { ...options, level: Level.Debug })
 }
 
 export function info(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
-  log(Level.Info, message, attributes, options)
+  log(message, attributes, { ...options, level: Level.Info })
 }
 
 export function trace(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
-  log(Level.Trace, message, attributes, options)
+  log(message, attributes, { ...options, level: Level.Trace })
 }
 
 export function error(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
-  log(Level.Error, message, attributes, options)
+  log(message, attributes, { ...options, level: Level.Error })
 }
 
 export function fatal(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
-  log(Level.Fatal, message, attributes, options)
+  log(message, attributes, { ...options, level: Level.Fatal })
 }
 
 export function notice(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
-  log(Level.Notice, message, attributes, options)
+  log(message, attributes, { ...options, level: Level.Notice })
 }
 
 export function warning(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
-  log(Level.Warning, message, attributes, options)
+  log(message, attributes, { ...options, level: Level.Warning })
 }
 
 export function reportError(message: string, error: Error, extraAttributes: Record<string, unknown> = {}) {
-  const span = startSpan(Level.Error, message, {
+  const span = startSpan(message, {
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     [ATTR_EXCEPTION_MESSAGE]: error.message ?? 'error',
     [ATTR_EXCEPTION_STACKTRACE]: error.stack,

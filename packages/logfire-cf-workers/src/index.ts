@@ -1,6 +1,8 @@
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
+
 import { KVNamespace } from '@cloudflare/workers-types'
 import { instrument as microlabsInstrument } from '@microlabs/otel-cf-workers'
-import { ReadableSpan } from '@opentelemetry/sdk-trace-base'
+import { AttributeScrubber, LogfireAttributeScrubber, serializeAttributes } from '@pydantic/logfire-api'
 
 export interface CloudflareConfigOptions {
   baseUrl?: string
@@ -22,6 +24,7 @@ export interface LogfireCloudflareConfigOptions {
 const DEFAULT_LOGFIRE_BASE_URL = 'https://logfire-api.pydantic.dev/'
 
 function getConfig(config: LogfireCloudflareConfigOptions) {
+  const scrubber = new LogfireAttributeScrubber()
   return (env: Env) => {
     let { LOGFIRE_BASE_URL: baseUrl = DEFAULT_LOGFIRE_BASE_URL, LOGFIRE_TOKEN: token } = env
 
@@ -34,7 +37,7 @@ function getConfig(config: LogfireCloudflareConfigOptions) {
         headers: { Authorization: token },
         url: `${baseUrl}v1/traces`,
       },
-      postProcessor: filterEmptyAttributes,
+      postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(spans, scrubber),
       service: {
         name: config.serviceName ?? 'cloudflare-worker',
         namespace: config.serviceNamespace ?? '',
@@ -58,7 +61,7 @@ function instrumentDO<T>(doClass: T, config: LogfireCloudflareConfigOptions): T 
 }
 */
 
-function filterEmptyAttributes(spans: ReadableSpan[]) {
+function postProcessAttributes(spans: ReadableSpan[], scrubber: AttributeScrubber) {
   for (const span of spans) {
     for (const attrKey of Object.keys(span.attributes)) {
       const attrVal = span.attributes[attrKey]
@@ -68,6 +71,7 @@ function filterEmptyAttributes(spans: ReadableSpan[]) {
         delete span.attributes[attrKey]
       }
     }
+    Object.assign(span.attributes, serializeAttributes(span.attributes, scrubber))
   }
   return spans
 }

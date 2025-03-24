@@ -69,24 +69,35 @@ npm install @pydantic/logfire-cf-workers @pydantic/logfire-api
 ```
 Next, add `compatibility_flags = [ "nodejs_compat" ]` to your wrangler.toml or `"compatibility_flags": ["nodejs_compat"]` if you're using `wrangler.jsonc`.
 
-Add your [Logfire write token](https://logfire.pydantic.dev/docs/how-to-guides/create-write-tokens/) to your `.dev.vars` file. Check the [Cloudflare documentation for further details on how to manage and deploy the secrets](https://developers.cloudflare.com/workers/configuration/secrets/).
+Add your [Logfire write token](https://logfire.pydantic.dev/docs/how-to-guides/create-write-tokens/) to your `.dev.vars` file. 
 
 ```sh
 LOGFIRE_TOKEN=your-write-token
 ```
 
+For the production deployment, check the [Cloudflare documentation for further details on how to manage and deploy the secrets](https://developers.cloudflare.com/workers/configuration/secrets/).
+
+One way to do that is through the `npx wrangler` command:
+
+```sh
+npx wrangler secret put LOGFIRE_TOKEN
+```
+
+
 Next, add the necessary instrumentation around your handler. The `tracerConfig` function will extract your write token from the `env` object and provide the necessary configuration for the instrumentation:
+
 
 ```ts
 import * as logfire from '@pydantic/logfire-api';
 import { instrument } from '@pydantic/logfire-cf-workers';
 
+
 const handler = {
-	async fetch(): Promise<Response> {
-		logfire.info('info span from inside the worker body');
-		return new Response('Hello World!');
-	},
-} satisfies ExportedHandler;
+  async fetch(): promise<response> {
+    logfire.info('info span from inside the worker body');
+    return new response('hello world!');
+  },
+} satisfies exportedHandler;
 
 export default instrument(handler, {
 	serviceName: 'cloudflare-worker',
