@@ -43,6 +43,11 @@ export interface SrubbingOptions {
   extraPatterns?: string[]
 }
 
+export interface RegionData {
+  baseUrl: string
+  gcpRegion: string
+}
+
 export interface LogfireConfigOptions {
   /**
    * Additional span processors to be added to the OpenTelemetry SDK
@@ -103,7 +108,6 @@ export interface LogfireConfigOptions {
   token?: string
 }
 
-const DEFAULT_LOGFIRE_BASE_URL = 'https://logfire-api.pydantic.dev/'
 const DEFAULT_OTEL_SCOPE = 'logfire'
 const TRACE_ENDPOINT_PATH = 'v1/traces'
 const METRIC_ENDPOINT_PATH = 'v1/metrics'
@@ -161,8 +165,9 @@ export function configure(config: LogfireConfigOptions = {}) {
     logfireApi.configureLogfireApi({ otelScope })
   }
 
-  const baseUrl = resolveBaseUrl(cnf.advanced?.baseUrl)
   const token = cnf.token ?? env.LOGFIRE_TOKEN
+  const sendToLogfire = resolveSendToLogfire(cnf.sendToLogfire, token)
+  const baseUrl = !sendToLogfire || !token ? '' : resolveBaseUrl(cnf.advanced?.baseUrl, token)
 
   Object.assign(logfireConfig, {
     additionalSpanProcessors: cnf.additionalSpanProcessors ?? [],
@@ -178,7 +183,7 @@ export function configure(config: LogfireConfigOptions = {}) {
     metricExporterUrl: `${baseUrl}/${METRIC_ENDPOINT_PATH}`,
     metrics: cnf.metrics,
     scrubber: resolveScrubber(cnf.scrubbing),
-    sendToLogfire: resolveSendToLogfire(cnf.sendToLogfire, token),
+    sendToLogfire,
     serviceName: cnf.serviceName ?? env.LOGFIRE_SERVICE_NAME,
     serviceVersion: cnf.serviceVersion ?? env.LOGFIRE_SERVICE_VERSION,
     token,
@@ -214,8 +219,8 @@ function resolveSendToLogfire(option: LogfireConfigOptions['sendToLogfire'], tok
   }
 }
 
-function resolveBaseUrl(option: string | undefined) {
-  let url = option ?? process.env.LOGFIRE_BASE_URL ?? DEFAULT_LOGFIRE_BASE_URL
+export function resolveBaseUrl(passedUrl: string | undefined, token: string) {
+  let url = passedUrl ?? process.env.LOGFIRE_BASE_URL ?? getBaseUrlFromToken(token)
   if (url.endsWith('/')) {
     url = url.slice(0, -1)
   }
@@ -225,4 +230,31 @@ function resolveBaseUrl(option: string | undefined) {
 function resolveDistributedTracing(option: LogfireConfigOptions['distributedTracing']) {
   const envDistributedTracing = process.env.LOGFIRE_DISTRIBUTED_TRACING
   return (option ?? envDistributedTracing === undefined) ? true : envDistributedTracing === 'true'
+}
+
+const PYDANTIC_LOGFIRE_TOKEN_PATTERN = /^(?<safe_part>pylf_v(?<version>[0-9]+)_(?<region>[a-z]+)_)(?<token>[a-zA-Z0-9]+)$/
+
+const REGIONS: Record<string, RegionData> = {
+  eu: {
+    baseUrl: 'https://logfire-eu.pydantic.dev',
+    gcpRegion: 'europe-west4',
+  },
+  us: {
+    baseUrl: 'https://logfire-us.pydantic.dev',
+    gcpRegion: 'us-east4',
+  },
+}
+
+function getBaseUrlFromToken(token: string | undefined): string {
+  let regionKey = 'us'
+  if (token) {
+    const match = PYDANTIC_LOGFIRE_TOKEN_PATTERN.exec(token)
+    if (match) {
+      const region = match.groups?.region
+      if (region && region in REGIONS) {
+        regionKey = region
+      }
+    }
+  }
+  return REGIONS[regionKey].baseUrl
 }

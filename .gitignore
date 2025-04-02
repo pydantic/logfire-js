@@ -3,3 +3,4 @@ packages/*/*.tgz
 .turbo
 .env
 CLAUDE.md
+scratch/
