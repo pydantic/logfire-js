@@ -129,7 +129,9 @@ Optionally, you can use the Logfire API package for creating manual spans. Insta
 import * as logfire from '@pydantic/logfire-api'
 
 export default async function Home() {
-  return logfire.startActiveSpan(logfire.Level.Warning, 'A warning span', {}, {}, async () => {
+  return logfire.span('A warning span', {}, {
+    level: logfire.Level.Warning, 
+  }, async () => {
     logfire.info('Nested info span');
     return <div>Hello</div>;
   })
