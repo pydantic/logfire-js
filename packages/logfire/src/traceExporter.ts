@@ -42,7 +42,7 @@ class LogfireSpanProcessor implements SpanProcessor {
   }
 
   onEnd(span: ReadableSpan): void {
-    Object.assign(span.attributes, serializeAttributes(span.attributes, logfireConfig.scrubber))
+    Object.assign(span.attributes, serializeAttributes(span.attributes))
     this.wrapped.onEnd(span)
   }
 

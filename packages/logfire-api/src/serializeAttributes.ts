@@ -1,12 +1,9 @@
-import { ATTRIBUTES_TAGS_KEY } from '.'
-import { AttributeScrubber } from './AttributeScrubber'
+import { logfireApiConfig } from '.'
+import { ATTRIBUTES_SPAN_TYPE_KEY, ATTRIBUTES_TAGS_KEY, JSON_NULL_FIELDS_KEY, JSON_SCHEMA_KEY } from './constants'
 
 export type AttributeValue = boolean | number | string | string[]
 
 export type RawAttributes = Record<string, unknown>
-
-const JSON_SCHEMA_KEY = 'logfire.json_schema'
-const JSON_NULL_FIELDS_KEY = 'logfire.null_args'
 
 interface JSONSchema {
   properties: Record<
@@ -20,8 +17,11 @@ interface JSONSchema {
 
 type SerializedAttributes = Record<string, AttributeValue>
 
-export function serializeAttributes(attributes: RawAttributes, scrubber: AttributeScrubber): SerializedAttributes {
-  const scrubbedAttributes = scrubber.scrubValue([], attributes)[0] as Record<string, unknown>
+export function serializeAttributes(attributes: RawAttributes): SerializedAttributes {
+  const scrubber = logfireApiConfig.scrubber
+  const alreadyScubbed = ATTRIBUTES_SPAN_TYPE_KEY in attributes
+  const scrubbedAttributes = alreadyScubbed ? attributes : (scrubber.scrubValue([], attributes)[0] as Record<string, unknown>)
+  // if the span is created through the logfire API methods, the attributes have already been scrubbed
 
   const result: SerializedAttributes = {}
   const nullArgs: string[] = []

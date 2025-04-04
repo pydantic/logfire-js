@@ -46,7 +46,7 @@
     "typecheck": "tsc",
     "prepack": "cp ../../LICENSE .",
     "postpack": "rm LICENSE",
-    "test": "vitest"
+    "test": "vitest --passWithNoTests"
   },
   "dependencies": {
     "@pydantic/logfire-api": "*"

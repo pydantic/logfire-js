@@ -38,16 +38,6 @@ export interface MetricsOptions {
   additionalReaders: MetricReader[]
 }
 
-export interface SrubbingOptions {
-  callback?: logfireApi.ScrubCallback
-  extraPatterns?: string[]
-}
-
-export interface RegionData {
-  baseUrl: string
-  gcpRegion: string
-}
-
 export interface LogfireConfigOptions {
   /**
    * Additional span processors to be added to the OpenTelemetry SDK
@@ -85,7 +75,7 @@ export interface LogfireConfigOptions {
   /**
    * Options for scrubbing sensitive data. Set to False to disable.
    */
-  scrubbing?: false | SrubbingOptions
+  scrubbing?: false | logfireApi.SrubbingOptions
   /**
    * Whether to send logs to logfire.dev.
    * Defaults to the `LOGFIRE_SEND_TO_LOGFIRE` environment variable if set, otherwise defaults to True. If if-token-present is provided, logs will only be sent if a token is present.
@@ -125,7 +115,6 @@ export interface LogfireConfig {
   metricExporterUrl: string
   metrics: false | MetricsOptions | undefined
   otelScope: string
-  scrubber: logfireApi.AttributeScrubber
   sendToLogfire: boolean
   serviceName: string | undefined
   serviceVersion: string | undefined
@@ -146,7 +135,6 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   metricExporterUrl: '',
   metrics: undefined,
   otelScope: DEFAULT_OTEL_SCOPE,
-  scrubber: new logfireApi.LogfireAttributeScrubber(),
   sendToLogfire: false,
   serviceName: process.env.LOGFIRE_SERVICE_NAME,
   serviceVersion: process.env.LOGFIRE_SERVICE_VERSION,
@@ -157,17 +145,17 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
 export const logfireConfig: LogfireConfig = DEFAULT_LOGFIRE_CONFIG
 
 export function configure(config: LogfireConfigOptions = {}) {
-  const { otelScope, ...cnf } = config
+  const { otelScope, scrubbing, ...cnf } = config
 
   const env = process.env
 
   if (otelScope) {
-    logfireApi.configureLogfireApi({ otelScope })
+    logfireApi.configureLogfireApi({ otelScope, scrubbing })
   }
 
   const token = cnf.token ?? env.LOGFIRE_TOKEN
-  const sendToLogfire = resolveSendToLogfire(cnf.sendToLogfire, token)
-  const baseUrl = !sendToLogfire || !token ? '' : resolveBaseUrl(cnf.advanced?.baseUrl, token)
+  const sendToLogfire = logfireApi.resolveSendToLogfire(process.env, cnf.sendToLogfire, token)
+  const baseUrl = !sendToLogfire || !token ? '' : logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, token)
 
   Object.assign(logfireConfig, {
     additionalSpanProcessors: cnf.additionalSpanProcessors ?? [],
@@ -182,7 +170,6 @@ export function configure(config: LogfireConfigOptions = {}) {
     idGenerator: cnf.advanced?.idGenerator ?? new ULIDGenerator(),
     metricExporterUrl: `${baseUrl}/${METRIC_ENDPOINT_PATH}`,
     metrics: cnf.metrics,
-    scrubber: resolveScrubber(cnf.scrubbing),
     sendToLogfire,
     serviceName: cnf.serviceName ?? env.LOGFIRE_SERVICE_NAME,
     serviceVersion: cnf.serviceVersion ?? env.LOGFIRE_SERVICE_VERSION,
@@ -193,68 +180,7 @@ export function configure(config: LogfireConfigOptions = {}) {
   start()
 }
 
-function resolveScrubber(scrubbing: LogfireConfigOptions['scrubbing']) {
-  if (scrubbing !== undefined) {
-    if (scrubbing === false) {
-      return new logfireApi.NoopAttributeScrubber()
-    } else {
-      return new logfireApi.LogfireAttributeScrubber(scrubbing.extraPatterns, scrubbing.callback)
-    }
-  } else {
-    return new logfireApi.LogfireAttributeScrubber()
-  }
-}
-
-function resolveSendToLogfire(option: LogfireConfigOptions['sendToLogfire'], token: string | undefined) {
-  const sendToLogfireConfig = option ?? process.env.LOGFIRE_SEND_TO_LOGFIRE ?? 'if-token-present'
-
-  if (sendToLogfireConfig === 'if-token-present') {
-    if (token) {
-      return true
-    } else {
-      return false
-    }
-  } else {
-    return Boolean(sendToLogfireConfig)
-  }
-}
-
-export function resolveBaseUrl(passedUrl: string | undefined, token: string) {
-  let url = passedUrl ?? process.env.LOGFIRE_BASE_URL ?? getBaseUrlFromToken(token)
-  if (url.endsWith('/')) {
-    url = url.slice(0, -1)
-  }
-  return url
-}
-
 function resolveDistributedTracing(option: LogfireConfigOptions['distributedTracing']) {
   const envDistributedTracing = process.env.LOGFIRE_DISTRIBUTED_TRACING
   return (option ?? envDistributedTracing === undefined) ? true : envDistributedTracing === 'true'
-}
-
-const PYDANTIC_LOGFIRE_TOKEN_PATTERN = /^(?<safe_part>pylf_v(?<version>[0-9]+)_(?<region>[a-z]+)_)(?<token>[a-zA-Z0-9]+)$/
-
-const REGIONS: Record<string, RegionData> = {
-  eu: {
-    baseUrl: 'https://logfire-eu.pydantic.dev',
-    gcpRegion: 'europe-west4',
-  },
-  us: {
-    baseUrl: 'https://logfire-us.pydantic.dev',
-    gcpRegion: 'us-east4',
-  },
-}
-
-function getBaseUrlFromToken(token: string | undefined): string {
-  let regionKey = 'us'
-  if (token) {
-    const match = PYDANTIC_LOGFIRE_TOKEN_PATTERN.exec(token)
-    if (match) {
-      const region = match.groups?.region
-      if (region && region in REGIONS) {
-        regionKey = region
-      }
-    }
-  }
-  return REGIONS[regionKey].baseUrl
 }

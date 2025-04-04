@@ -1,43 +1,34 @@
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 
-import { KVNamespace } from '@cloudflare/workers-types'
 import { instrument as microlabsInstrument } from '@microlabs/otel-cf-workers'
-import { AttributeScrubber, LogfireAttributeScrubber, serializeAttributes } from '@pydantic/logfire-api'
+import { resolveBaseUrl, serializeAttributes } from '@pydantic/logfire-api'
 
 export interface CloudflareConfigOptions {
   baseUrl?: string
   token: string
 }
 
-interface Env {
-  LOGFIRE_BASE_URL: string
-  LOGFIRE_TOKEN: string
-  OTEL_TEST: KVNamespace
-}
+type Env = Record<string, string | undefined>
 
 export interface LogfireCloudflareConfigOptions {
+  baseUrl?: string
   serviceName?: string
   serviceNamespace?: string
   serviceVersion?: string
 }
 
-const DEFAULT_LOGFIRE_BASE_URL = 'https://logfire-api.pydantic.dev/'
-
 function getConfig(config: LogfireCloudflareConfigOptions) {
-  const scrubber = new LogfireAttributeScrubber()
   return (env: Env) => {
-    let { LOGFIRE_BASE_URL: baseUrl = DEFAULT_LOGFIRE_BASE_URL, LOGFIRE_TOKEN: token } = env
+    const { LOGFIRE_TOKEN: token = '' } = env
 
-    if (!baseUrl.endsWith('/')) {
-      baseUrl += '/'
-    }
+    const baseUrl = resolveBaseUrl(env, config.baseUrl, token)
 
     return {
       exporter: {
         headers: { Authorization: token },
-        url: `${baseUrl}v1/traces`,
+        url: `${baseUrl}/v1/traces`,
       },
-      postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(spans, scrubber),
+      postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(spans),
       service: {
         name: config.serviceName ?? 'cloudflare-worker',
         namespace: config.serviceNamespace ?? '',
@@ -61,7 +52,7 @@ function instrumentDO<T>(doClass: T, config: LogfireCloudflareConfigOptions): T 
 }
 */
 
-function postProcessAttributes(spans: ReadableSpan[], scrubber: AttributeScrubber) {
+function postProcessAttributes(spans: ReadableSpan[]) {
   for (const span of spans) {
     for (const attrKey of Object.keys(span.attributes)) {
       const attrVal = span.attributes[attrKey]
@@ -71,7 +62,7 @@ function postProcessAttributes(spans: ReadableSpan[], scrubber: AttributeScrubbe
         delete span.attributes[attrKey]
       }
     }
-    Object.assign(span.attributes, serializeAttributes(span.attributes, scrubber))
+    Object.assign(span.attributes, serializeAttributes(span.attributes))
   }
   return spans
 }

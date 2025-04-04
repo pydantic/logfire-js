@@ -1,14 +1,27 @@
 /* eslint-disable perfectionist/sort-objects */
-import { context as ContextAPI, Span, SpanStatusCode, trace as TraceAPI } from '@opentelemetry/api'
+import { Span, SpanStatusCode } from '@opentelemetry/api'
 import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 
+import { ScrubCallback } from './AttributeScrubber'
+import { ATTRIBUTES_LEVEL_KEY, ATTRIBUTES_MESSAGE_TEMPLATE_KEY, ATTRIBUTES_SPAN_TYPE_KEY, ATTRIBUTES_TAGS_KEY } from './constants'
+import { logfireFormatWithExtras } from './formatter'
+import { logfireApiConfig } from './logfireApiConfig'
+
 export * from './AttributeScrubber'
+export { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire } from './logfireApiConfig'
 export { serializeAttributes } from './serializeAttributes'
 
-const DEFAULT_OTEL_SCOPE = 'logfire'
+export interface SrubbingOptions {
+  callback?: ScrubCallback
+  extraPatterns?: string[]
+}
 
 export interface LogfireApiConfigOptions {
   otelScope?: string
+  /**
+   * Options for scrubbing sensitive data. Set to False to disable.
+   */
+  scrubbing?: false | SrubbingOptions
 }
 
 export const Level = {
@@ -29,43 +42,19 @@ export interface LogOptions {
   tags?: string[]
 }
 
-const LOGFIRE_ATTRIBUTES_NAMESPACE = 'logfire'
-const ATTRIBUTES_LEVEL_KEY = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.level_num`
-const ATTRIBUTES_SPAN_TYPE_KEY = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.span_type`
-export const ATTRIBUTES_TAGS_KEY = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.tags`
-
-const currentLogfireApiConfig: LogfireApiConfigOptions = {}
-
-export function configureLogfireApi(config: LogfireApiConfigOptions) {
-  Object.assign(currentLogfireApiConfig, {
-    ...config,
-  })
-}
-
-const logfireApiConfig = {
-  get context() {
-    return ContextAPI.active()
-  },
-
-  get otelScope() {
-    return currentLogfireApiConfig.otelScope ?? DEFAULT_OTEL_SCOPE
-  },
-
-  get tracer() {
-    return TraceAPI.getTracer(logfireApiConfig.otelScope)
-  },
-}
-
 export function startSpan(
-  message: string,
+  msgTemplate: string,
   attributes: Record<string, unknown> = {},
   { log, tags = [], level = Level.Info }: LogOptions = {}
 ): Span {
+  // TODO: should we also send the extra attributes (2nd arg)?
+  const [formattedMessage, , newTemplate] = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
   const span = logfireApiConfig.tracer.startSpan(
-    message,
+    formattedMessage,
     {
       attributes: {
         ...attributes,
+        [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
         [ATTRIBUTES_LEVEL_KEY]: level,
         [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
         [ATTRIBUTES_SPAN_TYPE_KEY]: log ? 'log' : 'span',
