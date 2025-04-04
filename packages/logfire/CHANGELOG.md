@@ -1,5 +1,17 @@
 # logfire
 
+## 0.4.0
+
+### Minor Changes
+
+- dc0a537: Support for EU tokens. Support span message formatting.
+- 65274e3: Support us/eu tokens
+
+### Patch Changes
+
+- Updated dependencies [dc0a537]
+  - @pydantic/logfire-api@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes
