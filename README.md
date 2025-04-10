@@ -195,6 +195,12 @@ The `logfire.configure` call should happen before the actual express module impo
 },
 ```
 
+## Deno
+
+Deno has [built-in support for OpenTelemetry](https://docs.deno.com/runtime/fundamentals/open_telemetry/). The examples directory includes a `Hello world` example that configures Deno OTel export to Logfire through environment variables.
+
+Optionally, you can use the Logfire API package for creating manual spans. Install the `@pydantic/logfire-api` NPM package and call the respective methods from your code.
+
 #### Configuring the instrumentation
 
 The `logfire.configure` function accepts a set of configuration options that control the behavior of the instrumentation. Alternatively, you can [use environment variables](https://logfire.pydantic.dev/docs/reference/configuration/#programmatically-via-configure) to configure the instrumentation.
