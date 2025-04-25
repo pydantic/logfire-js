@@ -11,7 +11,7 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 import * as logfire from '@pydantic/logfire-api';
-import { instrument } from '@pydantic/logfire-cf-workers';
+import { instrumentTail } from '@pydantic/logfire-cf-workers';
 
 const handler = {
 	async fetch(): Promise<Response> {
@@ -20,8 +20,10 @@ const handler = {
 	},
 } satisfies ExportedHandler;
 
-export default instrument(handler, {
-	serviceName: 'cloudflare-worker',
-	serviceNamespace: '',
-	serviceVersion: '1.0.0',
+export default instrumentTail(handler, {
+	service: {
+		name: 'cloudflare-worker',
+		namespace: '',
+		version: '1.0.0',
+	},
 });

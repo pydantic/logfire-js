@@ -1,0 +1,19 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "https://unpkg.com/wrangler@latest/config-schema.json",
+	"name": "cloudflare-worker",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-03-11",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": {
+		"enabled": true,
+	},
+	"tail_consumers": [
+		{
+			"service": "example-tail-worker",
+		},
+	],
+}
