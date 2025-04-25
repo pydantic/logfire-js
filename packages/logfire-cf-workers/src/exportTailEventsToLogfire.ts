@@ -2,11 +2,12 @@ import { resolveBaseUrl } from '@pydantic/logfire-api'
 
 // simplified interface from CF
 interface TraceItem {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   logs: { message: any[] }[]
 }
 
 export async function exportTailEventsToLogfire(events: TraceItem[], env: Record<string, string | undefined>) {
-  const token = env.LOGFIRE_TOKEN as string | undefined
+  const token = env.LOGFIRE_TOKEN
   if (!token) {
     console.warn('No token provided, not sending payload to Logfire')
     return
