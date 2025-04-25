@@ -11,6 +11,7 @@ export interface SrubbingOptions {
   callback?: ScrubCallback
   extraPatterns?: string[]
 }
+
 export interface LogfireApiConfigOptions {
   otelScope?: string
   /**

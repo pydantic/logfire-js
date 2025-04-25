@@ -1,7 +1,11 @@
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 
-import { instrument as microlabsInstrument } from '@microlabs/otel-cf-workers'
 import { resolveBaseUrl, serializeAttributes } from '@pydantic/logfire-api'
+import { instrument as baseInstrument, TraceConfig } from '@pydantic/otel-cf-workers'
+
+import { TailWorkerExporter } from './TailWorkerExporter'
+import { ULIDGenerator } from './ULIDGenerator'
+export * from './exportTailEventsToLogfire'
 
 export interface CloudflareConfigOptions {
   baseUrl?: string
@@ -10,47 +14,49 @@ export interface CloudflareConfigOptions {
 
 type Env = Record<string, string | undefined>
 
-export interface LogfireCloudflareConfigOptions {
+type ConfigOptionsBase = Pick<TraceConfig, 'fetch' | 'handlers' | 'instrumentation' | 'propagator' | 'sampling' | 'scope' | 'service'>
+
+export interface InProcessConfigOptions extends ConfigOptionsBase {
   baseUrl?: string
-  serviceName?: string
-  serviceNamespace?: string
-  serviceVersion?: string
 }
 
-function getConfig(config: LogfireCloudflareConfigOptions) {
-  return (env: Env) => {
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface TailConfigOptions extends ConfigOptionsBase {}
+
+function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => TraceConfig {
+  return (env: Env): TraceConfig => {
     const { LOGFIRE_TOKEN: token = '' } = env
 
     const baseUrl = resolveBaseUrl(env, config.baseUrl, token)
 
-    return {
+    return Object.assign({}, config, {
       exporter: {
         headers: { Authorization: token },
         url: `${baseUrl}/v1/traces`,
       },
+      idGenerator: new ULIDGenerator(),
       postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(spans),
-      service: {
-        name: config.serviceName ?? 'cloudflare-worker',
-        namespace: config.serviceNamespace ?? '',
-        version: config.serviceVersion ?? '0.0.0',
-      },
-    }
+    })
   }
 }
 
-export function instrument<T>(handler: T, config: LogfireCloudflareConfigOptions): T {
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-  return microlabsInstrument(handler, getConfig(config))
+export function getTailConfig(config: TailConfigOptions): (env: Env) => TraceConfig {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  return (_env: Env): TraceConfig => {
+    return Object.assign({}, config, {
+      exporter: new TailWorkerExporter(),
+      idGenerator: new ULIDGenerator(),
+    })
+  }
 }
 
-// ATM this is broken in microlabs,
-/*
-function instrumentDO<T>(doClass: T, config: LogfireCloudflareConfigOptions): T {
-  // the d.ts bundler choked on this
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
-  return microlabsInstrumentDO(doClass as unknown as any, getConfig(config)) as T
+export function instrumentInProcess<T>(handler: T, config: InProcessConfigOptions): T {
+  return baseInstrument(handler, getInProcessConfig(config)) as T
 }
-*/
+
+export function instrumentTail<T>(handler: T, config: TailConfigOptions): T {
+  return baseInstrument(handler, getTailConfig(config)) as T
+}
 
 function postProcessAttributes(spans: ReadableSpan[]) {
   for (const span of spans) {
