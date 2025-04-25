@@ -1,5 +1,11 @@
 # @pydantic/logfire-cf-workers
 
+## 0.4.1
+
+### Patch Changes
+
+- af427c5: Support for tail worker trace exporting
+
 ## 0.4.0
 
 ### Minor Changes
