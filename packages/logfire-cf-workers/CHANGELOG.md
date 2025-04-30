@@ -1,5 +1,11 @@
 # @pydantic/logfire-cf-workers
 
+## 0.4.2
+
+### Patch Changes
+
+- b59e803: Bump to latest otel-cf-workers, fixes span nesting and adds header capturing
+
 ## 0.4.1
 
 ### Patch Changes
