@@ -15,7 +15,11 @@ import { instrumentTail } from '@pydantic/logfire-cf-workers';
 
 const handler = {
 	async fetch(): Promise<Response> {
-		logfire.info('info span from inside the worker body');
+		logfire.info('span1');
+		await fetch('https://example.com/1');
+		logfire.info('span2');
+		await fetch('https://example.com/2');
+		// await new Promise((resolve) => setTimeout(resolve, 100));
 		return new Response('Hello World!');
 	},
 } satisfies ExportedHandler;
