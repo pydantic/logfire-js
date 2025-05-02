@@ -107,7 +107,6 @@ export interface LogfireConfig {
   authorizationHeaders: Record<string, string>
   baseUrl: string
   codeSource: CodeSource | undefined
-  deployEnvironment: string | undefined
   deploymentEnvironment: string | undefined
   diagLogLevel?: DiagLogLevel
   distributedTracing: boolean
@@ -127,7 +126,6 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   authorizationHeaders: {},
   baseUrl: '',
   codeSource: undefined,
-  deployEnvironment: undefined,
   deploymentEnvironment: undefined,
   diagLogLevel: undefined,
   distributedTracing: true,
@@ -164,7 +162,7 @@ export function configure(config: LogfireConfigOptions = {}) {
     },
     baseUrl,
     codeSource: cnf.codeSource,
-    deployEnvironment: cnf.environment ?? env.LOGFIRE_ENVIRONMENT,
+    deploymentEnvironment: cnf.environment ?? env.LOGFIRE_ENVIRONMENT,
     diagLogLevel: cnf.diagLogLevel,
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),
     idGenerator: cnf.advanced?.idGenerator ?? new ULIDGenerator(),
