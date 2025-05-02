@@ -1,5 +1,11 @@
 # logfire
 
+## 0.4.1
+
+### Patch Changes
+
+- 8dbb603: Fix for not picking up environment
+
 ## 0.4.0
 
 ### Minor Changes
