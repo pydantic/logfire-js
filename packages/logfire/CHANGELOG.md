@@ -1,5 +1,11 @@
 # logfire
 
+## 0.5.0
+
+### Minor Changes
+
+- e1dc8d0: Allow configuration of node auto instrumentations
+
 ## 0.4.1
 
 ### Patch Changes
