@@ -48,15 +48,7 @@ export function start() {
     autoDetectResources: false,
     contextManager,
     idGenerator: new ULIDGenerator(),
-    instrumentations: [
-      getNodeAutoInstrumentations({
-        // https://opentelemetry.io/docs/languages/js/libraries/#registration
-        // This particular instrumentation creates a lot of noise on startup
-        '@opentelemetry/instrumentation-fs': {
-          enabled: false,
-        },
-      }),
-    ],
+    instrumentations: [getNodeAutoInstrumentations(logfireConfig.nodeAutoInstrumentations)],
     metricReader: logfireConfig.metrics === false ? undefined : periodicMetricReader(),
     resource,
     spanProcessors: [processor, ...logfireConfig.additionalSpanProcessors],

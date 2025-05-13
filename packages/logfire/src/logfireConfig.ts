@@ -1,4 +1,5 @@
 import { DiagLogLevel } from '@opentelemetry/api'
+import { InstrumentationConfigMap } from '@opentelemetry/auto-instrumentations-node'
 import { MetricReader } from '@opentelemetry/sdk-metrics'
 import { IdGenerator, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as logfireApi from '@pydantic/logfire-api'
@@ -69,6 +70,10 @@ export interface LogfireConfigOptions {
    */
   metrics?: false | MetricsOptions
   /**
+   * The node auto instrumentations to use. See [Node Auto Instrumentations](https://opentelemetry.io/docs/languages/js/libraries/#registration) for more information.
+   */
+  nodeAutoInstrumentations?: InstrumentationConfigMap
+  /**
    * The otel scope to use for the logfire API. Defaults to 'logfire'.
    */
   otelScope?: string
@@ -101,6 +106,13 @@ export interface LogfireConfigOptions {
 const DEFAULT_OTEL_SCOPE = 'logfire'
 const TRACE_ENDPOINT_PATH = 'v1/traces'
 const METRIC_ENDPOINT_PATH = 'v1/metrics'
+const DEFAULT_AUTO_INSTRUMENTATION_CONFIG: InstrumentationConfigMap = {
+  // https://opentelemetry.io/docs/languages/js/libraries/#registration
+  // This particular instrumentation creates a lot of noise on startup
+  '@opentelemetry/instrumentation-fs': {
+    enabled: false,
+  },
+}
 
 export interface LogfireConfig {
   additionalSpanProcessors: SpanProcessor[]
@@ -113,6 +125,7 @@ export interface LogfireConfig {
   idGenerator: IdGenerator
   metricExporterUrl: string
   metrics: false | MetricsOptions | undefined
+  nodeAutoInstrumentations: InstrumentationConfigMap
   otelScope: string
   sendToLogfire: boolean
   serviceName: string | undefined
@@ -132,6 +145,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   idGenerator: new ULIDGenerator(),
   metricExporterUrl: '',
   metrics: undefined,
+  nodeAutoInstrumentations: DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
   otelScope: DEFAULT_OTEL_SCOPE,
   sendToLogfire: false,
   serviceName: process.env.LOGFIRE_SERVICE_NAME,
@@ -168,6 +182,7 @@ export function configure(config: LogfireConfigOptions = {}) {
     idGenerator: cnf.advanced?.idGenerator ?? new ULIDGenerator(),
     metricExporterUrl: `${baseUrl}/${METRIC_ENDPOINT_PATH}`,
     metrics: cnf.metrics,
+    nodeAutoInstrumentations: cnf.nodeAutoInstrumentations ?? DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
     sendToLogfire,
     serviceName: cnf.serviceName ?? env.LOGFIRE_SERVICE_NAME,
     serviceVersion: cnf.serviceVersion ?? env.LOGFIRE_SERVICE_VERSION,
