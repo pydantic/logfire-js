@@ -1,19 +1,19 @@
-# Pydantic Logfire — Uncomplicated Observability — JavaScript SDK
 
-From the team behind [Pydantic](https://pydantic.dev/), **Logfire** is an observability platform built on the same belief as our
-open source library — that the most powerful tools can be easy to use.
 
-Check the [Github Repository README](https://github.com/pydantic/logfire-js) for more information on how to use the SDK.
+## Pydantic Logfire Vercel AI Otel Span Processor
 
----
+With the help of `LogfireVercelAISpanProcessor`, you can monitor and observe the [Vercel AI SDK](https://ai-sdk.dev/) behavior on the runtime.
 
-## Integrating with @vercel/otel for Vercel AI Observability
-
-To gain deep, actionable insights into how your application interacts with the [Vercel AI SDK](https://ai-sdk.dev/), you can seamlessly integrate Logfire's span processor with your OpenTelemetry setup. This enables advanced tracing, analytics, and detailed panels for every AI action within Logfire.
+<img width="1394" alt="Logfire UI with Vercel AI SDK traces" src="https://github.com/user-attachments/assets/50568c94-3955-46d3-a9c9-5d82c888ddcc" />
 
 Add the Logfire Vercel AI Span Processor to your span processors when registering OpenTelemetry in your application:
 
+```bash
+npm install @pydantic/logfire-vercel-ai-span-processor`
+```
+
 ```ts
+// instrumentation.ts
 import { registerOTel } from '@vercel/otel';
 import { LogfireVercelAISpanProcessor } from '@pydantic/logfire-vercel-ai-span-processor';
 
@@ -24,7 +24,8 @@ registerOTel({
 });
 ```
 
-By including the Logfire span processor, your Vercel AI spans will be automatically enriched with Logfire-compatible attributes. This integration empowers you to:
-- Visualize and analyze each AI action in detail
-- Monitor and debug AI workflows with precision
-- Unlock advanced observability and reporting features in Logfire
+## Pydantic Logfire — Uncomplicated Observability — JavaScript SDK
+
+From the team behind [Pydantic](https://pydantic.dev/), **Logfire** is an observability platform built on the same belief as our open source library — that the most powerful tools can be easy to use.
+
+Check the [Github Repository README](https://github.com/pydantic/logfire-js) for more information on how to use the SDK.

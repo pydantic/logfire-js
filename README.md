@@ -143,9 +143,14 @@ A working example can be found in the `examples/nextjs` directory.
 
 ### AI SDK / Vercel
 
-To gain deep, actionable insights into how your application interacts with the [Vercel AI SDK](https://ai-sdk.dev/), you can seamlessly integrate Logfire's span processor with your OpenTelemetry setup. This enables advanced tracing, analytics, and detailed panels for every AI action within Logfire.
+To be abele to observer [Vercel AI SDK](https://ai-sdk.dev/), you can integrate [Logfire's span processor](/packages/logfire-vercel-ai-span-processor) with your OpenTelemetry setup.
 
 Add the `LogfireVercelAISpanProcessor` to your span processors when registering OpenTelemetry in your application:
+
+
+```bash
+npm install @pydantic/logfire-vercel-ai-span-processor`
+```
 
 ```ts
 # instrumentation.ts
@@ -158,10 +163,6 @@ registerOTel({
   spanProcessors: [new LogfireVercelAISpanProcessor()],
 });
 ```
-
-By including the Logfire span processor, your Vercel AI spans will be automatically enriched with Logfire-compatible attributes. This integration empowers you to:
-- Visualize and analyze each AI action in detail
-- Monitor and debug AI workflows with precision
 
 
 ### Express, generic Node instrumentation
