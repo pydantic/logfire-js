@@ -7,7 +7,7 @@ import * as logfireApi from '@pydantic/logfire-api'
 import { start } from './sdk'
 import { ULIDGenerator } from './ULIDGenerator'
 
-export interface AdancedLogfireConfigOptions {
+export interface AdvancedLogfireConfigOptions {
   /**
    * The logfire API base URL. Defaults to 'https://logfire-api.pydantic.dev/'
    */
@@ -47,7 +47,7 @@ export interface LogfireConfigOptions {
   /**
    * Advanced configuration options
    */
-  advanced?: AdancedLogfireConfigOptions
+  advanced?: AdvancedLogfireConfigOptions
   /**
    * Settings for the source code of the project.
    */
