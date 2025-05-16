@@ -1,5 +1,11 @@
 # logfire
 
+## 0.5.1
+
+### Patch Changes
+
+- 14833ef: Fix typo in interface name
+
 ## 0.5.0
 
 ### Minor Changes
