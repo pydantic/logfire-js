@@ -131,8 +131,10 @@ import * as logfire from '@pydantic/logfire-api'
 export default async function Home() {
   return logfire.span('A warning span', {}, {
     level: logfire.Level.Warning, 
-  }, async () => {
+  }, async (span) => {
     logfire.info('Nested info span');
+    // ending the span is necessary to ensure it is reported
+    span.end()
     return <div>Hello</div>;
   })
 }
