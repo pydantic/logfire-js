@@ -142,6 +142,31 @@ export default async function Home() {
 
 A working example can be found in the `examples/nextjs` directory.
 
+
+### AI SDK / Vercel
+
+To be abele to observer [Vercel AI SDK](https://ai-sdk.dev/), you can integrate [Logfire's span processor](/packages/logfire-vercel-ai-span-processor) with your OpenTelemetry setup.
+
+Add the `LogfireVercelAISpanProcessor` to your span processors when registering OpenTelemetry in your application:
+
+
+```bash
+npm install @pydantic/logfire-vercel-ai-span-processor`
+```
+
+```ts
+# instrumentation.ts
+import { registerOTel } from '@vercel/otel';
+import { LogfireVercelAISpanProcessor } from '@pydantic/logfire-vercel-ai-span-processor';
+
+registerOTel({
+  serviceName: 'your-service-name',
+  autoDetectResources: true,
+  spanProcessors: [new LogfireVercelAISpanProcessor()],
+});
+```
+
+
 ### Express, generic Node instrumentation
 
 For the purposes of the example, we will instrument this simple Express app:
