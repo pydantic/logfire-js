@@ -1,5 +1,11 @@
 # @pydantic/logfire-cf-workers
 
+## 0.4.3
+
+### Patch Changes
+
+- 17dbddd: Re-export instrument function
+
 ## 0.4.2
 
 ### Patch Changes
