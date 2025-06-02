@@ -1,0 +1,35 @@
+{
+  "name": "client-side-instrumentation",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/context-zone": "^1.30.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.57.2",
+    "@opentelemetry/instrumentation": "^0.57.2",
+    "@opentelemetry/instrumentation-fetch": "^0.57.2",
+    "@opentelemetry/resources": "^1.19.0",
+    "@opentelemetry/sdk-trace-web": "^1.30.1",
+    "@opentelemetry/semantic-conventions": "^1.32.0",
+    "@pydantic/logfire-api": "^0.4.0",
+    "@vercel/otel": "^1.11.0",
+    "next": "15.3.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.3.0",
+    "typescript": "^5"
+  }
+}
