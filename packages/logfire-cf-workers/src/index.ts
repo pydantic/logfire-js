@@ -58,6 +58,11 @@ export function instrumentTail<T>(handler: T, config: TailConfigOptions): T {
   return baseInstrument(handler, getTailConfig(config)) as T
 }
 
+/**
+ * Alias for `instrumentInProcess` to maintain compatibility with previous versions.
+ */
+export const instrument = instrumentInProcess
+
 function postProcessAttributes(spans: ReadableSpan[]) {
   for (const span of spans) {
     for (const attrKey of Object.keys(span.attributes)) {
