@@ -5,7 +5,7 @@ import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetr
 import { ScrubCallback } from './AttributeScrubber'
 import { ATTRIBUTES_LEVEL_KEY, ATTRIBUTES_MESSAGE_TEMPLATE_KEY, ATTRIBUTES_SPAN_TYPE_KEY, ATTRIBUTES_TAGS_KEY } from './constants'
 import { logfireFormatWithExtras } from './formatter'
-import { logfireApiConfig } from './logfireApiConfig'
+import { logfireApiConfig, serializeAttributes } from './logfireApiConfig'
 
 export * from './AttributeScrubber'
 export { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire } from './logfireApiConfig'
@@ -53,7 +53,7 @@ export function startSpan(
     formattedMessage,
     {
       attributes: {
-        ...attributes,
+        ...serializeAttributes(attributes),
         [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
         [ATTRIBUTES_LEVEL_KEY]: level,
         [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
@@ -67,16 +67,18 @@ export function startSpan(
 }
 
 export function span<F extends (span: Span) => unknown>(
-  message: string,
+  msgTemplate: string,
   attributes: Record<string, unknown> = {},
   { tags = [], level = Level.Info }: LogOptions = {},
   callback: F
 ) {
+  const [formattedMessage, , newTemplate] = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
   return logfireApiConfig.tracer.startActiveSpan<F>(
-    message,
+    formattedMessage,
     {
       attributes: {
-        ...attributes,
+        ...serializeAttributes(attributes),
+        [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
         [ATTRIBUTES_LEVEL_KEY]: level,
         [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
       },

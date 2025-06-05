@@ -1,7 +1,6 @@
 import { Context } from '@opentelemetry/api'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
 import { BatchSpanProcessor, BufferConfig, ReadableSpan, Span, SpanExporter, SpanProcessor } from '@opentelemetry/sdk-trace-base'
-import { serializeAttributes } from '@pydantic/logfire-api'
 
 import { logfireConfig } from './logfireConfig'
 import { VoidTraceExporter } from './VoidTraceExporter'
@@ -42,7 +41,9 @@ class LogfireSpanProcessor implements SpanProcessor {
   }
 
   onEnd(span: ReadableSpan): void {
-    Object.assign(span.attributes, serializeAttributes(span.attributes))
+    // Note: this is too late for the regular node instrumentation. The opentelemetry API rejects the non-primitive attribute values.
+    // Instead, the serialization happens at the `logfire.span, logfire.startSpan`, etc.
+    // Object.assign(span.attributes, serializeAttributes(span.attributes))
     this.wrapped.onEnd(span)
   }
 
