@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.4.1
+
+### Patch Changes
+
+- cd2ac40: Fix attribute serialization
+
 ## 0.4.0
 
 ### Minor Changes
