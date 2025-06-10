@@ -1,5 +1,12 @@
 # @pydantic/logfire-api
 
+## 0.4.2
+
+### Patch Changes
+
+- fac89ec: logfire.reportError - documentation and setting correct span type
+- fac89ec: Document and slightly enhance the `reportError` function.
+
 ## 0.4.1
 
 ### Patch Changes
