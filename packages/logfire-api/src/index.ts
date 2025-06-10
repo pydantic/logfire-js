@@ -119,13 +119,23 @@ export function warning(message: string, attributes: Record<string, unknown> = {
   log(message, attributes, { ...options, level: Level.Warning })
 }
 
+/**
+ * Use this method to report an error to Logfire.
+ * Captures the error stack trace and message in the respective semantic attributes and sets the correct level and status.
+ */
 export function reportError(message: string, error: Error, extraAttributes: Record<string, unknown> = {}) {
-  const span = startSpan(message, {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    [ATTR_EXCEPTION_MESSAGE]: error.message ?? 'error',
-    [ATTR_EXCEPTION_STACKTRACE]: error.stack,
-    ...extraAttributes,
-  })
+  const span = startSpan(
+    message,
+    {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      [ATTR_EXCEPTION_MESSAGE]: error.message ?? 'error',
+      [ATTR_EXCEPTION_STACKTRACE]: error.stack,
+      ...extraAttributes,
+    },
+    {
+      level: Level.Error,
+    }
+  )
 
   span.recordException(error)
   span.setStatus({ code: SpanStatusCode.ERROR })

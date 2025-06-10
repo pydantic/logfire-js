@@ -122,6 +122,28 @@ export default instrument(handler, {
 
 A working example can be found in the `examples/cloudflare-worker` directory.
 
+Note: if you're testing your worker with Vitest, you need to add the following additional configuration to your `vitest.config.mts`:
+
+```
+export default defineWorkersConfig({
+  test: {
+    deps: {
+      optimizer: {
+        ssr: {
+          enabled: true,
+          include: ['@pydantic/logfire-cf-workers'],
+        },
+      },
+    },
+    poolOptions: {
+      workers: {
+        // ...
+      },
+    },
+  },
+});
+```
+
 ### Next.js/Vercel
 
 Vercel provides a comprehensive OpenTelemetry integration through the
@@ -269,6 +291,18 @@ function info(
   attributes?: Record<string, unknown>,
   options?: LogOptions,
 ): void;
+```
+
+### Reporting errors
+
+In addition to `trace`, `debug`, the Logfire API exports a `reportError` function that accepts a message and a JavaScript `Error` object. It will extract the necessary details from the error and create a span with the `error` level.
+
+```ts
+try {
+  1 / 0
+} catch (error) {
+  logfire.reportError("An error occurred", error);
+}
 ```
 
 ## Contributing

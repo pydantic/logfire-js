@@ -5,12 +5,7 @@ logfire.configure({
   serviceName: 'example-node-script',
   serviceVersion: '1.0.0',
   environment: 'staging',
-  token: 'pylf_v1_eu_fcksvB6FNdWKZ3xGbrG8g8GXHFqPfFXgtRgnZdvV6PCj',
   diagLogLevel: logfire.DiagLogLevel.DEBUG,
-  codeSource: {
-    repository: 'https://github.com/pydantic/pydantic',
-    revision: 'master',
-  },
 })
 
 
@@ -27,3 +22,12 @@ logfire.span('Hello from Node.js, {next_player}', {
 }, (span) => {
   span.end()
 })
+
+if (process.env.TRIGGER_ERROR) {
+  try {
+    throw new Error('This is an error for testing purposes');
+  } catch (error) {
+    logfire.reportError("An error occurred", error as Error);
+    console.error("An error occurred:", error);
+  }
+}
