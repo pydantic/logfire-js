@@ -112,9 +112,11 @@ const handler = {
 } satisfies ExportedHandler;
 
 export default instrument(handler, {
-  serviceName: "cloudflare-worker",
-  serviceNamespace: "",
-  serviceVersion: "1.0.0",
+	service: {
+		name: 'my-cloudflare-worker',
+		namespace: '',
+		version: '1.0.0',
+	},
 });
 ```
 
