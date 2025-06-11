@@ -1,5 +1,11 @@
 # @pydantic/logfire-cf-workers
 
+## 0.4.4
+
+### Patch Changes
+
+- df4ac70: Support environment for Cloudflare workers
+
 ## 0.4.3
 
 ### Patch Changes
