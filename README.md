@@ -85,7 +85,10 @@ to your `.dev.vars` file:
 
 ```sh
 LOGFIRE_TOKEN=your-write-token
+LOGFIRE_ENVIRONMENT=development
 ```
+
+The `LOGFIRE_ENVIRONMENT` variable is optional and can be used to specify the environment for the service.
 
 For production deployment, check the
 [Cloudflare documentation for details on managing and deploying secrets](https://developers.cloudflare.com/workers/configuration/secrets/).

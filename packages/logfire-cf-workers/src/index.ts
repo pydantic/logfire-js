@@ -14,7 +14,10 @@ export interface CloudflareConfigOptions {
 
 type Env = Record<string, string | undefined>
 
-type ConfigOptionsBase = Pick<TraceConfig, 'fetch' | 'handlers' | 'instrumentation' | 'propagator' | 'sampling' | 'scope' | 'service'>
+type ConfigOptionsBase = Pick<
+  TraceConfig,
+  'environment' | 'fetch' | 'handlers' | 'instrumentation' | 'propagator' | 'sampling' | 'scope' | 'service'
+>
 
 export interface InProcessConfigOptions extends ConfigOptionsBase {
   baseUrl?: string
@@ -25,11 +28,13 @@ export interface TailConfigOptions extends ConfigOptionsBase {}
 
 function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => TraceConfig {
   return (env: Env): TraceConfig => {
-    const { LOGFIRE_TOKEN: token = '' } = env
+    const { LOGFIRE_ENVIRONMENT: envDeploymentEnvironment, LOGFIRE_TOKEN: token = '' } = env
 
     const baseUrl = resolveBaseUrl(env, config.baseUrl, token)
+    const resolvedEnvironment = config.environment ?? envDeploymentEnvironment
 
     return Object.assign({}, config, {
+      environment: resolvedEnvironment,
       exporter: {
         headers: { Authorization: token },
         url: `${baseUrl}/v1/traces`,

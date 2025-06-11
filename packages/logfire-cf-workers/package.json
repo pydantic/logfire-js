@@ -50,7 +50,7 @@
   },
   "dependencies": {
     "@pydantic/logfire-api": "*",
-    "@pydantic/otel-cf-workers": "^1.0.0-rc.51"
+    "@pydantic/otel-cf-workers": "^1.0.0-rc.53"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20250311.0",
