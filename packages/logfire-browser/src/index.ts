@@ -10,8 +10,15 @@ import {
   ATTR_TELEMETRY_SDK_LANGUAGE,
   ATTR_TELEMETRY_SDK_NAME,
   ATTR_TELEMETRY_SDK_VERSION,
+  ATTR_USER_AGENT_ORIGINAL,
   TELEMETRY_SDK_LANGUAGE_VALUE_WEBJS,
 } from '@opentelemetry/semantic-conventions'
+import {
+  ATTR_BROWSER_BRANDS,
+  ATTR_BROWSER_LANGUAGE,
+  ATTR_BROWSER_MOBILE,
+  ATTR_BROWSER_PLATFORM,
+} from '@opentelemetry/semantic-conventions/incubating'
 import { ULIDGenerator } from '@pydantic/logfire-api'
 import * as logfireApi from '@pydantic/logfire-api'
 export { DiagLogLevel } from '@opentelemetry/api'
@@ -64,12 +71,22 @@ export function configure(options: LogfireConfigOptions) {
   }
 
   const resource = resourceFromAttributes({
+    [ATTR_BROWSER_LANGUAGE]: navigator.language,
     [ATTR_SERVICE_NAME]: options.serviceName ?? 'logfire-browser',
     [ATTR_SERVICE_VERSION]: options.serviceVersion ?? '0.0.1',
     [ATTR_TELEMETRY_SDK_LANGUAGE]: TELEMETRY_SDK_LANGUAGE_VALUE_WEBJS,
     [ATTR_TELEMETRY_SDK_NAME]: 'logfire-browser',
     // eslint-disable-next-line no-undef
     [ATTR_TELEMETRY_SDK_VERSION]: PACKAGE_VERSION,
+    ...(navigator.userAgentData
+      ? {
+          [ATTR_BROWSER_BRANDS]: navigator.userAgentData.brands.map((brand) => `${brand.brand} ${brand.version}`),
+          [ATTR_BROWSER_MOBILE]: navigator.userAgentData.mobile,
+          [ATTR_BROWSER_PLATFORM]: navigator.userAgentData.platform,
+        }
+      : {
+          [ATTR_USER_AGENT_ORIGINAL]: navigator.userAgent,
+        }),
   })
 
   diag.info('logfire-browser: starting')

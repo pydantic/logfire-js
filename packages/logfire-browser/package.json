@@ -65,6 +65,7 @@
     "eslint": "^9.22.0",
     "prettier": "3.5.3",
     "typescript": "^5.8.2",
+    "user-agent-data-types": "^0.4.2",
     "vite": "^6.2.0",
     "vite-plugin-dts": "^4.5.3",
     "vitest": "^3.1.1"
