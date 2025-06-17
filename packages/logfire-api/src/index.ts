@@ -10,6 +10,7 @@ import { logfireApiConfig, serializeAttributes } from './logfireApiConfig'
 export * from './AttributeScrubber'
 export { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire } from './logfireApiConfig'
 export { serializeAttributes } from './serializeAttributes'
+export * from './ULIDGenerator'
 
 export interface SrubbingOptions {
   callback?: ScrubCallback

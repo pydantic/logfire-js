@@ -5,7 +5,6 @@ import { IdGenerator, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as logfireApi from '@pydantic/logfire-api'
 
 import { start } from './sdk'
-import { ULIDGenerator } from './ULIDGenerator'
 
 export interface AdvancedLogfireConfigOptions {
   /**
@@ -142,7 +141,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   deploymentEnvironment: undefined,
   diagLogLevel: undefined,
   distributedTracing: true,
-  idGenerator: new ULIDGenerator(),
+  idGenerator: new logfireApi.ULIDGenerator(),
   metricExporterUrl: '',
   metrics: undefined,
   nodeAutoInstrumentations: DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
@@ -179,7 +178,7 @@ export function configure(config: LogfireConfigOptions = {}) {
     deploymentEnvironment: cnf.environment ?? env.LOGFIRE_ENVIRONMENT,
     diagLogLevel: cnf.diagLogLevel,
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),
-    idGenerator: cnf.advanced?.idGenerator ?? new ULIDGenerator(),
+    idGenerator: cnf.advanced?.idGenerator ?? new logfireApi.ULIDGenerator(),
     metricExporterUrl: `${baseUrl}/${METRIC_ENDPOINT_PATH}`,
     metrics: cnf.metrics,
     nodeAutoInstrumentations: cnf.nodeAutoInstrumentations ?? DEFAULT_AUTO_INSTRUMENTATION_CONFIG,

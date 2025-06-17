@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 export function middleware(request: NextRequest) {
   const url = request.nextUrl.clone();
 
-  console.log(process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT);
   if (url.pathname === "/client-traces") {
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set("Authorization", process.env.LOGFIRE_TOKEN!);

@@ -1,0 +1,76 @@
+{
+  "name": "@pydantic/logfire-browser",
+  "description": "JavaScript Browser SDK for Logfire - https://pydantic.dev/logfire",
+  "author": {
+    "name": "The Pydantic Team",
+    "email": "engineering@pydantic.dev",
+    "url": "https://pydantic.dev"
+  },
+  "sideEffects": false,
+  "homepage": "https://pydantic.dev/logfire",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "logfire",
+    "observability",
+    "opentelemetry",
+    "tracing",
+    "profiling",
+    "stats",
+    "monitoring"
+  ],
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "scripts": {
+    "dev": "vite build",
+    "build": "vite build",
+    "lint": "eslint",
+    "preview": "vite preview",
+    "typecheck": "tsc",
+    "prepack": "cp ../../LICENSE .",
+    "postpack": "rm LICENSE",
+    "test": "vitest --passWithNoTests"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.202.0",
+    "@opentelemetry/instrumentation": "^0.202.0",
+    "@opentelemetry/resources": "^2.0.1",
+    "@pydantic/logfire-api": "*"
+  },
+  "peerDependencies": {
+    "@opentelemetry/sdk-trace-web": "^2.0.1",
+    "@opentelemetry/semantic-conventions": "^1.34.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/sdk-trace-web": "^2.0.1",
+    "@opentelemetry/semantic-conventions": "^1.34.0",
+    "eslint": "^9.22.0",
+    "prettier": "3.5.3",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.0",
+    "vite-plugin-dts": "^4.5.3",
+    "vitest": "^3.1.1"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ]
+}

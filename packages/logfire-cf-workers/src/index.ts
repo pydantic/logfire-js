@@ -1,10 +1,9 @@
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 
-import { resolveBaseUrl, serializeAttributes } from '@pydantic/logfire-api'
+import { resolveBaseUrl, serializeAttributes, ULIDGenerator } from '@pydantic/logfire-api'
 import { instrument as baseInstrument, TraceConfig } from '@pydantic/otel-cf-workers'
 
 import { TailWorkerExporter } from './TailWorkerExporter'
-import { ULIDGenerator } from './ULIDGenerator'
 export * from './exportTailEventsToLogfire'
 
 export interface CloudflareConfigOptions {

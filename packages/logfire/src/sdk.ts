@@ -5,18 +5,24 @@ import { W3CTraceContextPropagator } from '@opentelemetry/core'
 import { detectResources, envDetector, resourceFromAttributes } from '@opentelemetry/resources'
 import { MeterProvider } from '@opentelemetry/sdk-metrics'
 import { NodeSDK } from '@opentelemetry/sdk-node'
-import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions'
+import {
+  ATTR_SERVICE_NAME,
+  ATTR_SERVICE_VERSION,
+  ATTR_TELEMETRY_SDK_LANGUAGE,
+  ATTR_TELEMETRY_SDK_NAME,
+  ATTR_TELEMETRY_SDK_VERSION,
+  TELEMETRY_SDK_LANGUAGE_VALUE_NODEJS,
+} from '@opentelemetry/semantic-conventions'
 import {
   ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
   ATTR_VCS_REPOSITORY_REF_REVISION,
   ATTR_VCS_REPOSITORY_URL_FULL,
 } from '@opentelemetry/semantic-conventions/incubating'
-import { reportError } from '@pydantic/logfire-api'
+import { reportError, ULIDGenerator } from '@pydantic/logfire-api'
 
 import { logfireConfig } from './logfireConfig'
 import { periodicMetricReader } from './metricExporter'
 import { logfireSpanProcessor } from './traceExporter'
-import { ULIDGenerator } from './ULIDGenerator'
 import { removeEmptyKeys } from './utils'
 
 const LOGFIRE_ATTRIBUTES_NAMESPACE = 'logfire'
@@ -32,6 +38,11 @@ export function start() {
       [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: logfireConfig.deploymentEnvironment,
       [ATTR_SERVICE_NAME]: logfireConfig.serviceName,
       [ATTR_SERVICE_VERSION]: logfireConfig.serviceVersion,
+      [ATTR_TELEMETRY_SDK_LANGUAGE]: TELEMETRY_SDK_LANGUAGE_VALUE_NODEJS,
+      [ATTR_TELEMETRY_SDK_NAME]: 'logfire',
+      // eslint-disable-next-line no-undef
+      [ATTR_TELEMETRY_SDK_VERSION]: PACKAGE_VERSION,
+
       [ATTR_VCS_REPOSITORY_REF_REVISION]: logfireConfig.codeSource?.revision,
       [ATTR_VCS_REPOSITORY_URL_FULL]: logfireConfig.codeSource?.repository,
       [RESOURCE_ATTRIBUTES_CODE_ROOT_PATH]: logfireConfig.codeSource?.rootPath,
