@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.5.0
+
+### Minor Changes
+
+- 478e045: Experimental browser support
+
 ## 0.4.2
 
 ### Patch Changes
