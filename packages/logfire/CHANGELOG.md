@@ -1,5 +1,11 @@
 # logfire
 
+## 0.7.0
+
+### Minor Changes
+
+- 2a62de6: Support passing additional instrumentations
+
 ## 0.6.0
 
 ### Minor Changes
