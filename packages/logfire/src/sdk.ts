@@ -59,7 +59,7 @@ export function start() {
     autoDetectResources: false,
     contextManager,
     idGenerator: new ULIDGenerator(),
-    instrumentations: [getNodeAutoInstrumentations(logfireConfig.nodeAutoInstrumentations)],
+    instrumentations: [getNodeAutoInstrumentations(logfireConfig.nodeAutoInstrumentations), ...logfireConfig.instrumentations],
     metricReader: logfireConfig.metrics === false ? undefined : periodicMetricReader(),
     resource,
     spanProcessors: [processor, ...logfireConfig.additionalSpanProcessors],
@@ -73,7 +73,6 @@ export function start() {
 
   sdk.start()
   diag.info('logfire: starting')
-  diag.debug(JSON.stringify(logfireConfig, null, 2))
 
   process.on('uncaughtExceptionMonitor', (error: Error) => {
     diag.info('logfire: caught uncaught exception', error.message)
