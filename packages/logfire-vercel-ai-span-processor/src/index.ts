@@ -1,0 +1,1 @@
+export { LogfireVercelAISpanProcessor } from './spanProcessor'
