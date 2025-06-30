@@ -189,8 +189,6 @@ export default async function Home() {
 
 A working example can be found in the `examples/nextjs` directory.
 
-<<<<<<< HEAD
-
 ### AI SDK / Vercel
 
 To be abele to observer [Vercel AI SDK](https://ai-sdk.dev/), you can integrate [Logfire's span processor](/packages/logfire-vercel-ai-span-processor) with your OpenTelemetry setup.
@@ -213,13 +211,6 @@ registerOTel({
   spanProcessors: [new LogfireVercelAISpanProcessor()],
 });
 ```
-
-=======
-#### Next.js client-side instrumentation
-
-The `@vercel/otel` package does not support client-side instrumentation, so few additional steps are necessary to send spans and/or instrument the client-side. 
-For a working example, refer to the `examples/nextjs-client-side-instrumentation` directory, which instruments the client-side `fetch` calls.
->>>>>>> 45ad87d62fc3836fba2ea913acec6bc381136d80
 
 ### Express, generic Node instrumentation
 
