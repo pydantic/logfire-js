@@ -1,13 +1,13 @@
 import { DiagLogLevel } from '@opentelemetry/api'
 import { InstrumentationConfigMap } from '@opentelemetry/auto-instrumentations-node'
+import { Instrumentation } from '@opentelemetry/instrumentation'
 import { MetricReader } from '@opentelemetry/sdk-metrics'
 import { IdGenerator, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as logfireApi from '@pydantic/logfire-api'
 
 import { start } from './sdk'
-import { ULIDGenerator } from './ULIDGenerator'
 
-export interface AdancedLogfireConfigOptions {
+export interface AdvancedLogfireConfigOptions {
   /**
    * The logfire API base URL. Defaults to 'https://logfire-api.pydantic.dev/'
    */
@@ -47,7 +47,7 @@ export interface LogfireConfigOptions {
   /**
    * Advanced configuration options
    */
-  advanced?: AdancedLogfireConfigOptions
+  advanced?: AdvancedLogfireConfigOptions
   /**
    * Settings for the source code of the project.
    */
@@ -65,6 +65,10 @@ export interface LogfireConfigOptions {
    * Defaults to the `LOGFIRE_ENVIRONMENT` environment variable.
    */
   environment?: string
+  /**
+   * Additional third-party instrumentations to use.
+   */
+  instrumentations?: Instrumentation[]
   /**
    * Set to False to disable sending all metrics, or provide a MetricsOptions object to configure metrics, e.g. additional metric readers.
    */
@@ -123,6 +127,7 @@ export interface LogfireConfig {
   diagLogLevel?: DiagLogLevel
   distributedTracing: boolean
   idGenerator: IdGenerator
+  instrumentations: Instrumentation[]
   metricExporterUrl: string
   metrics: false | MetricsOptions | undefined
   nodeAutoInstrumentations: InstrumentationConfigMap
@@ -142,7 +147,8 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   deploymentEnvironment: undefined,
   diagLogLevel: undefined,
   distributedTracing: true,
-  idGenerator: new ULIDGenerator(),
+  idGenerator: new logfireApi.ULIDGenerator(),
+  instrumentations: [],
   metricExporterUrl: '',
   metrics: undefined,
   nodeAutoInstrumentations: DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
@@ -179,7 +185,8 @@ export function configure(config: LogfireConfigOptions = {}) {
     deploymentEnvironment: cnf.environment ?? env.LOGFIRE_ENVIRONMENT,
     diagLogLevel: cnf.diagLogLevel,
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),
-    idGenerator: cnf.advanced?.idGenerator ?? new ULIDGenerator(),
+    idGenerator: cnf.advanced?.idGenerator ?? new logfireApi.ULIDGenerator(),
+    instrumentations: cnf.instrumentations ?? [],
     metricExporterUrl: `${baseUrl}/${METRIC_ENDPOINT_PATH}`,
     metrics: cnf.metrics,
     nodeAutoInstrumentations: cnf.nodeAutoInstrumentations ?? DEFAULT_AUTO_INSTRUMENTATION_CONFIG,

@@ -1,5 +1,28 @@
 # @pydantic/logfire-cf-workers
 
+## 0.5.0
+
+### Minor Changes
+
+- 478e045: Experimental browser support
+
+### Patch Changes
+
+- Updated dependencies [478e045]
+  - @pydantic/logfire-api@0.5.0
+
+## 0.4.4
+
+### Patch Changes
+
+- df4ac70: Support environment for Cloudflare workers
+
+## 0.4.3
+
+### Patch Changes
+
+- 17dbddd: Re-export instrument function
+
 ## 0.4.2
 
 ### Patch Changes

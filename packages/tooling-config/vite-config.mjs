@@ -21,6 +21,7 @@ export default (entry, external = []) => defineConfig({
   },
   define: {
     PACKAGE_TIMESTAMP: new Date().getTime(),
+    PACKAGE_VERSION: JSON.stringify(process.env.npm_package_version || '0.0.0'),
   },
   plugins: [
     dts({

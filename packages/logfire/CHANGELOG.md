@@ -1,5 +1,36 @@
 # logfire
 
+## 0.7.0
+
+### Minor Changes
+
+- 2a62de6: Support passing additional instrumentations
+
+## 0.6.0
+
+### Minor Changes
+
+- 478e045: Experimental browser support
+
+### Patch Changes
+
+- Updated dependencies [478e045]
+  - @pydantic/logfire-api@0.5.0
+
+## 0.5.2
+
+### Patch Changes
+
+- cd2ac40: Fix attribute serialization
+- Updated dependencies [cd2ac40]
+  - @pydantic/logfire-api@0.4.1
+
+## 0.5.1
+
+### Patch Changes
+
+- 14833ef: Fix typo in interface name
+
 ## 0.5.0
 
 ### Minor Changes

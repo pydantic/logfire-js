@@ -1,5 +1,24 @@
 # @pydantic/logfire-api
 
+## 0.5.0
+
+### Minor Changes
+
+- 478e045: Experimental browser support
+
+## 0.4.2
+
+### Patch Changes
+
+- fac89ec: logfire.reportError - documentation and setting correct span type
+- fac89ec: Document and slightly enhance the `reportError` function.
+
+## 0.4.1
+
+### Patch Changes
+
+- cd2ac40: Fix attribute serialization
+
 ## 0.4.0
 
 ### Minor Changes

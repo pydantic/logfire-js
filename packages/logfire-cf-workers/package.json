@@ -22,7 +22,7 @@
     "stats",
     "monitoring"
   ],
-  "version": "0.4.2",
+  "version": "0.5.0",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -50,7 +50,7 @@
   },
   "dependencies": {
     "@pydantic/logfire-api": "*",
-    "@pydantic/otel-cf-workers": "^1.0.0-rc.51"
+    "@pydantic/otel-cf-workers": "^1.0.0-rc.53"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20250311.0",
