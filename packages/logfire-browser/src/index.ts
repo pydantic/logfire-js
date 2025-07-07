@@ -18,6 +18,7 @@ import {
   ATTR_BROWSER_LANGUAGE,
   ATTR_BROWSER_MOBILE,
   ATTR_BROWSER_PLATFORM,
+  ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
 } from '@opentelemetry/semantic-conventions/incubating'
 import { ULIDGenerator } from '@pydantic/logfire-api'
 import * as logfireApi from '@pydantic/logfire-api'
@@ -33,10 +34,17 @@ export interface LogfireConfigOptions {
    * Defines the available internal logging levels for the diagnostic logger.
    */
   diagLogLevel?: DiagLogLevel
+
   /**
    * Set to `false` to disable the [zone context manager](https://www.npmjs.com/package/@opentelemetry/context-zone) usage.
    */
   enableZoneContextManager?: boolean
+
+  /**
+   * The environment this service is running in, e.g. `staging` or `prod`. Sets the deployment.environment.name resource attribute. Useful for filtering within projects in the Logfire UI.
+   * Defaults to the `LOGFIRE_ENVIRONMENT` environment variable.
+   */
+  environment?: string
   /**
    * The instrumentations to register - a common one [is the fetch instrumentation](https://www.npmjs.com/package/@opentelemetry/instrumentation-fetch).
    */
@@ -45,6 +53,7 @@ export interface LogfireConfigOptions {
    * Options for scrubbing sensitive data. Set to False to disable.
    */
   scrubbing?: false | logfireApi.SrubbingOptions
+
   /**
    * Name of this service.
    */
@@ -76,6 +85,7 @@ export function configure(options: LogfireConfigOptions) {
     [ATTR_SERVICE_VERSION]: options.serviceVersion ?? '0.0.1',
     [ATTR_TELEMETRY_SDK_LANGUAGE]: TELEMETRY_SDK_LANGUAGE_VALUE_WEBJS,
     [ATTR_TELEMETRY_SDK_NAME]: 'logfire-browser',
+    ...(options.environment ? { [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: options.environment } : {}),
     // eslint-disable-next-line no-undef
     [ATTR_TELEMETRY_SDK_VERSION]: PACKAGE_VERSION,
     ...(navigator.userAgentData
