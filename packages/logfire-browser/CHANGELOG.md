@@ -1,5 +1,11 @@
 # @pydantic/logfire-browser
 
+## 0.3.0
+
+### Minor Changes
+
+- 088af0d: Support environment configuration
+
 ## 0.2.0
 
 ### Minor Changes
