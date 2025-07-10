@@ -25,6 +25,8 @@ import * as logfireApi from '@pydantic/logfire-api'
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from '@pydantic/logfire-api'
 
+type TraceExporterConfig = NonNullable<typeof OTLPTraceExporter extends new (config: infer T) => unknown ? T : never>
+
 export interface LogfireConfigOptions {
   /**
    * The configuration of the batch span processor.
@@ -65,6 +67,11 @@ export interface LogfireConfigOptions {
   serviceVersion?: string
 
   /**
+   * configures the trace exporter.
+   */
+  traceExporterConfig?: TraceExporterConfig
+
+  /**
    * The URL of your trace exporter proxy endpoint.
    */
   traceUrl: string
@@ -103,7 +110,12 @@ export function configure(options: LogfireConfigOptions) {
   const tracerProvider = new WebTracerProvider({
     idGenerator: new ULIDGenerator(),
     resource,
-    spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter({ url: options.traceUrl }), options.batchSpanProcessorConfig)],
+    spanProcessors: [
+      new BatchSpanProcessor(
+        new OTLPTraceExporter({ ...options.traceExporterConfig, url: options.traceUrl }),
+        options.batchSpanProcessorConfig
+      ),
+    ],
   })
 
   if (options.enableZoneContextManager !== false) {
