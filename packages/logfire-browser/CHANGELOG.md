@@ -1,5 +1,11 @@
 # @pydantic/logfire-browser
 
+## 0.4.0
+
+### Minor Changes
+
+- 4d22a69: Support configuration for the trace exporter config
+
 ## 0.3.1
 
 ### Patch Changes
