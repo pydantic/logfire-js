@@ -1,26 +1,16 @@
 # Pydantic Logfire — Uncomplicated Observability — JavaScript SDK
 
-From the team behind [Pydantic](https://pydantic.dev/), **Logfire** is an
-observability platform built on the same belief as our open source library —
-that the most powerful tools can be easy to use.
+From the team behind [Pydantic Validation](https://pydantic.dev/), **Pydantic Logfire** is an observability platform built on the same belief as our open source library — that the most powerful tools can be easy to use.
 
 What sets Logfire apart:
 
-- **Simple and Powerful:** Logfire's dashboard is simple relative to the power
-  it provides, ensuring your entire engineering team will actually use it.
-- **SQL:** Query your data using standard SQL — all the control and (for many)
-  nothing new to learn. Using SQL also means you can query your data with
-  existing BI tools and database querying libraries.
-- **OpenTelemetry:** Logfire is an opinionated wrapper around OpenTelemetry,
-  allowing you to leverage existing tooling, infrastructure, and instrumentation
-  for many common packages, and enabling support for virtually any language. We
-  offer full support for all OpenTelemetry signals (traces, metrics, and logs).
+- **Simple and Powerful:** Logfire's dashboard is simple relative to the power it provides, ensuring your entire engineering team will actually use it.
+- **SQL:** Query your data using standard SQL — all the control and (for many) nothing new to learn. Using SQL also means you can query your data with existing BI tools and database querying libraries.
+- **OpenTelemetry:** Logfire is an opinionated wrapper around OpenTelemetry, allowing you to leverage existing tooling, infrastructure, and instrumentation for many common packages, and enabling support for virtually any language. We offer full support for all OpenTelemetry signals (traces, metrics, and logs).
 
-**Feel free to report issues and ask any questions about Logfire in this
-repository!**
+**Feel free to report issues and ask any questions about Logfire in this repository!**
 
-This repository contains the JavaScript SDK for `logfire` and its documentation;
-the server application for recording and displaying data is closed source.
+This repository contains the JavaScript SDK for `logfire` and its documentation; the server application for recording and displaying data is closed source.
 
 <img width="1394" alt="Logfire UI with Next.js traces" src="https://github.com/user-attachments/assets/a2a1167b-6bf7-4d6a-8d59-81cb2433c8e9" />
 

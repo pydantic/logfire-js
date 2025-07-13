@@ -1,4 +1,4 @@
-# Contributing to the Logfire JavaScript SDK - instructions
+# Contributing to the Pydantic Logfire JavaScript SDK - instructions
 
 1. Fork and clone the repository. 
 2. Run `npm install`.
