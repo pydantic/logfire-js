@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.6.0
+
+### Minor Changes
+
+- 71f46db: Auto-close spans opened with logfire.span
+
 ## 0.5.0
 
 ### Minor Changes
