@@ -2,7 +2,7 @@
 
 export type JsonPath = (number | string)[]
 export interface ScrubbedNote {
-  matchedSubstring: string
+  matched_substring: string
   path: JsonPath
 }
 
@@ -136,7 +136,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
     }
 
     const matchedSubstring = match[0]
-    notes.push({ matchedSubstring, path })
+    notes.push({ matched_substring: matchedSubstring, path })
     return `[Scrubbed due to '${matchedSubstring}']`
   }
 

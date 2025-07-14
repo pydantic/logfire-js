@@ -48,13 +48,12 @@ export function startSpan(
   attributes: Record<string, unknown> = {},
   { log, tags = [], level = Level.Info }: LogOptions = {}
 ): Span {
-  // TODO: should we also send the extra attributes (2nd arg)?
-  const [formattedMessage, , newTemplate] = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
+  const [formattedMessage, extraAttributes, newTemplate] = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
   const span = logfireApiConfig.tracer.startSpan(
     formattedMessage,
     {
       attributes: {
-        ...serializeAttributes(attributes),
+        ...serializeAttributes({ ...attributes, ...extraAttributes }),
         [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
         [ATTRIBUTES_LEVEL_KEY]: level,
         [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
@@ -67,24 +66,29 @@ export function startSpan(
   return span
 }
 
-export function span<F extends (span: Span) => unknown>(
+export function span<R>(
   msgTemplate: string,
   attributes: Record<string, unknown> = {},
   { tags = [], level = Level.Info }: LogOptions = {},
-  callback: F
+  callback: (span: Span) => R
 ) {
-  const [formattedMessage, , newTemplate] = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
-  return logfireApiConfig.tracer.startActiveSpan<F>(
+  const [formattedMessage, extraAttributes, newTemplate] = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
+
+  return logfireApiConfig.tracer.startActiveSpan(
     formattedMessage,
     {
       attributes: {
-        ...serializeAttributes(attributes),
+        ...serializeAttributes({ ...attributes, ...extraAttributes }),
         [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
         [ATTRIBUTES_LEVEL_KEY]: level,
         [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
       },
     },
-    callback
+    (span: Span) => {
+      const result = callback(span)
+      span.end()
+      return result
+    }
   )
 }
 

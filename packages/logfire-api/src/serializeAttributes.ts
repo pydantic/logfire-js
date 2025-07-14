@@ -1,5 +1,5 @@
-import { logfireApiConfig } from '.'
-import { ATTRIBUTES_SPAN_TYPE_KEY, ATTRIBUTES_TAGS_KEY, JSON_NULL_FIELDS_KEY, JSON_SCHEMA_KEY } from './constants'
+import { logfireApiConfig, ScrubbedNote } from '.'
+import { ATTRIBUTES_SCRUBBED_KEY, ATTRIBUTES_SPAN_TYPE_KEY, ATTRIBUTES_TAGS_KEY, JSON_NULL_FIELDS_KEY, JSON_SCHEMA_KEY } from './constants'
 
 export type AttributeValue = boolean | number | string | string[]
 
@@ -20,12 +20,19 @@ type SerializedAttributes = Record<string, AttributeValue>
 export function serializeAttributes(attributes: RawAttributes): SerializedAttributes {
   const scrubber = logfireApiConfig.scrubber
   const alreadyScubbed = ATTRIBUTES_SPAN_TYPE_KEY in attributes
-  const scrubbedAttributes = alreadyScubbed ? attributes : (scrubber.scrubValue([], attributes)[0] as Record<string, unknown>)
-  // if the span is created through the logfire API methods, the attributes have already been scrubbed
+  const [scrubbedAttributes, scrubNotes] = alreadyScubbed ? [attributes, []] : scrubber.scrubValue([], attributes)
 
   const result: SerializedAttributes = {}
   const nullArgs: string[] = []
   const schema: JSONSchema = { properties: {}, type: 'object' }
+
+  if (scrubNotes.length > 0) {
+    if (ATTRIBUTES_SCRUBBED_KEY in scrubbedAttributes) {
+      ;(scrubbedAttributes[ATTRIBUTES_SCRUBBED_KEY] as ScrubbedNote[]).push(...scrubNotes)
+    } else {
+      scrubbedAttributes[ATTRIBUTES_SCRUBBED_KEY] = scrubNotes
+    }
+  }
   for (const [key, value] of Object.entries(scrubbedAttributes)) {
     // we don't want to serialize the tags
     if (key === ATTRIBUTES_TAGS_KEY) {

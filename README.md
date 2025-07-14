@@ -180,8 +180,6 @@ export default async function Home() {
     level: logfire.Level.Warning,
   }, async (span) => {
     logfire.info("Nested info span");
-    // ending the span is necessary to ensure it is reported
-    span.end();
     return <div>Hello</div>;
   });
 }
