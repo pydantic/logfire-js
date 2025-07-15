@@ -1,7 +1,6 @@
-# Example for a Next.js client/server distributed OTel instrumentation with Logfire
+# Example for a Next.js client/server distributed OTel instrumentation with Pydantic Logfire
 
-
-The example showcases how a fetch request initiated from the browser can propagate to the server and then to a third-party service, all while being instrumented with OpenTelemetry. The example uses the Logfire OTel SDK for both the client and server sides.
+The example showcases how a fetch request initiated from the browser can propagate to the server and then to a third-party service, all while being instrumented with OpenTelemetry. The example uses the Pydantic Logfire OTel SDK for both the client and server sides.
 
 ## Highlights
 
