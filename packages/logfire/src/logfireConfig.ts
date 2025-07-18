@@ -84,7 +84,7 @@ export interface LogfireConfigOptions {
   /**
    * Options for scrubbing sensitive data. Set to False to disable.
    */
-  scrubbing?: false | logfireApi.SrubbingOptions
+  scrubbing?: false | logfireApi.ScrubbingOptions
   /**
    * Whether to send logs to logfire.dev.
    * Defaults to the `LOGFIRE_SEND_TO_LOGFIRE` environment variable if set, otherwise defaults to True. If if-token-present is provided, logs will only be sent if a token is present.

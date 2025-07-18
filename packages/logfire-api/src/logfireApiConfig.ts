@@ -7,7 +7,7 @@ import { DEFAULT_OTEL_SCOPE } from './constants'
 export * from './AttributeScrubber'
 export { serializeAttributes } from './serializeAttributes'
 
-export interface SrubbingOptions {
+export interface ScrubbingOptions {
   callback?: ScrubCallback
   extraPatterns?: string[]
 }
@@ -17,7 +17,7 @@ export interface LogfireApiConfigOptions {
   /**
    * Options for scrubbing sensitive data. Set to False to disable.
    */
-  scrubbing?: false | SrubbingOptions
+  scrubbing?: false | ScrubbingOptions
 }
 
 export type SendToLogfire = 'if-token-present' | boolean | undefined

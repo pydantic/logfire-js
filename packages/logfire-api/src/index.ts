@@ -2,27 +2,22 @@
 import { Span, SpanStatusCode } from '@opentelemetry/api'
 import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 
-import { ScrubCallback } from './AttributeScrubber'
 import { ATTRIBUTES_LEVEL_KEY, ATTRIBUTES_MESSAGE_TEMPLATE_KEY, ATTRIBUTES_SPAN_TYPE_KEY, ATTRIBUTES_TAGS_KEY } from './constants'
 import { logfireFormatWithExtras } from './formatter'
-import { logfireApiConfig, serializeAttributes } from './logfireApiConfig'
+import { logfireApiConfig, ScrubbingOptions, serializeAttributes } from './logfireApiConfig'
 
 export * from './AttributeScrubber'
 export { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire } from './logfireApiConfig'
+export type { ScrubbingOptions } from './logfireApiConfig'
 export { serializeAttributes } from './serializeAttributes'
 export * from './ULIDGenerator'
-
-export interface SrubbingOptions {
-  callback?: ScrubCallback
-  extraPatterns?: string[]
-}
 
 export interface LogfireApiConfigOptions {
   otelScope?: string
   /**
    * Options for scrubbing sensitive data. Set to False to disable.
    */
-  scrubbing?: false | SrubbingOptions
+  scrubbing?: false | ScrubbingOptions
 }
 
 export const Level = {

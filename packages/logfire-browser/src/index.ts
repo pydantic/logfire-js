@@ -54,7 +54,7 @@ export interface LogfireConfigOptions {
   /**
    * Options for scrubbing sensitive data. Set to False to disable.
    */
-  scrubbing?: false | logfireApi.SrubbingOptions
+  scrubbing?: false | logfireApi.ScrubbingOptions
 
   /**
    * Name of this service.
