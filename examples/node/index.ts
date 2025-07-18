@@ -20,7 +20,19 @@ logfire.span('Hello from Node.js, {next_player}', {
 }, {
   tags: ['example', 'example2']
 }, (span) => {
-  span.end()
+  console.log('Inside span callback');
+})
+
+await logfire.span('parent span', {}, {}, async (_span) => {
+  await new Promise((resolve) => setTimeout(resolve, 1000))
+  logfire.info('nested span')
+  await new Promise((resolve) => setTimeout(resolve, 1000))
+  logfire.debug('another nested span')
+})
+
+
+logfire.span('parent sync span', {}, {}, (_span) => {
+  logfire.info('nested span')
 })
 
 if (process.env.TRIGGER_ERROR) {

@@ -43,6 +43,11 @@ export interface LogOptions {
   tags?: string[]
 }
 
+/**
+ * Starts a new Span without setting it on context.
+ * This method does NOT modify the current Context.
+ * You need to manually call `span.end()` to finish the span.
+ */
 export function startSpan(
   msgTemplate: string,
   attributes: Record<string, unknown> = {},
@@ -66,6 +71,12 @@ export function startSpan(
   return span
 }
 
+/**
+ * Starts a new Span and calls the given function passing it the
+ * created span as first argument.
+ * Additionally the new span gets set in context and this context is activated within the execution of the function.
+ * The span will be ended automatically after the function call.
+ */
 export function span<R>(
   msgTemplate: string,
   attributes: Record<string, unknown> = {},
@@ -86,7 +97,16 @@ export function span<R>(
     },
     (span: Span) => {
       const result = callback(span)
-      span.end()
+
+      const asPromise = Promise.resolve(result)
+      if (asPromise === result) {
+        // eslint-disable-next-line no-void
+        void asPromise.finally(() => {
+          span.end()
+        })
+      } else {
+        span.end()
+      }
       return result
     }
   )
