@@ -117,7 +117,7 @@ A working example can be found in the `examples/cloudflare-worker` directory.
 
 Note: if you're testing your worker with Vitest, you need to add the following additional configuration to your `vitest.config.mts`:
 
-```
+```ts
 export default defineWorkersConfig({
   test: {
     deps: {
