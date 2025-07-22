@@ -1,5 +1,5 @@
 /* eslint-disable perfectionist/sort-objects */
-import { Span, SpanStatusCode } from '@opentelemetry/api'
+import { Span, SpanStatusCode, context as TheContextAPI, trace as TheTraceAPI } from '@opentelemetry/api'
 import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 
 import { ATTRIBUTES_LEVEL_KEY, ATTRIBUTES_MESSAGE_TEMPLATE_KEY, ATTRIBUTES_SPAN_TYPE_KEY, ATTRIBUTES_TAGS_KEY } from './constants'
@@ -33,8 +33,22 @@ export const Level = {
 export type LogFireLevel = (typeof Level)[keyof typeof Level]
 
 export interface LogOptions {
+  /**
+   * The log level for the span.
+   * Defaults to Level.Info.
+   */
   level?: LogFireLevel
+  /**
+   * Set to true to indicate that this span is a log. logs don't have child spans.
+   */
   log?: true
+  /**
+   * Set a span started with `startSpan` as parentSpan to create a child span.
+   */
+  parentSpan?: Span
+  /**
+   * Tags to add to the span.
+   */
   tags?: string[]
 }
 
@@ -46,9 +60,11 @@ export interface LogOptions {
 export function startSpan(
   msgTemplate: string,
   attributes: Record<string, unknown> = {},
-  { log, tags = [], level = Level.Info }: LogOptions = {}
+  { log, tags = [], level = Level.Info, parentSpan }: LogOptions = {}
 ): Span {
   const [formattedMessage, extraAttributes, newTemplate] = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
+
+  const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : logfireApiConfig.context
   const span = logfireApiConfig.tracer.startSpan(
     formattedMessage,
     {
@@ -60,11 +76,15 @@ export function startSpan(
         [ATTRIBUTES_SPAN_TYPE_KEY]: log ? 'log' : 'span',
       },
     },
-    logfireApiConfig.context
+    context
   )
 
   return span
 }
+
+type SpanCallback<R> = (activeSpan: Span) => R
+type SpanArgsVariant1<R> = [Record<string, unknown>, LogOptions, SpanCallback<R>]
+type SpanArgsVariant2<R> = [{ attributes?: Record<string, unknown>; callback: SpanCallback<R>; level?: LogFireLevel; tags?: string[] }]
 
 /**
  * Starts a new Span and calls the given function passing it the
@@ -72,12 +92,27 @@ export function startSpan(
  * Additionally the new span gets set in context and this context is activated within the execution of the function.
  * The span will be ended automatically after the function call.
  */
-export function span<R>(
-  msgTemplate: string,
-  attributes: Record<string, unknown> = {},
-  { tags = [], level = Level.Info }: LogOptions = {},
-  callback: (span: Span) => R
-) {
+export function span<R>(msgTemplate: string, options: SpanArgsVariant2<R>[0]): R
+// eslint-disable-next-line no-redeclare
+export function span<R>(msgTemplate: string, attributes: Record<string, unknown>, options: LogOptions, callback: (span: Span) => R): R
+// eslint-disable-next-line no-redeclare
+export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | SpanArgsVariant2<R>): R {
+  let attributes: Record<string, unknown> = {}
+  let level: LogFireLevel = Level.Info
+  let tags: string[] = []
+  let callback!: SpanCallback<R>
+  if (args.length === 1) {
+    attributes = args[0].attributes ?? {}
+    level = args[0].level ?? Level.Info
+    tags = args[0].tags ?? []
+    callback = args[0].callback
+  } else {
+    attributes = args[0]
+    level = args[1].level ?? Level.Info
+    tags = args[1].tags ?? []
+    callback = args[2]
+  }
+
   const [formattedMessage, extraAttributes, newTemplate] = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
 
   return logfireApiConfig.tracer.startActiveSpan(

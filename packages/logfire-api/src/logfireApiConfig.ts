@@ -134,5 +134,9 @@ function getBaseUrlFromToken(token: string | undefined): string {
       }
     }
   }
-  return REGIONS[regionKey].baseUrl
+  const regionData = REGIONS[regionKey]
+  if (!regionData) {
+    throw new Error(`Unknown region in token: ${regionKey}. Valid regions are: ${Object.keys(REGIONS).join(', ')}`)
+  }
+  return regionData.baseUrl
 }

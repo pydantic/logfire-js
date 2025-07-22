@@ -35,6 +35,18 @@ logfire.span('parent sync span', {}, {}, (_span) => {
   logfire.info('nested span')
 })
 
+logfire.span('parent sync span overload', {
+  callback: (_span) => {
+    logfire.info('nested span')
+  }
+})
+
+const mySpan = logfire.startSpan('a manual parent span', { 'foo': 'foo' })
+
+logfire.info('manual child span', {}, { parentSpan: mySpan })
+
+mySpan.end()
+
 if (process.env.TRIGGER_ERROR) {
   try {
     throw new Error('This is an error for testing purposes');

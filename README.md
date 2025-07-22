@@ -284,6 +284,31 @@ function info(
 ): void;
 ```
 
+### Nesting spans
+
+`logfire.span` is a convenience wrapper around the OpenTelemetry span creation API that allows you to create a span and execute a callback function within that span's context. 
+This is useful for creating nested spans or for executing code within the context of a span. Unlike the opentelemetry implementation, the parent span is automatically ended when the callback function completes.
+
+
+```ts
+logfire.span('parent sync span overload', {
+  callback: (_span) => {
+    logfire.info('nested span')
+  }
+})
+```
+
+You can also pass parent spans manually through the `parentSpan` option:
+
+```ts
+const mySpan = logfire.startSpan('a manual parent span')
+
+logfire.info('manual child span', {}, { parentSpan: mySpan })
+
+// ensure to end the parent span when done
+mySpan.end()
+```
+
 ### Reporting errors
 
 In addition to `trace`, `debug`, the Logfire API exports a `reportError` function that accepts a message and a JavaScript `Error` object. It will extract the necessary details from the error and create a span with the `error` level.

@@ -48,7 +48,7 @@ class ChunksFormatter {
     // Simple number formatting for demonstration
     if (typeof value === 'number') {
       if (formatSpec.includes('.')) {
-        const [, precision] = formatSpec.split('.')
+        const [, precision] = formatSpec.split('.') as [string, string]
         return value.toFixed(parseInt(precision, 10))
       }
     }
@@ -64,16 +64,16 @@ class ChunksFormatter {
       try {
         // Simple nested property access (this is a simplification)
         const parts = fieldName.split('.')
-        let obj = record[parts[0]]
+        let obj = record[parts[0] ?? '']
         for (let i = 1; i < parts.length; i++) {
-          const key = parts[i]
+          const key = parts[i] ?? ''
           if (key in record) {
             obj = record[key]
           } else {
             throw new KnownFormattingError(`The field ${fieldName} is not an object.`)
           }
         }
-        return [obj, parts[0]]
+        return [obj, parts[0] ?? '']
       } catch {
         // Try getting the whole thing from object
         if (fieldName in record) {
@@ -111,7 +111,7 @@ class ChunksFormatter {
         literalText += '}'
       } else if (curlyContent) {
         // Found a field, add the accumulated literal text and the field info
-        result.push([literalText, fieldName || null, formatSpec || null, null])
+        result.push([literalText, fieldName ?? null, formatSpec ?? null, null])
         literalText = ''
       }
 
@@ -170,8 +170,9 @@ class ChunksFormatter {
         // Handle debug format like "{field=}"
         let actualFieldName = fieldName
         if (fieldName.endsWith('=')) {
-          if (result.length > 0 && result[result.length - 1].type === 'lit') {
-            result[result.length - 1].value += fieldName
+          const lastResult = result[result.length - 1] ?? null
+          if (lastResult !== null && lastResult.type === 'lit') {
+            lastResult.value += fieldName
           } else {
             result.push({ type: 'lit', value: fieldName })
           }
