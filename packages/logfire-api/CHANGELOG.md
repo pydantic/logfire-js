@@ -1,5 +1,14 @@
 # @pydantic/logfire-api
 
+## 0.7.0
+
+### Minor Changes
+
+- 2f2f859: Improve nested span API
+
+  - Add convenient 2 argument overload for `span`.
+  - Support `parentSpan` option to nest spans manually.
+
 ## 0.6.1
 
 ### Patch Changes
