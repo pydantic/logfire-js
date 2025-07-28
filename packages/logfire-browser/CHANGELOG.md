@@ -1,5 +1,11 @@
 # @pydantic/logfire-browser
 
+## 0.6.0
+
+### Minor Changes
+
+- 763b96a: Improve fetch / click spans
+
 ## 0.5.0
 
 ### Minor Changes
