@@ -1,9 +1,9 @@
-import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api'
+import { Context, diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api'
 import { ZoneContextManager } from '@opentelemetry/context-zone'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import { Instrumentation, registerInstrumentations } from '@opentelemetry/instrumentation'
 import { resourceFromAttributes } from '@opentelemetry/resources'
-import { BatchSpanProcessor, BufferConfig, WebTracerProvider } from '@opentelemetry/sdk-trace-web'
+import { BatchSpanProcessor, BufferConfig, ReadableSpan, Span, SpanProcessor, WebTracerProvider } from '@opentelemetry/sdk-trace-web'
 import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION,
@@ -18,6 +18,7 @@ import {
   ATTR_BROWSER_LANGUAGE,
   ATTR_BROWSER_MOBILE,
   ATTR_BROWSER_PLATFORM,
+  ATTR_HTTP_URL,
   ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
 } from '@opentelemetry/semantic-conventions/incubating'
 import { ULIDGenerator } from '@pydantic/logfire-api'
@@ -26,6 +27,10 @@ export { DiagLogLevel } from '@opentelemetry/api'
 export * from '@pydantic/logfire-api'
 
 type TraceExporterConfig = NonNullable<typeof OTLPTraceExporter extends new (config: infer T) => unknown ? T : never>
+
+// not present in the semantic conventions
+const ATTR_TARGET_XPATH = 'target_xpath'
+const ATTR_EVENT_TYPE = 'event_type'
 
 export interface LogfireConfigOptions {
   /**
@@ -111,9 +116,11 @@ export function configure(options: LogfireConfigOptions) {
     idGenerator: new ULIDGenerator(),
     resource,
     spanProcessors: [
-      new BatchSpanProcessor(
-        new OTLPTraceExporter({ ...options.traceExporterConfig, url: options.traceUrl }),
-        options.batchSpanProcessorConfig
+      new LogfireSpanProcessor(
+        new BatchSpanProcessor(
+          new OTLPTraceExporter({ ...options.traceExporterConfig, url: options.traceUrl }),
+          options.batchSpanProcessorConfig
+        )
       ),
     ],
   })
@@ -136,5 +143,43 @@ export function configure(options: LogfireConfigOptions) {
     await tracerProvider.forceFlush()
     await tracerProvider.shutdown()
     diag.info('logfire-browser: shut down complete')
+  }
+}
+
+class LogfireSpanProcessor implements SpanProcessor {
+  private wrapped: SpanProcessor
+
+  constructor(wrapped: SpanProcessor) {
+    this.wrapped = wrapped
+  }
+
+  async forceFlush(): Promise<void> {
+    return this.wrapped.forceFlush()
+  }
+
+  onEnd(span: ReadableSpan): void {
+    console.log('on end', span)
+    // Note: this is too late for the regular node instrumentation. The opentelemetry API rejects the non-primitive attribute values.
+    // Instead, the serialization happens at the `logfire.span, logfire.startSpan`, etc.
+    // Object.assign(span.attributes, serializeAttributes(span.attributes))
+    this.wrapped.onEnd(span)
+  }
+
+  onStart(span: Span, parentContext: Context): void {
+    // make the fetch spans more descriptive
+    if (ATTR_HTTP_URL in span.attributes) {
+      const url = new URL(span.attributes[ATTR_HTTP_URL] as string)
+      Reflect.set(span, 'name', `${span.name} ${url.pathname}`)
+    }
+
+    // same for the interaction spans
+    if (ATTR_TARGET_XPATH in span.attributes) {
+      Reflect.set(span, 'name', `${span.attributes[ATTR_EVENT_TYPE]} ${span.attributes[ATTR_TARGET_XPATH]}`)
+    }
+    this.wrapped.onStart(span, parentContext)
+  }
+
+  async shutdown(): Promise<void> {
+    return this.wrapped.shutdown()
   }
 }
