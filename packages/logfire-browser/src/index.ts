@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-deprecated */
 import { Context, diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api'
 import { ZoneContextManager } from '@opentelemetry/context-zone'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
@@ -18,8 +19,8 @@ import {
   ATTR_BROWSER_LANGUAGE,
   ATTR_BROWSER_MOBILE,
   ATTR_BROWSER_PLATFORM,
-  ATTR_HTTP_URL,
   ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
+  ATTR_HTTP_URL,
 } from '@opentelemetry/semantic-conventions/incubating'
 import { ULIDGenerator } from '@pydantic/logfire-api'
 import * as logfireApi from '@pydantic/logfire-api'
@@ -174,7 +175,8 @@ class LogfireSpanProcessor implements SpanProcessor {
 
     // same for the interaction spans
     if (ATTR_TARGET_XPATH in span.attributes) {
-      Reflect.set(span, 'name', `${span.attributes[ATTR_EVENT_TYPE]} ${span.attributes[ATTR_TARGET_XPATH]}`)
+      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+      Reflect.set(span, 'name', `${span.attributes[ATTR_EVENT_TYPE] ?? 'unknown'} ${span.attributes[ATTR_TARGET_XPATH] ?? ''}`)
     }
     this.wrapped.onStart(span, parentContext)
   }
