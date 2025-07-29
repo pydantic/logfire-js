@@ -1,5 +1,11 @@
 # @pydantic/logfire-browser
 
+## 0.7.0
+
+### Minor Changes
+
+- 2771f37: Support dynamic headers for the proxy URL
+
 ## 0.6.0
 
 ### Minor Changes
