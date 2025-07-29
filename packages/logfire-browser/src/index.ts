@@ -24,6 +24,8 @@ import {
 } from '@opentelemetry/semantic-conventions/incubating'
 import { ULIDGenerator } from '@pydantic/logfire-api'
 import * as logfireApi from '@pydantic/logfire-api'
+
+import { OTLPTraceExporterWithDynamicHeaders } from './OTLPTraceExporterWithDynamicHeaders'
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from '@pydantic/logfire-api'
 
@@ -78,9 +80,19 @@ export interface LogfireConfigOptions {
   traceExporterConfig?: TraceExporterConfig
 
   /**
+   * Any additional HTTP headers to be sent with the trace exporter requests.
+   * This is useful for authentication or other custom headers.
+   */
+  traceExporterHeaders?: () => Record<string, string>
+
+  /**
    * The URL of your trace exporter proxy endpoint.
    */
   traceUrl: string
+}
+
+function defaultTraceExporterHeaders() {
+  return {}
 }
 
 export function configure(options: LogfireConfigOptions) {
@@ -119,7 +131,10 @@ export function configure(options: LogfireConfigOptions) {
     spanProcessors: [
       new LogfireSpanProcessor(
         new BatchSpanProcessor(
-          new OTLPTraceExporter({ ...options.traceExporterConfig, url: options.traceUrl }),
+          new OTLPTraceExporterWithDynamicHeaders(
+            { ...options.traceExporterConfig, url: options.traceUrl },
+            options.traceExporterHeaders ?? defaultTraceExporterHeaders
+          ),
           options.batchSpanProcessorConfig
         )
       ),
@@ -159,7 +174,6 @@ class LogfireSpanProcessor implements SpanProcessor {
   }
 
   onEnd(span: ReadableSpan): void {
-    console.log('on end', span)
     // Note: this is too late for the regular node instrumentation. The opentelemetry API rejects the non-primitive attribute values.
     // Instead, the serialization happens at the `logfire.span, logfire.startSpan`, etc.
     // Object.assign(span.attributes, serializeAttributes(span.attributes))
