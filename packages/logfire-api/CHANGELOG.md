@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.8.0
+
+### Minor Changes
+
+- f29a18b: Support Zone.js promises
+
 ## 0.7.0
 
 ### Minor Changes

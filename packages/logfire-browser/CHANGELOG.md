@@ -1,5 +1,16 @@
 # @pydantic/logfire-browser
 
+## 0.8.0
+
+### Minor Changes
+
+- f29a18b: Support Zone.js promises
+
+### Patch Changes
+
+- Updated dependencies [f29a18b]
+  - @pydantic/logfire-api@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes
