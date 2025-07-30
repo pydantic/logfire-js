@@ -25,5 +25,9 @@ logfire.configure({
 
 
 document.querySelector('button')?.addEventListener('click', () => {
-  fetch('https://jsonplaceholder.typicode.com/posts/1')
+  logfire.span('fetch wrapper',
+    {
+      callback: async () => { return fetch('https://jsonplaceholder.typicode.com/posts/1') }
+    }
+  )
 })
