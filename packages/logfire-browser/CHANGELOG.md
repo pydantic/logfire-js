@@ -1,5 +1,13 @@
 # @pydantic/logfire-browser
 
+## 0.8.1
+
+### Patch Changes
+
+- 4c22f71: Externalize the context manager, to avoid zone.js patching
+- Updated dependencies [4c22f71]
+  - @pydantic/logfire-api@0.8.1
+
 ## 0.8.0
 
 ### Minor Changes
