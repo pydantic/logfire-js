@@ -1,10 +1,17 @@
 /* eslint-disable @typescript-eslint/no-deprecated */
-import { Context, diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api'
-import { ZoneContextManager } from '@opentelemetry/context-zone'
+import { Context, ContextManager, diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import { Instrumentation, registerInstrumentations } from '@opentelemetry/instrumentation'
 import { resourceFromAttributes } from '@opentelemetry/resources'
-import { BatchSpanProcessor, BufferConfig, ReadableSpan, Span, SpanProcessor, WebTracerProvider } from '@opentelemetry/sdk-trace-web'
+import {
+  BatchSpanProcessor,
+  BufferConfig,
+  ReadableSpan,
+  Span,
+  SpanProcessor,
+  StackContextManager,
+  WebTracerProvider,
+} from '@opentelemetry/sdk-trace-web'
 import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION,
@@ -41,14 +48,14 @@ export interface LogfireConfigOptions {
    */
   batchSpanProcessorConfig?: BufferConfig
   /**
+   * Pass a context manager (e.g. ZoneContextManager) to use.
+   */
+  contextManager?: ContextManager
+
+  /**
    * Defines the available internal logging levels for the diagnostic logger.
    */
   diagLogLevel?: DiagLogLevel
-
-  /**
-   * Set to `false` to disable the [zone context manager](https://www.npmjs.com/package/@opentelemetry/context-zone) usage.
-   */
-  enableZoneContextManager?: boolean
 
   /**
    * The environment this service is running in, e.g. `staging` or `prod`. Sets the deployment.environment.name resource attribute. Useful for filtering within projects in the Logfire UI.
@@ -141,12 +148,9 @@ export function configure(options: LogfireConfigOptions) {
     ],
   })
 
-  if (options.enableZoneContextManager !== false) {
-    diag.info('logfire-browser: enable zone context manager')
-    tracerProvider.register({
-      contextManager: new ZoneContextManager(),
-    })
-  }
+  tracerProvider.register({
+    contextManager: options.contextManager ?? new StackContextManager(),
+  })
 
   const unregister = registerInstrumentations({
     instrumentations: options.instrumentations ?? [],

@@ -64,7 +64,7 @@ export function startSpan(
 ): Span {
   const [formattedMessage, extraAttributes, newTemplate] = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
 
-  const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : logfireApiConfig.context
+  const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : TheContextAPI.active()
   const span = logfireApiConfig.tracer.startSpan(
     formattedMessage,
     {
@@ -84,7 +84,9 @@ export function startSpan(
 
 type SpanCallback<R> = (activeSpan: Span) => R
 type SpanArgsVariant1<R> = [Record<string, unknown>, LogOptions, SpanCallback<R>]
-type SpanArgsVariant2<R> = [{ attributes?: Record<string, unknown>; callback: SpanCallback<R>; level?: LogFireLevel; tags?: string[] }]
+type SpanArgsVariant2<R> = [
+  { attributes?: Record<string, unknown>; callback: SpanCallback<R>; level?: LogFireLevel; parentSpan?: Span; tags?: string[] },
+]
 
 /**
  * Starts a new Span and calls the given function passing it the
@@ -101,20 +103,24 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
   let level: LogFireLevel = Level.Info
   let tags: string[] = []
   let callback!: SpanCallback<R>
+  let parentSpan: Span | undefined
   if (args.length === 1) {
     attributes = args[0].attributes ?? {}
     level = args[0].level ?? Level.Info
     tags = args[0].tags ?? []
     callback = args[0].callback
+    parentSpan = args[0].parentSpan
   } else {
     attributes = args[0]
     level = args[1].level ?? Level.Info
     tags = args[1].tags ?? []
+    parentSpan = args[1].parentSpan
     callback = args[2]
   }
 
   const [formattedMessage, extraAttributes, newTemplate] = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
 
+  const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : TheContextAPI.active()
   return logfireApiConfig.tracer.startActiveSpan(
     formattedMessage,
     {
@@ -125,6 +131,7 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
         [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
       },
     },
+    context,
     (span: Span) => {
       const result = callback(span)
 

@@ -1,4 +1,4 @@
-import { getWebAutoInstrumentations } from "@opentelemetry/auto-instrumentations-web";
+import { getWebAutoInstrumentations } from '@opentelemetry/auto-instrumentations-web';
 import * as logfire from '@pydantic/logfire-browser';
 
 
@@ -25,9 +25,18 @@ logfire.configure({
 
 
 document.querySelector('button')?.addEventListener('click', () => {
+  logfire.info('Button clicked!')
   logfire.span('fetch wrapper',
     {
       callback: async () => { return fetch('https://jsonplaceholder.typicode.com/posts/1') }
     }
   )
+
+  logfire.span('test something', {
+    callback: async () => {
+      const promise = await new Promise((resolve) => setTimeout(resolve, 1000))
+      logfire.info('something!')
+      return promise
+    },
+  })
 })
