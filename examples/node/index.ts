@@ -5,7 +5,8 @@ logfire.configure({
   serviceName: 'example-node-script',
   serviceVersion: '1.0.0',
   environment: 'staging',
-  diagLogLevel: logfire.DiagLogLevel.DEBUG,
+  diagLogLevel: logfire.DiagLogLevel.NONE,
+  console: false
 })
 
 

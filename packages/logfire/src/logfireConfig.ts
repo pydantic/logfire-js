@@ -53,6 +53,10 @@ export interface LogfireConfigOptions {
    */
   codeSource?: CodeSource
   /**
+   * Whether to log the spans to the console in addition to sending them to the Logfire API.
+   */
+  console?: boolean
+  /**
    * Defines the available internal logging levels for the diagnostic logger.
    */
   diagLogLevel?: DiagLogLevel
@@ -123,6 +127,7 @@ export interface LogfireConfig {
   authorizationHeaders: Record<string, string>
   baseUrl: string
   codeSource: CodeSource | undefined
+  console: boolean | undefined
   deploymentEnvironment: string | undefined
   diagLogLevel?: DiagLogLevel
   distributedTracing: boolean
@@ -144,6 +149,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   authorizationHeaders: {},
   baseUrl: '',
   codeSource: undefined,
+  console: false,
   deploymentEnvironment: undefined,
   diagLogLevel: undefined,
   distributedTracing: true,
@@ -174,6 +180,7 @@ export function configure(config: LogfireConfigOptions = {}) {
   const token = cnf.token ?? env.LOGFIRE_TOKEN
   const sendToLogfire = logfireApi.resolveSendToLogfire(process.env, cnf.sendToLogfire, token)
   const baseUrl = !sendToLogfire || !token ? '' : logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, token)
+  const console = 'console' in cnf ? cnf.console : env.LOGFIRE_CONSOLE === 'true'
 
   Object.assign(logfireConfig, {
     additionalSpanProcessors: cnf.additionalSpanProcessors ?? [],
@@ -182,6 +189,7 @@ export function configure(config: LogfireConfigOptions = {}) {
     },
     baseUrl,
     codeSource: cnf.codeSource,
+    console,
     deploymentEnvironment: cnf.environment ?? env.LOGFIRE_ENVIRONMENT,
     diagLogLevel: cnf.diagLogLevel,
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),

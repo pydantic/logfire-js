@@ -54,7 +54,7 @@ export function start() {
 
   const propagator = logfireConfig.distributedTracing ? new W3CTraceContextPropagator() : undefined
 
-  const processor = logfireSpanProcessor()
+  const processor = logfireSpanProcessor(logfireConfig.console)
   const sdk = new NodeSDK({
     autoDetectResources: false,
     contextManager,
