@@ -1,5 +1,11 @@
 # @pydantic/logfire-browser
 
+## 0.9.0
+
+### Minor Changes
+
+- 413ff56: Support logging spans in the console
+
 ## 0.8.1
 
 ### Patch Changes
