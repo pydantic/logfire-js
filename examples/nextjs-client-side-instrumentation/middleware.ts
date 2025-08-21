@@ -5,12 +5,15 @@ export function middleware(request: NextRequest) {
 
   if (url.pathname === "/client-traces") {
     const requestHeaders = new Headers(request.headers);
+
     requestHeaders.set("Authorization", process.env.LOGFIRE_TOKEN!);
 
     return NextResponse.rewrite(
       new URL(process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT!),
       {
-        headers: requestHeaders,
+        request: {
+          headers: requestHeaders,
+        }
       },
     );
   }
