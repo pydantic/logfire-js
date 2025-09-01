@@ -1,15 +1,11 @@
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 
 import { resolveBaseUrl, serializeAttributes, ULIDGenerator } from '@pydantic/logfire-api'
+import * as logfireApi from '@pydantic/logfire-api'
 import { instrument as baseInstrument, TraceConfig } from '@pydantic/otel-cf-workers'
 
 import { TailWorkerExporter } from './TailWorkerExporter'
 export * from './exportTailEventsToLogfire'
-
-export interface CloudflareConfigOptions {
-  baseUrl?: string
-  token: string
-}
 
 type Env = Record<string, string | undefined>
 
@@ -20,6 +16,10 @@ type ConfigOptionsBase = Pick<
 
 export interface InProcessConfigOptions extends ConfigOptionsBase {
   baseUrl?: string
+  /**
+   * Options for scrubbing sensitive data. Set to False to disable.
+   */
+  scrubbing?: false | logfireApi.ScrubbingOptions
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -55,6 +55,9 @@ export function getTailConfig(config: TailConfigOptions): (env: Env) => TraceCon
 }
 
 export function instrumentInProcess<T>(handler: T, config: InProcessConfigOptions): T {
+  if (config.scrubbing !== undefined) {
+    logfireApi.configureLogfireApi({ scrubbing: config.scrubbing })
+  }
   return baseInstrument(handler, getInProcessConfig(config)) as T
 }
 
