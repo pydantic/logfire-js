@@ -1,9 +1,9 @@
-import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
-
-import { resolveBaseUrl, serializeAttributes, ULIDGenerator } from '@pydantic/logfire-api'
+import { type ReadableSpan, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as logfireApi from '@pydantic/logfire-api'
+import { resolveBaseUrl, serializeAttributes, ULIDGenerator } from '@pydantic/logfire-api'
 import { instrument as baseInstrument, TraceConfig } from '@pydantic/otel-cf-workers'
 
+import { LogfireCloudflareConsoleSpanExporter } from './LogfireCloudflareConsoleSpanExporter'
 import { TailWorkerExporter } from './TailWorkerExporter'
 export * from './exportTailEventsToLogfire'
 
@@ -16,6 +16,10 @@ type ConfigOptionsBase = Pick<
 
 export interface InProcessConfigOptions extends ConfigOptionsBase {
   baseUrl?: string
+  /**
+   * Whether to log the spans to the console in addition to sending them to the Logfire API.
+   */
+  console?: boolean
   /**
    * Options for scrubbing sensitive data. Set to False to disable.
    */
@@ -32,7 +36,10 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
     const baseUrl = resolveBaseUrl(env, config.baseUrl, token)
     const resolvedEnvironment = config.environment ?? envDeploymentEnvironment
 
+    const additionalSpanProcessors = config.console ? [new SimpleSpanProcessor(new LogfireCloudflareConsoleSpanExporter())] : []
+
     return Object.assign({}, config, {
+      additionalSpanProcessors,
       environment: resolvedEnvironment,
       exporter: {
         headers: { Authorization: token },
@@ -40,7 +47,7 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
       },
       idGenerator: new ULIDGenerator(),
       postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(spans),
-    })
+    }) satisfies TraceConfig
   }
 }
 

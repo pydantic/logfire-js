@@ -15,7 +15,7 @@ import { instrument } from '@pydantic/logfire-cf-workers';
 
 const handler = {
 	async fetch(): Promise<Response> {
-		logfire.info('info span from inside the worker body');
+		logfire.info('span from inside the worker body', { foo: 'bar' });
 		return new Response('Hello World!');
 	},
 } satisfies ExportedHandler;
@@ -26,4 +26,5 @@ export default instrument(handler, {
 		namespace: '',
 		version: '1.0.0',
 	},
+	console: true,
 });
