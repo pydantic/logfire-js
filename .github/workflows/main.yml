@@ -1,5 +1,10 @@
 name: CI
-on: [push]
+on:
+  push:
+    branches:
+      - main
+  pull_request: {}
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,12 +28,33 @@ jobs:
         run: |
           npm run ci
 
+  release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: success() && github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+    environment:
+      name: npm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Install dependencies
+        run: |
+          npm install -g npm@latest
+          npm install
+          npm install --workspaces
+
       - name: Release
         id: changesets
-        if: github.ref == 'refs/heads/main'
         uses: changesets/action@v1
         with:
           publish: npm run release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
