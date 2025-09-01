@@ -1,5 +1,12 @@
 # @pydantic/logfire-cf-workers
 
+## 0.7.0
+
+### Minor Changes
+
+- 5e54d9c: Allow disabling scrubbing
+- 0787869: Support console logging of spans for CF workers
+
 ## 0.6.0
 
 ### Minor Changes
