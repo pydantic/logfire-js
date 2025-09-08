@@ -34,6 +34,7 @@ jobs:
     if: success() && github.ref == 'refs/heads/main'
     permissions:
       id-token: write
+      contents: read
     environment:
       name: npm
     steps:
