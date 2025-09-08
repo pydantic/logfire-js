@@ -1,5 +1,11 @@
 # @pydantic/logfire-cf-workers
 
+## 0.8.0
+
+### Minor Changes
+
+- 3203828: Support additional span processors for cf workers
+
 ## 0.7.0
 
 ### Minor Changes
