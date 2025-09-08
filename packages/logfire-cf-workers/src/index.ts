@@ -1,4 +1,4 @@
-import { type ReadableSpan, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { type ReadableSpan, SimpleSpanProcessor, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as logfireApi from '@pydantic/logfire-api'
 import { resolveBaseUrl, serializeAttributes, ULIDGenerator } from '@pydantic/logfire-api'
 import { instrument as baseInstrument, TraceConfig } from '@pydantic/otel-cf-workers'
@@ -15,6 +15,10 @@ type ConfigOptionsBase = Pick<
 >
 
 export interface InProcessConfigOptions extends ConfigOptionsBase {
+  /**
+   * Additional span processors to add to the tracer provider.
+   */
+  additionalSpanProcessors?: SpanProcessor[]
   baseUrl?: string
   /**
    * Whether to log the spans to the console in addition to sending them to the Logfire API.
@@ -36,7 +40,11 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
     const baseUrl = resolveBaseUrl(env, config.baseUrl, token)
     const resolvedEnvironment = config.environment ?? envDeploymentEnvironment
 
-    const additionalSpanProcessors = config.console ? [new SimpleSpanProcessor(new LogfireCloudflareConsoleSpanExporter())] : []
+    const additionalSpanProcessors = config.additionalSpanProcessors ?? []
+
+    if (config.console) {
+      additionalSpanProcessors.push(new SimpleSpanProcessor(new LogfireCloudflareConsoleSpanExporter()))
+    }
 
     return Object.assign({}, config, {
       additionalSpanProcessors,
