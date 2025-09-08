@@ -35,6 +35,7 @@ jobs:
     permissions:
       id-token: write
       contents: write
+      pull-requests: write
     environment:
       name: npm
     steps:
