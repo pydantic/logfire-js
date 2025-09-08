@@ -7,6 +7,10 @@
     "email": "engineering@pydantic.dev",
     "url": "https://pydantic.dev"
   },
+  "repository": {
+    "url": "https://github.com/pydantic/logfire-js",
+    "directory": "packages/logfire-cf-workers"
+  },
   "sideEffects": false,
   "homepage": "https://pydantic.dev/logfire",
   "license": "MIT",
