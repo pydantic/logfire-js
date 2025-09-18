@@ -1,5 +1,11 @@
 # @pydantic/logfire-cf-workers
 
+## 0.8.1
+
+### Patch Changes
+
+- 258969c: Update READMEs
+
 ## 0.8.0
 
 ### Minor Changes
