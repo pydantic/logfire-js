@@ -12,49 +12,14 @@ See the [documentation](https://logfire.pydantic.dev/docs/) for more information
 
 **Feel free to report issues and ask any questions about Logfire in this repository!**
 
-This repo contains the JavaScript Node.js SDK; the server application for recording and displaying data is closed source.
+This repo contains the JavaScript Browser SDK; the server application for recording and displaying data is closed source.
 
-If you need to instrument your browser application, see the [Logfire Browser package](https://www.npmjs.com/package/@pydantic/logfire-browser).
+If you need to instrument your Node.js application, see the [`logfire` package](https://www.npmjs.com/package/logfire).
 If you're instrumenting Cloudflare, see the [Logfire CF workers package](https://www.npmjs.com/package/@pydantic/logfire-cf-workers).
 
 ## Basic usage
 
-Using Logfire from your Node.js script is as simple as
-[getting a write token](https://logfire.pydantic.dev/docs/how-to-guides/create-write-tokens/),
-installing the package, calling configure, and using the provided API. Let's
-create an empty project:
-
-```sh
-mkdir test-logfire-js
-cd test-logfire-js
-npm init -y es6 # creates package.json with `type: module`
-npm install logfire
-```
-
-Then, create the following `hello.js` script in the directory:
-
-```js
-import * as logfire from 'logfire'
-
-logfire.configure({
-  token: 'my-write-token', // replace with your write token
-  serviceName: 'example-node-script',
-  serviceVersion: '1.0.0',
-})
-
-logfire.info(
-  'Hello from Node.js',
-  {
-    'attribute-key': 'attribute-value',
-  },
-  {
-    tags: ['example', 'example2'],
-  }
-)
-```
-
-Run the script with `node hello.js`, and you should see the span being logged in
-the live view of your Logfire project.
+See the [Logfire Browser docs for a primer](https://logfire.pydantic.dev/docs/integrations/javascript/browser/). Ready to run examples are available in the repository [in vanilla browser](https://github.com/pydantic/logfire-js/tree/main/examples/browser) and [Next.js variants](https://github.com/pydantic/logfire-js/tree/main/examples/nextjs-client-side-instrumentation).
 
 ## Contributing
 
