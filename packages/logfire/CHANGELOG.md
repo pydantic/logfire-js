@@ -1,5 +1,11 @@
 # logfire
 
+## 0.9.1
+
+### Patch Changes
+
+- 258969c: Update READMEs
+
 ## 0.9.0
 
 ### Minor Changes
