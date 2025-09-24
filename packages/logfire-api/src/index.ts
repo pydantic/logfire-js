@@ -2,7 +2,13 @@
 import { Span, SpanStatusCode, context as TheContextAPI, trace as TheTraceAPI } from '@opentelemetry/api'
 import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 
-import { ATTRIBUTES_LEVEL_KEY, ATTRIBUTES_MESSAGE_TEMPLATE_KEY, ATTRIBUTES_SPAN_TYPE_KEY, ATTRIBUTES_TAGS_KEY } from './constants'
+import {
+  ATTRIBUTES_LEVEL_KEY,
+  ATTRIBUTES_MESSAGE_KEY,
+  ATTRIBUTES_MESSAGE_TEMPLATE_KEY,
+  ATTRIBUTES_SPAN_TYPE_KEY,
+  ATTRIBUTES_TAGS_KEY,
+} from './constants'
 import { logfireFormatWithExtras } from './formatter'
 import { logfireApiConfig, ScrubbingOptions, serializeAttributes } from './logfireApiConfig'
 
@@ -62,15 +68,16 @@ export function startSpan(
   attributes: Record<string, unknown> = {},
   { log, tags = [], level = Level.Info, parentSpan }: LogOptions = {}
 ): Span {
-  const [formattedMessage, extraAttributes, newTemplate] = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
+  const { formattedMessage, extraAttributes, newTemplate } = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
 
   const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : TheContextAPI.active()
   const span = logfireApiConfig.tracer.startSpan(
-    formattedMessage,
+    msgTemplate,
     {
       attributes: {
         ...serializeAttributes({ ...attributes, ...extraAttributes }),
         [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
+        [ATTRIBUTES_MESSAGE_KEY]: formattedMessage,
         [ATTRIBUTES_LEVEL_KEY]: level,
         [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
         [ATTRIBUTES_SPAN_TYPE_KEY]: log ? 'log' : 'span',
@@ -118,15 +125,16 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
     callback = args[2]
   }
 
-  const [formattedMessage, extraAttributes, newTemplate] = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
+  const { formattedMessage, extraAttributes, newTemplate } = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
 
   const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : TheContextAPI.active()
   return logfireApiConfig.tracer.startActiveSpan(
-    formattedMessage,
+    msgTemplate,
     {
       attributes: {
         ...serializeAttributes({ ...attributes, ...extraAttributes }),
         [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
+        [ATTRIBUTES_MESSAGE_KEY]: formattedMessage,
         [ATTRIBUTES_LEVEL_KEY]: level,
         [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
       },

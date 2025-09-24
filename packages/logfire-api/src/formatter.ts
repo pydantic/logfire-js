@@ -219,24 +219,26 @@ class ChunksFormatter {
 export const chunksFormatter = new ChunksFormatter()
 
 /**
- * Format a string using a Python-like template syntax
- */
-export function logfireFormat(formatString: string, record: Record<string, unknown>, scrubber: BaseScrubber): string {
-  return logfireFormatWithExtras(formatString, record, scrubber)[0]
-}
-
-/**
  * Format a string with additional information about attributes and templates
  */
 export function logfireFormatWithExtras(
   formatString: string,
   record: Record<string, unknown>,
   scrubber: BaseScrubber
-): [string, Record<string, unknown>, string] {
+): {
+  extraAttributes: Record<string, unknown>
+  formattedMessage: string
+  newTemplate: string
+} {
   try {
-    const [chunks, extraAttrs, newTemplate] = chunksFormatter.chunks(formatString, record, scrubber)
+    const [chunks, extraAttributes, newTemplate] = chunksFormatter.chunks(formatString, record, scrubber)
 
-    return [chunks.map((chunk) => chunk.value).join(''), extraAttrs, newTemplate]
+    const formattedMessage = chunks.map((chunk) => chunk.value).join('')
+    return {
+      extraAttributes,
+      formattedMessage,
+      newTemplate,
+    }
   } catch (err) {
     if (err instanceof KnownFormattingError) {
       console.warn(`Formatting error: ${err.message}`)
@@ -245,7 +247,11 @@ export function logfireFormatWithExtras(
     }
 
     // Formatting failed, use the original format string as the message
-    return [formatString, {}, formatString]
+    return {
+      extraAttributes: {},
+      formattedMessage: formatString,
+      newTemplate: formatString,
+    }
   }
 }
 
