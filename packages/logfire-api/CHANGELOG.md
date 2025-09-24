@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.8.2
+
+### Patch Changes
+
+- 8c57b16: Do not format span_name
+
 ## 0.8.1
 
 ### Patch Changes
