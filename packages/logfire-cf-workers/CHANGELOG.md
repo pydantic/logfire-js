@@ -1,5 +1,11 @@
 # @pydantic/logfire-cf-workers
 
+## 0.8.2
+
+### Patch Changes
+
+- 4ec3564: Diagnostic host message
+
 ## 0.8.1
 
 ### Patch Changes
