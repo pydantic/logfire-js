@@ -46,6 +46,7 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
       additionalSpanProcessors.push(new SimpleSpanProcessor(new LogfireCloudflareConsoleSpanExporter()))
     }
 
+    console.log({ baseUrl })
     return Object.assign({}, config, {
       additionalSpanProcessors,
       environment: resolvedEnvironment,
