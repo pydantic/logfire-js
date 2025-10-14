@@ -50,7 +50,7 @@
     "typecheck": "tsc",
     "prepack": "cp ../../LICENSE .",
     "postpack": "rm LICENSE",
-    "test": "vitest --passWithNoTests"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",

@@ -1,7 +1,13 @@
 import { trace } from '@opentelemetry/api'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-import { ATTRIBUTES_LEVEL_KEY, ATTRIBUTES_MESSAGE_TEMPLATE_KEY, ATTRIBUTES_SPAN_TYPE_KEY, ATTRIBUTES_TAGS_KEY } from './constants'
+import {
+  ATTRIBUTES_LEVEL_KEY,
+  ATTRIBUTES_MESSAGE_KEY,
+  ATTRIBUTES_MESSAGE_TEMPLATE_KEY,
+  ATTRIBUTES_SPAN_TYPE_KEY,
+  ATTRIBUTES_TAGS_KEY,
+} from './constants'
 import { info } from './index'
 
 vi.mock('@opentelemetry/api', () => {
@@ -35,10 +41,11 @@ describe('info', () => {
 
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(tracer.startSpan).toBeCalledWith(
-      'aha 1',
+      'aha {i}',
       {
         attributes: {
           [ATTRIBUTES_LEVEL_KEY]: 9,
+          [ATTRIBUTES_MESSAGE_KEY]: 'aha 1',
           [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: 'aha {i}',
           [ATTRIBUTES_SPAN_TYPE_KEY]: 'log',
           [ATTRIBUTES_TAGS_KEY]: [],
@@ -55,10 +62,11 @@ describe('info', () => {
 
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(tracer.startSpan).toBeCalledWith(
-      'aha 1',
+      'aha {i}',
       {
         attributes: {
           [ATTRIBUTES_LEVEL_KEY]: 9,
+          [ATTRIBUTES_MESSAGE_KEY]: 'aha 1',
           [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: 'aha {i}',
           [ATTRIBUTES_SPAN_TYPE_KEY]: 'log',
           [ATTRIBUTES_TAGS_KEY]: [],
