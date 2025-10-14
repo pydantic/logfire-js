@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.9.0
+
+### Minor Changes
+
+- 03df4fb: Add default export to packages. Using the default import is equivalent to the star import.
+
 ## 0.8.2
 
 ### Patch Changes
