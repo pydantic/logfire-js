@@ -1,7 +1,7 @@
 import { resolveBaseUrl } from '@pydantic/logfire-api'
 
 // simplified interface from CF
-interface TraceItem {
+export interface TraceItem {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   logs: { message: any[] }[]
 }

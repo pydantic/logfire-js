@@ -2,5 +2,4 @@ node_modules
 packages/*/*.tgz
 .turbo
 .env
-CLAUDE.md
 scratch/

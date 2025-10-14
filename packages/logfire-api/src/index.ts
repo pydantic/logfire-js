@@ -2,6 +2,7 @@
 import { Span, SpanStatusCode, context as TheContextAPI, trace as TheTraceAPI } from '@opentelemetry/api'
 import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 
+import * as AttributeScrubbingExports from './AttributeScrubber'
 import {
   ATTRIBUTES_LEVEL_KEY,
   ATTRIBUTES_MESSAGE_KEY,
@@ -10,21 +11,15 @@ import {
   ATTRIBUTES_TAGS_KEY,
 } from './constants'
 import { logfireFormatWithExtras } from './formatter'
-import { logfireApiConfig, ScrubbingOptions, serializeAttributes } from './logfireApiConfig'
+import { logfireApiConfig, serializeAttributes } from './logfireApiConfig'
+import * as logfireApiConfigExports from './logfireApiConfig'
+import * as ULIDGeneratorExports from './ULIDGenerator'
 
 export * from './AttributeScrubber'
 export { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire } from './logfireApiConfig'
-export type { ScrubbingOptions } from './logfireApiConfig'
+export type { LogfireApiConfig, LogfireApiConfigOptions, ScrubbingOptions } from './logfireApiConfig'
 export { serializeAttributes } from './serializeAttributes'
 export * from './ULIDGenerator'
-
-export interface LogfireApiConfigOptions {
-  otelScope?: string
-  /**
-   * Options for scrubbing sensitive data. Set to False to disable.
-   */
-  scrubbing?: false | ScrubbingOptions
-}
 
 export const Level = {
   Trace: 1 as const,
@@ -211,3 +206,25 @@ export function reportError(message: string, error: Error, extraAttributes: Reco
   span.setStatus({ code: SpanStatusCode.ERROR })
   span.end()
 }
+
+const defaultExport = {
+  ...AttributeScrubbingExports,
+  ...ULIDGeneratorExports,
+  ...logfireApiConfigExports,
+
+  serializeAttributes,
+  Level,
+  startSpan,
+  span,
+  log,
+  debug,
+  info,
+  trace,
+  error,
+  fatal,
+  notice,
+  warning,
+  reportError,
+}
+
+export default defaultExport

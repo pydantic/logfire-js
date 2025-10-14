@@ -19,8 +19,29 @@ import {
   ATTR_BROWSER_PLATFORM,
   ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
 } from '@opentelemetry/semantic-conventions/incubating'
-import * as logfireApi from '@pydantic/logfire-api'
-import { ULIDGenerator } from '@pydantic/logfire-api'
+import {
+  configureLogfireApi,
+  debug,
+  error,
+  fatal,
+  info,
+  Level,
+  log,
+  logfireApiConfig,
+  LogfireAttributeScrubber,
+  NoopAttributeScrubber,
+  notice,
+  reportError,
+  resolveBaseUrl,
+  resolveSendToLogfire,
+  type ScrubbingOptions,
+  serializeAttributes,
+  span,
+  startSpan,
+  trace,
+  ULIDGenerator,
+  warning,
+} from '@pydantic/logfire-api'
 
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
 import { OTLPTraceExporterWithDynamicHeaders } from './OTLPTraceExporterWithDynamicHeaders'
@@ -60,7 +81,7 @@ export interface LogfireConfigOptions {
   /**
    * Options for scrubbing sensitive data. Set to False to disable.
    */
-  scrubbing?: false | logfireApi.ScrubbingOptions
+  scrubbing?: false | ScrubbingOptions
 
   /**
    * Name of this service.
@@ -99,7 +120,7 @@ export function configure(options: LogfireConfigOptions) {
   }
 
   if (options.scrubbing !== undefined) {
-    logfireApi.configureLogfireApi({ scrubbing: options.scrubbing })
+    configureLogfireApi({ scrubbing: options.scrubbing })
   }
 
   const resource = resourceFromAttributes({
@@ -156,4 +177,31 @@ export function configure(options: LogfireConfigOptions) {
     await tracerProvider.shutdown()
     diag.info('logfire-browser: shut down complete')
   }
+}
+
+// Create default export by listing all exports explicitly
+export default {
+  configure,
+  configureLogfireApi,
+  debug,
+  DiagLogLevel,
+  error,
+  fatal,
+  info,
+  // Re-export all from @pydantic/logfire-api
+  Level,
+  log,
+  logfireApiConfig,
+  LogfireAttributeScrubber,
+  NoopAttributeScrubber,
+  notice,
+  reportError,
+  resolveBaseUrl,
+  resolveSendToLogfire,
+  serializeAttributes,
+  span,
+  startSpan,
+  trace,
+  ULIDGenerator,
+  warning,
 }

@@ -1,8 +1,31 @@
 import { type ReadableSpan, SimpleSpanProcessor, SpanProcessor } from '@opentelemetry/sdk-trace-base'
-import * as logfireApi from '@pydantic/logfire-api'
-import { resolveBaseUrl, serializeAttributes, ULIDGenerator } from '@pydantic/logfire-api'
+import {
+  configureLogfireApi,
+  debug,
+  error,
+  fatal,
+  info,
+  Level,
+  log,
+  logfireApiConfig,
+  LogfireAttributeScrubber,
+  NoopAttributeScrubber,
+  notice,
+  reportError,
+  resolveBaseUrl,
+  resolveSendToLogfire,
+  type ScrubbingOptions,
+  serializeAttributes,
+  span,
+  startSpan,
+  trace,
+  ULIDGenerator,
+  warning,
+} from '@pydantic/logfire-api'
 import { instrument as baseInstrument, TraceConfig } from '@pydantic/otel-cf-workers'
 
+// Import all exports to construct default export
+import * as exportTailEventsExports from './exportTailEventsToLogfire'
 import { LogfireCloudflareConsoleSpanExporter } from './LogfireCloudflareConsoleSpanExporter'
 import { TailWorkerExporter } from './TailWorkerExporter'
 export * from './exportTailEventsToLogfire'
@@ -27,7 +50,7 @@ export interface InProcessConfigOptions extends ConfigOptionsBase {
   /**
    * Options for scrubbing sensitive data. Set to False to disable.
    */
-  scrubbing?: false | logfireApi.ScrubbingOptions
+  scrubbing?: false | ScrubbingOptions
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
@@ -46,7 +69,6 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
       additionalSpanProcessors.push(new SimpleSpanProcessor(new LogfireCloudflareConsoleSpanExporter()))
     }
 
-    console.log({ baseUrl })
     return Object.assign({}, config, {
       additionalSpanProcessors,
       environment: resolvedEnvironment,
@@ -72,7 +94,7 @@ export function getTailConfig(config: TailConfigOptions): (env: Env) => TraceCon
 
 export function instrumentInProcess<T>(handler: T, config: InProcessConfigOptions): T {
   if (config.scrubbing !== undefined) {
-    logfireApi.configureLogfireApi({ scrubbing: config.scrubbing })
+    configureLogfireApi({ scrubbing: config.scrubbing })
   }
   return baseInstrument(handler, getInProcessConfig(config)) as T
 }
@@ -99,4 +121,34 @@ function postProcessAttributes(spans: ReadableSpan[]) {
     Object.assign(span.attributes, serializeAttributes(span.attributes))
   }
   return spans
+}
+
+// Create default export by listing all exports explicitly
+export default {
+  ...exportTailEventsExports,
+  configureLogfireApi,
+  debug,
+  error,
+  fatal,
+  getTailConfig,
+  info,
+  instrument,
+  instrumentInProcess,
+  instrumentTail,
+  // Re-export all from @pydantic/logfire-api
+  Level,
+  log,
+  logfireApiConfig,
+  LogfireAttributeScrubber,
+  NoopAttributeScrubber,
+  notice,
+  reportError,
+  resolveBaseUrl,
+  resolveSendToLogfire,
+  serializeAttributes,
+  span,
+  startSpan,
+  trace,
+  ULIDGenerator,
+  warning,
 }
