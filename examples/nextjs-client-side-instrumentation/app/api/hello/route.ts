@@ -1,4 +1,4 @@
-import * as logfire from "@pydantic/logfire-api";
+import * as logfire from "logfire";
 
 export async function GET() {
   logfire.info("server endpoint");

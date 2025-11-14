@@ -16,7 +16,7 @@
 		"wrangler": "^4.0.0"
 	},
 	"dependencies": {
-		"@pydantic/logfire-api": "*",
+		"logfire": "*",
 		"@pydantic/logfire-cf-workers": "*"
 	}
 }

@@ -53,7 +53,7 @@
     "postpack": "rm LICENSE"
   },
   "dependencies": {
-    "@pydantic/logfire-api": "*",
+    "logfire": "*",
     "@pydantic/otel-cf-workers": "^1.0.0-rc.54"
   },
   "devDependencies": {

@@ -41,12 +41,12 @@ import {
   trace,
   ULIDGenerator,
   warning,
-} from '@pydantic/logfire-api'
+} from 'logfire'
 
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
 import { OTLPTraceExporterWithDynamicHeaders } from './OTLPTraceExporterWithDynamicHeaders'
 export { DiagLogLevel } from '@opentelemetry/api'
-export * from '@pydantic/logfire-api'
+export * from 'logfire'
 
 type TraceExporterConfig = NonNullable<typeof OTLPTraceExporter extends new (config: infer T) => unknown ? T : never>
 
@@ -188,7 +188,7 @@ export default {
   error,
   fatal,
   info,
-  // Re-export all from @pydantic/logfire-api
+  // Re-export all from logfire
   Level,
   log,
   logfireApiConfig,

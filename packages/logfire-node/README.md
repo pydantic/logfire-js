@@ -28,13 +28,13 @@ create an empty project:
 mkdir test-logfire-js
 cd test-logfire-js
 npm init -y es6 # creates package.json with `type: module`
-npm install logfire
+npm install @pydantic/logfire-node
 ```
 
 Then, create the following `hello.js` script in the directory:
 
 ```js
-import * as logfire from 'logfire'
+import * as logfire from '@pydantic/logfire-node'
 
 logfire.configure({
   token: 'my-write-token', // replace with your write token

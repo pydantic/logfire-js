@@ -1,4 +1,4 @@
-import * as logfire from '@pydantic/logfire-api'
+import * as logfire from 'logfire'
 
 /** Add your relevant code here for the issue to reproduce */
 export default async function Home() {

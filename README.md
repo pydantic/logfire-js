@@ -30,13 +30,13 @@ create an empty project:
 mkdir test-logfire-js
 cd test-logfire-js
 npm init -y es6 # creates package.json with `type: module`
-npm install logfire
+npm install @pydantic/logfire-node
 ```
 
 Then, create the following `hello.js` script in the directory:
 
 ```js
-import * as logfire from "logfire";
+import * as logfire from "@pydantic/logfire-node";
 
 logfire.configure({
   token: "test-e2e-write-token",
@@ -59,11 +59,11 @@ the live view of your Logfire project.
 
 ### Cloudflare Workers
 
-First, install the `@pydantic/logfire-cf-workers @pydantic/logfire-api` NPM
+First, install the `@pydantic/logfire-cf-workers logfire` NPM
 packages:
 
 ```sh
-npm install @pydantic/logfire-cf-workers @pydantic/logfire-api
+npm install @pydantic/logfire-cf-workers logfire
 ```
 
 Next, add `compatibility_flags = [ "nodejs_compat" ]` to your wrangler.toml or
@@ -94,7 +94,7 @@ function will extract your write token from the `env` object and provide the
 necessary configuration for the instrumentation:
 
 ```ts
-import * as logfire from "@pydantic/logfire-api";
+import * as logfire from "logfire";
 import { instrument } from "@pydantic/logfire-cf-workers";
 
 const handler = {
@@ -159,11 +159,11 @@ This will point the instrumentation to Logfire.
 > [clear the data cache for your project](https://vercel.com/docs/data-cache/manage-data-cache).
 
 Optionally, you can use the Logfire API package for creating manual spans.
-Install the `@pydantic/logfire-api` NPM package and call the respective methods
+Install the `logfire` NPM package and call the respective methods
 from your server-side code:
 
 ```tsx
-import * as logfire from "@pydantic/logfire-api";
+import * as logfire from "logfire";
 
 export default async function Home() {
   return logfire.span("A warning span", {}, {
@@ -206,11 +206,11 @@ app.listen(PORT, () => {
 });
 ```
 
-Next, install the `logfire` and `dotenv` NPM packages to keep your Logfire write
+Next, install the `@pydantic/logfire-node` and `dotenv` NPM packages to keep your Logfire write
 token in a `.env` file:
 
 ```sh
-npm install logfire dotenv
+npm install @pydantic/logfire-node dotenv
 ```
 
 Add your token to the `.env` file:
@@ -220,11 +220,11 @@ LOGFIRE_TOKEN=your-write-token
 ```
 
 Then, create an `instrumentation.ts` file to set up the instrumentation. The
-`logfire` package includes a `configure` function that simplifies the setup:
+`@pydantic/logfire-node` package includes a `configure` function that simplifies the setup:
 
 ```ts
 // instrumentation.ts
-import * as logfire from "logfire";
+import * as logfire from "@pydantic/logfire-node";
 import "dotenv/config";
 
 logfire.configure();
@@ -247,7 +247,7 @@ The examples directory includes a `Hello world` example that configures Deno
 OTel export to Logfire through environment variables.
 
 Optionally, you can use the Logfire API package for creating manual spans.
-Install the `@pydantic/logfire-api` NPM package and call the respective methods
+Install the `logfire` NPM package and call the respective methods
 from your code.
 
 ### Configuring the instrumentation
@@ -259,8 +259,8 @@ to configure the instrumentation.
 
 ## Trace API
 
-The `@pydantic/logfire-api` exports several convenience wrappers around the
-OpenTelemetry span creation API. The `logfire` package re-exports these.
+The `logfire` package exports several convenience wrappers around the
+OpenTelemetry span creation API. The `@pydantic/logfire-node` package re-exports these.
 
 The following methods create spans with their respective log levels (ordered by
 severity):

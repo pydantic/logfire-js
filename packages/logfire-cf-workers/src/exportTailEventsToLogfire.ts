@@ -1,4 +1,4 @@
-import { resolveBaseUrl } from '@pydantic/logfire-api'
+import { resolveBaseUrl } from 'logfire'
 
 // simplified interface from CF
 export interface TraceItem {

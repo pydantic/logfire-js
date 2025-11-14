@@ -1,6 +1,6 @@
 {
-  "name": "logfire",
-  "description": "JavaScript SDK for Logfire - https://pydantic.dev/logfire",
+  "name": "@pydantic/logfire-node",
+  "description": "Node.js SDK for Logfire with automatic instrumentation - https://pydantic.dev/logfire",
   "author": {
     "name": "The Pydantic Team",
     "email": "engineering@pydantic.dev",
@@ -8,7 +8,7 @@
   },
   "repository": {
     "url": "https://github.com/pydantic/logfire-js",
-    "directory": "packages/logfire"
+    "directory": "packages/logfire-node"
   },
   "sideEffects": false,
   "homepage": "https://pydantic.dev/logfire",
@@ -53,7 +53,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@pydantic/logfire-api": "*",
+    "logfire": "*",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {

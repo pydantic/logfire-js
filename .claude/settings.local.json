@@ -5,7 +5,13 @@
       "WebSearch",
       "Bash(npm run build)",
       "Bash(npm run build:*)",
-      "Bash(npx changeset:*)"
+      "Bash(npx changeset:*)",
+      "Skill(prp-workflow)",
+      "Bash(tree:*)",
+      "Bash(git mv:*)",
+      "Bash(npm install)",
+      "Bash(npm run test:*)",
+      "Bash(npm run ci:*)"
     ],
     "deny": [],
     "ask": []
