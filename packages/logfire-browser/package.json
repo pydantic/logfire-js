@@ -59,7 +59,7 @@
     "@opentelemetry/instrumentation": "^0.202.0",
     "@opentelemetry/otlp-exporter-base": "^0.203.0",
     "@opentelemetry/resources": "^2.0.1",
-    "@pydantic/logfire-api": "*"
+    "logfire": "*"
   },
   "peerDependencies": {
     "@opentelemetry/sdk-trace-web": "^2.0.1",

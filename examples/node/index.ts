@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import * as logfire from 'logfire'
+import * as logfire from '@pydantic/logfire-node'
 
 logfire.configure({
   serviceName: 'example-node-script',

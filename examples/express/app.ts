@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import express from "express";
-import * as logfire from "logfire";
+import * as logfire from "@pydantic/logfire-node";
 
 const PORT: number = parseInt(process.env.EXPRESS_PORT || "8080");
 const app: Express = express();

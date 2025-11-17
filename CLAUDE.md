@@ -10,8 +10,8 @@ This is a monorepo for the **Pydantic Logfire JavaScript SDK** - an observabilit
 
 This is an **npm workspace monorepo** managed with **Turborepo**:
 
-- `packages/logfire` - Main Node.js SDK with automatic OpenTelemetry instrumentation
-- `packages/logfire-api` - Core API package that can be used standalone for manual tracing (no auto-instrumentation)
+- `packages/logfire-node` - Node.js SDK with automatic OpenTelemetry instrumentation
+- `packages/logfire-api` - Core API package (published as `logfire`) that can be used standalone for manual tracing (no auto-instrumentation)
 - `packages/logfire-cf-workers` - Cloudflare Workers integration
 - `packages/logfire-browser` - Browser/web SDK
 - `packages/tooling-config` - Shared build and linting configuration
@@ -21,21 +21,21 @@ This is an **npm workspace monorepo** managed with **Turborepo**:
 
 ### Package Relationships
 
-- `logfire-api` is the base package that provides the core tracing API (`span`, `info`, `debug`, `error`, etc.) - it wraps OpenTelemetry's trace API with convenience methods
-- `logfire` (Node.js SDK) depends on `logfire-api` and adds automatic instrumentation via `@opentelemetry/auto-instrumentations-node`
-- `logfire-cf-workers` depends on `logfire-api` and adds Cloudflare Workers-specific instrumentation
-- `logfire-browser` depends on `logfire-api` and adds browser-specific instrumentation
+- `logfire` (published from `packages/logfire-api`) is the base package that provides the core tracing API (`span`, `info`, `debug`, `error`, etc.) - it wraps OpenTelemetry's trace API with convenience methods
+- `@pydantic/logfire-node` (from `packages/logfire-node`) depends on `logfire` and adds automatic instrumentation via `@opentelemetry/auto-instrumentations-node`
+- `@pydantic/logfire-cf-workers` depends on `logfire` and adds Cloudflare Workers-specific instrumentation
+- `@pydantic/logfire-browser` depends on `logfire` and adds browser-specific instrumentation
 
 ### Key Concepts
 
-**Trace API** (`logfire-api`):
+**Trace API** (`logfire` package):
 
 - Provides convenience wrappers around OpenTelemetry spans with log levels (trace, debug, info, notice, warn, error, fatal)
 - Uses message template formatting with attribute extraction (see `formatter.ts`)
 - Uses ULID for trace ID generation (see `ULIDGenerator.ts`)
 - Supports attribute scrubbing for sensitive data (see `AttributeScrubber.ts`)
 
-**Configuration** (`logfire` package):
+**Configuration** (`@pydantic/logfire-node` package):
 
 - `configure()` function in `logfireConfig.ts` handles SDK initialization
 - Configuration can be provided programmatically or via environment variables:
@@ -79,7 +79,7 @@ npm run dev
 npm run test
 
 # Run tests for a specific package
-cd packages/logfire && npm test
+cd packages/logfire-node && npm test
 ```
 
 ### Linting and Type Checking
@@ -126,7 +126,7 @@ npm run release
 
 ```bash
 # Navigate to the package
-cd packages/logfire-api
+cd packages/logfire-api  # or packages/logfire-node
 
 # Run vitest with a filter
 npm test -- -t "test name pattern"

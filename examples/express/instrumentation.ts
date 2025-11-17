@@ -1,4 +1,4 @@
-import * as logfire from 'logfire'
+import * as logfire from '@pydantic/logfire-node'
 import 'dotenv/config'
 
 logfire.configure({

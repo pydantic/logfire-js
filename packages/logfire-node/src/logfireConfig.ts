@@ -3,7 +3,7 @@ import { InstrumentationConfigMap } from '@opentelemetry/auto-instrumentations-n
 import { Instrumentation } from '@opentelemetry/instrumentation'
 import { MetricReader } from '@opentelemetry/sdk-metrics'
 import { IdGenerator, SpanProcessor } from '@opentelemetry/sdk-trace-base'
-import * as logfireApi from '@pydantic/logfire-api'
+import * as logfireApi from 'logfire'
 
 import { start } from './sdk'
 

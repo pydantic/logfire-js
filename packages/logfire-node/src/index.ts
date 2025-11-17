@@ -20,14 +20,14 @@ import {
   trace,
   ULIDGenerator,
   warning,
-} from '@pydantic/logfire-api'
+} from 'logfire'
 
 // Import all exports to construct default export
 import * as logfireConfigExports from './logfireConfig'
 
 export * from './logfireConfig'
 export { DiagLogLevel } from '@opentelemetry/api'
-export * from '@pydantic/logfire-api'
+export * from 'logfire'
 
 // Create default export by listing all exports explicitly
 export default {
@@ -38,7 +38,7 @@ export default {
   error,
   fatal,
   info,
-  // Re-export all from @pydantic/logfire-api
+  // Re-export all from logfire
   Level,
   log,
   logfireApiConfig,

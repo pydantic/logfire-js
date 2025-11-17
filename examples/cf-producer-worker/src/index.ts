@@ -10,7 +10,7 @@
  *
  * Learn more at https://developers.cloudflare.com/workers/
  */
-import * as logfire from '@pydantic/logfire-api';
+import * as logfire from 'logfire';
 import { instrumentTail } from '@pydantic/logfire-cf-workers';
 
 const handler = {

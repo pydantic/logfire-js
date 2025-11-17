@@ -18,7 +18,7 @@ import {
   ATTR_VCS_REPOSITORY_REF_REVISION,
   ATTR_VCS_REPOSITORY_URL_FULL,
 } from '@opentelemetry/semantic-conventions/incubating'
-import { reportError, ULIDGenerator } from '@pydantic/logfire-api'
+import { reportError, ULIDGenerator } from 'logfire'
 
 import { logfireConfig } from './logfireConfig'
 import { periodicMetricReader } from './metricExporter'

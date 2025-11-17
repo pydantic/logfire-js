@@ -1,4 +1,5 @@
 import { type ReadableSpan, SimpleSpanProcessor, SpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { instrument as baseInstrument, TraceConfig } from '@pydantic/otel-cf-workers'
 import {
   configureLogfireApi,
   debug,
@@ -21,8 +22,7 @@ import {
   trace,
   ULIDGenerator,
   warning,
-} from '@pydantic/logfire-api'
-import { instrument as baseInstrument, TraceConfig } from '@pydantic/otel-cf-workers'
+} from 'logfire'
 
 // Import all exports to construct default export
 import * as exportTailEventsExports from './exportTailEventsToLogfire'
@@ -135,7 +135,7 @@ export default {
   instrument,
   instrumentInProcess,
   instrumentTail,
-  // Re-export all from @pydantic/logfire-api
+  // Re-export all from logfire
   Level,
   log,
   logfireApiConfig,
