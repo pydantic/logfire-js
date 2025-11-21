@@ -1,5 +1,11 @@
 # @pydantic/logfire-browser
 
+## 0.12.0
+
+### Minor Changes
+
+- 26db714: Use logfire instead of @pydantic/logfire-api
+
 ## 0.11.0
 
 ### Minor Changes
