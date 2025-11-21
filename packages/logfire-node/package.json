@@ -7,7 +7,7 @@
     "url": "https://pydantic.dev"
   },
   "repository": {
-    "url": "https://github.com/pydantic/logfire-js",
+    "url": "git+https://github.com/pydantic/logfire-js.git",
     "directory": "packages/logfire-node"
   },
   "sideEffects": false,
