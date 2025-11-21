@@ -1,5 +1,11 @@
 # @pydantic/logfire-cf-workers
 
+## 0.11.0
+
+### Minor Changes
+
+- 26db714: Use logfire instead of @pydantic/logfire-api
+
 ## 0.10.0
 
 ### Minor Changes
