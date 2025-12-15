@@ -1,5 +1,11 @@
 # logfire
 
+## 0.11.2
+
+### Patch Changes
+
+- 79032ef: Fix Scrubbing configuration. Scrubbing now works even when scope is not set
+
 ## 0.11.1
 
 ### Patch Changes
