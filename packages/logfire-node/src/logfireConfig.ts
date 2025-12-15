@@ -173,7 +173,7 @@ export function configure(config: LogfireConfigOptions = {}) {
 
   const env = process.env
 
-  if (otelScope) {
+  if (otelScope !== undefined || scrubbing !== undefined) {
     logfireApi.configureLogfireApi({ otelScope, scrubbing })
   }
 
