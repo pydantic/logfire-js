@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.11.1
+
+### Patch Changes
+
+- 9f03df2: Fix phantom dependencies
+
 ## 0.11.0
 
 ### Minor Changes

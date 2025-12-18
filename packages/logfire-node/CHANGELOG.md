@@ -1,5 +1,13 @@
 # logfire
 
+## 0.11.3
+
+### Patch Changes
+
+- 9f03df2: Fix phantom dependencies
+- Updated dependencies [9f03df2]
+  - logfire@0.11.1
+
 ## 0.11.2
 
 ### Patch Changes
