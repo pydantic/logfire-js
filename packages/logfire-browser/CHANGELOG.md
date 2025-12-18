@@ -1,5 +1,11 @@
 # @pydantic/logfire-browser
 
+## 0.12.2
+
+### Patch Changes
+
+- 0420b0e: Fix phantom dependency
+
 ## 0.12.1
 
 ### Patch Changes
