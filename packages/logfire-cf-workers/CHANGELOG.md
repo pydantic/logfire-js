@@ -1,5 +1,11 @@
 # @pydantic/logfire-cf-workers
 
+## 0.11.2
+
+### Patch Changes
+
+- eeb5801: Update OpenTelemetry dependencies to latest versions
+
 ## 0.11.1
 
 ### Patch Changes
