@@ -1,3 +1,6 @@
-import baseConfig from '@pydantic/logfire-tooling-config/prettier-config'
-
-export default baseConfig
+export default {
+  printWidth: 140,
+  semi: false,
+  singleQuote: true,
+  trailingComma: 'es5',
+}

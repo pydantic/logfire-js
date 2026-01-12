@@ -3,11 +3,11 @@
 I need to add a default export to all packages in this monorepo. The default export object should be the same as the star import. For example, the following two codes are equivalent:
 
 ```ts
-import * as logfire from 'logfire';
+import * as logfire from 'logfire'
 ```
 
 ```ts
-import logfire from 'logfire';
+import logfire from 'logfire'
 ```
 
 Implement this for every package in the monorepo. Do not touch the examples.

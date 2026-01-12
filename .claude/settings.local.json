@@ -30,7 +30,9 @@
       "Bash(pnpm run typecheck:*)",
       "Bash(pnpm run lint:*)",
       "Bash(pnpm run format-check:*)",
-      "Bash(pnpm run format:*)"
+      "Bash(pnpm run format:*)",
+      "Bash(git config:*)",
+      "Bash(pnpm exec lefthook:*)"
     ],
     "deny": [],
     "ask": []

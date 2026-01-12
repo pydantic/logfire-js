@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "prepare": "lefthook install",
     "build": "pnpm --filter \"./packages/*\" run build",
     "dev": "pnpm --filter \"./packages/*\" --parallel run dev",
     "test": "pnpm --filter \"./packages/*\" run test",
@@ -17,7 +18,21 @@
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.12",
-    "prettier": "3.7.4"
+    "@eslint/js": "^9.22.0",
+    "@typescript-eslint/utils": "^8.26.1",
+    "eslint": "^9.22.0",
+    "eslint-config-prettier": "^10.1.1",
+    "eslint-plugin-perfectionist": "^4.10.1",
+    "eslint-plugin-prettier": "^5.2.3",
+    "globals": "^16.0.0",
+    "lefthook": "^2.0.14",
+    "neostandard": "^0.12.1",
+    "prettier": "3.7.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.26.1",
+    "vite": "^6.3.5",
+    "vite-plugin-dts": "^4.5.3",
+    "vitest": "^3.0.8"
   },
   "engines": {
     "node": "22"

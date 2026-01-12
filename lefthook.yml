@@ -1,0 +1,22 @@
+pre-commit:
+  parallel: true
+  commands:
+    format-check:
+      glob: '*.{js,ts,mjs,mts,json,md,yaml,yml}'
+      run: pnpm run format-check
+    lint:
+      glob: '*.{js,ts,mjs,mts}'
+      run: pnpm run lint
+    typecheck:
+      glob: '*.{ts,mts}'
+      run: pnpm run typecheck
+
+pre-push:
+  piped: true
+  commands:
+    build:
+      run: pnpm run build
+      priority: 1
+    test:
+      run: pnpm run test
+      priority: 2

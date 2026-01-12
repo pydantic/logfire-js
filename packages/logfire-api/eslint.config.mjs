@@ -1,4 +1,4 @@
-import baseConfig from '@pydantic/logfire-tooling-config/eslint-config'
+import baseConfig from '../../eslint-config.mjs'
 
 export default [
   ...baseConfig,
