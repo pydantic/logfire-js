@@ -3,6 +3,6 @@
   "extends": "../../tsconfig.base.json",
   "include": ["src", "vite.config.ts", "eslint.config.mjs"],
   "compilerOptions": {
-    "types": ["../../node_modules/user-agent-data-types"]
+    "types": ["user-agent-data-types"]
   }
 }
