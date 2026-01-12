@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-export function middleware(request: NextRequest) {
+export default function proxy(request: NextRequest) {
   const url = request.nextUrl.clone()
 
   if (url.pathname === '/client-traces') {

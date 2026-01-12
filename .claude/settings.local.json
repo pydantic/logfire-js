@@ -32,7 +32,8 @@
       "Bash(pnpm run format-check:*)",
       "Bash(pnpm run format:*)",
       "Bash(git config:*)",
-      "Bash(pnpm exec lefthook:*)"
+      "Bash(pnpm exec lefthook:*)",
+      "Bash(done)"
     ],
     "deny": [],
     "ask": []

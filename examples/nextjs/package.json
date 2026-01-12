@@ -2,7 +2,7 @@
   "name": "@pydantic/logfire-nextjs-example",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev --turbopack --port 8080",
     "build": "next build",
     "start": "next start"
   },
