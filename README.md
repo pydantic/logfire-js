@@ -36,22 +36,26 @@ npm install @pydantic/logfire-node
 Then, create the following `hello.js` script in the directory:
 
 ```js
-import * as logfire from "@pydantic/logfire-node";
+import * as logfire from '@pydantic/logfire-node'
 
 logfire.configure({
-  token: "test-e2e-write-token",
+  token: 'test-e2e-write-token',
   advanced: {
-    baseUrl: "http://localhost:8000",
+    baseUrl: 'http://localhost:8000',
   },
-  serviceName: "example-node-script",
-  serviceVersion: "1.0.0",
-});
+  serviceName: 'example-node-script',
+  serviceVersion: '1.0.0',
+})
 
-logfire.info("Hello from Node.js", {
-  "attribute-key": "attribute-value",
-}, {
-  tags: ["example", "example2"],
-});
+logfire.info(
+  'Hello from Node.js',
+  {
+    'attribute-key': 'attribute-value',
+  },
+  {
+    tags: ['example', 'example2'],
+  }
+)
 ```
 
 Run the script with `node hello.js`, and you should see the span being logged in
@@ -94,23 +98,23 @@ function will extract your write token from the `env` object and provide the
 necessary configuration for the instrumentation:
 
 ```ts
-import * as logfire from "logfire";
-import { instrument } from "@pydantic/logfire-cf-workers";
+import * as logfire from 'logfire'
+import { instrument } from '@pydantic/logfire-cf-workers'
 
 const handler = {
   async fetch(): Promise<Response> {
-    logfire.info("info span from inside the worker body");
-    return new Response("hello world!");
+    logfire.info('info span from inside the worker body')
+    return new Response('hello world!')
   },
-} satisfies ExportedHandler;
+} satisfies ExportedHandler
 
 export default instrument(handler, {
-	service: {
-		name: 'my-cloudflare-worker',
-		namespace: '',
-		version: '1.0.0',
-	},
-});
+  service: {
+    name: 'my-cloudflare-worker',
+    namespace: '',
+    version: '1.0.0',
+  },
+})
 ```
 
 A working example can be found in the `examples/cloudflare-worker` directory.
@@ -134,7 +138,7 @@ export default defineWorkersConfig({
       },
     },
   },
-});
+})
 ```
 
 ### Next.js/Vercel
@@ -163,15 +167,20 @@ Install the `logfire` NPM package and call the respective methods
 from your server-side code:
 
 ```tsx
-import * as logfire from "logfire";
+import * as logfire from 'logfire'
 
 export default async function Home() {
-  return logfire.span("A warning span", {}, {
-    level: logfire.Level.Warning,
-  }, async (span) => {
-    logfire.info("Nested info span");
-    return <div>Hello</div>;
-  });
+  return logfire.span(
+    'A warning span',
+    {},
+    {
+      level: logfire.Level.Warning,
+    },
+    async (span) => {
+      logfire.info('Nested info span')
+      return <div>Hello</div>
+    }
+  )
 }
 ```
 
@@ -179,7 +188,7 @@ A working example can be found in the `examples/nextjs` directory.
 
 #### Next.js client-side instrumentation
 
-The `@vercel/otel` package does not support client-side instrumentation, so few additional steps are necessary to send spans and/or instrument the client-side. 
+The `@vercel/otel` package does not support client-side instrumentation, so few additional steps are necessary to send spans and/or instrument the client-side.
 For a working example, refer to the `examples/nextjs-client-side-instrumentation` directory, which instruments the client-side `fetch` calls.
 
 ### Express, generic Node instrumentation
@@ -224,10 +233,10 @@ Then, create an `instrumentation.ts` file to set up the instrumentation. The
 
 ```ts
 // instrumentation.ts
-import * as logfire from "@pydantic/logfire-node";
-import "dotenv/config";
+import * as logfire from '@pydantic/logfire-node'
+import 'dotenv/config'
 
-logfire.configure();
+logfire.configure()
 ```
 
 The `logfire.configure` call should happen before the actual express module
@@ -277,24 +286,19 @@ Each method accepts a message, attributes, and optionally, options that let you
 specify the span tags. The attribute values must be serializable to JSON.
 
 ```ts
-function info(
-  message: string,
-  attributes?: Record<string, unknown>,
-  options?: LogOptions,
-): void;
+function info(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
 ```
 
 ### Nesting spans
 
-`logfire.span` is a convenience wrapper around the OpenTelemetry span creation API that allows you to create a span and execute a callback function within that span's context. 
+`logfire.span` is a convenience wrapper around the OpenTelemetry span creation API that allows you to create a span and execute a callback function within that span's context.
 This is useful for creating nested spans or for executing code within the context of a span. Unlike the opentelemetry implementation, the parent span is automatically ended when the callback function completes.
-
 
 ```ts
 logfire.span('parent sync span overload', {
   callback: (_span) => {
     logfire.info('nested span')
-  }
+  },
 })
 ```
 
@@ -317,7 +321,7 @@ In addition to `trace`, `debug`, the Logfire API exports a `reportError` functio
 try {
   1 / 0
 } catch (error) {
-  logfire.reportError("An error occurred", error);
+  logfire.reportError('An error occurred', error)
 }
 ```
 

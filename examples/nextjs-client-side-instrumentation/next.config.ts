@@ -1,7 +1,7 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  turbopack: {},
   webpack: (config, { isServer }) => {
     if (!isServer) {
       config.resolve = {
@@ -10,14 +10,14 @@ const nextConfig: NextConfig = {
           ...config.resolve.fallback,
           fs: false,
         },
-      };
+      }
     }
     config.module = {
       ...config.module,
       exprContextCritical: false,
-    };
-    return config;
+    }
+    return config
   },
-};
+}
 
-export default nextConfig;
+export default nextConfig

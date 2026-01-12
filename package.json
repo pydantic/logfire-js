@@ -2,30 +2,40 @@
   "name": "@pydantic/logfire-monorepo",
   "version": "1.0.0",
   "private": true,
-  "main": "index.js",
+  "type": "module",
   "scripts": {
-    "dev": "turbo watch dev",
-    "build": "turbo build",
-    "test": "turbo test",
-    "release": "turbo build && npx @changesets/cli publish",
-    "changeset-add": "npx @changesets/cli add",
-    "ci": "turbo typecheck lint test"
+    "prepare": "lefthook install",
+    "build": "pnpm --filter \"./packages/*\" run build",
+    "dev": "pnpm --filter \"./packages/*\" --parallel run dev",
+    "test": "pnpm --filter \"./packages/*\" run test",
+    "typecheck": "pnpm --filter \"./packages/*\" --parallel run typecheck",
+    "lint": "pnpm --filter \"./packages/*\" --parallel run lint",
+    "format": "prettier --write .",
+    "format-check": "prettier --check .",
+    "check": "pnpm run build && pnpm run typecheck && pnpm run lint && pnpm run format-check && pnpm run test",
+    "release": "pnpm run build && pnpm changeset publish",
+    "changeset-add": "pnpm changeset add"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "workspaces": [
-    "examples/*",
-    "examples/cloudflare-tail-worker/*",
-    "packages/*"
-  ],
   "devDependencies": {
     "@changesets/cli": "^2.27.12",
-    "turbo": "^2.4.4"
+    "@eslint/js": "^9.22.0",
+    "@typescript-eslint/utils": "^8.26.1",
+    "eslint": "^9.22.0",
+    "eslint-config-prettier": "^10.1.1",
+    "eslint-plugin-perfectionist": "^4.10.1",
+    "eslint-plugin-prettier": "^5.2.3",
+    "globals": "^16.0.0",
+    "lefthook": "^2.0.14",
+    "neostandard": "^0.12.1",
+    "prettier": "3.7.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.26.1",
+    "vite": "^6.3.5",
+    "vite-plugin-dts": "^4.5.3",
+    "vitest": "^3.0.8"
   },
   "engines": {
-    "node": "22"
+    "node": "24"
   },
   "devEngines": {
     "runtime": {
@@ -33,9 +43,9 @@
       "onFail": "error"
     },
     "packageManager": {
-      "name": "npm",
+      "name": "pnpm",
       "onFail": "error"
     }
   },
-  "packageManager": "npm@10.9.2"
+  "packageManager": "pnpm@10.28.0"
 }

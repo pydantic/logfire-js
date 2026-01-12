@@ -1,5 +1,5 @@
 node_modules
 packages/*/*.tgz
-.turbo
 .env
 scratch/
+**/.turbo

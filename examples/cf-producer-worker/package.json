@@ -9,15 +9,15 @@
 		"cf-typegen": "wrangler types"
 	},
 	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.7.5",
-		"@cloudflare/workers-types": "^4.20250311.0",
-		"typescript": "^5.5.2",
-		"vitest": "~3.0.7",
-		"wrangler": "^4.0.0"
+		"@cloudflare/vitest-pool-workers": "^0.12.1",
+		"@cloudflare/workers-types": "^4.20260111.0",
+		"typescript": "^5.9.3",
+		"vitest": "^3.2.4",
+		"wrangler": "^4.58.0"
 	},
 	"dependencies": {
 		"@microlabs/otel-cf-workers": "^1.0.0-rc.49",
-		"logfire": "*",
-		"@pydantic/logfire-cf-workers": "*"
+		"@pydantic/logfire-cf-workers": "workspace:*",
+		"logfire": "workspace:*"
 	}
 }

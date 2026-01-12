@@ -5,7 +5,6 @@ import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended'
 import globals from 'globals'
 import neostandard, { resolveIgnoresFromGitignore } from 'neostandard'
 import tseslint from 'typescript-eslint'
-import turboPlugin from "eslint-plugin-turbo";
 
 export default tseslint.config(
   pluginJs.configs.recommended,
@@ -22,12 +21,8 @@ export default tseslint.config(
     },
   },
   {
-    plugins: {
-      turbo: turboPlugin,
-    },
     rules: {
-      "turbo/no-undeclared-env-vars": "off",
-      "perfectionist/sort-modules": "off",
+      'perfectionist/sort-modules': 'off',
     },
   },
   { ignores: resolveIgnoresFromGitignore() }
