@@ -85,8 +85,8 @@ cd packages/logfire-node && pnpm test
 ### Linting, Type Checking, and Formatting
 
 ```bash
-# Run full CI pipeline (build, typecheck, lint, format-check, test)
-pnpm run ci
+# Run all checks (build, typecheck, lint, format-check, test)
+pnpm run check
 
 # Individual commands
 pnpm run typecheck    # Type checking
@@ -137,7 +137,7 @@ pnpm test -- -t "test name pattern"
 1. Make changes in `packages/` source code
 2. Run `pnpm run build` to rebuild packages (or `pnpm run dev` for watch mode)
 3. Test changes using examples in `examples/` directory
-4. Run `pnpm run ci` to ensure all checks pass (build, typecheck, lint, format, test)
+4. Run `pnpm run check` to ensure all checks pass (build, typecheck, lint, format, test)
 5. Add a changeset if the changes warrant a version bump: `pnpm run changeset-add`
 
 ## Important Implementation Details

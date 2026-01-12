@@ -12,7 +12,7 @@
     "lint": "pnpm --filter \"./packages/*\" --parallel run lint",
     "format": "prettier --write .",
     "format-check": "prettier --check .",
-    "ci": "pnpm run build && pnpm run typecheck && pnpm run lint && pnpm run format-check && pnpm run test",
+    "check": "pnpm run build && pnpm run typecheck && pnpm run lint && pnpm run format-check && pnpm run test",
     "release": "pnpm run build && pnpm changeset publish",
     "changeset-add": "pnpm changeset add"
   },
@@ -35,7 +35,7 @@
     "vitest": "^3.0.8"
   },
   "engines": {
-    "node": "22"
+    "node": "24"
   },
   "devEngines": {
     "runtime": {
