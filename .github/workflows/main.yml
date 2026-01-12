@@ -14,19 +14,20 @@ jobs:
       - name: Begin CI...
         uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Use Node 22
         uses: actions/setup-node@v4
         with:
           node-version: 22.x
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: | 
-          npm install
-          npm install --workspaces
+        run: pnpm install --frozen-lockfile
 
       - name: run CI checks
-        run: |
-          npm run ci
+        run: pnpm run ci
 
   release:
     needs: [build]
@@ -42,22 +43,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
           node-version: 22.x
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: |
-          npm install -g npm@latest
-          npm install
-          npm install --workspaces
+        run: pnpm install --frozen-lockfile
 
       - name: Release
         id: changesets
         uses: changesets/action@v1
         with:
-          publish: npm run release
+          publish: pnpm run release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

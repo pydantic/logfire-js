@@ -53,7 +53,7 @@
     "postpack": "rm LICENSE"
   },
   "dependencies": {
-    "logfire": "*",
+    "logfire": "workspace:*",
     "@pydantic/otel-cf-workers": "^1.0.0-rc.54"
   },
   "devDependencies": {
@@ -61,7 +61,7 @@
     "@opentelemetry/otlp-transformer": "^0.202.0",
     "@cloudflare/workers-types": "4.20250311.0",
     "@opentelemetry/sdk-trace-base": "^2.0.0",
-    "@pydantic/logfire-tooling-config": "*",
+    "@pydantic/logfire-tooling-config": "workspace:*",
     "eslint": "^9.22.0",
     "prettier": "3.5.3",
     "typescript": "^5.8.2",

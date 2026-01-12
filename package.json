@@ -7,19 +7,14 @@
     "dev": "turbo watch dev",
     "build": "turbo build",
     "test": "turbo test",
-    "release": "turbo build && npx @changesets/cli publish",
-    "changeset-add": "npx @changesets/cli add",
+    "release": "turbo build && pnpm changeset publish",
+    "changeset-add": "pnpm changeset add",
     "ci": "turbo typecheck lint test"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
-  "workspaces": [
-    "examples/*",
-    "examples/cloudflare-tail-worker/*",
-    "packages/*"
-  ],
   "devDependencies": {
     "@changesets/cli": "^2.27.12",
     "turbo": "^2.4.4"
@@ -33,9 +28,9 @@
       "onFail": "error"
     },
     "packageManager": {
-      "name": "npm",
+      "name": "pnpm",
       "onFail": "error"
     }
   },
-  "packageManager": "npm@10.9.2"
+  "packageManager": "pnpm@10.28.0"
 }

@@ -60,7 +60,7 @@
     "@opentelemetry/otlp-exporter-base": "^0.203.0",
     "@opentelemetry/otlp-transformer": "^0.202.0",
     "@opentelemetry/resources": "^2.0.1",
-    "logfire": "^0.11.0"
+    "logfire": "workspace:^"
   },
   "peerDependencies": {
     "@opentelemetry/sdk-trace-web": "^2.0.1",

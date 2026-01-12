@@ -8,7 +8,7 @@ This is a monorepo for the **Pydantic Logfire JavaScript SDK** - an observabilit
 
 ## Repository Structure
 
-This is an **npm workspace monorepo** managed with **Turborepo**:
+This is a **pnpm workspace monorepo** managed with **Turborepo**:
 
 - `packages/logfire-node` - Node.js SDK with automatic OpenTelemetry instrumentation
 - `packages/logfire-api` - Core API package (published as `logfire`) that can be used standalone for manual tracing (no auto-instrumentation)
@@ -59,34 +59,34 @@ This is an **npm workspace monorepo** managed with **Turborepo**:
 ### Development Setup
 
 ```bash
-npm install
+pnpm install
 ```
 
 ### Building
 
 ```bash
 # Build all packages
-npm run build
+pnpm run build
 
 # Build in watch mode (for development)
-npm run dev
+pnpm run dev
 ```
 
 ### Testing
 
 ```bash
 # Run all tests
-npm run test
+pnpm run test
 
 # Run tests for a specific package
-cd packages/logfire-node && npm test
+cd packages/logfire-node && pnpm test
 ```
 
 ### Linting and Type Checking
 
 ```bash
 # Run both typecheck and lint across all packages
-npm run ci
+pnpm run ci
 
 # Just linting
 turbo lint
@@ -104,10 +104,10 @@ Start an example to test changes:
 cd examples/node  # or express, nextjs, cf-worker, etc.
 
 # Install dependencies (if needed)
-npm install
+pnpm install
 
 # Run the example (check the example's package.json for scripts)
-npm start  # or npm run dev
+pnpm start  # or pnpm run dev
 ```
 
 ### Changesets (Version Management)
@@ -116,10 +116,10 @@ This project uses Changesets for version management:
 
 ```bash
 # Add a changeset when making changes
-npm run changeset-add
+pnpm run changeset-add
 
 # Publish packages (maintainers only)
-npm run release
+pnpm run release
 ```
 
 ### Running a Single Test
@@ -129,16 +129,16 @@ npm run release
 cd packages/logfire-api  # or packages/logfire-node
 
 # Run vitest with a filter
-npm test -- -t "test name pattern"
+pnpm test -- -t "test name pattern"
 ```
 
 ## Development Workflow
 
 1. Make changes in `packages/` source code
-2. Run `npm run build` to rebuild packages (or `npm run dev` for watch mode)
+2. Run `pnpm run build` to rebuild packages (or `pnpm run dev` for watch mode)
 3. Test changes using examples in `examples/` directory
-4. Run `npm run ci` to ensure linting and type checking pass
-5. Add a changeset if the changes warrant a version bump: `npm run changeset-add`
+4. Run `pnpm run ci` to ensure linting and type checking pass
+5. Add a changeset if the changes warrant a version bump: `pnpm run changeset-add`
 
 ## Important Implementation Details
 
@@ -182,4 +182,4 @@ The project requires **Node.js 22** (see `engines` in root package.json).
 
 ## Package Manager
 
-Uses **npm 10.9.2** (enforced via `packageManager` field).
+Uses **pnpm 10.28.0** (enforced via `packageManager` field).

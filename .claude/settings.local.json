@@ -11,7 +11,12 @@
       "Bash(git mv:*)",
       "Bash(npm install)",
       "Bash(npm run test:*)",
-      "Bash(npm run ci:*)"
+      "Bash(npm run ci:*)",
+      "Bash(git show:*)",
+      "Bash(pnpm install:*)",
+      "Bash(npm view:*)",
+      "Bash(pnpm info:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

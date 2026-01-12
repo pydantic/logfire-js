@@ -7,8 +7,8 @@
     "start": "next start"
   },
   "dependencies": {
-    "@vercel/otel": "^1.10.3",
-    "logfire": "*",
+    "@vercel/otel": "^2.1.0",
+    "logfire": "workspace:*",
     "next": "15.2.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
