@@ -2,7 +2,6 @@
 // After adding bindings to `wrangler.jsonc`, regenerate this interface via `npm run cf-typegen`
 declare namespace Cloudflare {
 	// eslint-disable-next-line @typescript-eslint/no-empty-interface,@typescript-eslint/no-empty-object-type
-	interface Env {
-	}
+	interface Env {}
 }
 interface Env extends Cloudflare.Env {}

@@ -6,7 +6,7 @@
     "dev": "next dev --turbopack --port 3001",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
@@ -19,10 +19,10 @@
     "@opentelemetry/resources": "^2.3.0",
     "@opentelemetry/sdk-trace-web": "^2.3.0",
     "@opentelemetry/semantic-conventions": "^1.32.0",
-    "logfire": "workspace:*",
     "@pydantic/logfire-browser": "workspace:*",
     "@vercel/otel": "^2.1.0",
-    "next": "15.3.0",
+    "logfire": "workspace:*",
+    "next": "16.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
@@ -32,7 +32,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "15.3.0",
-    "typescript": "^5"
+    "eslint-config-next": "16.1.1",
+    "typescript": "^5.9.3"
   }
 }

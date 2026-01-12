@@ -9,13 +9,13 @@
   "dependencies": {
     "@vercel/otel": "^2.1.0",
     "logfire": "workspace:*",
-    "next": "15.2.1",
+    "next": "16.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^22",
     "@types/react": "^19",
-    "typescript": "^5"
+    "typescript": "^5.9.3"
   }
 }

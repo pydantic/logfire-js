@@ -8,7 +8,7 @@ This is a monorepo for the **Pydantic Logfire JavaScript SDK** - an observabilit
 
 ## Repository Structure
 
-This is a **pnpm workspace monorepo** managed with **Turborepo**:
+This is a **pnpm workspace monorepo**:
 
 - `packages/logfire-node` - Node.js SDK with automatic OpenTelemetry instrumentation
 - `packages/logfire-api` - Core API package (published as `logfire`) that can be used standalone for manual tracing (no auto-instrumentation)
@@ -82,17 +82,17 @@ pnpm run test
 cd packages/logfire-node && pnpm test
 ```
 
-### Linting and Type Checking
+### Linting, Type Checking, and Formatting
 
 ```bash
-# Run both typecheck and lint across all packages
+# Run full CI pipeline (build, typecheck, lint, format-check, test)
 pnpm run ci
 
-# Just linting
-turbo lint
-
-# Just type checking
-turbo typecheck
+# Individual commands
+pnpm run typecheck    # Type checking
+pnpm run lint         # Linting
+pnpm run format-check # Check formatting
+pnpm run format       # Fix formatting
 ```
 
 ### Working with Examples
@@ -137,7 +137,7 @@ pnpm test -- -t "test name pattern"
 1. Make changes in `packages/` source code
 2. Run `pnpm run build` to rebuild packages (or `pnpm run dev` for watch mode)
 3. Test changes using examples in `examples/` directory
-4. Run `pnpm run ci` to ensure linting and type checking pass
+4. Run `pnpm run ci` to ensure all checks pass (build, typecheck, lint, format, test)
 5. Add a changeset if the changes warrant a version bump: `pnpm run changeset-add`
 
 ## Important Implementation Details

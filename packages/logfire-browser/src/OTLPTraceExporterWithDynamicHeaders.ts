@@ -24,16 +24,18 @@ export class OTLPTraceExporterWithDynamicHeaders extends OTLPExporterBase<Readab
     const xhrExportConfig = {
       ...sharedConfig,
       agentOptions: { keepAlive: true },
-      headers: () => {
+      headers: async () => {
+        const configHeaders = typeof config.headers === 'function' ? await config.headers() : (config.headers ?? {})
         return {
           'Content-Type': 'application/json',
-          ...(config.headers ?? {}),
-          ...(getHeaders ? getHeaders() : {}),
+          ...configHeaders,
+          ...(getHeaders?.() ?? {}),
         }
       },
       url: config.url ?? 'http://localhost:4318/v1/traces',
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- XHR is still supported for browser compatibility
     super(createOtlpXhrExportDelegate(xhrExportConfig, JsonTraceSerializer))
   }
 }

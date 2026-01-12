@@ -16,13 +16,12 @@
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-perfectionist": "^4.10.1",
     "eslint-plugin-prettier": "^5.2.3",
-    "eslint-plugin-turbo": "^2.4.4",
     "globals": "^16.0.0",
     "neostandard": "^0.12.1",
-    "prettier": "3.5.3",
-    "typescript": "^5.8.2",
+    "prettier": "3.7.4",
+    "typescript": "^5.9.3",
     "typescript-eslint": "^8.26.1",
-    "vite": "^6.2.1",
+    "vite": "^6.3.5",
     "vite-plugin-dts": "^4.5.3",
     "vitest": "^3.0.8"
   }

@@ -6,8 +6,8 @@ The example showcases how a fetch request initiated from the browser can propaga
 
 - The `ClientInstrumentationProvider` is a client-only component that instruments the browser fetch.
 - To avoid exposing the write token, the middleware.ts proxies the logfire `/v1/traces` request.
-- The instrumentation.ts file is the standard `@vercel/otel` setup. 
-- The `.env` should look like this: 
+- The instrumentation.ts file is the standard `@vercel/otel` setup.
+- The `.env` should look like this:
 
 ```sh
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://logfire-api.pydantic.dev/v1/traces

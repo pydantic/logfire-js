@@ -2,22 +2,22 @@
   "name": "@pydantic/logfire-monorepo",
   "version": "1.0.0",
   "private": true,
-  "main": "index.js",
+  "type": "module",
   "scripts": {
-    "dev": "turbo watch dev",
-    "build": "turbo build",
-    "test": "turbo test",
-    "release": "turbo build && pnpm changeset publish",
-    "changeset-add": "pnpm changeset add",
-    "ci": "turbo typecheck lint test"
+    "build": "pnpm --filter \"./packages/*\" run build",
+    "dev": "pnpm --filter \"./packages/*\" --parallel run dev",
+    "test": "pnpm --filter \"./packages/*\" run test",
+    "typecheck": "pnpm --filter \"./packages/*\" --parallel run typecheck",
+    "lint": "pnpm --filter \"./packages/*\" --parallel run lint",
+    "format": "prettier --write .",
+    "format-check": "prettier --check .",
+    "ci": "pnpm run build && pnpm run typecheck && pnpm run lint && pnpm run format-check && pnpm run test",
+    "release": "pnpm run build && pnpm changeset publish",
+    "changeset-add": "pnpm changeset add"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "devDependencies": {
     "@changesets/cli": "^2.27.12",
-    "turbo": "^2.4.4"
+    "prettier": "3.7.4"
   },
   "engines": {
     "node": "22"
