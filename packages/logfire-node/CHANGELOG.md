@@ -1,5 +1,11 @@
 # logfire
 
+## 0.11.4
+
+### Patch Changes
+
+- eeb5801: Update OpenTelemetry dependencies to latest versions
+
 ## 0.11.3
 
 ### Patch Changes
@@ -29,7 +35,6 @@
   This change clarifies that this package is the Node.js-specific SDK with OpenTelemetry auto-instrumentation.
 
   **Migration Guide**:
-
   - Update package.json: Change `"logfire"` to `"@pydantic/logfire-node"`
   - Update imports: Change `from 'logfire'` to `from '@pydantic/logfire-node'`
   - Run `npm install` to update lockfiles

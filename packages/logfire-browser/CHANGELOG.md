@@ -1,5 +1,11 @@
 # @pydantic/logfire-browser
 
+## 0.12.3
+
+### Patch Changes
+
+- eeb5801: Update OpenTelemetry dependencies to latest versions
+
 ## 0.12.2
 
 ### Patch Changes
