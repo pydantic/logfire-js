@@ -33,7 +33,14 @@
       "Bash(pnpm run format:*)",
       "Bash(git config:*)",
       "Bash(pnpm exec lefthook:*)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(gh run view:*)",
+      "Bash(git push:*)",
+      "WebFetch(domain:www.thinkwithgoogle.com)",
+      "WebFetch(domain:www.prnewswire.com)",
+      "Bash(npm info:*)",
+      "Bash(git add:*)",
+      "Bash(git log:*)"
     ],
     "deny": [],
     "ask": []

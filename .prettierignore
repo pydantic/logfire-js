@@ -6,3 +6,4 @@ pnpm-lock.yaml
 **/.turbo
 CHANGELOG.md
 **/next-env.d.ts
+.changeset/*.md
