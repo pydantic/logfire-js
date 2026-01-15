@@ -13,7 +13,7 @@
     "format": "prettier --write .",
     "format-check": "prettier --check .",
     "check": "pnpm run build && pnpm run typecheck && pnpm run lint && pnpm run format-check && pnpm run test",
-    "release": "pnpm run build && pnpm changeset publish",
+    "release": "pnpm run build && pnpm publish -r --access public",
     "changeset-add": "pnpm changeset add"
   },
   "devDependencies": {
