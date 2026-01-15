@@ -1,5 +1,11 @@
 # logfire
 
+## 0.11.5
+
+### Patch Changes
+
+- c9a5685: Fix broken dependency reference in published package (logfire was incorrectly published as "workspace:\*")
+
 ## 0.11.4
 
 ### Patch Changes
