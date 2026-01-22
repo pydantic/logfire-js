@@ -1,4 +1,3 @@
-/* eslint-disable no-use-before-define */
 /*
  * Copyright The OpenTelemetry Authors
  *

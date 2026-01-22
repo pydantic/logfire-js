@@ -66,19 +66,12 @@ function parseStackFrames(stack: string | undefined): StackFrame[] {
  * portable across different environments.
  */
 function extractModuleName(filePath: string): string {
-  return (
-    filePath
-      // Remove file:// protocol
-      .replace(/^file:\/\//, '')
-      // Remove node_modules path prefix, keep package name
-      .replace(/^.*?\/node_modules\//, '')
-      // Keep path relative to src/
-      .replace(/^.*?\/(src\/)/, '$1')
-      // Remove common extensions
-      .replace(/\.[jt]sx?$/, '')
-      // Remove query strings (for bundled code)
-      .replace(/\?.*$/, '')
-  )
+  return filePath
+    .replace(/^file:\/\//, '')
+    .replace(/^.*?\/node_modules\//, '')
+    .replace(/^.*?\/(src\/)/, '$1')
+    .replace(/\.[jt]sx?$/, '')
+    .replace(/\?.*$/, '')
 }
 
 /**
