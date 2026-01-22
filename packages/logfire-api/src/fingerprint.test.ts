@@ -180,4 +180,22 @@ describe('computeFingerprint', () => {
 
     expect(fp1).toBe(fp2)
   })
+
+  test('handles anonymous stack frames without function names', async () => {
+    const error1 = new Error('test')
+    const error2 = new Error('test')
+
+    error1.stack = `Error: test
+    at file:///home/user/project/src/utils/helper.js:10:5
+    at otherFunction (other.js:20:3)`
+
+    error2.stack = `Error: test
+    at file:///different/path/src/utils/helper.js:10:5
+    at otherFunction (other.js:20:3)`
+
+    const fp1 = await computeFingerprint(error1)
+    const fp2 = await computeFingerprint(error2)
+
+    expect(fp1).toBe(fp2)
+  })
 })

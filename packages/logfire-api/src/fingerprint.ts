@@ -3,7 +3,10 @@ interface StackFrame {
   functionName: string
 }
 
-const V8_PATTERNS = [/^\s*at\s+(.+?)\s+\((.+?):\d+:\d+\)/, /^\s*at\s+(.+?):\d+:\d+/, /^\s*at\s+(.+?)\s+\((.+?)\)/, /^\s*at\s+(.+)/]
+const V8_PATTERN_WITH_PARENS = /^\s*at\s+(.+?)\s+\((.+?):\d+:\d+\)/
+const V8_PATTERN_NO_PARENS = /^\s*at\s+(.+?):\d+:\d+/
+const V8_PATTERN_EVAL = /^\s*at\s+(.+?)\s+\((.+?)\)/
+const V8_PATTERN_BARE = /^\s*at\s+(.+)/
 const FIREFOX_PATTERN = /^(.+?)@(.+?):\d+:\d+/
 
 /**
@@ -20,18 +23,31 @@ function parseStackFrames(stack: string | undefined): StackFrame[] {
   const lines = stack.split('\n').slice(1)
 
   for (const line of lines) {
-    let v8Match: null | RegExpExecArray = null
-    for (const pattern of V8_PATTERNS) {
-      v8Match = pattern.exec(line)
-      if (v8Match) break
-    }
-
+    const withParensMatch = V8_PATTERN_WITH_PARENS.exec(line)
+    const noParensMatch = V8_PATTERN_NO_PARENS.exec(line)
+    const evalMatch = V8_PATTERN_EVAL.exec(line)
+    const bareMatch = V8_PATTERN_BARE.exec(line)
     const firefoxMatch = FIREFOX_PATTERN.exec(line)
 
-    if (v8Match) {
+    if (withParensMatch?.[1] && withParensMatch[2]) {
       frames.push({
-        fileName: v8Match[2] ? extractModuleName(v8Match[2]) : undefined,
-        functionName: v8Match[1] ?? '<anonymous>',
+        fileName: extractModuleName(withParensMatch[2]),
+        functionName: withParensMatch[1],
+      })
+    } else if (noParensMatch?.[1]) {
+      frames.push({
+        fileName: extractModuleName(noParensMatch[1]),
+        functionName: '<anonymous>',
+      })
+    } else if (evalMatch?.[1] && evalMatch[2]) {
+      frames.push({
+        fileName: extractModuleName(evalMatch[2]),
+        functionName: evalMatch[1],
+      })
+    } else if (bareMatch?.[1]) {
+      frames.push({
+        fileName: undefined,
+        functionName: bareMatch[1],
       })
     } else if (firefoxMatch?.[2]) {
       frames.push({
@@ -127,7 +143,7 @@ export function canonicalizeError(error: Error, seen = new WeakSet<Error>()): st
 
 /**
  * Computes SHA-256 hash of a string using Web Crypto API.
- * Works in Node.js 19+, browsers, Cloudflare Workers, and Deno.
+ * Works in Node.js 16+, browsers (in secure contexts), Cloudflare Workers, and Deno.
  */
 async function sha256(message: string): Promise<string> {
   const encoder = new TextEncoder()
