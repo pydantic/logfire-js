@@ -11,6 +11,8 @@ export const ATTRIBUTES_MESSAGE_KEY = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.msg`
 
 /** Key for storing scrubbed attributes information */
 export const ATTRIBUTES_SCRUBBED_KEY = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.scrubbed`
+/** Key for exception fingerprint used for issue grouping */
+export const ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.exception.fingerprint`
 export const DEFAULT_OTEL_SCOPE = 'logfire'
 export const JSON_SCHEMA_KEY = 'logfire.json_schema'
 export const JSON_NULL_FIELDS_KEY = 'logfire.null_args'

@@ -70,6 +70,12 @@ export interface LogfireConfigOptions {
    */
   environment?: string
   /**
+   * Whether to compute fingerprints for errors reported via reportError().
+   * Fingerprints enable error grouping in the Logfire backend.
+   * Defaults to true for Node.js.
+   */
+  errorFingerprinting?: boolean
+  /**
    * Additional third-party instrumentations to use.
    */
   instrumentations?: Instrumentation[]
@@ -169,12 +175,12 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
 export const logfireConfig: LogfireConfig = DEFAULT_LOGFIRE_CONFIG
 
 export function configure(config: LogfireConfigOptions = {}) {
-  const { otelScope, scrubbing, ...cnf } = config
+  const { errorFingerprinting, otelScope, scrubbing, ...cnf } = config
 
   const env = process.env
 
-  if (otelScope !== undefined || scrubbing !== undefined) {
-    logfireApi.configureLogfireApi({ otelScope, scrubbing })
+  if (errorFingerprinting !== undefined || otelScope !== undefined || scrubbing !== undefined) {
+    logfireApi.configureLogfireApi({ errorFingerprinting, otelScope, scrubbing })
   }
 
   const token = cnf.token ?? env.LOGFIRE_TOKEN

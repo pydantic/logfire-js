@@ -76,8 +76,11 @@ export function start() {
 
   process.on('uncaughtExceptionMonitor', (error: Error) => {
     diag.info('logfire: caught uncaught exception', error.message)
-    reportError(error.message, error, {})
-
+    try {
+      reportError(error.message, error, {})
+    } catch (err: unknown) {
+      diag.warn('logfire: failed to report error', err)
+    }
     // eslint-disable-next-line no-void
     void processor.forceFlush()
   })
@@ -86,8 +89,12 @@ export function start() {
     diag.error('unhandled rejection', reason)
 
     if (reason instanceof Error) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      reportError(reason.message ?? 'error', reason, {})
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        reportError(reason.message ?? 'error', reason, {})
+      } catch (err: unknown) {
+        diag.warn('logfire: failed to report error', err)
+      }
     }
     // eslint-disable-next-line no-void
     void processor.forceFlush()
