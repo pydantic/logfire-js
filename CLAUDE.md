@@ -175,6 +175,7 @@ The SDK uses ULID (Universally Unique Lexicographically Sortable Identifier) for
 - Tests use Vitest
 - Some packages have minimal tests (`--passWithNoTests` flag in package.json)
 - Test files are located alongside source files with `.test.ts` extension
+- **Prefer exact assertions over fuzzy matching**: When testing functions that produce stable, canonical output, use exact equality (`toBe`, `toEqual`) rather than fuzzy matchers (`toContain`, `toMatch`). If a value should be stable, test the exact value. For example, instead of `expect(result).toContain('foo')`, use `expect(result).toBe('expected\nfull\nvalue')`. Control inputs (like mocking `error.stack`) to make outputs deterministic.
 
 ## Node Version
 
