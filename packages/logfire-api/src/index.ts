@@ -191,24 +191,21 @@ export function warning(message: string, attributes: Record<string, unknown> = {
 /**
  * Use this method to report an error to Logfire.
  * Captures the error stack trace and message in the respective semantic attributes and sets the correct level and status.
- * Computes a fingerprint for the error to enable issue grouping in the Logfire backend.
+ * Computes a fingerprint for the error to enable issue grouping in the Logfire backend (if errorFingerprinting is enabled).
  */
 export function reportError(message: string, error: Error, extraAttributes: Record<string, unknown> = {}) {
-  const fingerprint = computeFingerprint(error)
+  const attributes: Record<string, unknown> = {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    [ATTR_EXCEPTION_MESSAGE]: error.message ?? 'error',
+    [ATTR_EXCEPTION_STACKTRACE]: error.stack,
+    ...extraAttributes,
+  }
 
-  const span = startSpan(
-    message,
-    {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      [ATTR_EXCEPTION_MESSAGE]: error.message ?? 'error',
-      [ATTR_EXCEPTION_STACKTRACE]: error.stack,
-      [ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY]: fingerprint,
-      ...extraAttributes,
-    },
-    {
-      level: Level.Error,
-    }
-  )
+  if (logfireApiConfig.enableErrorFingerprinting) {
+    attributes[ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY] = computeFingerprint(error)
+  }
+
+  const span = startSpan(message, attributes, { level: Level.Error })
 
   span.recordException(error)
   span.setStatus({ code: SpanStatusCode.ERROR, message: `${error.name}: ${error.message}` })

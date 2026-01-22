@@ -13,6 +13,12 @@ export interface ScrubbingOptions {
 }
 
 export interface LogfireApiConfigOptions {
+  /**
+   * Whether to compute fingerprints for errors reported via reportError().
+   * Fingerprints enable error grouping in the Logfire backend.
+   * Defaults to true for Node.js, false for browser (minified code produces unstable fingerprints).
+   */
+  errorFingerprinting?: boolean
   otelScope?: string
   /**
    * Options for scrubbing sensitive data. Set to False to disable.
@@ -44,6 +50,7 @@ export interface LogOptions {
 
 export interface LogfireApiConfig {
   context: Context
+  enableErrorFingerprinting: boolean
   otelScope: string
   scrubber: BaseScrubber
   tracer: Tracer
@@ -58,6 +65,7 @@ const DEFAULT_LOGFIRE_API_CONFIG: LogfireApiConfig = {
   get context() {
     return ContextAPI.active()
   },
+  enableErrorFingerprinting: true,
   otelScope: DEFAULT_OTEL_SCOPE,
   scrubber: new LogfireAttributeScrubber(),
   tracer: TraceAPI.getTracer(DEFAULT_OTEL_SCOPE),
@@ -66,6 +74,10 @@ const DEFAULT_LOGFIRE_API_CONFIG: LogfireApiConfig = {
 export const logfireApiConfig: LogfireApiConfig = DEFAULT_LOGFIRE_API_CONFIG
 
 export function configureLogfireApi(config: LogfireApiConfigOptions) {
+  if (config.errorFingerprinting !== undefined) {
+    logfireApiConfig.enableErrorFingerprinting = config.errorFingerprinting
+  }
+
   if (config.scrubbing !== undefined) {
     logfireApiConfig.scrubber = resolveScrubber(config.scrubbing)
   }

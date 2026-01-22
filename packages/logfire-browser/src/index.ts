@@ -75,6 +75,11 @@ export interface LogfireConfigOptions {
    */
   environment?: string
   /**
+   * Whether to compute fingerprints for errors reported via reportError().
+   * Defaults to false for browser since minified code produces unstable fingerprints.
+   */
+  errorFingerprinting?: boolean
+  /**
    * The instrumentations to register - a common one [is the fetch instrumentation](https://www.npmjs.com/package/@opentelemetry/instrumentation-fetch).
    */
   instrumentations?: (Instrumentation | Instrumentation[])[]
@@ -119,9 +124,10 @@ export function configure(options: LogfireConfigOptions) {
     diag.setLogger(new DiagConsoleLogger(), options.diagLogLevel)
   }
 
-  if (options.scrubbing !== undefined) {
-    configureLogfireApi({ scrubbing: options.scrubbing })
-  }
+  configureLogfireApi({
+    errorFingerprinting: options.errorFingerprinting ?? false,
+    scrubbing: options.scrubbing,
+  })
 
   const resource = resourceFromAttributes({
     [ATTR_BROWSER_LANGUAGE]: navigator.language,
