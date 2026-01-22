@@ -1,3 +1,5 @@
+import { murmurhash3x64128 } from './murmurhash'
+
 interface StackFrame {
   fileName?: string
   functionName: string
@@ -135,26 +137,14 @@ export function canonicalizeError(error: Error, seen = new WeakSet<Error>()): st
 }
 
 /**
- * Computes SHA-256 hash of a string using Web Crypto API.
- * Works in Node.js 16+, browsers (in secure contexts), Cloudflare Workers, and Deno.
- */
-async function sha256(message: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(message)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-/**
  * Computes a fingerprint for an error that can be used to group
  * similar errors into issues.
  *
- * The fingerprint is a SHA-256 hash of the canonicalized error representation.
+ * The fingerprint is a MurmurHash3 128-bit hash of the canonicalized error representation.
  * Errors with the same stack trace structure (ignoring line numbers) will
  * produce the same fingerprint.
  */
-export async function computeFingerprint(error: Error): Promise<string> {
+export function computeFingerprint(error: Error): string {
   const canonical = canonicalizeError(error)
-  return sha256(canonical)
+  return murmurhash3x64128(canonical)
 }

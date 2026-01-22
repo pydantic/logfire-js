@@ -90,14 +90,14 @@ describe('canonicalizeError', () => {
 })
 
 describe('computeFingerprint', () => {
-  test('returns 64 character hex string (SHA-256)', async () => {
+  test('returns 32 character hex string (MurmurHash3 128-bit)', () => {
     const error = new Error('test')
-    const fingerprint = await computeFingerprint(error)
+    const fingerprint = computeFingerprint(error)
 
-    expect(fingerprint).toMatch(/^[a-f0-9]{64}$/)
+    expect(fingerprint).toMatch(/^[a-f0-9]{32}$/)
   })
 
-  test('same canonical form produces same fingerprint', async () => {
+  test('same canonical form produces same fingerprint', () => {
     const error1 = new Error('message 1')
     const error2 = new Error('message 2')
 
@@ -109,13 +109,13 @@ describe('computeFingerprint', () => {
     at testFunction (test.js:10:5)
     at main (test.js:20:3)`
 
-    const fp1 = await computeFingerprint(error1)
-    const fp2 = await computeFingerprint(error2)
+    const fp1 = computeFingerprint(error1)
+    const fp2 = computeFingerprint(error2)
 
     expect(fp1).toBe(fp2)
   })
 
-  test('different error types produce different fingerprints', async () => {
+  test('different error types produce different fingerprints', () => {
     const error1 = new Error('test')
     const error2 = new TypeError('test')
 
@@ -125,13 +125,13 @@ describe('computeFingerprint', () => {
     error2.stack = `TypeError: test
     at testFunction (test.js:10:5)`
 
-    const fp1 = await computeFingerprint(error1)
-    const fp2 = await computeFingerprint(error2)
+    const fp1 = computeFingerprint(error1)
+    const fp2 = computeFingerprint(error2)
 
     expect(fp1).not.toBe(fp2)
   })
 
-  test('different stack produces different fingerprint', async () => {
+  test('different stack produces different fingerprint', () => {
     const error1 = new Error('test')
     const error2 = new Error('test')
 
@@ -141,13 +141,13 @@ describe('computeFingerprint', () => {
     error2.stack = `Error: test
     at locationB (test.js:10:5)`
 
-    const fp1 = await computeFingerprint(error1)
-    const fp2 = await computeFingerprint(error2)
+    const fp1 = computeFingerprint(error1)
+    const fp2 = computeFingerprint(error2)
 
     expect(fp1).not.toBe(fp2)
   })
 
-  test('line numbers do not affect fingerprint', async () => {
+  test('line numbers do not affect fingerprint', () => {
     const error1 = new Error('test')
     const error2 = new Error('test')
 
@@ -159,13 +159,13 @@ describe('computeFingerprint', () => {
     at testFunction (test.js:999:5)
     at main (test.js:888:3)`
 
-    const fp1 = await computeFingerprint(error1)
-    const fp2 = await computeFingerprint(error2)
+    const fp1 = computeFingerprint(error1)
+    const fp2 = computeFingerprint(error2)
 
     expect(fp1).toBe(fp2)
   })
 
-  test('file paths are normalized for portability', async () => {
+  test('file paths are normalized for portability', () => {
     const error1 = new Error('test')
     const error2 = new Error('test')
 
@@ -175,13 +175,13 @@ describe('computeFingerprint', () => {
     error2.stack = `Error: test
     at testFunction (/different/path/project/src/utils/helper.ts:10:5)`
 
-    const fp1 = await computeFingerprint(error1)
-    const fp2 = await computeFingerprint(error2)
+    const fp1 = computeFingerprint(error1)
+    const fp2 = computeFingerprint(error2)
 
     expect(fp1).toBe(fp2)
   })
 
-  test('handles anonymous stack frames without function names', async () => {
+  test('handles anonymous stack frames without function names', () => {
     const error1 = new Error('test')
     const error2 = new Error('test')
 
@@ -193,13 +193,13 @@ describe('computeFingerprint', () => {
     at file:///different/path/src/utils/helper.js:10:5
     at otherFunction (other.js:20:3)`
 
-    const fp1 = await computeFingerprint(error1)
-    const fp2 = await computeFingerprint(error2)
+    const fp1 = computeFingerprint(error1)
+    const fp2 = computeFingerprint(error2)
 
     expect(fp1).toBe(fp2)
   })
 
-  test('parses Firefox stack trace format', async () => {
+  test('parses Firefox stack trace format', () => {
     const error1 = new Error('test')
     const error2 = new Error('test')
 
@@ -211,8 +211,8 @@ otherFunction@http://example.com/src/script.js:20:3`
 myFunction@http://different.com/src/script.js:999:1
 otherFunction@http://different.com/src/script.js:888:2`
 
-    const fp1 = await computeFingerprint(error1)
-    const fp2 = await computeFingerprint(error2)
+    const fp1 = computeFingerprint(error1)
+    const fp2 = computeFingerprint(error2)
 
     expect(fp1).toBe(fp2)
 

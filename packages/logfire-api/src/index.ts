@@ -193,8 +193,8 @@ export function warning(message: string, attributes: Record<string, unknown> = {
  * Captures the error stack trace and message in the respective semantic attributes and sets the correct level and status.
  * Computes a fingerprint for the error to enable issue grouping in the Logfire backend.
  */
-export async function reportError(message: string, error: Error, extraAttributes: Record<string, unknown> = {}) {
-  const fingerprint = await computeFingerprint(error)
+export function reportError(message: string, error: Error, extraAttributes: Record<string, unknown> = {}) {
+  const fingerprint = computeFingerprint(error)
 
   const span = startSpan(
     message,

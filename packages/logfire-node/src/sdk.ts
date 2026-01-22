@@ -76,28 +76,28 @@ export function start() {
 
   process.on('uncaughtExceptionMonitor', (error: Error) => {
     diag.info('logfire: caught uncaught exception', error.message)
+    try {
+      reportError(error.message, error, {})
+    } catch (err: unknown) {
+      diag.warn('logfire: failed to report error', err)
+    }
     // eslint-disable-next-line no-void
-    void reportError(error.message, error, {})
-      .catch((err: unknown) => {
-        diag.warn('logfire: failed to report error', err)
-      })
-      .finally(() => processor.forceFlush())
+    void processor.forceFlush()
   })
 
   process.on('unhandledRejection', (reason: Error) => {
     diag.error('unhandled rejection', reason)
 
     if (reason instanceof Error) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, no-void
-      void reportError(reason.message ?? 'error', reason, {})
-        .catch((err: unknown) => {
-          diag.warn('logfire: failed to report error', err)
-        })
-        .finally(() => processor.forceFlush())
-    } else {
-      // eslint-disable-next-line no-void
-      void processor.forceFlush()
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        reportError(reason.message ?? 'error', reason, {})
+      } catch (err: unknown) {
+        diag.warn('logfire: failed to report error', err)
+      }
     }
+    // eslint-disable-next-line no-void
+    void processor.forceFlush()
   })
 
   // gracefully shut down the SDK on process exit
