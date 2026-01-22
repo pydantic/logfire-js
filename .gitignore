@@ -3,3 +3,4 @@ packages/*/*.tgz
 .env
 scratch/
 **/.turbo
+.claude/settings.local.json

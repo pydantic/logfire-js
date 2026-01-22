@@ -40,7 +40,13 @@
       "WebFetch(domain:www.prnewswire.com)",
       "Bash(npm info:*)",
       "Bash(git add:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(pnpm run check:*)",
+      "Bash(pnpm -w run check:*)",
+      "Bash(gh api:*)",
+      "Bash(git symbolic-ref:*)",
+      "WebFetch(domain:google.github.io)",
+      "Bash(pnpm run test:*)"
     ],
     "deny": [],
     "ask": []

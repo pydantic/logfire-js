@@ -198,4 +198,26 @@ describe('computeFingerprint', () => {
 
     expect(fp1).toBe(fp2)
   })
+
+  test('parses Firefox stack trace format', async () => {
+    const error1 = new Error('test')
+    const error2 = new Error('test')
+
+    error1.stack = `Error: test
+myFunction@http://example.com/src/script.js:10:5
+otherFunction@http://example.com/src/script.js:20:3`
+
+    error2.stack = `Error: test
+myFunction@http://different.com/src/script.js:999:1
+otherFunction@http://different.com/src/script.js:888:2`
+
+    const fp1 = await computeFingerprint(error1)
+    const fp2 = await computeFingerprint(error2)
+
+    expect(fp1).toBe(fp2)
+
+    const canonical = canonicalizeError(error1)
+    expect(canonical).toContain('myFunction')
+    expect(canonical).toContain('otherFunction')
+  })
 })
