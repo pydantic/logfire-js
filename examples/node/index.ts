@@ -49,6 +49,8 @@ const mySpan = logfire.startSpan('a manual parent span', { foo: 'foo' })
 
 logfire.info('manual child span', {}, { parentSpan: mySpan })
 
+logfire.reportError('Something went wrong in manual span', new Error('Manual error'), { attrs: 'extra' })
+
 mySpan.end()
 
 if (process.env.TRIGGER_ERROR) {

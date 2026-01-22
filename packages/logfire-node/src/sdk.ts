@@ -76,21 +76,20 @@ export function start() {
 
   process.on('uncaughtExceptionMonitor', (error: Error) => {
     diag.info('logfire: caught uncaught exception', error.message)
-    reportError(error.message, error, {})
-
     // eslint-disable-next-line no-void
-    void processor.forceFlush()
+    void reportError(error.message, error, {}).finally(() => processor.forceFlush())
   })
 
   process.on('unhandledRejection', (reason: Error) => {
     diag.error('unhandled rejection', reason)
 
     if (reason instanceof Error) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      reportError(reason.message ?? 'error', reason, {})
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, no-void
+      void reportError(reason.message ?? 'error', reason, {}).finally(() => processor.forceFlush())
+    } else {
+      // eslint-disable-next-line no-void
+      void processor.forceFlush()
     }
-    // eslint-disable-next-line no-void
-    void processor.forceFlush()
   })
 
   // gracefully shut down the SDK on process exit
