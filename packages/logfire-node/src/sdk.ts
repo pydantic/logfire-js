@@ -5,6 +5,7 @@ import { W3CTraceContextPropagator } from '@opentelemetry/core'
 import { detectResources, envDetector, resourceFromAttributes } from '@opentelemetry/resources'
 import { MeterProvider } from '@opentelemetry/sdk-metrics'
 import { NodeSDK } from '@opentelemetry/sdk-node'
+import { ParentBasedSampler, TraceIdRatioBasedSampler } from '@opentelemetry/sdk-trace-base'
 import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION,
@@ -18,7 +19,7 @@ import {
   ATTR_VCS_REPOSITORY_REF_REVISION,
   ATTR_VCS_REPOSITORY_URL_FULL,
 } from '@opentelemetry/semantic-conventions/incubating'
-import { reportError, ULIDGenerator } from 'logfire'
+import { reportError, TailSamplingProcessor, ULIDGenerator } from 'logfire'
 
 import { logfireConfig } from './logfireConfig'
 import { periodicMetricReader } from './metricExporter'
@@ -54,7 +55,15 @@ export function start() {
 
   const propagator = logfireConfig.distributedTracing ? new W3CTraceContextPropagator() : undefined
 
-  const processor = logfireSpanProcessor(logfireConfig.console)
+  let processor: import('@opentelemetry/sdk-trace-base').SpanProcessor = logfireSpanProcessor(logfireConfig.console)
+  if (logfireConfig.sampling?.tail) {
+    processor = new TailSamplingProcessor(processor, logfireConfig.sampling.tail)
+  }
+
+  const headRate = logfireConfig.sampling?.head
+  const sampler =
+    headRate !== undefined && headRate < 1.0 ? new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(headRate) }) : undefined
+
   const sdk = new NodeSDK({
     autoDetectResources: false,
     contextManager,
@@ -62,6 +71,7 @@ export function start() {
     instrumentations: [getNodeAutoInstrumentations(logfireConfig.nodeAutoInstrumentations), ...logfireConfig.instrumentations],
     metricReader: logfireConfig.metrics === false ? undefined : periodicMetricReader(),
     resource,
+    ...(sampler ? { sampler } : {}),
     spanProcessors: [processor, ...logfireConfig.additionalSpanProcessors],
     textMapPropagator: propagator,
   })

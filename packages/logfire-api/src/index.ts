@@ -16,13 +16,17 @@ import { computeFingerprint } from './fingerprint'
 import { logfireFormatWithExtras } from './formatter'
 import { logfireApiConfig, serializeAttributes } from './logfireApiConfig'
 import * as logfireApiConfigExports from './logfireApiConfig'
+import * as samplingExports from './sampling'
+import { TailSamplingProcessor } from './TailSamplingProcessor'
 import * as ULIDGeneratorExports from './ULIDGenerator'
 
 export * from './AttributeScrubber'
 export { canonicalizeError, computeFingerprint } from './fingerprint'
 export { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire } from './logfireApiConfig'
 export type { LogfireApiConfig, LogfireApiConfigOptions, ScrubbingOptions } from './logfireApiConfig'
+export * from './sampling'
 export { serializeAttributes } from './serializeAttributes'
+export { TailSamplingProcessor } from './TailSamplingProcessor'
 export * from './ULIDGenerator'
 
 export const Level = {
@@ -215,10 +219,12 @@ export function reportError(message: string, error: Error, extraAttributes: Reco
 const defaultExport = {
   ...AttributeScrubbingExports,
   ...fingerprintExports,
+  ...samplingExports,
   ...ULIDGeneratorExports,
   ...logfireApiConfigExports,
 
   serializeAttributes,
+  TailSamplingProcessor,
   Level,
   startSpan,
   span,

@@ -1,3 +1,5 @@
+import type { SamplingOptions } from 'logfire'
+
 import { DiagLogLevel } from '@opentelemetry/api'
 import { InstrumentationConfigMap } from '@opentelemetry/auto-instrumentations-node'
 import { Instrumentation } from '@opentelemetry/instrumentation'
@@ -92,6 +94,13 @@ export interface LogfireConfigOptions {
    */
   otelScope?: string
   /**
+   * Sampling options for controlling which traces are exported.
+   * `head` sets a probabilistic sample rate (0.0-1.0) at trace creation time.
+   * `tail` provides a callback evaluated on every span to decide whether to keep the trace.
+   * Defaults to the `LOGFIRE_TRACE_SAMPLE_RATE` environment variable for head sampling.
+   */
+  sampling?: SamplingOptions
+  /**
    * Options for scrubbing sensitive data. Set to False to disable.
    */
   scrubbing?: false | logfireApi.ScrubbingOptions
@@ -143,6 +152,7 @@ export interface LogfireConfig {
   metrics: false | MetricsOptions | undefined
   nodeAutoInstrumentations: InstrumentationConfigMap
   otelScope: string
+  sampling: SamplingOptions | undefined
   sendToLogfire: boolean
   serviceName: string | undefined
   serviceVersion: string | undefined
@@ -165,6 +175,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   metrics: undefined,
   nodeAutoInstrumentations: DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
   otelScope: DEFAULT_OTEL_SCOPE,
+  sampling: undefined,
   sendToLogfire: false,
   serviceName: process.env.LOGFIRE_SERVICE_NAME,
   serviceVersion: process.env.LOGFIRE_SERVICE_VERSION,
@@ -175,7 +186,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
 export const logfireConfig: LogfireConfig = DEFAULT_LOGFIRE_CONFIG
 
 export function configure(config: LogfireConfigOptions = {}) {
-  const { errorFingerprinting, otelScope, scrubbing, ...cnf } = config
+  const { errorFingerprinting, otelScope, sampling, scrubbing, ...cnf } = config
 
   const env = process.env
 
@@ -204,6 +215,7 @@ export function configure(config: LogfireConfigOptions = {}) {
     metricExporterUrl: `${baseUrl}/${METRIC_ENDPOINT_PATH}`,
     metrics: cnf.metrics,
     nodeAutoInstrumentations: cnf.nodeAutoInstrumentations ?? DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
+    sampling: resolveSampling(sampling),
     sendToLogfire,
     serviceName: cnf.serviceName ?? env.LOGFIRE_SERVICE_NAME,
     serviceVersion: cnf.serviceVersion ?? env.LOGFIRE_SERVICE_VERSION,
@@ -212,6 +224,20 @@ export function configure(config: LogfireConfigOptions = {}) {
   })
 
   start()
+}
+
+function resolveSampling(option: SamplingOptions | undefined): SamplingOptions | undefined {
+  const envRate = process.env.LOGFIRE_TRACE_SAMPLE_RATE
+  if (option) {
+    return option
+  }
+  if (envRate !== undefined) {
+    const rate = parseFloat(envRate)
+    if (!isNaN(rate) && rate >= 0 && rate <= 1) {
+      return { head: rate }
+    }
+  }
+  return undefined
 }
 
 function resolveDistributedTracing(option: LogfireConfigOptions['distributedTracing']) {
