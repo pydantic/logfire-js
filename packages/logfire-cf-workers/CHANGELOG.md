@@ -1,5 +1,12 @@
 # @pydantic/logfire-cf-workers
 
+## 0.11.4
+
+### Patch Changes
+
+- Updated dependencies [1b4d704]
+  - logfire@0.13.0
+
 ## 0.11.3
 
 ### Patch Changes
