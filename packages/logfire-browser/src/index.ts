@@ -2,7 +2,14 @@ import { ContextManager, diag, DiagConsoleLogger, DiagLogLevel } from '@opentele
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import { Instrumentation, registerInstrumentations } from '@opentelemetry/instrumentation'
 import { resourceFromAttributes } from '@opentelemetry/resources'
-import { BatchSpanProcessor, BufferConfig, StackContextManager, WebTracerProvider } from '@opentelemetry/sdk-trace-web'
+import {
+  BatchSpanProcessor,
+  BufferConfig,
+  ParentBasedSampler,
+  StackContextManager,
+  TraceIdRatioBasedSampler,
+  WebTracerProvider,
+} from '@opentelemetry/sdk-trace-web'
 import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION,
@@ -34,10 +41,12 @@ import {
   reportError,
   resolveBaseUrl,
   resolveSendToLogfire,
+  type SamplingOptions,
   type ScrubbingOptions,
   serializeAttributes,
   span,
   startSpan,
+  TailSamplingProcessor,
   trace,
   ULIDGenerator,
   warning,
@@ -83,6 +92,17 @@ export interface LogfireConfigOptions {
    * The instrumentations to register - a common one [is the fetch instrumentation](https://www.npmjs.com/package/@opentelemetry/instrumentation-fetch).
    */
   instrumentations?: (Instrumentation | Instrumentation[])[]
+  /**
+   * Sampling options for controlling which traces are exported.
+   * `head` sets a probabilistic sample rate (0.0-1.0) at trace creation time.
+   * `tail` provides a callback evaluated on every span to decide whether to keep the trace.
+   *
+   * Note: Tail sampling buffers all spans in a trace in memory until either a span meets the
+   * sampling criteria or the root span ends. In long-lived browser sessions, this can lead to
+   * significant memory usage. Consider using head sampling alone for long-running traces, or
+   * ensure tail callbacks accept traces quickly (e.g., on the first error-level span).
+   */
+  sampling?: SamplingOptions
   /**
    * Options for scrubbing sensitive data. Set to False to disable.
    */
@@ -150,21 +170,34 @@ export function configure(options: LogfireConfigOptions) {
   })
 
   diag.info('logfire-browser: starting')
+
+  const headRate = options.sampling?.head
+  const sampler =
+    headRate !== undefined && headRate < 1.0 ? new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(headRate) }) : undefined
+
+  let spanProcessor: import('@opentelemetry/sdk-trace-web').SpanProcessor = new LogfireSpanProcessor(
+    new BatchSpanProcessor(
+      new OTLPTraceExporterWithDynamicHeaders(
+        { ...options.traceExporterConfig, url: options.traceUrl },
+        options.traceExporterHeaders ?? defaultTraceExporterHeaders
+      ),
+      options.batchSpanProcessorConfig
+    ),
+    Boolean(options.console)
+  )
+
+  if (options.sampling?.tail) {
+    spanProcessor = new TailSamplingProcessor(
+      spanProcessor,
+      options.sampling.tail
+    ) as unknown as import('@opentelemetry/sdk-trace-web').SpanProcessor
+  }
+
   const tracerProvider = new WebTracerProvider({
     idGenerator: new ULIDGenerator(),
     resource,
-    spanProcessors: [
-      new LogfireSpanProcessor(
-        new BatchSpanProcessor(
-          new OTLPTraceExporterWithDynamicHeaders(
-            { ...options.traceExporterConfig, url: options.traceUrl },
-            options.traceExporterHeaders ?? defaultTraceExporterHeaders
-          ),
-          options.batchSpanProcessorConfig
-        ),
-        Boolean(options.console)
-      ),
-    ],
+    ...(sampler ? { sampler } : {}),
+    spanProcessors: [spanProcessor],
   })
 
   tracerProvider.register({
