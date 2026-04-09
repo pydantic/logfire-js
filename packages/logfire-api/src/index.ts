@@ -144,10 +144,27 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
     },
     context,
     (span: Span) => {
-      const result = callback(span)
+      let result: R
+      try {
+        result = callback(span)
+      } catch (thrown) {
+        recordSpanException(span, thrown)
+        span.end()
+        throw thrown
+      }
 
-      // we need this clunky detection because of zone.js promises
-      if (typeof result === 'object' && result !== null && 'finally' in result && typeof result.finally === 'function') {
+      if (result instanceof Promise) {
+        result.then(
+          () => {
+            span.end()
+          },
+          (reason: unknown) => {
+            recordSpanException(span, reason)
+            span.end()
+          }
+        )
+        // we need this clunky detection because of zone.js promises
+      } else if (typeof result === 'object' && result !== null && 'finally' in result && typeof result.finally === 'function') {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-call
         result.finally(() => {
           span.end()
@@ -190,6 +207,20 @@ export function notice(message: string, attributes: Record<string, unknown> = {}
 
 export function warning(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
   log(message, attributes, { ...options, level: Level.Warning })
+}
+
+function recordSpanException(span: Span, thrown: unknown): void {
+  const isError = thrown instanceof Error
+  const errorMessage = isError ? thrown.message : String(thrown)
+  const errorName = isError ? thrown.name : 'Error'
+
+  span.recordException(isError ? thrown : String(thrown))
+  span.setStatus({ code: SpanStatusCode.ERROR, message: `${errorName}: ${errorMessage}` })
+  span.setAttribute(ATTRIBUTES_LEVEL_KEY, Level.Error)
+
+  if (isError && logfireApiConfig.enableErrorFingerprinting) {
+    span.setAttribute(ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY, computeFingerprint(thrown))
+  }
 }
 
 /**
