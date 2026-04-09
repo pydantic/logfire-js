@@ -178,4 +178,15 @@ describe('span', () => {
     expect(spanMock.setAttribute).not.toHaveBeenCalledWith(ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY, expect.anything())
     expect(spanMock.end).toHaveBeenCalledOnce()
   })
+
+  test('thenable callback result is returned untouched', () => {
+    const then = vi.fn()
+    const lazyThenable = { then }
+
+    const result = span('test', { callback: () => lazyThenable })
+
+    expect(result).toBe(lazyThenable)
+    expect(then).not.toHaveBeenCalled()
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
 })

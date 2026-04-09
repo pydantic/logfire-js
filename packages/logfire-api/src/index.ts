@@ -153,9 +153,7 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
         throw thrown
       }
 
-      // we need this clunky detection because of zone.js promises
-      if (typeof result === 'object' && result !== null && 'then' in result && typeof result.then === 'function') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+      if (result instanceof Promise) {
         result.then(
           () => {
             span.end()
@@ -165,6 +163,12 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
             span.end()
           }
         )
+        // we need this clunky detection because of zone.js promises
+      } else if (typeof result === 'object' && result !== null && 'finally' in result && typeof result.finally === 'function') {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+        result.finally(() => {
+          span.end()
+        })
       } else {
         span.end()
       }
