@@ -75,3 +75,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub releases
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for row in $(echo '${{ steps.changesets.outputs.publishedPackages }}' | jq -c '.[]'); do
+            NAME=$(echo "$row" | jq -r '.name')
+            VERSION=$(echo "$row" | jq -r '.version')
+            TAG="${NAME}@${VERSION}"
+            if ! git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
+              git tag "$TAG"
+              git push origin "$TAG"
+            fi
+            if ! gh release view "$TAG" > /dev/null 2>&1; then
+              gh release create "$TAG" --title "$TAG" --generate-notes
+            fi
+          done
