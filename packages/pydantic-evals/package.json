@@ -1,0 +1,79 @@
+{
+  "name": "@pydantic/evals",
+  "description": "Evaluation framework for stochastic functions (LLM calls, agents, pipelines) - TypeScript port of pydantic-evals",
+  "author": {
+    "name": "The Pydantic Team",
+    "email": "engineering@pydantic.dev",
+    "url": "https://pydantic.dev"
+  },
+  "repository": {
+    "url": "git+https://github.com/pydantic/logfire-js.git",
+    "directory": "packages/pydantic-evals"
+  },
+  "sideEffects": false,
+  "homepage": "https://pydantic.dev/logfire",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "pydantic",
+    "evals",
+    "evaluation",
+    "llm",
+    "testing",
+    "observability",
+    "opentelemetry"
+  ],
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "scripts": {
+    "dev": "vite build",
+    "build": "vite build",
+    "lint": "eslint",
+    "preview": "vite preview",
+    "typecheck": "tsc",
+    "prepack": "cp ../../LICENSE .",
+    "postpack": "rm LICENSE",
+    "test": "vitest run --coverage"
+  },
+  "dependencies": {
+    "yaml": "^2.6.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/sdk-trace-base": "^2.0.0",
+    "@vitest/coverage-v8": "^3.0.8"
+  },
+  "peerDependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/sdk-trace-base": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentelemetry/api": {
+      "optional": true
+    },
+    "@opentelemetry/sdk-trace-base": {
+      "optional": true
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ]
+}
