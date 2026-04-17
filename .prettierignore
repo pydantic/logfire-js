@@ -7,3 +7,4 @@ pnpm-lock.yaml
 CHANGELOG.md
 **/next-env.d.ts
 .changeset/*.md
+**/coverage
