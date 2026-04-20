@@ -41,7 +41,7 @@ import * as logfire from '@pydantic/logfire-node'
 logfire.configure({
   token: 'test-e2e-write-token',
   advanced: {
-    baseUrl: 'http://localhost:8000',
+    baseUrl: 'http://localhost:3000',
   },
   serviceName: 'example-node-script',
   serviceVersion: '1.0.0',

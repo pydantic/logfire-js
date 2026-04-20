@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@opentelemetry/auto-instrumentations-web": "^0.54.0",
+    "@opentelemetry/auto-instrumentations-web": "catalog:",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "express-http-proxy": "^2.1.1",

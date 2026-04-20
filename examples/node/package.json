@@ -20,7 +20,7 @@
     "dotenv": "^16.4.7"
   },
   "devDependencies": {
-    "@opentelemetry/semantic-conventions": "^1.30.0",
+    "@opentelemetry/semantic-conventions": "catalog:",
     "@tsconfig/node22": "^22.0.0",
     "typescript": "^5.9.3"
   }

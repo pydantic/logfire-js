@@ -50,6 +50,7 @@
   "packageManager": "pnpm@10.28.0",
   "pnpm": {
     "overrides": {
+      "protobufjs@^7.5.3": "7.5.5",
       "undici@>=7.0.0 <7.24.0": ">=7.24.0"
     }
   }
