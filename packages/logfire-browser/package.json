@@ -57,8 +57,6 @@
     "@opentelemetry/core": "catalog:",
     "@opentelemetry/exporter-trace-otlp-http": "catalog:",
     "@opentelemetry/instrumentation": "catalog:",
-    "@opentelemetry/otlp-exporter-base": "catalog:",
-    "@opentelemetry/otlp-transformer": "catalog:",
     "@opentelemetry/resources": "catalog:",
     "logfire": "workspace:*"
   },

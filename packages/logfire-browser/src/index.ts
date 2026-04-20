@@ -188,10 +188,7 @@ export function configure(options: LogfireConfigOptions) {
       new OTLPTraceExporter({
         ...options.traceExporterConfig,
         headers: async () =>
-          await resolveTraceExporterHeaders(
-            options.traceExporterConfig?.headers,
-            options.traceExporterHeaders ?? defaultTraceExporterHeaders
-          ),
+          resolveTraceExporterHeaders(options.traceExporterConfig?.headers, options.traceExporterHeaders ?? defaultTraceExporterHeaders),
         url: options.traceUrl,
       }),
       options.batchSpanProcessorConfig
