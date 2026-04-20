@@ -53,7 +53,6 @@ import {
 } from 'logfire'
 
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
-import { OTLPTraceExporterWithDynamicHeaders } from './OTLPTraceExporterWithDynamicHeaders'
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from 'logfire'
 
@@ -139,6 +138,15 @@ function defaultTraceExporterHeaders() {
   return {}
 }
 
+async function resolveTraceExporterHeaders(configHeaders: TraceExporterConfig['headers'], dynamicHeaders: () => Record<string, string>) {
+  const resolvedConfigHeaders = typeof configHeaders === 'function' ? await configHeaders() : (configHeaders ?? {})
+
+  return {
+    ...resolvedConfigHeaders,
+    ...dynamicHeaders(),
+  }
+}
+
 export function configure(options: LogfireConfigOptions) {
   if (options.diagLogLevel !== undefined) {
     diag.setLogger(new DiagConsoleLogger(), options.diagLogLevel)
@@ -177,10 +185,12 @@ export function configure(options: LogfireConfigOptions) {
 
   let spanProcessor: import('@opentelemetry/sdk-trace-web').SpanProcessor = new LogfireSpanProcessor(
     new BatchSpanProcessor(
-      new OTLPTraceExporterWithDynamicHeaders(
-        { ...options.traceExporterConfig, url: options.traceUrl },
-        options.traceExporterHeaders ?? defaultTraceExporterHeaders
-      ),
+      new OTLPTraceExporter({
+        ...options.traceExporterConfig,
+        headers: async () =>
+          resolveTraceExporterHeaders(options.traceExporterConfig?.headers, options.traceExporterHeaders ?? defaultTraceExporterHeaders),
+        url: options.traceUrl,
+      }),
       options.batchSpanProcessorConfig
     ),
     Boolean(options.console)

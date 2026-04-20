@@ -53,19 +53,19 @@
     "postpack": "rm LICENSE"
   },
   "dependencies": {
-    "@pydantic/otel-cf-workers": "^1.0.0-rc.54",
+    "@pydantic/otel-cf-workers": "^1.0.0-rc.55",
     "logfire": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "4.20250311.0",
-    "@opentelemetry/core": "^2.0.1",
-    "@opentelemetry/otlp-transformer": "^0.209.0",
-    "@opentelemetry/sdk-trace-base": "^2.0.0"
+    "@opentelemetry/core": "catalog:",
+    "@opentelemetry/otlp-transformer": "catalog:",
+    "@opentelemetry/sdk-trace-base": "catalog:"
   },
   "peerDependencies": {
-    "@opentelemetry/core": "^2.0.1",
-    "@opentelemetry/otlp-transformer": "^0.209.0",
-    "@opentelemetry/sdk-trace-base": "^2.0.0"
+    "@opentelemetry/core": "catalog:",
+    "@opentelemetry/otlp-transformer": "catalog:",
+    "@opentelemetry/sdk-trace-base": "catalog:"
   },
   "files": [
     "dist",
