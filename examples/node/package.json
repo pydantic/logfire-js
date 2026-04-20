@@ -1,7 +1,7 @@
 {
   "name": "@pydantic/logfire-node-example",
   "private": true,
-  "version": "1.0.6",
+  "version": "1.0.7",
   "main": "index.ts",
   "type": "module",
   "scripts": {
