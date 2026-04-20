@@ -1,5 +1,14 @@
 # logfire
 
+## 0.13.2
+
+### Patch Changes
+
+- 51f8ad5: Upgrade the published OpenTelemetry dependency ranges to patched versions and move
+  the Cloudflare workers integration to `@pydantic/otel-cf-workers@1.0.0-rc.55`.
+- Updated dependencies [51f8ad5]
+  - logfire@0.13.2
+
 ## 0.13.1
 
 ### Patch Changes
