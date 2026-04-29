@@ -31,11 +31,11 @@ export class ROCAUCEvaluator extends ReportEvaluator {
     this.positiveFrom = opts.positiveFrom
     this.positiveKey = opts.positiveKey
     this.nThresholds = opts.nThresholds ?? 100
-    this.title = opts.title ?? 'ROC'
+    this.title = opts.title ?? 'ROC Curve'
   }
 
   evaluate(ctx: ReportEvaluatorContext): [ROCAnalysis, ScalarAnalysis] {
-    const cases = ctx.cases.filter((c): c is ReportCase => 'output' in c)
+    const cases = ctx.report.cases.filter((c): c is ReportCase => 'output' in c)
     const inputs = buildThresholdInputs(cases, {
       positiveFrom: this.positiveFrom,
       positiveKey: this.positiveKey,
@@ -43,7 +43,7 @@ export class ROCAUCEvaluator extends ReportEvaluator {
       scoreKey: this.scoreKey,
     })
 
-    const thresholds = uniqueSortedThresholds(inputs.scores, this.nThresholds)
+    const thresholds = [Infinity, ...uniqueSortedThresholds(inputs.scores, this.nThresholds)]
     const points: { x: number; y: number }[] = []
     for (const t of thresholds) {
       let tp = 0
@@ -66,14 +66,14 @@ export class ROCAUCEvaluator extends ReportEvaluator {
     points.sort((a, b) => a.x - b.x)
     const xs = points.map((p) => p.x)
     const ys = points.map((p) => p.y)
-    const auc = trapezoidalAuc(xs, ys)
+    const auc = inputs.scores.length === 0 ? Number.NaN : trapezoidalAuc(xs, ys)
 
     return [
       {
         curves: [
-          { name: 'ROC', points, style: 'solid' },
+          { name: `${ctx.name} (AUC: ${auc.toFixed(3)})`, points, style: 'solid' },
           {
-            name: 'random',
+            name: 'Random',
             points: [
               { x: 0, y: 0 },
               { x: 1, y: 1 },
@@ -82,11 +82,13 @@ export class ROCAUCEvaluator extends ReportEvaluator {
           },
         ],
         title: this.title,
-        type: 'roc_curve',
+        type: 'line_plot',
         x_label: 'False Positive Rate',
+        x_range: [0, 1],
         y_label: 'True Positive Rate',
+        y_range: [0, 1],
       },
-      { title: `${this.title} — AUC`, type: 'scalar', value: auc },
+      { title: `${this.title} AUC`, type: 'scalar', value: auc },
     ]
   }
 
@@ -98,7 +100,7 @@ export class ROCAUCEvaluator extends ReportEvaluator {
     }
     if (this.positiveKey !== undefined) out.positive_key = this.positiveKey
     if (this.nThresholds !== 100) out.n_thresholds = this.nThresholds
-    if (this.title !== 'ROC') out.title = this.title
+    if (this.title !== 'ROC Curve') out.title = this.title
     return out
   }
 }

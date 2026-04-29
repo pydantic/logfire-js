@@ -4,6 +4,8 @@
  * strict-parses.
  */
 
+import pRetry from 'p-retry'
+
 import type { Evaluator } from './Evaluator'
 import type {
   EvaluationReason,
@@ -12,6 +14,7 @@ import type {
   EvaluatorFailureRecord,
   EvaluatorOutput,
   EvaluatorSpec,
+  RetryConfig,
 } from './types'
 
 import { ATTR_EVALUATOR_NAME, SPAN_MSG_TEMPLATE_EVALUATOR, SPAN_NAME_EVALUATOR_LITERAL } from './constants'
@@ -24,21 +27,27 @@ export interface RunEvaluatorsResult {
   scores: Record<string, EvaluationResultJson>
 }
 
-export async function runEvaluators(evaluators: readonly Evaluator[], ctx: EvaluatorContext): Promise<RunEvaluatorsResult> {
+export async function runEvaluators(
+  evaluators: readonly Evaluator[],
+  ctx: EvaluatorContext,
+  retryEvaluators?: RetryConfig
+): Promise<RunEvaluatorsResult> {
   const result: RunEvaluatorsResult = { assertions: {}, failures: [], labels: {}, scores: {} }
 
   for (const evaluator of evaluators) {
     const evaluatorName = evaluator.getResultName()
     const spec = evaluator.getSpec()
     try {
-      const raw = await evalsSpan(
-        SPAN_MSG_TEMPLATE_EVALUATOR,
-        {
-          attributes: { [ATTR_EVALUATOR_NAME]: evaluatorName },
-          spanName: SPAN_NAME_EVALUATOR_LITERAL,
-        },
-        async () => evaluator.evaluate(ctx)
-      )
+      const runOnce = (): Promise<EvaluatorOutput> =>
+        evalsSpan(
+          SPAN_MSG_TEMPLATE_EVALUATOR,
+          {
+            attributes: { [ATTR_EVALUATOR_NAME]: evaluatorName },
+            spanName: SPAN_NAME_EVALUATOR_LITERAL,
+          },
+          async () => evaluator.evaluate(ctx)
+        )
+      const raw = retryEvaluators === undefined ? await runOnce() : await pRetry(runOnce, retryEvaluators)
       mergeEvaluatorOutput(result, raw, evaluatorName, spec, evaluator.evaluatorVersion)
     } catch (err) {
       result.failures.push(buildFailureRecord(err, evaluatorName, spec, evaluator.evaluatorVersion))

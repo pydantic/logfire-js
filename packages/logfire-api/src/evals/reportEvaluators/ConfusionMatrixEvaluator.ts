@@ -17,7 +17,7 @@ export interface ConfusionMatrixOptions {
 }
 
 /**
- * Builds a confusion matrix from the report cases. Counts each (predicted, expected)
+ * Builds a confusion matrix from the report cases. Counts each (expected, predicted)
  * label pair. Mirrors pydantic-evals' `ConfusionMatrixEvaluator`.
  */
 export class ConfusionMatrixEvaluator extends ReportEvaluator {
@@ -35,26 +35,34 @@ export class ConfusionMatrixEvaluator extends ReportEvaluator {
   }
 
   evaluate(ctx: ReportEvaluatorContext): ConfusionMatrixAnalysis {
-    const matrix: Record<string, Record<string, number>> = {}
-    const trueLabels = new Set<string>()
-    const predictedLabels = new Set<string>()
+    const pairs: { expected: string; predicted: string }[] = []
+    const labels = new Set<string>()
 
-    for (const c of ctx.cases) {
+    for (const c of ctx.report.cases) {
       if (!isReportCase(c)) continue
-      const p = extractLabel(c, this.predicted)
-      const e = extractLabel(c, this.expected)
-      if (p === null || e === null) continue
-      predictedLabels.add(p)
-      trueLabels.add(e)
-      const row = (matrix[p] ??= {})
-      row[e] = (row[e] ?? 0) + 1
+      const predicted = extractLabel(c, this.predicted)
+      const expected = extractLabel(c, this.expected)
+      if (predicted === null || expected === null) continue
+      pairs.push({ expected, predicted })
+      labels.add(expected)
+      labels.add(predicted)
     }
 
+    const classLabels = [...labels].sort()
+    const index = new Map(classLabels.map((label, i) => [label, i] as const))
+    const matrix = classLabels.map(() => classLabels.map(() => 0))
+    for (const { expected, predicted } of pairs) {
+      const rowIndex = index.get(expected)
+      const colIndex = index.get(predicted)
+      const row = rowIndex === undefined ? undefined : matrix[rowIndex]
+      if (row !== undefined && colIndex !== undefined) {
+        row[colIndex] = (row[colIndex] ?? 0) + 1
+      }
+    }
     return {
+      class_labels: classLabels,
       matrix,
-      predicted_labels: [...predictedLabels].sort(),
       title: this.title,
-      true_labels: [...trueLabels].sort(),
       type: 'confusion_matrix',
     }
   }

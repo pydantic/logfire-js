@@ -24,6 +24,14 @@ export class Semaphore {
     }
   }
 
+  tryAcquire(): (() => void) | null {
+    if (this.permits <= 0) return null
+    this.permits--
+    return () => {
+      this.release()
+    }
+  }
+
   private release(): void {
     const next = this.waiters.shift()
     if (next !== undefined) {

@@ -149,6 +149,36 @@ describe('Dataset YAML round-trip', () => {
     }
   })
 
+  it('toFile writes schema sidecar idempotently when schemaPath is provided', async () => {
+    const ds = new Dataset({
+      cases: [new Case({ inputs: { v: 1 }, name: 'tmp' })],
+      evaluators: [new EqualsExpected()],
+      name: 'file-test',
+    })
+    const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
+    const os: typeof import('node:os') = await import('node:os')
+    const path: typeof import('node:path') = await import('node:path')
+    const tmpdir = await fs.mkdtemp(path.join(os.tmpdir(), 'logfire-evals-schema-'))
+    const filePath = path.join(tmpdir, 'dataset.yaml')
+    const schemaPath = path.join(tmpdir, 'dataset.schema.json')
+    try {
+      await ds.toFile(filePath, { schemaPath: 'dataset.schema.json' })
+      expect(await fs.readFile(filePath, 'utf8')).toContain('# yaml-language-server: $schema=dataset.schema.json')
+      const firstSchema = await fs.readFile(schemaPath, 'utf8')
+      const parsedSchema = JSON.parse(firstSchema) as { title?: unknown }
+      expect(parsedSchema.title).toBe('PydanticEvalsDataset')
+      const firstMtime = (await fs.stat(schemaPath)).mtimeMs
+
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      await ds.toFile(filePath, { schemaPath: 'dataset.schema.json' })
+
+      expect(await fs.readFile(schemaPath, 'utf8')).toBe(firstSchema)
+      expect((await fs.stat(schemaPath)).mtimeMs).toBe(firstMtime)
+    } finally {
+      await fs.rm(tmpdir, { force: true, recursive: true })
+    }
+  })
+
   it('rejects malformed dataset objects with a helpful zod error', () => {
     expect(() => Dataset.fromObject({ cases: 'not-an-array', name: 'x' })).toThrow()
   })

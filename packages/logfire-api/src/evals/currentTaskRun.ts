@@ -17,17 +17,24 @@ interface ALSLike<T> {
 }
 
 let alsImpl: ALSLike<TaskRunState> | null = null
+let alsProbeComplete = false
 /** Fallback storage cell for runtimes without ALS. Single-slot, single-execute. */
 let fallbackStore: null | TaskRunState = null
 
 async function ensureALS(): Promise<void> {
   if (alsImpl !== null) return
+  if (alsProbeComplete) return
+  alsProbeComplete = true
   if (!hasAsyncLocalStorage()) return
   // Lazy import — `node:async_hooks` is not available on the browser. Vite is
   // configured to externalize `node:*` so this resolves at runtime against the
   // host's module resolver.
-  const mod: typeof import('node:async_hooks') = await import('node:async_hooks')
-  alsImpl = new mod.AsyncLocalStorage<TaskRunState>()
+  try {
+    const mod: typeof import('node:async_hooks') = await import('node:async_hooks')
+    alsImpl = new mod.AsyncLocalStorage<TaskRunState>()
+  } catch {
+    alsImpl = null
+  }
 }
 
 /** Run `fn` with `state` set as the current task-run context. */

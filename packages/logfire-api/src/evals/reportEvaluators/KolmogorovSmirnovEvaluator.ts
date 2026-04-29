@@ -28,11 +28,11 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
     this.scoreFrom = opts.scoreFrom ?? 'scores'
     this.positiveFrom = opts.positiveFrom
     this.positiveKey = opts.positiveKey
-    this.title = opts.title ?? 'Kolmogorov–Smirnov'
+    this.title = opts.title ?? 'KS Plot'
   }
 
   evaluate(ctx: ReportEvaluatorContext): [KSAnalysis, ScalarAnalysis] {
-    const cases = ctx.cases.filter((c): c is ReportCase => 'output' in c)
+    const cases = ctx.report.cases.filter((c): c is ReportCase => 'output' in c)
     const inputs = buildThresholdInputs(cases, {
       positiveFrom: this.positiveFrom,
       positiveKey: this.positiveKey,
@@ -69,15 +69,16 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
     return [
       {
         curves: [
-          { name: 'positive CDF', points: positivePoints },
-          { name: 'negative CDF', points: negativePoints },
+          { name: 'Positive', points: positivePoints, step: 'end' },
+          { name: 'Negative', points: negativePoints, step: 'end' },
         ],
         title: this.title,
-        type: 'ks',
-        x_label: 'score',
-        y_label: 'CDF',
+        type: 'line_plot',
+        x_label: 'Score',
+        y_label: 'Cumulative Probability',
+        y_range: [0, 1],
       },
-      { title: `${this.title} — KS statistic`, type: 'scalar', value: ksStatistic },
+      { title: 'KS Statistic', type: 'scalar', value: ksStatistic },
     ]
   }
 
@@ -88,7 +89,7 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
       score_key: this.scoreKey,
     }
     if (this.positiveKey !== undefined) out.positive_key = this.positiveKey
-    if (this.title !== 'Kolmogorov–Smirnov') out.title = this.title
+    if (this.title !== 'KS Plot') out.title = this.title
     return out
   }
 }

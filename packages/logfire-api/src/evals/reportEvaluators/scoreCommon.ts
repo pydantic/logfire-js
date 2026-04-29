@@ -68,17 +68,8 @@ function extractPositive(c: ReportCase, opts: ThresholdOptions): boolean | null 
 
 export function uniqueSortedThresholds(scores: readonly number[], n: number): number[] {
   if (scores.length === 0) return []
-  let lo = Infinity
-  let hi = -Infinity
-  for (const s of scores) {
-    if (s < lo) lo = s
-    if (s > hi) hi = s
-  }
-  if (lo === hi) return [lo]
-  const step = (hi - lo) / (n - 1)
-  const out: number[] = []
-  for (let i = 0; i < n; i++) out.push(lo + step * i)
-  return out
+  const unique = [...new Set(scores)].sort((a, b) => b - a)
+  return downsample(unique, n)
 }
 
 /** AUC via the trapezoidal rule. Expects `xs` already sorted ascending. */
@@ -91,4 +82,16 @@ export function trapezoidalAuc(xs: readonly number[], ys: readonly number[]): nu
     auc += dx * yMid
   }
   return auc
+}
+
+export function downsample<T>(items: readonly T[], maxItems: number): T[] {
+  if (items.length <= maxItems) return [...items]
+  if (maxItems <= 0) return []
+  if (maxItems === 1) return [items[0]!]
+  const out: T[] = []
+  const step = (items.length - 1) / (maxItems - 1)
+  for (let i = 0; i < maxItems; i++) {
+    out.push(items[Math.round(i * step)]!)
+  }
+  return out
 }

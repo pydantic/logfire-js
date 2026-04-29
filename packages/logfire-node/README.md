@@ -65,7 +65,7 @@ JSON files round-trip across the two languages.
 
 ```ts
 import * as logfire from '@pydantic/logfire-node'
-import { Case, Dataset, EqualsExpected, withOnlineEvaluation } from '@pydantic/logfire-node/evals'
+import { Case, Dataset, Equals, EqualsExpected, withOnlineEvaluation } from '@pydantic/logfire-node/evals'
 
 logfire.configure({ serviceName: 'sentiment-classifier' })
 
@@ -83,10 +83,26 @@ const report = await dataset.evaluate(classify)
 
 // Online — wraps a function so each call also dispatches evaluators in the background.
 const monitored = withOnlineEvaluation(classify, {
-  evaluators: [new EqualsExpected()],
+  evaluators: [new Equals({ value: 'POSITIVE' })],
   target: 'sentiment-classifier',
 })
 await monitored({ text: 'I love this!' })
+```
+
+Runtime notes:
+
+- `Dataset.toFile` / `Dataset.fromFile` work in Node, Bun, and Deno. Browser and
+  Cloudflare Worker runtimes can use in-memory datasets and online evaluation,
+  but not filesystem-backed dataset helpers.
+- Browser offline evaluations should use `maxConcurrency: 1`; without
+  `AsyncLocalStorage`, concurrent case runs cannot isolate
+  `setEvalAttribute` / `incrementEvalMetric` state.
+- Manual non-Node smoke checks live under `scripts/runtime-smoke`:
+
+```sh
+pnpm build
+deno run --config scripts/runtime-smoke/deno.json --allow-read --allow-write scripts/runtime-smoke/evals-deno.ts
+bun run scripts/runtime-smoke/evals-bun.ts
 ```
 
 ## Contributing

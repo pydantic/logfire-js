@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  ATTR_EVALUATOR_NAME,
   Equals,
   ERROR_TYPE,
   EVAL_RESULT_EVENT_NAME,
@@ -14,6 +15,8 @@ import {
   GEN_AI_EXPLANATION,
   GEN_AI_SCORE_LABEL,
   GEN_AI_SCORE_VALUE,
+  OnlineEvaluator,
+  SPAN_NAME_EVALUATOR_LITERAL,
   waitForEvaluations,
   withOnlineEvaluation,
 } from '../../evals'
@@ -99,6 +102,11 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     expect(callSpan).toBeDefined()
     expect(rec.spanContext?.traceId).toBe(callSpan!.spanContext().traceId)
     expect(rec.spanContext?.spanId).toBe(callSpan!.spanContext().spanId)
+
+    const evaluatorSpan = spans.find((s) => s.name === SPAN_NAME_EVALUATOR_LITERAL)
+    expect(evaluatorSpan?.attributes[ATTR_EVALUATOR_NAME]).toBe('AlwaysPass')
+    expect(evaluatorSpan?.parentSpanContext?.spanId).toBe(callSpan!.spanContext().spanId)
+    expect(evaluatorSpan?.spanContext().traceId).toBe(callSpan!.spanContext().traceId)
   })
 
   it('encodes false as score.value=0 + score.label=fail', async () => {
@@ -193,6 +201,42 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     const src = JSON.parse(logs[0]!.attributes[GEN_AI_EVALUATOR_SOURCE] as string) as { arguments: unknown; name: string }
     expect(src.name).toBe('Equals')
     expect(src.arguments).toEqual({ value: 'expected' })
+  })
+
+  it('drops online evaluations at maxConcurrency without blocking the wrapped call', async () => {
+    let releaseSlow!: () => void
+    const slow = new Promise<void>((resolve) => {
+      releaseSlow = resolve
+    })
+    const drops: string[] = []
+
+    class SlowEvaluator extends Evaluator {
+      static evaluatorName = 'SlowEvaluator'
+
+      async evaluate(): Promise<boolean> {
+        await slow
+        return true
+      }
+    }
+
+    const evaluator = new OnlineEvaluator({
+      evaluator: new SlowEvaluator(),
+      maxConcurrency: 1,
+      onMaxConcurrency: (name) => {
+        drops.push(name)
+      },
+    })
+    const fn = withOnlineEvaluation(async () => 'x', { evaluators: [evaluator], target: 'slow-target' })
+
+    const { logs } = await withMemoryLogExporter(async () => {
+      await fn()
+      await fn()
+      expect(drops).toEqual(['SlowEvaluator'])
+      releaseSlow()
+      await waitForEvaluations()
+    })
+
+    expect(logs).toHaveLength(1)
   })
 })
 

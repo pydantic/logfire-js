@@ -123,11 +123,19 @@ export function computeAverages(name: string, cases: readonly ReportCase[]): Rep
   for (const [k, { count, sum }] of Object.entries(metricsAcc)) {
     metrics[k] = { count, mean: count === 0 ? 0 : sum / count }
   }
+  const labels: ReportCaseAggregate['labels'] = {}
+  for (const [k, counts] of Object.entries(labelsAcc)) {
+    const total = Object.values(counts).reduce((sum, count) => sum + count, 0)
+    labels[k] = {}
+    for (const [label, count] of Object.entries(counts)) {
+      labels[k][label] = total === 0 ? 0 : count / total
+    }
+  }
 
   const n = cases.length === 0 ? 1 : cases.length
   return {
     assertions: assertionsTotal === 0 ? null : assertionsPassed / assertionsTotal,
-    labels: labelsAcc,
+    labels,
     metrics,
     name,
     scores,

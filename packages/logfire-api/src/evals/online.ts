@@ -10,11 +10,12 @@
  * Mirrors pydantic-evals' `online.py` + `_online.py`.
  */
 
-import { propagation } from '@opentelemetry/api'
+import { context as ContextAPI, propagation, trace as TraceAPI, TraceFlags } from '@opentelemetry/api'
 
 import type { Evaluator } from './Evaluator'
 import type { EvaluationResultJson, EvaluatorContext, EvaluatorFailureRecord, EvaluatorOutput } from './types'
 
+import { ATTR_EVALUATOR_NAME, SPAN_MSG_TEMPLATE_EVALUATOR, SPAN_NAME_EVALUATOR_LITERAL } from './constants'
 import { getCurrentTaskRun } from './currentTaskRun'
 import { evalsSpan } from './internal'
 import { buildEvaluationResultJson, emitEvaluationResult, emitEvaluatorFailure, spanReferenceFromSpan } from './otelEmit'
@@ -102,14 +103,26 @@ export class OnlineEvaluator {
     this.sink = opts.sink
   }
 
-  async tryRun(ctx: EvaluatorContext): Promise<{ failures: EvaluatorFailureRecord[]; results: EvaluationResultJson[] }> {
-    const release = await tryAcquire(this.maxConcurrencySem)
+  async tryRun(
+    ctx: EvaluatorContext,
+    parentSpanRef: null | { spanId: string; traceId: string }
+  ): Promise<{ failures: EvaluatorFailureRecord[]; results: EvaluationResultJson[] }> {
+    const release = this.maxConcurrencySem.tryAcquire()
     if (release === null) {
       this.onMaxConcurrency?.(this.name)
       return { failures: [], results: [] }
     }
     try {
-      const out = await Promise.resolve(this.inner.evaluate(ctx))
+      const out = await runWithParentSpanContext(parentSpanRef, () =>
+        evalsSpan(
+          SPAN_MSG_TEMPLATE_EVALUATOR,
+          {
+            attributes: { [ATTR_EVALUATOR_NAME]: this.name },
+            spanName: SPAN_NAME_EVALUATOR_LITERAL,
+          },
+          async () => this.inner.evaluate(ctx)
+        )
+      )
       return processOutput(out, this.inner)
     } catch (err) {
       this.onError?.(err, this.name)
@@ -308,7 +321,7 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
   const allResults: EvaluationResultJson[] = []
   const allFailures: EvaluatorFailureRecord[] = []
   for (const ev of args.sampledEvaluators) {
-    const { failures, results } = await ev.tryRun(ctx)
+    const { failures, results } = await ev.tryRun(ctx, args.callSpanRef)
     allResults.push(...results)
     allFailures.push(...failures)
   }
@@ -371,15 +384,15 @@ function buildFailureRecord(
   return out
 }
 
-function tryAcquire(sem: Semaphore): Promise<(() => void) | null> {
-  // Non-blocking acquire — we don't queue, we drop the dispatch and report
-  // via `onMaxConcurrency` (matches Python's behavior at `_online.py` semaphore).
-  // The tiny Semaphore class doesn't expose try-acquire, so we use a race with
-  // an immediate fail. Cheap workaround: peek the internals via a property,
-  // or simulate via a Promise.race.
-  // For now: just acquire (we'll add try-acquire later if profiling shows queue
-  // growth).
-  return sem.acquire()
+function runWithParentSpanContext<R>(parentSpanRef: null | { spanId: string; traceId: string }, fn: () => R): R {
+  if (parentSpanRef === null) return fn()
+  const parentContext = TraceAPI.setSpanContext(ContextAPI.active(), {
+    isRemote: false,
+    spanId: parentSpanRef.spanId,
+    traceFlags: TraceFlags.SAMPLED,
+    traceId: parentSpanRef.traceId,
+  })
+  return ContextAPI.with(parentContext, fn)
 }
 
 function extractParamNames(fn: (...args: unknown[]) => unknown): string[] {

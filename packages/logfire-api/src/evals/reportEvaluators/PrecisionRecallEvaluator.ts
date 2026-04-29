@@ -35,7 +35,7 @@ export class PrecisionRecallEvaluator extends ReportEvaluator {
   }
 
   evaluate(ctx: ReportEvaluatorContext): [PrecisionRecallAnalysis, ScalarAnalysis] {
-    const cases = ctx.cases.filter((c): c is ReportCase => 'output' in c)
+    const cases = ctx.report.cases.filter((c): c is ReportCase => 'output' in c)
     const inputs = buildThresholdInputs(cases, {
       positiveFrom: this.positiveFrom,
       positiveKey: this.positiveKey,
@@ -44,8 +44,10 @@ export class PrecisionRecallEvaluator extends ReportEvaluator {
     })
 
     const thresholds = uniqueSortedThresholds(inputs.scores, this.nThresholds)
-    const precision: number[] = []
-    const recall: number[] = []
+    const points: { precision: number; recall: number; threshold: number }[] = []
+    if (inputs.scores.length > 0) {
+      points.push({ precision: 1, recall: 0, threshold: Math.max(...inputs.scores) })
+    }
     for (const t of thresholds) {
       let tp = 0
       let fp = 0
@@ -57,19 +59,26 @@ export class PrecisionRecallEvaluator extends ReportEvaluator {
         else if (aboveThreshold && !positive) fp++
         else if (!aboveThreshold && positive) fn++
       }
-      precision.push(tp + fp === 0 ? 1 : tp / (tp + fp))
-      recall.push(tp + fn === 0 ? 0 : tp / (tp + fn))
+      points.push({
+        precision: tp + fp === 0 ? 1 : tp / (tp + fp),
+        recall: tp + fn === 0 ? 0 : tp / (tp + fn),
+        threshold: t,
+      })
     }
 
     // Recall ascending → AUC under PR curve (a.k.a. average precision).
-    const sorted = recall.map((r, i) => [r, precision[i]!] as const).sort((a, b) => a[0] - b[0])
+    const sorted = points.map((p) => [p.recall, p.precision] as const).sort((a, b) => a[0] - b[0])
     const xs = sorted.map(([r]) => r)
     const ys = sorted.map(([, p]) => p)
-    const auc = trapezoidalAuc(xs, ys)
+    const auc = inputs.scores.length === 0 ? Number.NaN : trapezoidalAuc(xs, ys)
 
     return [
-      { precision, recall, thresholds, title: this.title, type: 'precision_recall' },
-      { title: `${this.title} — AUC`, type: 'scalar', value: auc },
+      {
+        curves: inputs.scores.length === 0 ? [] : [{ auc, name: ctx.name, points }],
+        title: this.title,
+        type: 'precision_recall',
+      },
+      { title: `${this.title} AUC`, type: 'scalar', value: auc },
     ]
   }
 

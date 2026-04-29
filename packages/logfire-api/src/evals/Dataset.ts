@@ -80,11 +80,9 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
 
   static async fromFile<I = unknown, O = unknown, M = unknown>(filePath: string, options: FromOptions = {}): Promise<Dataset<I, O, M>> {
     if (!hasNodeFs()) throw new Error('Dataset.fromFile is only supported on Node, Bun, and Deno (no filesystem in browser/CF Workers)')
-    const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
-    const path: typeof import('node:path') = await import('node:path')
-    const text = await fs.readFile(filePath, 'utf8')
+    const text = await readTextFile(filePath)
     const format: 'json' | 'yaml' = filePath.endsWith('.json') ? 'json' : 'yaml'
-    const defaultName = options.defaultName ?? path.parse(filePath).name
+    const defaultName = options.defaultName ?? fileStem(filePath)
     return Dataset.fromText<I, O, M>(text, { ...options, defaultName, format })
   }
 
@@ -181,6 +179,7 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
               datasetEvaluators: this.evaluators,
               lifecycleClass: options.lifecycle,
               originalCase: c,
+              retryEvaluators: options.retryEvaluators,
               retryTask: options.retryTask,
               sourceCaseName: repeat > 1 ? sourceCaseName : undefined,
               task,
@@ -207,6 +206,16 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
         // on the span's attributes BEFORE it closes so the platform sees them.
         const analyses: ReportAnalysis[] = []
         const reportEvaluatorFailures: EvaluatorFailureRecord[] = []
+        const report: EvaluationReport<Inputs, Output, Metadata> = {
+          analyses,
+          cases,
+          experiment_metadata: options.metadata,
+          failures,
+          name: experimentName,
+          report_evaluator_failures: reportEvaluatorFailures,
+          span_id,
+          trace_id,
+        }
         for (const re of this.reportEvaluators) {
           const evaluatorName = (re.constructor as { evaluatorName?: string; name: string }).evaluatorName ?? re.constructor.name
           try {
@@ -216,7 +225,13 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
                 attributes: { evaluator_name: evaluatorName },
                 spanName: SPAN_NAME_REPORT_EVALUATOR_LITERAL,
               },
-              async () => re.evaluate({ cases: [...cases, ...failures], experimentMetadata: options.metadata, name: evaluatorName })
+              async () =>
+                re.evaluate({
+                  cases: [...cases, ...failures],
+                  experimentMetadata: options.metadata,
+                  name: experimentName,
+                  report,
+                })
             )
             const list = Array.isArray(out) ? out : [out]
             for (const item of list) analyses.push(item)
@@ -245,16 +260,7 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
         if (reportEvaluatorFailures.length > 0) finalAttrs[EXPERIMENT_REPORT_EVALUATOR_FAILURES_KEY] = reportEvaluatorFailures
         setEvalsSpanAttributes(experimentSpan, finalAttrs)
 
-        return {
-          analyses,
-          cases,
-          experiment_metadata: options.metadata,
-          failures,
-          name: experimentName,
-          report_evaluator_failures: reportEvaluatorFailures,
-          span_id,
-          trace_id,
-        }
+        return report
       }
     )
   }
@@ -274,12 +280,15 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
 
   async toFile(filePath: string, opts: ToOptions = {}): Promise<void> {
     if (!hasNodeFs()) throw new Error('Dataset.toFile is only supported on Node, Bun, and Deno (no filesystem in browser/CF Workers)')
-    const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
     const format: 'json' | 'yaml' = filePath.endsWith('.json') ? 'json' : 'yaml'
     const text = this.toText(format, opts)
     const finalText =
       format === 'yaml' && opts.schemaPath !== undefined ? `# yaml-language-server: $schema=${opts.schemaPath}\n${text}` : text
-    await fs.writeFile(filePath, finalText, 'utf8')
+    await writeTextFile(filePath, finalText)
+    if (opts.schemaPath !== undefined) {
+      const schemaText = `${JSON.stringify(this.jsonSchema(), null, 2)}\n`
+      await writeTextFileIfChanged(resolveSiblingPath(filePath, opts.schemaPath), schemaText)
+    }
   }
 
   toObject(opts?: ToOptions): Record<string, unknown> {
@@ -310,12 +319,13 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
   datasetEvaluators: readonly Evaluator<Inputs, Output, Metadata>[]
   lifecycleClass?: CaseLifecycleClass<Inputs, Output, Metadata>
   originalCase: Case<Inputs, Output, Metadata>
+  retryEvaluators?: import('./types').RetryConfig
   retryTask?: import('./types').RetryConfig
   sourceCaseName?: string
   task: (inputs: Inputs) => Output | Promise<Output>
   taskName: string
 }): Promise<ReportCase<Inputs, Output, Metadata> | ReportCaseFailure<Inputs, Output, Metadata>> {
-  const { caseName, datasetEvaluators, lifecycleClass, originalCase, retryTask, sourceCaseName, task, taskName } = args
+  const { caseName, datasetEvaluators, lifecycleClass, originalCase, retryEvaluators, retryTask, sourceCaseName, task, taskName } = args
   // eslint-disable-next-line new-cap
   const lifecycle: CaseLifecycle<Inputs, Output, Metadata> | null = lifecycleClass ? new lifecycleClass(originalCase) : null
 
@@ -423,7 +433,7 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
     }
 
     const allEvaluators: Evaluator<Inputs, Output, Metadata>[] = [...datasetEvaluators, ...originalCase.evaluators]
-    const evResult = await runEvaluators(allEvaluators as Evaluator[], ctx as EvaluatorContext)
+    const evResult = await runEvaluators(allEvaluators as Evaluator[], ctx as EvaluatorContext, retryEvaluators)
 
     const totalDuration = nowSec() - totalStart
 
@@ -463,6 +473,59 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
 
 function nowSec(): number {
   return performance.now() / 1000
+}
+
+interface DenoTextFileRuntime {
+  Deno?: {
+    readTextFile?: (path: string) => Promise<string>
+    writeTextFile?: (path: string, data: string) => Promise<void>
+  }
+}
+
+async function readTextFile(filePath: string): Promise<string> {
+  const deno = (globalThis as DenoTextFileRuntime).Deno
+  if (typeof deno?.readTextFile === 'function') return deno.readTextFile(filePath)
+  const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
+  return fs.readFile(filePath, 'utf8')
+}
+
+async function writeTextFile(filePath: string, text: string): Promise<void> {
+  const deno = (globalThis as DenoTextFileRuntime).Deno
+  if (typeof deno?.writeTextFile === 'function') {
+    await deno.writeTextFile(filePath, text)
+    return
+  }
+  const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
+  await fs.writeFile(filePath, text, 'utf8')
+}
+
+async function writeTextFileIfChanged(filePath: string, text: string): Promise<void> {
+  let existing: string | undefined
+  try {
+    existing = await readTextFile(filePath)
+  } catch {
+    existing = undefined
+  }
+  if (existing !== text) await writeTextFile(filePath, text)
+}
+
+function fileStem(filePath: string): string {
+  const base =
+    filePath
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .pop() ?? filePath
+  const dot = base.lastIndexOf('.')
+  return dot <= 0 ? base : base.slice(0, dot)
+}
+
+function resolveSiblingPath(filePath: string, siblingPath: string): string {
+  if (/^(?:[a-zA-Z]:[\\/]|[\\/]|[a-zA-Z][a-zA-Z\d+.-]*:)/.test(siblingPath)) return siblingPath
+  const trimmed = filePath.replace(/[\\/]+$/, '')
+  const sep = trimmed.includes('\\') ? '\\' : '/'
+  const lastSep = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  const dir = lastSep === -1 ? '.' : trimmed.slice(0, lastSep)
+  return dir === '.' ? siblingPath : `${dir}${sep}${siblingPath}`
 }
 
 /**

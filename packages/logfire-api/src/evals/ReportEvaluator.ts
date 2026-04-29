@@ -1,53 +1,34 @@
-import type { ReportCase, ReportCaseFailure } from './reporting'
+import type { EvaluationReport, ReportCase, ReportCaseFailure } from './reporting'
 import type { EvaluatorSpec } from './types'
 
 import { evaluatorRegistryKey } from './registry'
 
 /** Discriminated union of analysis outputs report evaluators may emit. */
-export type ReportAnalysis =
-  | ConfusionMatrixAnalysis
-  | KSAnalysis
-  | LinePlotAnalysis
-  | PrecisionRecallAnalysis
-  | ROCAnalysis
-  | ScalarAnalysis
-  | TableAnalysis
+export type ReportAnalysis = ConfusionMatrixAnalysis | LinePlotAnalysis | PrecisionRecallAnalysis | ScalarAnalysis | TableAnalysis
 
 export interface ConfusionMatrixAnalysis {
-  matrix: Record<string, Record<string, number>>
-  predicted_labels: string[]
+  class_labels: string[]
+  description?: string
+  matrix: number[][]
   title: string
-  true_labels: string[]
   type: 'confusion_matrix'
 }
 
 export interface PrecisionRecallAnalysis {
-  precision: number[]
-  recall: number[]
-  thresholds: number[]
+  curves: { auc?: number; name: string; points: { precision: number; recall: number; threshold: number }[] }[]
+  description?: string
   title: string
   type: 'precision_recall'
 }
 
-export interface ROCAnalysis {
-  curves: { name: string; points: { x: number; y: number }[]; style?: 'dashed' | 'solid' }[]
-  title: string
-  type: 'roc_curve'
-  x_label: string
-  y_label: string
-}
-
-export interface KSAnalysis {
-  curves: { name: string; points: { x: number; y: number }[] }[]
-  title: string
-  type: 'ks'
-  x_label: string
-  y_label: string
-}
+export type ROCAnalysis = LinePlotAnalysis
+export type KSAnalysis = LinePlotAnalysis
 
 export interface ScalarAnalysis {
+  description?: string
   title: string
   type: 'scalar'
+  unit?: string
   value: number
 }
 
@@ -60,16 +41,20 @@ export interface TableAnalysis {
 
 export interface LinePlotAnalysis {
   curves: { name: string; points: { x: number; y: number }[]; step?: 'end' | 'middle' | 'start'; style?: 'dashed' | 'solid' }[]
+  description?: string
   title: string
   type: 'line_plot'
   x_label: string
+  x_range?: [number, number]
   y_label: string
+  y_range?: [number, number]
 }
 
 export interface ReportEvaluatorContext<Inputs = unknown, Output = unknown, Metadata = unknown> {
   cases: readonly (ReportCase<Inputs, Output, Metadata> | ReportCaseFailure<Inputs, Output, Metadata>)[]
   experimentMetadata?: Record<string, unknown>
   name: string
+  report: EvaluationReport<Inputs, Output, Metadata>
 }
 
 export abstract class ReportEvaluator<Inputs = unknown, Output = unknown, Metadata = unknown> {

@@ -4,11 +4,13 @@ import { describe, expect, it } from 'vitest'
 import {
   Case,
   CaseLifecycle,
+  computeAverages,
   ConfusionMatrixEvaluator,
   Dataset,
   Equals,
   EqualsExpected,
   type EvaluationReport,
+  Evaluator,
   type EvaluatorContext,
   EXPERIMENT_ANALYSES_KEY,
   KolmogorovSmirnovEvaluator,
@@ -16,6 +18,8 @@ import {
   renderReport,
   type ReportCase,
   type ReportCaseFailure,
+  ReportEvaluator,
+  type ReportEvaluatorContext,
   ROCAUCEvaluator,
   SPAN_NAME_EXPERIMENT,
 } from '../../evals'
@@ -118,15 +122,67 @@ describe('retry support via p-retry', () => {
     )
     expect(result.failures).toHaveLength(1)
   })
+
+  it('retries evaluators and records failure after evaluator retries are exhausted', async () => {
+    class FlakyEvaluator extends Evaluator {
+      static evaluatorName = 'FlakyEvaluator'
+      attempts = 0
+
+      evaluate(): boolean {
+        this.attempts += 1
+        if (this.attempts < 3) throw new Error('not yet')
+        return true
+      }
+    }
+
+    const flaky = new FlakyEvaluator()
+    const ds = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'recovers' })],
+      evaluators: [flaky],
+      name: 'retry-evaluator',
+    })
+    const { result } = await withMemoryExporter(async () =>
+      ds.evaluate((input) => input, { retryEvaluators: { factor: 1, minTimeout: 1, retries: 5 } })
+    )
+
+    expect(flaky.attempts).toBe(3)
+    expect(result.cases[0]?.assertions.FlakyEvaluator?.value).toBe(true)
+    expect(result.cases[0]?.evaluator_failures).toEqual([])
+
+    class AlwaysThrowsEvaluator extends Evaluator {
+      static evaluatorName = 'AlwaysThrowsEvaluator'
+      attempts = 0
+
+      evaluate(): never {
+        this.attempts += 1
+        throw new Error('persistent evaluator')
+      }
+    }
+
+    const alwaysThrows = new AlwaysThrowsEvaluator()
+    const failing = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'fails' })],
+      evaluators: [alwaysThrows],
+      name: 'retry-evaluator-failure',
+    })
+    const failed = await withMemoryExporter(async () =>
+      failing.evaluate((input) => input, { retryEvaluators: { factor: 1, minTimeout: 1, retries: 2 } })
+    )
+
+    expect(alwaysThrows.attempts).toBe(3)
+    expect(failed.result.cases[0]?.evaluator_failures).toMatchObject([
+      { error_message: 'persistent evaluator', error_type: 'Error', name: 'AlwaysThrowsEvaluator' },
+    ])
+  })
 })
 
 describe('report-level evaluators land on the experiment span', () => {
-  it('ConfusionMatrixEvaluator analyses end up under logfire.experiment.analyses', async () => {
+  it('ConfusionMatrixEvaluator emits Python-compatible matrix rows=expected columns=predicted', async () => {
     const dataset = new Dataset<{ x: string }, string>({
       cases: [
         new Case<{ x: string }, string>({ expectedOutput: 'A', inputs: { x: 'A' }, name: '1' }),
-        new Case<{ x: string }, string>({ expectedOutput: 'A', inputs: { x: 'A' }, name: '2' }),
-        new Case<{ x: string }, string>({ expectedOutput: 'B', inputs: { x: 'B' }, name: '3' }),
+        new Case<{ x: string }, string>({ expectedOutput: 'A', inputs: { x: 'B' }, name: '2' }),
+        new Case<{ x: string }, string>({ expectedOutput: 'B', inputs: { x: 'A' }, name: '3' }),
       ],
       name: 'confusion-matrix-test',
       reportEvaluators: [new ConfusionMatrixEvaluator({ expected: { from: 'expected_output' }, predicted: { from: 'output' } })],
@@ -135,20 +191,51 @@ describe('report-level evaluators land on the experiment span', () => {
     const { result, spans } = await withMemoryExporter(async () => dataset.evaluate(({ x }) => x))
 
     expect(result.analyses).toHaveLength(1)
-    expect(result.analyses[0]?.type).toBe('confusion_matrix')
-    const cm = result.analyses[0] as { matrix: Record<string, Record<string, number>> }
-    expect(cm.matrix.A?.A).toBe(2)
-    expect(cm.matrix.B?.B).toBe(1)
+    expect(result.analyses[0]).toEqual({
+      class_labels: ['A', 'B'],
+      matrix: [
+        [1, 1],
+        [1, 0],
+      ],
+      title: 'Confusion Matrix',
+      type: 'confusion_matrix',
+    })
 
     // Analyses MUST be on the experiment span as a JSON-encoded array.
     const experimentSpan = spans.find((s) => s.name === SPAN_NAME_EXPERIMENT)!
     const analysesAttr = experimentSpan.attributes[EXPERIMENT_ANALYSES_KEY]
     expect(typeof analysesAttr).toBe('string')
-    const parsed = JSON.parse(analysesAttr as string) as { type: string }[]
-    expect(parsed[0]?.type).toBe('confusion_matrix')
+    expect(JSON.parse(analysesAttr as string)).toEqual(result.analyses)
   })
 
-  it('PrecisionRecall + ROCAUC + KS produce paired analysis arrays', async () => {
+  it('passes the experiment name and full report to report evaluators', async () => {
+    let captured: ReportEvaluatorContext<{ x: string }, string> | undefined
+    class CaptureReportEvaluator extends ReportEvaluator<{ x: string }, string> {
+      static evaluatorName = 'CaptureReportEvaluator'
+
+      evaluate(ctx: ReportEvaluatorContext<{ x: string }, string>) {
+        captured = ctx
+        return { columns: ['name'], rows: [[ctx.name]], title: 'captured', type: 'table' as const }
+      }
+    }
+
+    const dataset = new Dataset<{ x: string }, string>({
+      cases: [new Case<{ x: string }, string>({ expectedOutput: 'A', inputs: { x: 'A' }, name: '1' })],
+      name: 'report-context-test',
+      reportEvaluators: [new CaptureReportEvaluator()],
+    })
+
+    const { result } = await withMemoryExporter(async () =>
+      dataset.evaluate(({ x }) => x, { metadata: { owner: 'evals' }, name: 'experiment-name' })
+    )
+
+    expect(captured?.name).toBe('experiment-name')
+    expect(captured?.experimentMetadata).toEqual({ owner: 'evals' })
+    expect(captured?.report).toBe(result)
+    expect(captured?.report.cases[0]?.name).toBe('1')
+  })
+
+  it('PrecisionRecall + ROCAUC + KS emit Python-compatible analysis shapes', async () => {
     const dataset = new Dataset<{ score: number }, number>({
       cases: [
         new Case<{ score: number }, number>({ expectedOutput: 1, inputs: { score: 0.9 }, name: '1' }),
@@ -176,11 +263,108 @@ describe('report-level evaluators land on the experiment span', () => {
 
     // Each of PR / ROC / KS contributes 2 analyses (curve + scalar AUC/KS).
     expect(result.analyses).toHaveLength(6)
-    const types = result.analyses.map((a) => a.type)
-    expect(types).toContain('precision_recall')
-    expect(types).toContain('roc_curve')
-    expect(types).toContain('ks')
-    expect(types.filter((t) => t === 'scalar')).toHaveLength(3)
+    expect(result.analyses).toEqual([
+      {
+        curves: [
+          {
+            auc: 1,
+            name: 'thresholds-test',
+            points: [
+              { precision: 1, recall: 0, threshold: 0.9 },
+              { precision: 1, recall: 0.5, threshold: 0.9 },
+              { precision: 1, recall: 1, threshold: 0.6 },
+              { precision: 2 / 3, recall: 1, threshold: 0.3 },
+              { precision: 0.5, recall: 1, threshold: 0.1 },
+            ],
+          },
+        ],
+        title: 'Precision–Recall',
+        type: 'precision_recall',
+      },
+      { title: 'Precision–Recall AUC', type: 'scalar', value: 1 },
+      {
+        curves: [
+          {
+            name: 'thresholds-test (AUC: 1.000)',
+            points: [
+              { x: 0, y: 0 },
+              { x: 0, y: 0.5 },
+              { x: 0, y: 1 },
+              { x: 0.5, y: 1 },
+              { x: 1, y: 1 },
+            ],
+            style: 'solid',
+          },
+          {
+            name: 'Random',
+            points: [
+              { x: 0, y: 0 },
+              { x: 1, y: 1 },
+            ],
+            style: 'dashed',
+          },
+        ],
+        title: 'ROC Curve',
+        type: 'line_plot',
+        x_label: 'False Positive Rate',
+        x_range: [0, 1],
+        y_label: 'True Positive Rate',
+        y_range: [0, 1],
+      },
+      { title: 'ROC Curve AUC', type: 'scalar', value: 1 },
+      {
+        curves: [
+          {
+            name: 'Positive',
+            points: [
+              { x: 0.1, y: 0 },
+              { x: 0.3, y: 0 },
+              { x: 0.6, y: 0.5 },
+              { x: 0.9, y: 1 },
+            ],
+            step: 'end',
+          },
+          {
+            name: 'Negative',
+            points: [
+              { x: 0.1, y: 0.5 },
+              { x: 0.3, y: 1 },
+              { x: 0.6, y: 1 },
+              { x: 0.9, y: 1 },
+            ],
+            step: 'end',
+          },
+        ],
+        title: 'KS Plot',
+        type: 'line_plot',
+        x_label: 'Score',
+        y_label: 'Cumulative Probability',
+        y_range: [0, 1],
+      },
+      { title: 'KS Statistic', type: 'scalar', value: 1 },
+    ])
+  })
+
+  it('computes label averages as normalized frequencies', () => {
+    const makeCase = (label: string): ReportCase => ({
+      assertions: {},
+      attributes: {},
+      evaluator_failures: [],
+      inputs: 'x',
+      labels: { grade: { name: 'grade', reason: null, source: { arguments: null, name: 'Labeler' }, value: label } },
+      metrics: {},
+      name: label,
+      output: 'x',
+      scores: {},
+      span_id: null,
+      task_duration: 0,
+      total_duration: 0,
+      trace_id: null,
+    })
+
+    expect(computeAverages('labels', [makeCase('good'), makeCase('good'), makeCase('bad')]).labels).toEqual({
+      grade: { bad: 1 / 3, good: 2 / 3 },
+    })
   })
 })
 
