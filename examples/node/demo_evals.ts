@@ -36,7 +36,7 @@ import {
 } from '@pydantic/logfire-node/evals'
 
 logfire.configure({
-  baseUrl: process.env.LOGFIRE_BASE_URL ?? 'http://localhost:3000',
+  advanced: { baseUrl: process.env.LOGFIRE_BASE_URL ?? 'http://localhost:3000' },
   console: false,
   diagLogLevel: logfire.DiagLogLevel.NONE,
   environment: 'development',
