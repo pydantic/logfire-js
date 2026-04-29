@@ -40,16 +40,6 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
-    },
-    "./evals": {
-      "import": {
-        "types": "./dist/evals.d.ts",
-        "default": "./dist/evals.js"
-      },
-      "require": {
-        "types": "./dist/evals.d.cts",
-        "default": "./dist/evals.cjs"
-      }
     }
   },
   "scripts": {

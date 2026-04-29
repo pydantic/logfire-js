@@ -1,13 +1,11 @@
 ---
 'logfire': minor
-'@pydantic/logfire-browser': minor
-'@pydantic/logfire-cf-workers': minor
 '@pydantic/logfire-node': minor
 ---
 
 Add evals support — offline + online evaluations.
 
-A new `logfire/evals` subpath, re-exported by `@pydantic/logfire-node/evals`, `@pydantic/logfire-browser/evals`, and `@pydantic/logfire-cf-workers/evals`, exports `Dataset`, `Case`, `Evaluator`, built-in evaluators (`Equals`, `EqualsExpected`, `Contains`, `IsInstance`, `MaxDuration`, `HasMatchingSpan`, `LLMJudge`), report-level evaluators (`ConfusionMatrixEvaluator`, `PrecisionRecallEvaluator`, `ROCAUCEvaluator`, `KolmogorovSmirnovEvaluator`), and `withOnlineEvaluation` for runtime monitoring.
+A new `logfire/evals` subpath exports `Dataset`, `Case`, `Evaluator`, built-in evaluators (`Equals`, `EqualsExpected`, `Contains`, `IsInstance`, `MaxDuration`, `HasMatchingSpan`, `LLMJudge`), report-level evaluators (`ConfusionMatrixEvaluator`, `PrecisionRecallEvaluator`, `ROCAUCEvaluator`, `KolmogorovSmirnovEvaluator`), and `withOnlineEvaluation` for runtime monitoring.
 
 Emitted OTel spans, log events, and report analyses are wire-compatible with the Python `pydantic-evals` package, so experiments, cases, report-level charts, and live evaluations show up automatically in the Logfire web UI without any additional configuration. Datasets serialize to / deserialize from the same YAML and JSON format Python uses (`Dataset.toFile` / `Dataset.fromFile`, `Dataset.jsonSchema()`), with filesystem helpers supported in Node, Bun, and Deno.
 

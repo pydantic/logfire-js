@@ -262,9 +262,8 @@ from your code.
 ## Evaluations
 
 The `logfire/evals` subpath provides offline datasets and online evaluation
-wrappers that emit Logfire-compatible OpenTelemetry spans and log events. Node
-users can also import the same API from `@pydantic/logfire-node/evals`; browser
-and Cloudflare Worker packages re-export it from their own `/evals` subpaths.
+wrappers that emit Logfire-compatible OpenTelemetry spans and log events. Add
+`logfire` as a direct dependency in projects that import this subpath.
 
 ```ts
 import { Case, Dataset, Equals, EqualsExpected, withOnlineEvaluation } from 'logfire/evals'

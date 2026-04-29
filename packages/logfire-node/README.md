@@ -58,14 +58,15 @@ the live view of your Logfire project.
 
 ## Evaluations
 
-`@pydantic/logfire-node/evals` provides offline + online evaluation primitives
-that emit OTel spans / log events compatible with the Logfire Evaluations UI.
-The wire format matches the Python `pydantic-evals` package, so dataset YAML /
-JSON files round-trip across the two languages.
+`logfire/evals` provides offline + online evaluation primitives that emit OTel
+spans / log events compatible with the Logfire Evaluations UI. The wire format
+matches the Python `pydantic-evals` package, so dataset YAML / JSON files
+round-trip across the two languages. Add `logfire` as a direct dependency in
+projects that import this subpath.
 
 ```ts
 import * as logfire from '@pydantic/logfire-node'
-import { Case, Dataset, Equals, EqualsExpected, withOnlineEvaluation } from '@pydantic/logfire-node/evals'
+import { Case, Dataset, Equals, EqualsExpected, withOnlineEvaluation } from 'logfire/evals'
 
 logfire.configure({ serviceName: 'sentiment-classifier' })
 
