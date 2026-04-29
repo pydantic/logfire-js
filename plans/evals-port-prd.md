@@ -82,6 +82,26 @@ import { Dataset, Case, Equals, EqualsExpected, withOnlineEvaluation } from 'log
 
 This keeps `import 'logfire'` lean (no zod / no js-yaml in the import graph for users not using evals) and gives evals a discoverable namespace. Both `logfire-node` and `logfire-browser` will re-export `logfire/evals` from their own `./evals` subpaths so users can stay on a single import root if they want.
 
+### 2.3 Runtime support matrix
+
+Logfire-JS already targets Node, Browser, CF Workers, and Deno (see `examples/deno-project/`). The evals port must work in all of them, plus Bun, with documented caveats — Petyo flagged this in the #104 review. Capability map:
+
+| Runtime    | `node:async_hooks` ALS          | `node:fs/promises`            | `@opentelemetry/api-logs` | Status for evals                                                          |
+| ---------- | ------------------------------- | ----------------------------- | ------------------------- | ------------------------------------------------------------------------- |
+| Node 22+   | ✅ native                       | ✅ native                     | ✅                        | Full support — primary target                                             |
+| Bun 1.x    | ✅ via Node compat              | ✅ via Node compat            | ✅                        | Full support — verify in CI                                               |
+| Deno 1.40+ | ✅ via `node:` compat           | ✅ (also `Deno.readTextFile`) | ✅                        | Full support — extend `examples/deno-project/` with an evals smoke test   |
+| CF Workers | ✅ (Workers runtime, post-2024) | ❌ (use R2/KV)                | ✅                        | Online evals + `Dataset.fromText` / `fromObject` only — no `fromFile`     |
+| Browser    | ❌                              | ❌                            | ✅                        | Online evals + `fromText`/`fromObject` only; offline `maxConcurrency = 1` |
+
+Approach:
+
+- The runtime-agnostic core in `packages/logfire-api/src/evals/` uses **only** `@opentelemetry/api`, `@opentelemetry/api-logs`, and pure-TS code. No top-level `node:*` imports.
+- `node:async_hooks` is **lazily imported** behind a runtime probe. On runtimes without it (browser only) we fall back to a no-ALS path that scopes the current task-run via a per-execute promise chain — enough for `maxConcurrency = 1` offline evals and for online evals (which never need cross-task ALS).
+- `node:fs/promises` is **lazily imported** inside `Dataset.fromFile` / `Dataset.toFile`. On Deno specifically we prefer `Deno.readTextFile` / `Deno.writeTextFile` when present (avoids the node-compat layer and respects Deno's permissions model); Bun's `node:fs` shim is fine as-is.
+- A small `detectRuntime(): 'node' | 'bun' | 'deno' | 'workers' | 'browser'` shared utility in `logfire-api` selects the right strategy. Useful beyond evals.
+- CI: per-runtime Phase 7 smoke tests so we catch breakage on each runtime independently. We don't need to run the full vitest suite on every runtime, but we do need each runtime to actually execute a small offline + online flow end-to-end.
+
 ## 3. Public API design
 
 ### 3.1 `Case`
@@ -541,7 +561,7 @@ Python excludes any evaluator field whose value equals its declared default. We 
 
 ## 6. Span-tree capture
 
-Auto-install on `configure()` (Node, Browser, CF Workers). The processor is a `SimpleSpanProcessor` wrapping a memory-buffered exporter keyed on a per-task-run context ID stored in an `AsyncLocalStorage`-managed `ContextVar` analogue.
+Auto-install on `configure()` across all four configurable runtimes (Node, Bun via `logfire-node`, Deno via `logfire-node`, Browser, CF Workers). The processor is a `SimpleSpanProcessor` wrapping a memory-buffered exporter keyed on a per-task-run context ID stored in an `AsyncLocalStorage`-managed `ContextVar` analogue.
 
 ```ts
 // In packages/logfire-node/src/logfireConfig.ts
@@ -557,7 +577,7 @@ function configure(options: LogfireConfigOptions) {
 
 For users running their own `TracerProvider` (e.g. someone wiring up OTel manually before `logfire.configure()`), expose the processor as `getEvalsSpanProcessor()` in `logfire/evals` so they can install it themselves. If neither auto-install nor manual install happened, `ctx.spanTree` access throws `SpanTreeRecordingError` with a clear remediation message — matches Python.
 
-The exporter is gated on a **per-execute-task ContextVar** (Python's `_EXPORTER_CONTEXT_ID`) so concurrent cases under `maxConcurrency > 1` don't see each other's spans. We'll back this with `AsyncLocalStorage` — the runtime's standard pattern. (Browser-side: `StackContextManager` doesn't have an ALS analogue, so for browser use we'll either disable concurrent execute and document the limitation, or adopt a simple per-execute promise chain.)
+The exporter is gated on a **per-execute-task ContextVar** (Python's `_EXPORTER_CONTEXT_ID`) so concurrent cases under `maxConcurrency > 1` don't see each other's spans. We back this with `AsyncLocalStorage` — works on Node, Bun, Deno, and CF Workers. Browser is the only runtime without ALS; there we either disable concurrent execute and document the limitation, or adopt a per-execute promise chain (see C4).
 
 `SpanTree` and `SpanQuery` get straight ports of Python's API surface. The query DSL is `TypedDict`-shaped in Python; we keep it as a TS `interface`. Fields:
 
@@ -622,9 +642,10 @@ The exporter is gated on a **per-execute-task ContextVar** (Python's `_EXPORTER_
 
 1. Examples: `examples/evals/` with a Node demo (mirror the sentiment-classifier example from Petyo's review).
 2. Update `examples/node/index.ts` with an `evals.ts` sibling.
-3. Root README and `packages/logfire-api/README.md` short evals section.
-4. Coordinate with the docs site (logfire.pydantic.dev) on a TS evals docs section.
-5. Changesets per phase (each PR gets its own minor-bump changeset).
+3. Add an evals smoke test to `examples/deno-project/` and a new `examples/bun-project/` that exercise both an offline `Dataset.evaluate` and a `withOnlineEvaluation`-wrapped function. CI runs them per-runtime so a Bun/Deno regression can't merge unnoticed.
+4. Root README and `packages/logfire-api/README.md` short evals section.
+5. Coordinate with the docs site (logfire.pydantic.dev) on a TS evals docs section. Document the runtime support matrix from §2.3 there too.
+6. Changesets per phase (each PR gets its own minor-bump changeset).
 
 ## 8. Test strategy
 
@@ -656,7 +677,7 @@ Testing infra additions:
 
 **C3. `_spanName` plumbing.** Adding a private `_spanName` option to `LogOptions` for evaluator-span dual emission. Single-line change in `index.ts`/`startSpan`; no public surface change. Tests cover.
 
-**C4. `AsyncLocalStorage` in non-Node runtimes.** Browser doesn't have ALS; CF Workers does (since Workers runtime ~early 2024). For browser, we degrade to per-promise-chain context via `Symbol`-keyed promise hooks — works for the single-execute-at-a-time pattern. Document max concurrency = 1 in browser as a temporary limitation. (This only matters for offline evals; online is fine because the call span is the source of truth, no ALS needed for context propagation.)
+**C4. `AsyncLocalStorage` across runtimes.** ALS imports natively on Node 22+, on Bun 1.x (Node compat), on Deno 1.40+ (`node:async_hooks`), and on CF Workers (Workers runtime, post-2024). The only runtime without it is the browser, where we degrade to per-promise-chain context via `Symbol`-keyed scoping — works for the single-execute-at-a-time pattern. Document `maxConcurrency = 1` in browser as a temporary limitation. (Only affects offline evals; online is fine because the call span is the source of truth, no ALS needed for context propagation.) Bun has historically had subtle ALS interactions with `setImmediate`/`queueMicrotask`; verify the online-eval dispatcher path on Bun explicitly during Phase 6.
 
 **C5. No `@opentelemetry/api-logs` provider in `logfire-node` today.** Adding `gen_ai.evaluation.result` log emission requires a `LoggerProvider` configured against the same OTLP exporter. Investigation needed during Phase 6 — if missing, we add it to `logfire-node` as part of that PR. Likely small (~50 LoC: instantiate provider, register a `BatchLogRecordProcessor` against an `OTLPLogExporter`).
 
@@ -666,7 +687,13 @@ Testing infra additions:
 
 **C8. `LLMJudge` parity.** No pydantic-ai-js exists. We ship BYO-callback only; document the gap. Future: when pydantic-ai-js or a TS-side model gateway lands, wire up a default judge.
 
-**C9. Browser file IO.** `Dataset.fromFile(path)` only works in Node. Browser users use `Dataset.fromText(content, { format: 'yaml' })`. We'll throw a clear runtime error if `fromFile` is called in a non-Node runtime — we detect via `typeof process !== 'undefined' && process.versions?.node`.
+**C9. File IO across runtimes.** `Dataset.fromFile(path)` needs filesystem access; the strategy varies:
+
+- **Node + Bun**: dynamic `await import('node:fs/promises')`. Bun implements the API natively.
+- **Deno**: prefer `Deno.readTextFile` / `Deno.writeTextFile` when present (cleaner permissions story than node-compat). Falls through to `node:fs/promises` otherwise.
+- **Browser + CF Workers**: `fromFile` throws a runtime error pointing the user at `fromText` / `fromObject` (those work everywhere because they take strings/objects, no IO).
+
+Detection lives in a small `detectRuntime()` helper in `logfire-api`, shared with the ALS strategy selector. `Dataset.fromText(content, { format: 'yaml' })` is the universal path — we'll lead with it in non-Node docs.
 
 **C10. Windows path handling.** `_save_schema` sidecar writing uses `path.parse(file).dir` + `${stem}_schema.json`. Use Node's `path` module (not string concat) so Windows dataset paths work.
 
@@ -716,6 +743,7 @@ Compatibility concerns for the deferred ones, for record-keeping:
 5. **Online eval API: HOF (`withOnlineEvaluation(fn, opts)`) vs. TC39 stage-3 decorators (`@evaluate(...)`).** Proposing HOF for v1 — works everywhere, no `experimentalDecorators` required. Decorators can layer on later.
 6. **Should `Dataset.evaluate` accept an OTel `Tracer` override** (so users with multiple Logfire projects can route eval data deliberately)? Python doesn't have this; might be useful in TS where multi-tenant SDK setups are common. Default: no, add later if asked.
 7. **Where does the docs prose live?** The TS evals docs need to land somewhere — probably an `evals/typescript/` subtree on `logfire.pydantic.dev`. Follow-up workstream once the SDK lands.
+8. **CI breadth across runtimes.** Phase 7 adds Bun + Deno example smoke tests; should we additionally run the full vitest evals suite under Bun and/or Deno node-compat in CI, or rely on the example smoke tests + Node-only vitest? Bun's `bun test` has different semantics; Deno-running-vitest is fiddly. Cheapest: keep vitest on Node, add per-runtime example smoke tests. Pricier-but-safer: also run vitest under Bun (its Node compat for vitest is reasonable). Calling this out so we don't over- or under-invest.
 
 ## 13. Effort estimate
 
