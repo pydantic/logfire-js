@@ -41,6 +41,16 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./evals": {
+      "import": {
+        "types": "./dist/evals.d.ts",
+        "default": "./dist/evals.js"
+      },
+      "require": {
+        "types": "./dist/evals.d.cts",
+        "default": "./dist/evals.cjs"
+      }
     }
   },
   "scripts": {
@@ -53,13 +63,23 @@
     "postpack": "rm LICENSE",
     "test": "vitest run"
   },
+  "dependencies": {
+    "js-yaml": "catalog:",
+    "p-retry": "catalog:",
+    "zod": "catalog:"
+  },
   "devDependencies": {
     "@opentelemetry/api": "catalog:",
+    "@opentelemetry/api-logs": "catalog:",
+    "@opentelemetry/context-async-hooks": "catalog:",
+    "@opentelemetry/sdk-logs": "catalog:",
     "@opentelemetry/sdk-trace-base": "catalog:",
-    "@opentelemetry/semantic-conventions": "catalog:"
+    "@opentelemetry/semantic-conventions": "catalog:",
+    "@types/js-yaml": "catalog:"
   },
   "peerDependencies": {
     "@opentelemetry/api": "catalog:",
+    "@opentelemetry/api-logs": "catalog:",
     "@opentelemetry/sdk-trace-base": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:"
   },

@@ -20,6 +20,7 @@ import {
   ATTR_VCS_REPOSITORY_URL_FULL,
 } from '@opentelemetry/semantic-conventions/incubating'
 import { reportError, TailSamplingProcessor, ULIDGenerator } from 'logfire'
+import { getEvalsSpanProcessor } from 'logfire/evals'
 
 import { logfireConfig } from './logfireConfig'
 import { periodicMetricReader } from './metricExporter'
@@ -72,7 +73,7 @@ export function start() {
     metricReader: logfireConfig.metrics === false ? undefined : periodicMetricReader(),
     resource,
     ...(sampler ? { sampler } : {}),
-    spanProcessors: [processor, ...logfireConfig.additionalSpanProcessors],
+    spanProcessors: [processor, getEvalsSpanProcessor(), ...logfireConfig.additionalSpanProcessors],
     textMapPropagator: propagator,
   })
 

@@ -8,6 +8,7 @@
     "start": "node --experimental-strip-types --disable-warning=ExperimentalWarning index.ts",
     "start-and-throw-error": "TRIGGER_ERROR=true node --experimental-strip-types --disable-warning=ExperimentalWarning index.ts",
     "sampling": "node --experimental-strip-types --disable-warning=ExperimentalWarning sampling.ts",
+    "evals": "node --experimental-strip-types --disable-warning=ExperimentalWarning evals.ts",
     "debug": "node --experimental-strip-types --disable-warning=ExperimentalWarning --inspect-brk index.ts",
     "typecheck": "tsc"
   },

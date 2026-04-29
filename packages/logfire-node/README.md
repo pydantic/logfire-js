@@ -56,6 +56,39 @@ logfire.info(
 Run the script with `node hello.js`, and you should see the span being logged in
 the live view of your Logfire project.
 
+## Evaluations
+
+`@pydantic/logfire-node/evals` provides offline + online evaluation primitives
+that emit OTel spans / log events compatible with the Logfire Evaluations UI.
+The wire format matches the Python `pydantic-evals` package, so dataset YAML /
+JSON files round-trip across the two languages.
+
+```ts
+import * as logfire from '@pydantic/logfire-node'
+import { Case, Dataset, EqualsExpected, withOnlineEvaluation } from '@pydantic/logfire-node/evals'
+
+logfire.configure({ serviceName: 'sentiment-classifier' })
+
+async function classify({ text }: { text: string }): Promise<string> {
+  return text.toLowerCase().includes('love') ? 'POSITIVE' : 'NEUTRAL'
+}
+
+// Offline — runs your task against a labeled dataset and emits an experiment span.
+const dataset = new Dataset<{ text: string }, string>({
+  cases: [new Case({ inputs: { text: 'I love this!' }, expectedOutput: 'POSITIVE', name: 'a' })],
+  evaluators: [new EqualsExpected()],
+  name: 'sentiment-classifier',
+})
+const report = await dataset.evaluate(classify)
+
+// Online — wraps a function so each call also dispatches evaluators in the background.
+const monitored = withOnlineEvaluation(classify, {
+  evaluators: [new EqualsExpected()],
+  target: 'sentiment-classifier',
+})
+await monitored({ text: 'I love this!' })
+```
+
 ## Contributing
 
 See [CONTRIBUTING.md](https://github.com/pydantic/logfire-js/blob/main/CONTRIBUTING.md) for development instructions.

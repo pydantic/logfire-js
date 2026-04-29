@@ -43,6 +43,15 @@ export type LogFireLevel = (typeof Level)[keyof typeof Level]
 
 export interface LogOptions {
   /**
+   * Override the OTel span name without changing the message template stored on
+   * `logfire.msg_template`. Used by integrations (e.g. evals) that want a stable,
+   * un-interpolated span name for query/saved-view consistency while still
+   * presenting a friendly templated message in the UI.
+   *
+   * @internal
+   */
+  _spanName?: string
+  /**
    * The log level for the span.
    * Defaults to Level.Info.
    */
@@ -69,13 +78,13 @@ export interface LogOptions {
 export function startSpan(
   msgTemplate: string,
   attributes: Record<string, unknown> = {},
-  { log, tags = [], level = Level.Info, parentSpan }: LogOptions = {}
+  { log, tags = [], level = Level.Info, parentSpan, _spanName }: LogOptions = {}
 ): Span {
   const { formattedMessage, extraAttributes, newTemplate } = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
 
   const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : TheContextAPI.active()
   const span = logfireApiConfig.tracer.startSpan(
-    msgTemplate,
+    _spanName ?? msgTemplate,
     {
       attributes: {
         ...serializeAttributes({ ...attributes, ...extraAttributes }),
@@ -95,7 +104,14 @@ export function startSpan(
 type SpanCallback<R> = (activeSpan: Span) => R
 type SpanArgsVariant1<R> = [Record<string, unknown>, LogOptions, SpanCallback<R>]
 type SpanArgsVariant2<R> = [
-  { attributes?: Record<string, unknown>; callback: SpanCallback<R>; level?: LogFireLevel; parentSpan?: Span; tags?: string[] },
+  {
+    _spanName?: string
+    attributes?: Record<string, unknown>
+    callback: SpanCallback<R>
+    level?: LogFireLevel
+    parentSpan?: Span
+    tags?: string[]
+  },
 ]
 
 /**
@@ -114,17 +130,20 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
   let tags: string[] = []
   let callback!: SpanCallback<R>
   let parentSpan: Span | undefined
+  let spanName: string | undefined
   if (args.length === 1) {
     attributes = args[0].attributes ?? {}
     level = args[0].level ?? Level.Info
     tags = args[0].tags ?? []
     callback = args[0].callback
     parentSpan = args[0].parentSpan
+    spanName = args[0]._spanName
   } else {
     attributes = args[0]
     level = args[1].level ?? Level.Info
     tags = args[1].tags ?? []
     parentSpan = args[1].parentSpan
+    spanName = args[1]._spanName
     callback = args[2]
   }
 
@@ -132,7 +151,7 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
 
   const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : TheContextAPI.active()
   return logfireApiConfig.tracer.startActiveSpan(
-    msgTemplate,
+    spanName ?? msgTemplate,
     {
       attributes: {
         ...serializeAttributes({ ...attributes, ...extraAttributes }),

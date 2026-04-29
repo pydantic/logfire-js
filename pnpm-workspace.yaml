@@ -4,11 +4,13 @@ packages:
 
 catalog:
   '@opentelemetry/api': ^1.9.0
+  '@opentelemetry/api-logs': ^0.215.0
   '@opentelemetry/auto-instrumentations-node': ^0.73.0
   '@opentelemetry/auto-instrumentations-web': ^0.60.0
   '@opentelemetry/context-async-hooks': ^2.7.0
   '@opentelemetry/context-zone': ^2.7.0
   '@opentelemetry/core': ^2.7.0
+  '@opentelemetry/exporter-logs-otlp-proto': ^0.215.0
   '@opentelemetry/exporter-metrics-otlp-proto': ^0.215.0
   '@opentelemetry/exporter-trace-otlp-http': ^0.215.0
   '@opentelemetry/exporter-trace-otlp-proto': ^0.215.0
@@ -18,10 +20,15 @@ catalog:
   '@opentelemetry/otlp-exporter-base': ^0.215.0
   '@opentelemetry/otlp-transformer': ^0.215.0
   '@opentelemetry/resources': ^2.7.0
+  '@opentelemetry/sdk-logs': ^0.215.0
   '@opentelemetry/sdk-metrics': ^2.7.0
   '@opentelemetry/sdk-node': ^0.215.0
   '@opentelemetry/sdk-trace-base': ^2.7.0
   '@opentelemetry/sdk-trace-node': ^2.7.0
   '@opentelemetry/sdk-trace-web': ^2.7.0
   '@opentelemetry/semantic-conventions': ^1.40.0
+  '@types/js-yaml': ^4.0.9
   '@vercel/otel': ^2.1.2
+  'js-yaml': ^4.1.0
+  'p-retry': ^6.2.1
+  zod: ^3.23.8
