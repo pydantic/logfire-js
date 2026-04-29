@@ -1,6 +1,4 @@
 /**
- * TypeScript port of `platform/src/demos/logfire_demo/demo_evals.py`.
- *
  * Loads the same `time_range_v1.yaml` dataset Python uses, runs a stub
  * time-range "agent" against it (no model calls — we don't have pydantic-ai-js),
  * and emits experiment + case + evaluator spans against the local Logfire
@@ -32,7 +30,7 @@ import {
   registerEvaluator,
   renderReport,
   setDefaultJudge,
-} from '@pydantic/logfire-node/evals'
+} from 'logfire/evals'
 
 logfire.configure({
   advanced: { baseUrl: process.env.LOGFIRE_BASE_URL ?? 'http://localhost:3000' },

@@ -1,0 +1,124 @@
+/* eslint-disable import-x/first */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const mocks = vi.hoisted(() => {
+  const nodeSdkInstances: MockNodeSDK[] = []
+  let logForceFlushCalls = 0
+  let traceForceFlushCalls = 0
+
+  const logProcessor = {
+    forceFlush: () => {
+      logForceFlushCalls++
+      return Promise.resolve()
+    },
+    onEmit: () => undefined,
+    shutdown: () => Promise.resolve(),
+  }
+  const traceProcessor = {
+    forceFlush: () => {
+      traceForceFlushCalls++
+      return Promise.resolve()
+    },
+    onEnd: () => undefined,
+    onStart: () => undefined,
+    shutdown: () => Promise.resolve(),
+  }
+
+  class MockNodeSDK {
+    options: unknown
+    shutdownCalls = 0
+
+    constructor(options: unknown) {
+      this.options = options
+      nodeSdkInstances.push(this)
+    }
+
+    shutdown(): Promise<void> {
+      this.shutdownCalls++
+      return Promise.resolve()
+    }
+
+    start(): void {
+      return undefined
+    }
+  }
+
+  return {
+    get logForceFlushCalls() {
+      return logForceFlushCalls
+    },
+    logProcessor,
+    MockNodeSDK,
+    nodeSdkInstances,
+    reset() {
+      logForceFlushCalls = 0
+      traceForceFlushCalls = 0
+      nodeSdkInstances.length = 0
+    },
+    get traceForceFlushCalls() {
+      return traceForceFlushCalls
+    },
+    traceProcessor,
+  }
+})
+
+vi.mock('@opentelemetry/auto-instrumentations-node', () => ({
+  getNodeAutoInstrumentations: () => [],
+}))
+
+vi.mock('@opentelemetry/sdk-node', () => ({
+  NodeSDK: mocks.MockNodeSDK,
+}))
+
+vi.mock('../logsExporter', () => ({
+  logfireLogRecordProcessor: () => mocks.logProcessor,
+}))
+
+vi.mock('../metricExporter', () => ({
+  periodicMetricReader: () => undefined,
+}))
+
+vi.mock('../traceExporter', () => ({
+  logfireSpanProcessor: () => mocks.traceProcessor,
+}))
+
+import { forceFlush, shutdown, start } from '../sdk'
+
+describe('sdk lifecycle helpers', () => {
+  beforeEach(() => {
+    mocks.reset()
+    vi.spyOn(process, 'on').mockImplementation(() => process)
+  })
+
+  afterEach(async () => {
+    await shutdown()
+    vi.restoreAllMocks()
+  })
+
+  it('forceFlush flushes both trace and log processors', async () => {
+    start()
+
+    await forceFlush()
+
+    expect(mocks.traceForceFlushCalls).toBe(1)
+    expect(mocks.logForceFlushCalls).toBe(1)
+  })
+
+  it('shutdown is idempotent and clears active processors', async () => {
+    start()
+    const instance = mocks.nodeSdkInstances[0]
+    expect(instance).toBeDefined()
+    if (instance === undefined) throw new Error('expected NodeSDK mock instance')
+
+    await shutdown()
+    await shutdown()
+
+    expect(instance.shutdownCalls).toBe(1)
+
+    mocks.reset()
+    await forceFlush()
+
+    expect(mocks.traceForceFlushCalls).toBe(0)
+    expect(mocks.logForceFlushCalls).toBe(0)
+  })
+})

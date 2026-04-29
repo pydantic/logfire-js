@@ -1,5 +1,6 @@
 /* eslint-disable camelcase */
-import { trace as TraceAPI } from '@opentelemetry/api'
+import type { Span } from '@opentelemetry/api'
+
 import pRetry from 'p-retry'
 
 import type { CaseLifecycle, CaseLifecycleClass } from './CaseLifecycle'
@@ -39,6 +40,7 @@ import {
   SPAN_NAME_REPORT_EVALUATOR_LITERAL,
 } from './constants'
 import { runWithTaskRun } from './currentTaskRun'
+import { buildEvaluatorFailureRecord } from './evaluatorResults'
 import { extractMetricsFromSpanTree } from './extractMetrics'
 import { evalsSpan, setEvalsSpanAttributes } from './internal'
 import { computeAssertionPassRate, computeAverages, type EvaluationReport, type ReportCase, type ReportCaseFailure } from './reporting'
@@ -55,7 +57,7 @@ import {
   stringifyYaml,
   type ToOptions,
 } from './serialization'
-import { buildSpanTree, getEvalsSpanProcessor, SpanTree, SpanTreeRecordingError } from './spanTree'
+import { buildSpanTree, getEvalsSpanProcessor, isProcessorInstalledOnGlobal, SpanTree, SpanTreeRecordingError } from './spanTree'
 
 export interface DatasetOptions<Inputs, Output, Metadata = unknown> {
   cases?: readonly Case<Inputs, Output, Metadata>[]
@@ -80,11 +82,9 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
 
   static async fromFile<I = unknown, O = unknown, M = unknown>(filePath: string, options: FromOptions = {}): Promise<Dataset<I, O, M>> {
     if (!hasNodeFs()) throw new Error('Dataset.fromFile is only supported on Node, Bun, and Deno (no filesystem in browser/CF Workers)')
-    const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
-    const path: typeof import('node:path') = await import('node:path')
-    const text = await fs.readFile(filePath, 'utf8')
+    const text = await readTextFile(filePath)
     const format: 'json' | 'yaml' = filePath.endsWith('.json') ? 'json' : 'yaml'
-    const defaultName = options.defaultName ?? path.parse(filePath).name
+    const defaultName = options.defaultName ?? fileStem(filePath)
     return Dataset.fromText<I, O, M>(text, { ...options, defaultName, format })
   }
 
@@ -123,9 +123,15 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
     options: EvaluateOptions<Inputs, Output, Metadata> = {}
   ): Promise<EvaluationReport<Inputs, Output, Metadata>> {
     const taskName = options.taskName ?? (task.name === '' ? 'task' : task.name)
-    const experimentName = options.name ?? this.name
+    const experimentName = options.name ?? taskName
     const repeat = options.repeat ?? 1
+    if (!Number.isInteger(repeat) || repeat < 1) {
+      throw new Error(`Dataset.evaluate: repeat must be >= 1 (got ${repeat.toString()})`)
+    }
     const totalCases = this.cases.length * repeat
+    if (options.maxConcurrency !== undefined && (!Number.isInteger(options.maxConcurrency) || options.maxConcurrency < 1)) {
+      throw new Error(`Dataset.evaluate: maxConcurrency must be a positive integer (got ${options.maxConcurrency.toString()})`)
+    }
 
     const initialAttrs: Record<string, unknown> = {
       [ATTR_DATASET_NAME]: this.name,
@@ -174,13 +180,14 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
           }
           try {
             const sourceCaseName = c.name ?? `Case ${(positionalIndex + 1).toString()}`
-            const caseName = repeat > 1 ? `${sourceCaseName} [run/${(runIndex + 1).toString()}]` : sourceCaseName
+            const caseName = repeat > 1 ? `${sourceCaseName} [${(runIndex + 1).toString()}/${repeat.toString()}]` : sourceCaseName
             const result = await runOneCase({
               caseName,
               dataset: this,
               datasetEvaluators: this.evaluators,
               lifecycleClass: options.lifecycle,
               originalCase: c,
+              retryEvaluators: options.retryEvaluators,
               retryTask: options.retryTask,
               sourceCaseName: repeat > 1 ? sourceCaseName : undefined,
               task,
@@ -192,10 +199,7 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
               cases.push(result)
             }
             done += 1
-            const progress = options.progress
-            if (typeof progress === 'function') {
-              progress({ caseName, done, total: totalCases })
-            }
+            reportProgress(options.progress, { caseName, done, total: totalCases })
           } finally {
             release()
           }
@@ -207,6 +211,16 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
         // on the span's attributes BEFORE it closes so the platform sees them.
         const analyses: ReportAnalysis[] = []
         const reportEvaluatorFailures: EvaluatorFailureRecord[] = []
+        const report: EvaluationReport<Inputs, Output, Metadata> = {
+          analyses,
+          cases,
+          experiment_metadata: options.metadata,
+          failures,
+          name: experimentName,
+          report_evaluator_failures: reportEvaluatorFailures,
+          span_id,
+          trace_id,
+        }
         for (const re of this.reportEvaluators) {
           const evaluatorName = (re.constructor as { evaluatorName?: string; name: string }).evaluatorName ?? re.constructor.name
           try {
@@ -216,19 +230,18 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
                 attributes: { evaluator_name: evaluatorName },
                 spanName: SPAN_NAME_REPORT_EVALUATOR_LITERAL,
               },
-              async () => re.evaluate({ cases: [...cases, ...failures], experimentMetadata: options.metadata, name: evaluatorName })
+              async () =>
+                re.evaluate({
+                  cases: [...cases, ...failures],
+                  experimentMetadata: options.metadata,
+                  name: experimentName,
+                  report,
+                })
             )
             const list = Array.isArray(out) ? out : [out]
             for (const item of list) analyses.push(item)
           } catch (err) {
-            const isErr = err instanceof Error
-            reportEvaluatorFailures.push({
-              error_message: isErr ? err.message : String(err),
-              error_stacktrace: isErr ? err.stack : undefined,
-              error_type: isErr ? err.constructor.name : 'Error',
-              name: evaluatorName,
-              source: re.getSpec(),
-            })
+            reportEvaluatorFailures.push(buildEvaluatorFailureRecord(err, evaluatorName, re.getSpec(), re.evaluatorVersion))
           }
         }
 
@@ -245,16 +258,7 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
         if (reportEvaluatorFailures.length > 0) finalAttrs[EXPERIMENT_REPORT_EVALUATOR_FAILURES_KEY] = reportEvaluatorFailures
         setEvalsSpanAttributes(experimentSpan, finalAttrs)
 
-        return {
-          analyses,
-          cases,
-          experiment_metadata: options.metadata,
-          failures,
-          name: experimentName,
-          report_evaluator_failures: reportEvaluatorFailures,
-          span_id,
-          trace_id,
-        }
+        return report
       }
     )
   }
@@ -274,12 +278,15 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
 
   async toFile(filePath: string, opts: ToOptions = {}): Promise<void> {
     if (!hasNodeFs()) throw new Error('Dataset.toFile is only supported on Node, Bun, and Deno (no filesystem in browser/CF Workers)')
-    const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
     const format: 'json' | 'yaml' = filePath.endsWith('.json') ? 'json' : 'yaml'
     const text = this.toText(format, opts)
     const finalText =
       format === 'yaml' && opts.schemaPath !== undefined ? `# yaml-language-server: $schema=${opts.schemaPath}\n${text}` : text
-    await fs.writeFile(filePath, finalText, 'utf8')
+    await writeTextFile(filePath, finalText)
+    if (opts.schemaPath !== undefined) {
+      const schemaText = `${JSON.stringify(this.jsonSchema(), null, 2)}\n`
+      await writeTextFileIfChanged(resolveSiblingPath(filePath, opts.schemaPath), schemaText)
+    }
   }
 
   toObject(opts?: ToOptions): Record<string, unknown> {
@@ -304,18 +311,27 @@ function assertUniqueNames(cases: readonly Case[]): void {
   }
 }
 
+function reportProgress(progress: EvaluateOptions['progress'], event: { caseName: string; done: number; total: number }): void {
+  if (typeof progress === 'function') {
+    progress(event)
+  } else if (progress === true) {
+    console.error(`[${event.done.toString()}/${event.total.toString()}] ${event.caseName}`)
+  }
+}
+
 async function runOneCase<Inputs, Output, Metadata>(args: {
   caseName: string
   dataset: Dataset<Inputs, Output, Metadata>
   datasetEvaluators: readonly Evaluator<Inputs, Output, Metadata>[]
   lifecycleClass?: CaseLifecycleClass<Inputs, Output, Metadata>
   originalCase: Case<Inputs, Output, Metadata>
+  retryEvaluators?: import('./types').RetryConfig
   retryTask?: import('./types').RetryConfig
   sourceCaseName?: string
   task: (inputs: Inputs) => Output | Promise<Output>
   taskName: string
 }): Promise<ReportCase<Inputs, Output, Metadata> | ReportCaseFailure<Inputs, Output, Metadata>> {
-  const { caseName, datasetEvaluators, lifecycleClass, originalCase, retryTask, sourceCaseName, task, taskName } = args
+  const { caseName, datasetEvaluators, lifecycleClass, originalCase, retryEvaluators, retryTask, sourceCaseName, task, taskName } = args
   // eslint-disable-next-line new-cap
   const lifecycle: CaseLifecycle<Inputs, Output, Metadata> | null = lifecycleClass ? new lifecycleClass(originalCase) : null
 
@@ -339,7 +355,6 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
 
     const taskRunState: TaskRunState = {
       attributes: {},
-      caseSpan,
       exporterContextId,
       metrics: {},
     }
@@ -374,26 +389,18 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
     } catch (err) {
       // Drain bucket so we don't leak even on task failure.
       evalsProcessor.drainBucket(exporterContextId)
-      const isErr = err instanceof Error
       // Still record the exception on the case span — the platform shows it.
-      if (isErr) {
-        caseSpan.recordException(err)
-      } else {
-        caseSpan.recordException(String(err))
-      }
-      const failure: ReportCaseFailure<Inputs, Output, Metadata> = {
-        error_message: isErr ? err.message : String(err),
-        error_stacktrace: isErr ? err.stack : undefined,
-        error_type: isErr ? err.constructor.name : 'Error',
-        expected_output: originalCase.expectedOutput,
+      recordException(caseSpan, err)
+      const failure = buildCaseFailure(err, {
+        caseName,
+        expectedOutput: originalCase.expectedOutput,
         inputs: originalCase.inputs,
         metadata: originalCase.metadata,
-        name: caseName,
-        source_case_name: sourceCaseName,
+        sourceCaseName,
         span_id,
         trace_id,
-      }
-      if (lifecycle?.teardown !== undefined) await lifecycle.teardown(failure)
+      })
+      await runLifecycleTeardown(lifecycle, failure, caseSpan)
       return failure
     }
 
@@ -419,11 +426,26 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
       spanTree,
     }
     if (lifecycle?.prepareContext !== undefined) {
-      ctx = await lifecycle.prepareContext(ctx)
+      try {
+        ctx = await lifecycle.prepareContext(ctx)
+      } catch (err) {
+        recordException(caseSpan, err)
+        const failure = buildCaseFailure(err, {
+          caseName,
+          expectedOutput: originalCase.expectedOutput,
+          inputs: originalCase.inputs,
+          metadata: originalCase.metadata,
+          sourceCaseName,
+          span_id,
+          trace_id,
+        })
+        await runLifecycleTeardown(lifecycle, failure, caseSpan)
+        return failure
+      }
     }
 
-    const allEvaluators: Evaluator<Inputs, Output, Metadata>[] = [...datasetEvaluators, ...originalCase.evaluators]
-    const evResult = await runEvaluators(allEvaluators as Evaluator[], ctx as EvaluatorContext)
+    const allEvaluators: Evaluator<Inputs, Output, Metadata>[] = [...originalCase.evaluators, ...datasetEvaluators]
+    const evResult = await runEvaluators(allEvaluators as Evaluator[], ctx as EvaluatorContext, retryEvaluators)
 
     const totalDuration = nowSec() - totalStart
 
@@ -456,29 +478,116 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
       total_duration: totalDuration,
       trace_id,
     }
-    if (lifecycle?.teardown !== undefined) await lifecycle.teardown(reportCase)
+    await runLifecycleTeardown(lifecycle, reportCase, caseSpan)
     return reportCase
   })
+}
+
+function buildCaseFailure<Inputs, Output, Metadata>(
+  err: unknown,
+  opts: {
+    caseName: string
+    expectedOutput?: Output
+    inputs: Inputs
+    metadata?: Metadata
+    sourceCaseName?: string
+    span_id: null | string
+    trace_id: null | string
+  }
+): ReportCaseFailure<Inputs, Output, Metadata> {
+  const isErr = err instanceof Error
+  return {
+    error_message: isErr ? err.message : String(err),
+    error_stacktrace: isErr ? err.stack : undefined,
+    error_type: isErr ? err.constructor.name : 'Error',
+    expected_output: opts.expectedOutput,
+    inputs: opts.inputs,
+    metadata: opts.metadata,
+    name: opts.caseName,
+    source_case_name: opts.sourceCaseName,
+    span_id: opts.span_id,
+    trace_id: opts.trace_id,
+  }
+}
+
+function recordException(span: Span, err: unknown): void {
+  if (err instanceof Error) {
+    span.recordException(err)
+  } else {
+    span.recordException(String(err))
+  }
 }
 
 function nowSec(): number {
   return performance.now() / 1000
 }
 
-/**
- * Best-effort detection of whether the evals span processor is wired up to the
- * active TracerProvider. We use the presence of the singleton plus a heuristic
- * (active tracer-provider exposes a function we can call) to decide whether
- * an empty bucket means "no spans were emitted" vs. "the processor isn't
- * installed". For now we always assume installed — the explicit null path is
- * exercised by users running on a custom TracerProvider that didn't install
- * the processor; we'll wire that path up in Phase 3 when we add auto-install
- * to logfire-node.configure().
- */
-function isProcessorInstalledOnGlobal(): boolean {
-  // The simpler heuristic: if the tracer provider isn't a NoopTracerProvider,
-  // we assume the processor was installed. Users on a custom provider can
-  // explicitly install via `getEvalsSpanProcessor()`.
-  const tp = TraceAPI.getTracerProvider()
-  return typeof tp === 'object' && tp.constructor.name !== 'NoopTracerProvider' && tp.constructor.name !== 'ProxyTracerProvider'
+interface DenoTextFileRuntime {
+  Deno?: {
+    readTextFile?: (path: string) => Promise<string>
+    writeTextFile?: (path: string, data: string) => Promise<void>
+  }
+}
+
+async function readTextFile(filePath: string): Promise<string> {
+  const deno = (globalThis as DenoTextFileRuntime).Deno
+  if (typeof deno?.readTextFile === 'function') return deno.readTextFile(filePath)
+  const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
+  return fs.readFile(filePath, 'utf8')
+}
+
+async function writeTextFile(filePath: string, text: string): Promise<void> {
+  const deno = (globalThis as DenoTextFileRuntime).Deno
+  if (typeof deno?.writeTextFile === 'function') {
+    await deno.writeTextFile(filePath, text)
+    return
+  }
+  const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
+  await fs.writeFile(filePath, text, 'utf8')
+}
+
+async function writeTextFileIfChanged(filePath: string, text: string): Promise<void> {
+  let existing: string | undefined
+  try {
+    existing = await readTextFile(filePath)
+  } catch {
+    existing = undefined
+  }
+  if (existing !== text) await writeTextFile(filePath, text)
+}
+
+function fileStem(filePath: string): string {
+  const base =
+    filePath
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .pop() ?? filePath
+  const dot = base.lastIndexOf('.')
+  return dot <= 0 ? base : base.slice(0, dot)
+}
+
+function resolveSiblingPath(filePath: string, siblingPath: string): string {
+  if (/^(?:[a-zA-Z]:[\\/]|[\\/]|[a-zA-Z][a-zA-Z\d+.-]*:)/.test(siblingPath)) return siblingPath
+  const trimmed = filePath.replace(/[\\/]+$/, '')
+  const sep = trimmed.includes('\\') ? '\\' : '/'
+  const lastSep = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  const dir = lastSep === -1 ? '.' : trimmed.slice(0, lastSep)
+  return dir === '.' ? siblingPath : `${dir}${sep}${siblingPath}`
+}
+
+async function runLifecycleTeardown<Inputs, Output, Metadata>(
+  lifecycle: CaseLifecycle<Inputs, Output, Metadata> | null,
+  result: ReportCase<Inputs, Output, Metadata> | ReportCaseFailure<Inputs, Output, Metadata>,
+  caseSpan: Span
+): Promise<void> {
+  if (lifecycle?.teardown === undefined) return
+  try {
+    await lifecycle.teardown(result)
+  } catch (err) {
+    if (err instanceof Error) {
+      caseSpan.recordException(err)
+    } else {
+      caseSpan.recordException(String(err))
+    }
+  }
 }

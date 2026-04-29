@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/require-await */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { ATTRIBUTES_MESSAGE_KEY, ATTRIBUTES_MESSAGE_TEMPLATE_KEY } from '../../constants'
 import {
@@ -18,11 +18,15 @@ import {
   Equals,
   EqualsExpected,
   EVALS_OTEL_SCOPE,
+  Evaluator,
   EXPERIMENT_METADATA_KEY,
   EXPERIMENT_REPEAT_KEY,
   EXPERIMENT_SOURCE_CASE_NAME_KEY,
   GEN_AI_OPERATION_NAME,
+  getCurrentTaskRun,
+  incrementEvalMetric,
   OPERATION_EXPERIMENT,
+  setEvalAttribute,
   SPAN_NAME_CASE,
   SPAN_NAME_EVALUATOR_LITERAL,
   SPAN_NAME_EXECUTE,
@@ -73,7 +77,7 @@ describe('offline evals — span attribute parity', () => {
 
     // Experiment span attributes — Condition-2 ingest discriminator + sort-by-pass-rate fields.
     const expAttrs = experiment!.attributes
-    expect(expAttrs[ATTR_NAME]).toBe('sentiment-classifier')
+    expect(expAttrs[ATTR_NAME]).toBe('classify')
     expect(expAttrs[ATTR_DATASET_NAME]).toBe('sentiment-classifier')
     expect(expAttrs[ATTR_TASK_NAME]).toBe('classify')
     expect(expAttrs[ATTR_N_CASES]).toBe(2)
@@ -84,7 +88,7 @@ describe('offline evals — span attribute parity', () => {
     const metadata = JSON.parse(expAttrs[EXPERIMENT_METADATA_KEY] as string) as Record<string, unknown>
     expect(metadata.n_cases).toBe(2)
     expect(metadata.averages).toBeDefined()
-    expect((metadata.averages as { name: string }).name).toBe('sentiment-classifier')
+    expect((metadata.averages as { name: string }).name).toBe('classify')
 
     // Each case span has case_name as a top-level attribute (UI detection requirement)
     for (const c of cases) {
@@ -143,6 +147,68 @@ describe('offline evals — span attribute parity', () => {
     expect(scores).toEqual({})
   })
 
+  it('runs case evaluators before dataset evaluators and suffixes duplicate result names', async () => {
+    class SameNameEvaluator extends Evaluator {
+      static evaluatorName = 'SameNameEvaluator'
+      private readonly value: boolean
+      constructor(evaluationName: string, value: boolean) {
+        super()
+        this.evaluationName = evaluationName
+        this.value = value
+      }
+      evaluate(): boolean {
+        return this.value
+      }
+    }
+
+    const dataset = new Dataset<string, string>({
+      cases: [
+        new Case<string, string>({
+          evaluators: [new SameNameEvaluator('duplicate', true)],
+          inputs: 'x',
+          name: 'case',
+        }),
+      ],
+      evaluators: [new SameNameEvaluator('duplicate', false)],
+      name: 'ordering-test',
+    })
+
+    const { result } = await withMemoryExporter(() => dataset.evaluate((input) => input))
+
+    expect(Object.keys(result.cases[0]!.assertions)).toEqual(['duplicate', 'duplicate_2'])
+    expect(result.cases[0]?.assertions.duplicate?.value).toBe(true)
+    expect(result.cases[0]?.assertions.duplicate_2?.value).toBe(false)
+  })
+
+  it('runs evaluators for a case concurrently', async () => {
+    let fastStarted = false
+    class SlowEvaluator extends Evaluator {
+      static evaluatorName = 'SlowEvaluator'
+      async evaluate(): Promise<boolean> {
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        return fastStarted
+      }
+    }
+    class FastEvaluator extends Evaluator {
+      static evaluatorName = 'FastEvaluator'
+      evaluate(): boolean {
+        fastStarted = true
+        return true
+      }
+    }
+
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'x', name: 'case' })],
+      evaluators: [new SlowEvaluator(), new FastEvaluator()],
+      name: 'parallel-evaluator-test',
+    })
+
+    const { result } = await withMemoryExporter(() => dataset.evaluate((input) => input))
+
+    expect(result.cases[0]?.assertions.SlowEvaluator?.value).toBe(true)
+    expect(result.cases[0]?.assertions.FastEvaluator?.value).toBe(true)
+  })
+
   it('emits logfire.experiment.repeat and source_case_name on multi-run experiments', async () => {
     const dataset = new Dataset({
       cases: [new Case({ inputs: 'hi', name: 'x' })],
@@ -158,7 +224,7 @@ describe('offline evals — span attribute parity', () => {
     expect(cases).toHaveLength(3)
     for (const c of cases) {
       expect(c.attributes[EXPERIMENT_SOURCE_CASE_NAME_KEY]).toBe('x')
-      expect(c.attributes[ATTR_CASE_NAME]).toMatch(/^x \[run\/\d+\]$/)
+      expect(c.attributes[ATTR_CASE_NAME]).toMatch(/^x \[\d+\/3\]$/)
     }
   })
 
@@ -190,6 +256,229 @@ describe('offline evals — span attribute parity', () => {
     })
     const { result } = await withMemoryExporter(() => dataset.evaluate((s) => s))
     expect(result.cases[0]?.assertions.Contains?.value).toBe(true)
-    expect(result.cases[0]?.assertions.Contains?.reason).toBe('output contains value')
+    expect(result.cases[0]?.assertions.Contains?.reason).toBeNull()
+  })
+
+  it('supports addCase/addEvaluator, task helpers, progress callbacks and custom evaluator versions', async () => {
+    class VersionedEvaluator extends Evaluator {
+      static evaluatorName = 'VersionedEvaluator'
+      evaluatorVersion = '2026-01-01'
+
+      evaluate(): Record<string, boolean | number | string> {
+        return { label: 'ok', score: 0.5, versioned: true }
+      }
+    }
+
+    const dataset = new Dataset<{ n: number }, number>({ name: 'mutation-test' })
+    dataset.addCase({ inputs: { n: 1 }, name: 'one' })
+    dataset.addCase({ inputs: { n: 2 }, name: 'two' })
+    dataset.addEvaluator(new Equals({ value: 1 }), { specificCase: 'one' })
+    dataset.addEvaluator(new VersionedEvaluator())
+
+    expect(() => {
+      dataset.addCase({ inputs: { n: 3 }, name: 'one' })
+    }).toThrow('Duplicate case name: "one"')
+    dataset.cases.pop()
+    expect(() => {
+      dataset.addEvaluator(new EqualsExpected(), { specificCase: 'missing' })
+    }).toThrow('addEvaluator: no case named "missing"')
+
+    const progress: { caseName: string; done: number; total: number }[] = []
+    const { result } = await withMemoryExporter(() =>
+      dataset.evaluate(
+        ({ n }) => {
+          expect(getCurrentTaskRun()).toBeDefined()
+          setEvalAttribute('seen', n)
+          incrementEvalMetric('calls', 1)
+          incrementEvalMetric('calls', 2)
+          return n
+        },
+        { progress: (event) => progress.push(event) }
+      )
+    )
+
+    expect(progress.map((event) => event.caseName).sort()).toEqual(['one', 'two'])
+    expect(progress.map((event) => event.done).sort()).toEqual([1, 2])
+    expect(progress.map((event) => event.total)).toEqual([2, 2])
+    const casesByName = [...result.cases].sort((a, b) => a.name.localeCompare(b.name))
+    expect(casesByName.map((c) => c.attributes)).toEqual([{ seen: 1 }, { seen: 2 }])
+    expect(casesByName.map((c) => c.metrics)).toEqual([{ calls: 3 }, { calls: 3 }])
+    expect(casesByName[0]?.assertions.Equals?.value).toBe(true)
+    expect(casesByName[0]?.assertions.versioned?.evaluator_version).toBe('2026-01-01')
+    expect(casesByName[0]?.scores.score?.value).toBe(0.5)
+    expect(casesByName[0]?.labels.label?.value).toBe('ok')
+
+    setEvalAttribute('outside', true)
+    incrementEvalMetric('outside', 1)
+    expect(getCurrentTaskRun()).toBeUndefined()
+
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let messages: string[] = []
+    try {
+      await withMemoryExporter(() => dataset.evaluate(({ n }) => n, { progress: true }))
+      messages = error.mock.calls.map((call) => String(call[0]))
+    } finally {
+      error.mockRestore()
+    }
+    expect(messages).toHaveLength(2)
+    expect(messages.every((message) => /^\[\d\/2\] (?:one|two)$/.test(message))).toBe(true)
+    expect(messages.map((message) => message.replace(/^\[\d\/2\] /, '')).sort()).toEqual(['one', 'two'])
+  })
+
+  it('records non-Error task failures without rejecting the experiment', async () => {
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'x', name: 'x' })],
+      name: 'non-error-failure',
+    })
+
+    const { result, spans } = await withMemoryExporter(() =>
+      dataset.evaluate(() => {
+        // eslint-disable-next-line no-throw-literal, @typescript-eslint/only-throw-error
+        throw 'string boom'
+      })
+    )
+
+    expect(result.failures).toMatchObject([{ error_message: 'string boom', error_type: 'Error', name: 'x' }])
+    const caseSpan = spans.find((s) => s.name === SPAN_NAME_CASE)
+    expect(caseSpan?.events.some((event) => event.attributes?.['exception.message'] === 'string boom')).toBe(true)
+  })
+
+  it('returns an empty report when aborted before cases start', async () => {
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'x', name: 'x' })],
+      name: 'aborted-before-start',
+    })
+    const controller = new AbortController()
+    controller.abort()
+
+    const { result } = await withMemoryExporter(() => dataset.evaluate((input) => input, { signal: controller.signal }))
+
+    expect(result.cases).toEqual([])
+    expect(result.failures).toEqual([])
+  })
+
+  it('uses taskName and explicit name option for the report and span attributes', async () => {
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'one' })],
+      name: 'naming-test',
+    })
+
+    const { result: customTask, spans: customSpans } = await withMemoryExporter(() =>
+      dataset.evaluate((s) => s, { taskName: 'custom_task' })
+    )
+    expect(customTask.name).toBe('custom_task')
+    const exp1 = customSpans.find((s) => s.name === SPAN_NAME_EXPERIMENT)
+    expect(exp1!.attributes[ATTR_TASK_NAME]).toBe('custom_task')
+    expect(exp1!.attributes[ATTR_NAME]).toBe('custom_task')
+
+    const { result: customExp, spans: customExpSpans } = await withMemoryExporter(() =>
+      dataset.evaluate((s) => s, { name: 'custom_experiment', taskName: 'custom_task' })
+    )
+    expect(customExp.name).toBe('custom_experiment')
+    const exp2 = customExpSpans.find((s) => s.name === SPAN_NAME_EXPERIMENT)
+    expect(exp2!.attributes[ATTR_TASK_NAME]).toBe('custom_task')
+    expect(exp2!.attributes[ATTR_NAME]).toBe('custom_experiment')
+  })
+
+  it('passes options.metadata through to report.experiment_metadata and the span', async () => {
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'one' })],
+      name: 'metadata-test',
+    })
+    const metadata = { max_tokens: 1000, model: 'gpt-4o', prompt_version: 'v2.1' }
+
+    const { result, spans } = await withMemoryExporter(() => dataset.evaluate((s) => s, { metadata }))
+
+    expect(result.experiment_metadata).toEqual(metadata)
+    const exp = spans.find((s) => s.name === SPAN_NAME_EXPERIMENT)
+    const meta = JSON.parse(exp!.attributes[EXPERIMENT_METADATA_KEY] as string) as { metadata?: unknown }
+    expect(meta.metadata).toEqual(metadata)
+  })
+
+  it('returns an empty report for a dataset with no cases', async () => {
+    const dataset = new Dataset<string, string>({ cases: [], name: 'empty' })
+    const { result } = await withMemoryExporter(() => dataset.evaluate(() => 'unused'))
+    expect(result.cases).toEqual([])
+    expect(result.failures).toEqual([])
+  })
+
+  it('assigns positional names to unnamed cases interleaved with named ones', async () => {
+    const dataset = new Dataset<string, string>({
+      cases: [
+        new Case<string, string>({ inputs: 'a' }),
+        new Case<string, string>({ inputs: 'b', name: 'My Case' }),
+        new Case<string, string>({ inputs: 'c' }),
+      ],
+      name: 'unnamed',
+    })
+
+    const { result } = await withMemoryExporter(() => dataset.evaluate((s) => s.toUpperCase()))
+    expect([...result.cases].sort((a, b) => a.name.localeCompare(b.name)).map((c) => c.name)).toEqual(['Case 1', 'Case 3', 'My Case'])
+  })
+
+  it('incrementEvalMetric with amount 0 does not create the metric', async () => {
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'x' })],
+      name: 'increment-zero',
+    })
+    const { result } = await withMemoryExporter(() =>
+      dataset.evaluate((input) => {
+        incrementEvalMetric('phantom', 0)
+        incrementEvalMetric('real', 1)
+        return input
+      })
+    )
+    expect(result.cases[0]?.metrics).toEqual({ real: 1 })
+  })
+
+  it('respects maxConcurrency by serializing case execution', async () => {
+    let inFlight = 0
+    let peakInFlight = 0
+    const dataset = new Dataset<string, string>({
+      cases: [
+        new Case<string, string>({ inputs: 'a', name: 'a' }),
+        new Case<string, string>({ inputs: 'b', name: 'b' }),
+        new Case<string, string>({ inputs: 'c', name: 'c' }),
+        new Case<string, string>({ inputs: 'd', name: 'd' }),
+      ],
+      name: 'concurrency-test',
+    })
+
+    await withMemoryExporter(() =>
+      dataset.evaluate(
+        async (input) => {
+          inFlight += 1
+          peakInFlight = Math.max(peakInFlight, inFlight)
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          inFlight -= 1
+          return input
+        },
+        { maxConcurrency: 1 }
+      )
+    )
+    expect(peakInFlight).toBe(1)
+  })
+
+  it('records evaluator failures as evaluator_failures without aborting the experiment', async () => {
+    class FailingEvaluator extends Evaluator {
+      static evaluatorName = 'FailingEvaluator'
+      evaluate(): never {
+        throw new Error('Evaluator error')
+      }
+    }
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'one' }), new Case<string, string>({ inputs: 'b', name: 'two' })],
+      evaluators: [new FailingEvaluator()],
+      name: 'failing-eval',
+    })
+
+    const { result } = await withMemoryExporter(() => dataset.evaluate((s) => s.toUpperCase()))
+
+    expect(result.cases).toHaveLength(2)
+    expect(result.failures).toEqual([])
+    for (const c of result.cases) {
+      expect(c.assertions).toEqual({})
+      expect(c.evaluator_failures).toMatchObject([{ error_message: 'Evaluator error', error_type: 'Error', name: 'FailingEvaluator' }])
+    }
   })
 })

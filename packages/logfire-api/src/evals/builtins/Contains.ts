@@ -2,6 +2,7 @@ import type { EvaluationReason, EvaluatorContext } from '../types'
 
 import { Evaluator } from '../Evaluator'
 import { registerEvaluator } from '../registry'
+import { deepEqual } from './Equals'
 
 /**
  * True iff `output` contains `value`. Supports strings (substring), arrays
@@ -17,12 +18,34 @@ export class Contains extends Evaluator {
   readonly caseSensitive: boolean
   readonly value: unknown
 
-  constructor(opts: { asStrings?: boolean; caseSensitive?: boolean; evaluationName?: string; value: unknown }) {
+  constructor(opts: {
+    as_strings?: boolean
+    asStrings?: boolean
+    case_sensitive?: boolean
+    caseSensitive?: boolean
+    evaluation_name?: string
+    evaluationName?: string
+    value: unknown
+  }) {
     super()
     this.value = opts.value
-    this.caseSensitive = opts.caseSensitive ?? true
-    this.asStrings = opts.asStrings ?? false
-    if (opts.evaluationName !== undefined) this.evaluationName = opts.evaluationName
+    this.caseSensitive = opts.caseSensitive ?? opts.case_sensitive ?? true
+    this.asStrings = opts.asStrings ?? opts.as_strings ?? false
+    this.evaluationName = opts.evaluationName ?? opts.evaluation_name
+  }
+
+  static jsonSchema(): Record<string, unknown> {
+    return {
+      additionalProperties: false,
+      properties: {
+        as_strings: { default: false, type: 'boolean' },
+        case_sensitive: { default: true, type: 'boolean' },
+        evaluation_name: { type: 'string' },
+        value: {},
+      },
+      required: ['value'],
+      type: 'object',
+    }
   }
 
   evaluate(ctx: EvaluatorContext): EvaluationReason {
@@ -43,37 +66,58 @@ export class Contains extends Evaluator {
       const a = this.caseSensitive ? String(output) : String(output).toLowerCase()
       const b = this.caseSensitive ? String(this.value) : String(this.value).toLowerCase()
       const ok = a.includes(b)
-      return { reason: ok ? 'output contains value' : 'output does not contain value', value: ok }
+      if (ok) return { value: true }
+      return { reason: `Output string ${truncatedRepr(a, 100)} does not contain expected string ${truncatedRepr(b, 100)}`, value: false }
     }
     if (Array.isArray(output)) {
       for (const item of output) {
-        if (deepEqualLoose(item, this.value, this.caseSensitive)) {
-          return { reason: 'value found in output array', value: true }
+        if (deepEqual(item, this.value)) {
+          return { value: true }
         }
       }
-      return { reason: 'value not found in output array', value: false }
+      return { reason: `Output ${truncatedRepr(output, 200)} does not contain provided value`, value: false }
     }
     if (output !== null && typeof output === 'object') {
       const obj = output as Record<string, unknown>
-      // Either a matching key OR a matching value qualifies as "contains"
-      for (const [k, v] of Object.entries(obj)) {
-        if (deepEqualLoose(k, this.value, this.caseSensitive)) return { reason: 'key matches value', value: true }
-        if (deepEqualLoose(v, this.value, this.caseSensitive)) return { reason: 'object value matches', value: true }
+      if (isPlainRecord(this.value)) {
+        for (const [key, expected] of Object.entries(this.value)) {
+          if (!(key in obj)) {
+            return { reason: `Output does not contain expected key ${truncatedRepr(key, 30)}`, value: false }
+          }
+          if (!deepEqual(obj[key], expected)) {
+            return {
+              reason: `Output has different value for key ${truncatedRepr(key, 30)}: ${truncatedRepr(obj[key], 100)} != ${truncatedRepr(expected, 100)}`,
+              value: false,
+            }
+          }
+        }
+        return { value: true }
       }
-      return { reason: 'value not found in object', value: false }
+      const key = String(this.value)
+      return key in obj
+        ? { value: true }
+        : { reason: `Output ${truncatedRepr(obj, 200)} does not contain provided value as a key`, value: false }
     }
-    return { reason: 'output is not iterable', value: false }
+    return { reason: 'Containment check failed: output is not iterable', value: false }
   }
 }
 registerEvaluator(Contains)
 
-function deepEqualLoose(a: unknown, b: unknown, caseSensitive: boolean): boolean {
-  if (typeof a === 'string' && typeof b === 'string' && !caseSensitive) {
-    return a.toLowerCase() === b.toLowerCase()
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function truncatedRepr(value: unknown, maxLength: number): string {
+  let repr: string
+  if (typeof value === 'string') {
+    repr = JSON.stringify(value)
+  } else {
+    try {
+      repr = JSON.stringify(value)
+    } catch {
+      repr = String(value)
+    }
   }
-  if (a === b) return true
-  if (typeof a !== typeof b) return false
-  if (a === null || b === null) return false
-  if (typeof a !== 'object') return false
-  return JSON.stringify(a) === JSON.stringify(b)
+  if (repr.length <= maxLength) return repr
+  return `${repr.slice(0, Math.floor(maxLength / 2))}...${repr.slice(-Math.floor(maxLength / 2))}`
 }

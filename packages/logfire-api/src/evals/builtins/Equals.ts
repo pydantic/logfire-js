@@ -9,10 +9,22 @@ export class Equals extends Evaluator {
 
   readonly value: unknown
 
-  constructor(opts: { evaluationName?: string; value: unknown }) {
+  constructor(opts: { evaluation_name?: string; evaluationName?: string; value: unknown }) {
     super()
     this.value = opts.value
-    if (opts.evaluationName !== undefined) this.evaluationName = opts.evaluationName
+    this.evaluationName = opts.evaluationName ?? opts.evaluation_name
+  }
+
+  static jsonSchema(): Record<string, unknown> {
+    return {
+      additionalProperties: false,
+      properties: {
+        evaluation_name: { type: 'string' },
+        value: {},
+      },
+      required: ['value'],
+      type: 'object',
+    }
   }
 
   evaluate(ctx: EvaluatorContext): boolean {

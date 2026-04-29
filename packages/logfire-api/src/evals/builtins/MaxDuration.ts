@@ -14,6 +14,17 @@ export class MaxDuration extends Evaluator {
     this.seconds = opts.seconds
   }
 
+  static jsonSchema(): Record<string, unknown> {
+    return {
+      additionalProperties: false,
+      properties: {
+        seconds: { type: 'number' },
+      },
+      required: ['seconds'],
+      type: 'object',
+    }
+  }
+
   evaluate(ctx: EvaluatorContext): boolean {
     return ctx.duration <= this.seconds
   }

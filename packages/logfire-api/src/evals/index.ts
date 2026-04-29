@@ -29,26 +29,24 @@ export * from './constants'
 export { getCurrentTaskRun, incrementEvalMetric, runWithTaskRun, setEvalAttribute } from './currentTaskRun'
 export { Dataset, type DatasetOptions } from './Dataset'
 export { Evaluator } from './Evaluator'
+export { buildEvaluationResultJson } from './evaluatorResults'
 export {
   configureOnlineEvals,
   disableEvaluation,
   type EvaluationSink,
   getOnlineEvalConfig,
+  type OnErrorCallback,
+  type OnErrorLocation,
   type OnlineEvalConfig,
   OnlineEvaluator,
+  type OnMaxConcurrencyCallback,
   type SamplingContext,
   type SamplingMode,
   type SinkPayload,
   waitForEvaluations,
   withOnlineEvaluation,
 } from './online'
-export {
-  buildEvaluationResultJson,
-  emitEvaluationResult,
-  emitEvaluatorFailure,
-  type SpanReference,
-  spanReferenceFromSpan,
-} from './otelEmit'
+export { emitEvaluationResult, emitEvaluatorFailure, type SpanReference, spanReferenceFromSpan } from './otelEmit'
 export {
   evaluatorRegistryKey,
   getEvaluatorClass,
@@ -84,12 +82,16 @@ export {
   type ScoreFrom,
 } from './reportEvaluators'
 export {
+  averageFromAggregates,
+  averages,
+  caseGroups,
   computeAssertionPassRate,
   computeAverages,
   type EvaluationReport,
   type ReportCase,
   type ReportCaseAggregate,
   type ReportCaseFailure,
+  type ReportCaseGroup,
 } from './reporting'
 export { detectRuntime, hasAsyncLocalStorage, hasNodeFs, type RuntimeName } from './runtime'
 export {
@@ -109,7 +111,15 @@ export {
   stringifyYaml,
   type ToOptions,
 } from './serialization'
-export { EvalsSpanProcessor, getEvalsSpanProcessor, SpanNode, type SpanQuery, SpanTree, SpanTreeRecordingError } from './spanTree'
+export {
+  EvalsSpanProcessor,
+  getEvalsSpanProcessor,
+  SpanNode,
+  type SpanQuery,
+  spanQueryToSnakeCase,
+  SpanTree,
+  SpanTreeRecordingError,
+} from './spanTree'
 export type {
   EvaluateOptions,
   EvaluationReason,

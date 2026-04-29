@@ -13,7 +13,7 @@ import type { Logger } from '@opentelemetry/api-logs'
 import { context as ContextAPI, trace as TraceAPI } from '@opentelemetry/api'
 import { logs as LogsAPI, SeverityNumber } from '@opentelemetry/api-logs'
 
-import type { EvaluationReason, EvaluationResultJson, EvaluatorFailureRecord, EvaluatorSpec } from './types'
+import type { EvaluationResultJson, EvaluatorFailureRecord } from './types'
 
 import {
   ERROR_TYPE,
@@ -60,21 +60,24 @@ export function emitEvaluationResult(result: EvaluationResultJson, opts: EmitOpt
   encodeScoreAttrs(result.value, attrs)
   applyBaggage(attrs, opts.baggageAttrs)
 
-  emit(buildBody(result.name, result.value), attrs, SeverityNumber.INFO, opts.parentSpanRef)
+  emit(buildBody(result.name, result.value), attrs, opts.parentSpanRef)
 }
 
 export function emitEvaluatorFailure(failure: EvaluatorFailureRecord, opts: EmitOptions): void {
+  const errorType = failure.error_type || 'pydantic_evals.EvaluatorFailure'
+  const errorMessage = failure.error_message || ''
   const attrs: Record<string, unknown> = {
-    [ERROR_TYPE]: failure.error_type,
+    [ERROR_TYPE]: errorType,
     [GEN_AI_EVAL_NAME]: failure.name,
     [GEN_AI_EVAL_TARGET]: opts.target,
     [GEN_AI_EVALUATOR_SOURCE]: JSON.stringify(failure.source),
-    [GEN_AI_EXPLANATION]: failure.error_message,
+    [GEN_AI_EXPLANATION]: errorMessage,
   }
   if (failure.evaluator_version !== undefined) attrs[GEN_AI_EVALUATOR_VERSION] = failure.evaluator_version
   applyBaggage(attrs, opts.baggageAttrs)
 
-  emit(`evaluation: ${failure.name} failed: ${failure.error_message}`, attrs, SeverityNumber.WARN, opts.parentSpanRef)
+  const body = errorMessage === '' ? `evaluation: ${failure.name} failed` : `evaluation: ${failure.name} failed: ${errorMessage}`
+  emit(body, attrs, opts.parentSpanRef, SeverityNumber.WARN)
 }
 
 function encodeScoreAttrs(value: boolean | number | string, attrs: Record<string, unknown>): void {
@@ -93,15 +96,14 @@ function buildBody(name: string, value: boolean | number | string): string {
   if (typeof value === 'boolean') {
     formatted = value ? 'True' : 'False' // matches Python repr
   } else if (typeof value === 'string') {
-    formatted = JSON.stringify(value)
+    formatted = pythonStringRepr(value)
   } else {
-    // number — JS String() gives a reasonable shortest-form rendering
-    formatted = String(value)
+    formatted = formatPythonGeneralNumber(value)
   }
   return `evaluation: ${name}=${formatted}`
 }
 
-function emit(body: string, attrs: Record<string, unknown>, severityNumber: SeverityNumber, parentRef?: SpanReference): void {
+function emit(body: string, attrs: Record<string, unknown>, parentRef?: SpanReference, severityNumber?: SeverityNumber): void {
   const logger = getLogger()
   const ctxBase = ContextAPI.active()
   const ctx = parentRef === undefined ? ctxBase : TraceAPI.setSpanContext(ctxBase, { ...parentRef, traceFlags: 1 })
@@ -110,9 +112,25 @@ function emit(body: string, attrs: Record<string, unknown>, severityNumber: Seve
       attributes: attrs as Record<string, boolean | number | string>,
       body,
       eventName: EVAL_RESULT_EVENT_NAME,
-      severityNumber,
+      ...(severityNumber === undefined ? {} : { severityNumber }),
     })
   })
+}
+
+function formatPythonGeneralNumber(value: number): string {
+  if (Number.isNaN(value)) return 'nan'
+  if (value === Infinity) return 'inf'
+  if (value === -Infinity) return '-inf'
+  if (Number.isInteger(value)) return String(value)
+  return value
+    .toPrecision(6)
+    .replace(/(\.\d*?)0+(e|$)/, '$1$2')
+    .replace(/\.e/, 'e')
+    .replace(/e([+-])(\d)$/, 'e$10$2')
+}
+
+function pythonStringRepr(value: string): string {
+  return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
 }
 
 function applyBaggage(attrs: Record<string, unknown>, baggage: Record<string, unknown> | undefined): void {
@@ -121,31 +139,4 @@ function applyBaggage(attrs: Record<string, unknown>, baggage: Record<string, un
   for (const [k, v] of Object.entries(baggage)) {
     if (!(k in attrs)) attrs[k] = v
   }
-}
-
-/**
- * Combine `EvaluationReason` / scalar evaluator output into a single
- * `EvaluationResultJson` ready for emission. Used by the online wrapper to
- * normalize whatever the evaluator returned.
- */
-export function buildEvaluationResultJson(
-  defaultName: string,
-  value: boolean | EvaluationReason | number | string,
-  source: EvaluatorSpec,
-  evaluatorVersion?: string
-): EvaluationResultJson {
-  const reason = isReason(value) ? (value.reason ?? null) : null
-  const scalar = isReason(value) ? value.value : value
-  const out: EvaluationResultJson = {
-    name: defaultName,
-    reason,
-    source,
-    value: scalar,
-  }
-  if (evaluatorVersion !== undefined) out.evaluator_version = evaluatorVersion
-  return out
-}
-
-function isReason(v: unknown): v is EvaluationReason {
-  return typeof v === 'object' && v !== null && 'value' in v && !Array.isArray(v)
 }

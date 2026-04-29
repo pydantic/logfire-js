@@ -2,8 +2,6 @@
  * Shared types used across the evals subsystem.
  */
 
-import type { Span } from '@opentelemetry/api'
-
 import type { Evaluator } from './Evaluator'
 import type { ReportEvaluator } from './ReportEvaluator'
 import type { SpanTree } from './spanTree/SpanTree'
@@ -76,7 +74,6 @@ export interface ReportEvaluatorClass<Inputs = unknown, Output = unknown, Metada
  */
 export interface TaskRunState {
   attributes: Record<string, unknown>
-  caseSpan: null | Span
   /** Stable random ID used by the span-tree exporter to scope captured spans. */
   exporterContextId: string
   metrics: Record<string, number>
@@ -91,9 +88,6 @@ export interface EvaluatorFailureRecord {
   name: string
   source: EvaluatorSpec
 }
-
-/** Per-case evaluator container — separates dataset-level evaluators from case-specific ones. */
-export type EvaluatorList<Inputs, Output, Metadata> = readonly Evaluator<Inputs, Output, Metadata>[]
 
 /**
  * Retry config — passed to `p-retry`. See https://github.com/sindresorhus/p-retry
@@ -111,7 +105,7 @@ export interface RetryConfig {
  * `Dataset.evaluate(...)` kwargs but with TS-idiomatic naming.
  */
 export interface EvaluateOptions<Inputs = unknown, Output = unknown, Metadata = unknown> {
-  // Generic params reserved for future use (lifecycle, retry strategies)
+  // Phantom fields anchor the generic parameters for callers using this type directly.
   _phantomInputs?: Inputs
   _phantomMetadata?: Metadata
   _phantomOutput?: Output
@@ -131,7 +125,7 @@ export interface EvaluateOptions<Inputs = unknown, Output = unknown, Metadata = 
   retryEvaluators?: RetryConfig
   /** Retry config for the user's task. Powered by `p-retry`. */
   retryTask?: RetryConfig
-  /** Cancel an in-flight evaluation. Cases not yet started are skipped; in-flight tasks see the signal. */
+  /** Cancel an evaluation. Cases not yet started are skipped; in-flight tasks are not interrupted automatically. */
   signal?: AbortSignal
   /** Override the task display name (defaults to function.name). */
   taskName?: string

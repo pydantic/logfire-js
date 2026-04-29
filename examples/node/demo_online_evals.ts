@@ -1,6 +1,4 @@
 /**
- * TypeScript port of `platform/scripts/demo_online_evals.py`.
- *
  * Wraps a stub "agent" function with `withOnlineEvaluation` and emits a
  * mixture of bool / float / string / failing evaluator outputs so the
  * `gen_ai.evaluation.result` log stream exercises every encoding shape the
@@ -15,13 +13,7 @@
  */
 
 import * as logfire from '@pydantic/logfire-node'
-import {
-  Evaluator,
-  type EvaluatorContext,
-  type EvaluatorOutput,
-  waitForEvaluations,
-  withOnlineEvaluation,
-} from '@pydantic/logfire-node/evals'
+import { Evaluator, type EvaluatorContext, type EvaluatorOutput, waitForEvaluations, withOnlineEvaluation } from 'logfire/evals'
 
 logfire.configure({
   advanced: { baseUrl: process.env.LOGFIRE_BASE_URL ?? 'http://localhost:3000' },

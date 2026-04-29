@@ -4,17 +4,13 @@
  * strict-parses.
  */
 
+import pRetry from 'p-retry'
+
 import type { Evaluator } from './Evaluator'
-import type {
-  EvaluationReason,
-  EvaluationResultJson,
-  EvaluatorContext,
-  EvaluatorFailureRecord,
-  EvaluatorOutput,
-  EvaluatorSpec,
-} from './types'
+import type { EvaluationResultJson, EvaluatorContext, EvaluatorFailureRecord, EvaluatorOutput, RetryConfig } from './types'
 
 import { ATTR_EVALUATOR_NAME, SPAN_MSG_TEMPLATE_EVALUATOR, SPAN_NAME_EVALUATOR_LITERAL } from './constants'
+import { buildEvaluatorFailureRecord, evaluationResultsFromOutput } from './evaluatorResults'
 import { evalsSpan } from './internal'
 
 export interface RunEvaluatorsResult {
@@ -24,83 +20,66 @@ export interface RunEvaluatorsResult {
   scores: Record<string, EvaluationResultJson>
 }
 
-export async function runEvaluators(evaluators: readonly Evaluator[], ctx: EvaluatorContext): Promise<RunEvaluatorsResult> {
+export async function runEvaluators(
+  evaluators: readonly Evaluator[],
+  ctx: EvaluatorContext,
+  retryEvaluators?: RetryConfig
+): Promise<RunEvaluatorsResult> {
   const result: RunEvaluatorsResult = { assertions: {}, failures: [], labels: {}, scores: {} }
 
-  for (const evaluator of evaluators) {
-    const evaluatorName = evaluator.getResultName()
-    const spec = evaluator.getSpec()
-    try {
-      const raw = await evalsSpan(
-        SPAN_MSG_TEMPLATE_EVALUATOR,
-        {
-          attributes: { [ATTR_EVALUATOR_NAME]: evaluatorName },
-          spanName: SPAN_NAME_EVALUATOR_LITERAL,
-        },
-        async () => evaluator.evaluate(ctx)
-      )
-      mergeEvaluatorOutput(result, raw, evaluatorName, spec, evaluator.evaluatorVersion)
-    } catch (err) {
-      result.failures.push(buildFailureRecord(err, evaluatorName, spec, evaluator.evaluatorVersion))
+  const runs = await Promise.all(
+    evaluators.map(async (evaluator) => {
+      const evaluatorName = evaluator.getResultName()
+      const spec = evaluator.getSpec()
+      try {
+        const runOnce = (): Promise<EvaluatorOutput> =>
+          evalsSpan(
+            SPAN_MSG_TEMPLATE_EVALUATOR,
+            {
+              attributes: { [ATTR_EVALUATOR_NAME]: evaluatorName },
+              spanName: SPAN_NAME_EVALUATOR_LITERAL,
+            },
+            async () => evaluator.evaluate(ctx)
+          )
+        const raw = retryEvaluators === undefined ? await runOnce() : await pRetry(runOnce, retryEvaluators)
+        return {
+          failures: [],
+          results: evaluationResultsFromOutput(raw, evaluatorName, spec, evaluator.evaluatorVersion),
+        }
+      } catch (err) {
+        return {
+          failures: [buildEvaluatorFailureRecord(err, evaluatorName, spec, evaluator.evaluatorVersion)],
+          results: [],
+        }
+      }
+    })
+  )
+
+  for (const run of runs) {
+    result.failures.push(...run.failures)
+    for (const item of run.results) {
+      place(result, item)
     }
   }
   return result
 }
 
-function mergeEvaluatorOutput(
-  out: RunEvaluatorsResult,
-  raw: EvaluatorOutput,
-  defaultName: string,
-  spec: EvaluatorSpec,
-  evaluatorVersion?: string
-): void {
-  if (typeof raw === 'boolean' || typeof raw === 'number' || typeof raw === 'string' || isReason(raw)) {
-    place(out, defaultName, raw, spec, evaluatorVersion)
-    return
-  }
-  for (const [name, value] of Object.entries(raw)) {
-    place(out, name, value, spec, evaluatorVersion)
-  }
-}
-
-function place(
-  out: RunEvaluatorsResult,
-  name: string,
-  value: boolean | EvaluationReason | number | string,
-  spec: EvaluatorSpec,
-  evaluatorVersion?: string
-): void {
-  const reason = isReason(value) ? (value.reason ?? null) : null
-  const scalar = isReason(value) ? value.value : value
-  const json: EvaluationResultJson = {
-    name,
-    reason,
-    source: spec,
-    value: scalar,
-  }
-  if (evaluatorVersion !== undefined) json.evaluator_version = evaluatorVersion
-  if (typeof scalar === 'boolean') {
-    out.assertions[name] = json
-  } else if (typeof scalar === 'number') {
-    out.scores[name] = json
+function place(out: RunEvaluatorsResult, result: EvaluationResultJson): void {
+  if (typeof result.value === 'boolean') {
+    const name = nextResultName(out.assertions, result.name)
+    out.assertions[name] = { ...result, name }
+  } else if (typeof result.value === 'number') {
+    const name = nextResultName(out.scores, result.name)
+    out.scores[name] = { ...result, name }
   } else {
-    out.labels[name] = json
+    const name = nextResultName(out.labels, result.name)
+    out.labels[name] = { ...result, name }
   }
 }
 
-function isReason(v: unknown): v is EvaluationReason {
-  return typeof v === 'object' && v !== null && 'value' in v && !Array.isArray(v)
-}
-
-function buildFailureRecord(err: unknown, name: string, spec: EvaluatorSpec, evaluatorVersion?: string): EvaluatorFailureRecord {
-  const isErr = err instanceof Error
-  const out: EvaluatorFailureRecord = {
-    error_message: isErr ? err.message : String(err),
-    error_type: isErr ? err.constructor.name : 'Error',
-    name,
-    source: spec,
-  }
-  if (isErr && err.stack !== undefined) out.error_stacktrace = err.stack
-  if (evaluatorVersion !== undefined) out.evaluator_version = evaluatorVersion
-  return out
+function nextResultName(existing: Record<string, EvaluationResultJson>, baseName: string): string {
+  if (existing[baseName] === undefined) return baseName
+  let i = 2
+  while (existing[`${baseName}_${i.toString()}`] !== undefined) i++
+  return `${baseName}_${i.toString()}`
 }

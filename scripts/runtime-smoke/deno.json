@@ -1,0 +1,11 @@
+{
+  "imports": {
+    "@opentelemetry/api": "npm:@opentelemetry/api@^1.9.0",
+    "@opentelemetry/api-logs": "npm:@opentelemetry/api-logs@^0.215.0",
+    "@opentelemetry/sdk-trace-base": "npm:@opentelemetry/sdk-trace-base@^2.7.0",
+    "@opentelemetry/semantic-conventions": "npm:@opentelemetry/semantic-conventions@^1.40.0",
+    "js-yaml": "npm:js-yaml@^4.1.0",
+    "p-retry": "npm:p-retry@^6.2.1",
+    "zod": "npm:zod@^3.23.8"
+  }
+}

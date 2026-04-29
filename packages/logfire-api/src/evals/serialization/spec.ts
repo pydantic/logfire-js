@@ -20,6 +20,11 @@ import type { EvaluatorClass, EvaluatorSpec, ReportEvaluatorClass } from '../typ
 import { evaluatorRegistryKey } from '../registry'
 
 export type EncodedEvaluator = Record<string, unknown> | string
+export interface EvaluatorRegistry<T> {
+  get(name: string): T | undefined
+  keys(): Iterable<string>
+}
+type RegistryInput<T> = EvaluatorRegistry<T> | Map<string, T> | Record<string, T>
 
 export function encodeEvaluatorSpec(evaluator: Evaluator | ReportEvaluator): EncodedEvaluator {
   const cls = evaluator.constructor as { evaluatorName?: string; name: string }
@@ -47,7 +52,7 @@ export function encodeEvaluatorSpec(evaluator: Evaluator | ReportEvaluator): Enc
 
 export function decodeEvaluator<I = unknown, O = unknown, M = unknown>(
   encoded: unknown,
-  registry: Map<string, EvaluatorClass<I, O, M>> | Record<string, EvaluatorClass<I, O, M>>,
+  registry: RegistryInput<EvaluatorClass<I, O, M>>,
   primaryArgKeys: Map<string, string>
 ): Evaluator<I, O, M> {
   const spec = decodeSpec(encoded)
@@ -60,7 +65,7 @@ export function decodeEvaluator<I = unknown, O = unknown, M = unknown>(
 
 export function decodeReportEvaluator<I = unknown, O = unknown, M = unknown>(
   encoded: unknown,
-  registry: Map<string, ReportEvaluatorClass<I, O, M>> | Record<string, ReportEvaluatorClass<I, O, M>>,
+  registry: RegistryInput<ReportEvaluatorClass<I, O, M>>,
   primaryArgKeys: Map<string, string>
 ): ReportEvaluator<I, O, M> {
   const spec = decodeSpec(encoded)
@@ -123,10 +128,16 @@ function isStringKeyedDict(v: unknown): boolean {
   return v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)
 }
 
-function lookup<T>(registry: Map<string, T> | Record<string, T>, name: string): T | undefined {
-  return registry instanceof Map ? registry.get(name) : registry[name]
+function lookup<T>(registry: RegistryInput<T>, name: string): T | undefined {
+  if (isLookupRegistry(registry)) return registry.get(name)
+  return registry[name]
 }
 
-function keys<T>(registry: Map<string, T> | Record<string, T>): Iterable<string> {
-  return registry instanceof Map ? registry.keys() : Object.keys(registry)
+function keys<T>(registry: RegistryInput<T>): Iterable<string> {
+  if (isLookupRegistry(registry)) return registry.keys()
+  return Object.keys(registry)
+}
+
+function isLookupRegistry<T>(registry: RegistryInput<T>): registry is EvaluatorRegistry<T> | Map<string, T> {
+  return typeof (registry as EvaluatorRegistry<T>).get === 'function' && typeof (registry as EvaluatorRegistry<T>).keys === 'function'
 }
