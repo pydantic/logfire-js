@@ -19,6 +19,8 @@ import { decodeEvaluator, decodeReportEvaluator, type EncodedEvaluator, encodeEv
 export interface FromOptions {
   customEvaluators?: readonly EvaluatorClass[]
   customReportEvaluators?: readonly ReportEvaluatorClass[]
+  /** Default dataset name when the YAML / JSON omits `name`. Falls back to `'dataset'`. */
+  defaultName?: string
   /** Map of evaluator-name → primary-arg-key for constructing single-positional short forms. */
   primaryArgKeys?: Record<string, string>
 }
@@ -56,7 +58,8 @@ const serializedDatasetSchema = z.object({
   $schema: z.string().optional(),
   cases: z.array(serializedCaseSchema),
   evaluators: z.array(encodedEvaluatorSchema).optional(),
-  name: z.string(),
+  // Optional — defaults to the source file stem (or `'dataset'` for raw text).
+  name: z.string().optional(),
   report_evaluators: z.array(encodedEvaluatorSchema).optional(),
 })
 
@@ -102,7 +105,7 @@ export function datasetFromObject<I = unknown, O = unknown, M = unknown>(data: u
   return new Dataset<I, O, M>({
     cases,
     evaluators,
-    name: parsed.name,
+    name: parsed.name ?? options.defaultName ?? 'dataset',
     reportEvaluators,
   })
 }

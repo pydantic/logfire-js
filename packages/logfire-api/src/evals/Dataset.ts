@@ -81,9 +81,11 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
   static async fromFile<I = unknown, O = unknown, M = unknown>(filePath: string, options: FromOptions = {}): Promise<Dataset<I, O, M>> {
     if (!hasNodeFs()) throw new Error('Dataset.fromFile is only supported on Node, Bun, and Deno (no filesystem in browser/CF Workers)')
     const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
+    const path: typeof import('node:path') = await import('node:path')
     const text = await fs.readFile(filePath, 'utf8')
     const format: 'json' | 'yaml' = filePath.endsWith('.json') ? 'json' : 'yaml'
-    return Dataset.fromText<I, O, M>(text, { ...options, format })
+    const defaultName = options.defaultName ?? path.parse(filePath).name
+    return Dataset.fromText<I, O, M>(text, { ...options, defaultName, format })
   }
 
   static fromObject<I = unknown, O = unknown, M = unknown>(data: unknown, options: FromOptions = {}): Dataset<I, O, M> {
