@@ -23,9 +23,36 @@ import { reportError, TailSamplingProcessor, ULIDGenerator } from 'logfire'
 import { getEvalsSpanProcessor } from 'logfire/evals'
 
 import { logfireConfig } from './logfireConfig'
+import { logfireLogRecordProcessor } from './logsExporter'
 import { periodicMetricReader } from './metricExporter'
 import { logfireSpanProcessor } from './traceExporter'
 import { removeEmptyKeys } from './utils'
+
+let activeSdk: NodeSDK | undefined
+let activeProcessor: import('@opentelemetry/sdk-trace-base').SpanProcessor | undefined
+
+/**
+ * Force-flush all pending spans to the configured exporter. Mirrors Python's
+ * `logfire.force_flush()`. Call this before process exit when the default
+ * `beforeExit` cleanup might not have time to finish (e.g. short scripts that
+ * top-level-await once and exit).
+ */
+export async function forceFlush(): Promise<void> {
+  if (activeProcessor) {
+    await activeProcessor.forceFlush()
+  }
+}
+
+/**
+ * Shut down the OTel SDK, flushing pending spans and metrics. Idempotent —
+ * subsequent calls are no-ops. Mirrors Python's `logfire.shutdown()`.
+ */
+export async function shutdown(): Promise<void> {
+  if (activeSdk) {
+    await activeSdk.shutdown()
+    activeSdk = undefined
+  }
+}
 
 const LOGFIRE_ATTRIBUTES_NAMESPACE = 'logfire'
 const RESOURCE_ATTRIBUTES_CODE_ROOT_PATH = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.code.root_path`
@@ -60,16 +87,20 @@ export function start() {
   if (logfireConfig.sampling?.tail) {
     processor = new TailSamplingProcessor(processor, logfireConfig.sampling.tail)
   }
+  activeProcessor = processor
 
   const headRate = logfireConfig.sampling?.head
   const sampler =
     headRate !== undefined && headRate < 1.0 ? new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(headRate) }) : undefined
+
+  const logProcessor = logfireLogRecordProcessor()
 
   const sdk = new NodeSDK({
     autoDetectResources: false,
     contextManager,
     idGenerator: new ULIDGenerator(),
     instrumentations: [getNodeAutoInstrumentations(logfireConfig.nodeAutoInstrumentations), ...logfireConfig.instrumentations],
+    ...(logProcessor ? { logRecordProcessors: [logProcessor] } : {}),
     metricReader: logfireConfig.metrics === false ? undefined : periodicMetricReader(),
     resource,
     ...(sampler ? { sampler } : {}),
@@ -82,6 +113,7 @@ export function start() {
     metrics.setGlobalMeterProvider(meterProvider)
   }
 
+  activeSdk = sdk
   sdk.start()
   diag.info('logfire: starting')
 

@@ -129,6 +129,7 @@ export interface LogfireConfigOptions {
 const DEFAULT_OTEL_SCOPE = 'logfire'
 const TRACE_ENDPOINT_PATH = 'v1/traces'
 const METRIC_ENDPOINT_PATH = 'v1/metrics'
+const LOGS_ENDPOINT_PATH = 'v1/logs'
 const DEFAULT_AUTO_INSTRUMENTATION_CONFIG: InstrumentationConfigMap = {
   // https://opentelemetry.io/docs/languages/js/libraries/#registration
   // This particular instrumentation creates a lot of noise on startup
@@ -148,6 +149,7 @@ export interface LogfireConfig {
   distributedTracing: boolean
   idGenerator: IdGenerator
   instrumentations: Instrumentation[]
+  logsExporterUrl: string
   metricExporterUrl: string
   metrics: false | MetricsOptions | undefined
   nodeAutoInstrumentations: InstrumentationConfigMap
@@ -171,6 +173,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   distributedTracing: true,
   idGenerator: new logfireApi.ULIDGenerator(),
   instrumentations: [],
+  logsExporterUrl: '',
   metricExporterUrl: '',
   metrics: undefined,
   nodeAutoInstrumentations: DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
@@ -212,6 +215,7 @@ export function configure(config: LogfireConfigOptions = {}) {
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),
     idGenerator: cnf.advanced?.idGenerator ?? new logfireApi.ULIDGenerator(),
     instrumentations: cnf.instrumentations ?? [],
+    logsExporterUrl: `${baseUrl}/${LOGS_ENDPOINT_PATH}`,
     metricExporterUrl: `${baseUrl}/${METRIC_ENDPOINT_PATH}`,
     metrics: cnf.metrics,
     nodeAutoInstrumentations: cnf.nodeAutoInstrumentations ?? DEFAULT_AUTO_INSTRUMENTATION_CONFIG,

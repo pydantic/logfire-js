@@ -14,7 +14,6 @@
  * `math_agent` — http://localhost:3000/e2e-test/test-e2e-project/evals/live
  */
 
-import 'dotenv/config'
 import * as logfire from '@pydantic/logfire-node'
 import {
   Evaluator,
@@ -132,6 +131,6 @@ await runTarget('math_agent', MATH_CASES)
 
 console.log('\nFlushing pending evaluations…')
 await waitForEvaluations({ timeoutMs: 10_000 })
-// Give the OTel batch processor a moment to ship the events.
-await new Promise((r) => setTimeout(r, 1500))
+await logfire.forceFlush()
+await logfire.shutdown()
 console.log('Done. Open the Live Evaluations UI to confirm events landed for both targets.')

@@ -19,7 +19,6 @@
  * to inspect the resulting experiment.
  */
 
-import 'dotenv/config'
 import { resolve } from 'node:path'
 
 import * as logfire from '@pydantic/logfire-node'
@@ -143,5 +142,8 @@ async function evaluateDataset(): Promise<void> {
 }
 
 await evaluateDataset()
-// Force-flush the OTel SDK so the experiment lands before the process exits.
-await new Promise((resolve) => setTimeout(resolve, 1500))
+// Force-flush pending spans so we don't race the OTel batch processor's
+// 5-second scheduled-delay against process exit. Mirrors the Python demo's
+// `logfire.force_flush()` at the end of the script.
+await logfire.forceFlush()
+await logfire.shutdown()

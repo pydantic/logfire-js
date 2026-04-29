@@ -24,8 +24,10 @@ import {
 
 // Import all exports to construct default export
 import * as logfireConfigExports from './logfireConfig'
+import { forceFlush, shutdown } from './sdk'
 
 export * from './logfireConfig'
+export { forceFlush, shutdown } from './sdk'
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from 'logfire'
 
@@ -37,6 +39,7 @@ export default {
   DiagLogLevel,
   error,
   fatal,
+  forceFlush,
   info,
   // Re-export all from logfire
   Level,
@@ -49,6 +52,7 @@ export default {
   resolveBaseUrl,
   resolveSendToLogfire,
   serializeAttributes,
+  shutdown,
   span,
   startSpan,
   trace,
