@@ -1,6 +1,7 @@
 import baseConfig from '../../eslint-config.mjs'
 
 export default [
+  { ignores: ['coverage/**'] },
   ...baseConfig,
   {
     languageOptions: {

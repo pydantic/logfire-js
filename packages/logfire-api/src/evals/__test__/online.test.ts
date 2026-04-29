@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/require-await */
-import { trace as TraceAPI } from '@opentelemetry/api'
-import { describe, expect, it } from 'vitest'
+import { context as ContextAPI, propagation, trace as TraceAPI } from '@opentelemetry/api'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   ATTR_EVALUATOR_NAME,
   configureOnlineEvals,
+  disableEvaluation,
   Equals,
   ERROR_TYPE,
   EVAL_RESULT_EVENT_NAME,
@@ -17,6 +18,7 @@ import {
   GEN_AI_EXPLANATION,
   GEN_AI_SCORE_LABEL,
   GEN_AI_SCORE_VALUE,
+  getOnlineEvalConfig,
   HasMatchingSpan,
   OnlineEvaluator,
   type SinkPayload,
@@ -72,6 +74,32 @@ class Throwing extends Evaluator {
 }
 
 describe('online evals — gen_ai.evaluation.result emission', () => {
+  it('exposes global config and OnlineEvaluator wrapper properties', () => {
+    const sinkPayloads: SinkPayload[] = []
+    configureOnlineEvals({
+      metadata: { suite: 'online' },
+      sink: (payload) => {
+        sinkPayloads.push(payload)
+      },
+    })
+    try {
+      expect(getOnlineEvalConfig().metadata).toEqual({ suite: 'online' })
+      const evaluator = new OnlineEvaluator({
+        evaluator: new AlwaysPass(),
+        sampleRate: 0.25,
+        sink: (payload) => {
+          sinkPayloads.push(payload)
+        },
+      })
+      expect(evaluator.name).toBe('AlwaysPass')
+      expect(evaluator.evaluator).toBeInstanceOf(AlwaysPass)
+      expect(evaluator.sampleRate).toBe(0.25)
+      expect(evaluator.sink).toBeTypeOf('function')
+    } finally {
+      configureOnlineEvals({ metadata: undefined, sink: undefined })
+    }
+  })
+
   it('emits one log per result, parented to call span, on the pydantic-evals scope', async () => {
     const fn = withOnlineEvaluation(async (msg: string) => msg.toUpperCase(), {
       evaluators: [new AlwaysPass()],
@@ -167,6 +195,23 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     expect(logs[0]!.body).toContain('failed: evaluator boom')
   })
 
+  it('calls evaluator onError hooks for online evaluator failures', async () => {
+    const errors: { error: unknown; name: string }[] = []
+    const fn = withOnlineEvaluation(async () => 'x', {
+      evaluators: [new OnlineEvaluator({ evaluator: new Throwing(), onError: (error, name) => errors.push({ error, name }) })],
+      target: 'error-hook-target',
+    })
+
+    await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+
+    expect(errors).toHaveLength(1)
+    expect(errors[0]?.name).toBe('Throwing')
+    expect(errors[0]?.error).toBeInstanceOf(Error)
+  })
+
   it('zero sample-rate skips all evaluators (no logs emitted)', async () => {
     const fn = withOnlineEvaluation(async () => 'x', {
       evaluators: [new AlwaysPass()],
@@ -229,6 +274,27 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     }
   })
 
+  it('disableEvaluation suppresses dispatch until disposed', async () => {
+    const handle = disableEvaluation()
+    const fn = withOnlineEvaluation(async () => 'x', { evaluators: [new AlwaysPass()], target: 'disabled-handle-target' })
+    try {
+      const { logs } = await withMemoryLogExporter(async () => {
+        await expect(fn()).resolves.toBe('x')
+        await waitForEvaluations()
+      })
+      expect(logs).toHaveLength(0)
+    } finally {
+      handle.dispose()
+      handle.dispose()
+    }
+
+    const { logs } = await withMemoryLogExporter(async () => {
+      await expect(fn()).resolves.toBe('x')
+      await waitForEvaluations()
+    })
+    expect(logs).toHaveLength(1)
+  })
+
   it('emitOtelEvents=false still runs evaluators and sends sink payloads without log records', async () => {
     const sinkPayloads: SinkPayload[] = []
     const fn = withOnlineEvaluation(async () => 'x', {
@@ -249,6 +315,62 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     expect(sinkPayloads).toHaveLength(1)
     expect(sinkPayloads[0]?.results).toHaveLength(1)
     expect(sinkPayloads[0]?.results[0]?.name).toBe('AlwaysPass')
+  })
+
+  it('extracts call arguments, records return values and propagates baggage to emitted logs', async () => {
+    async function answer(first: string, count = 1): Promise<{ count: number; first: string }> {
+      return { count, first }
+    }
+
+    const fn = withOnlineEvaluation(answer, {
+      evaluators: [new AlwaysPass()],
+      extractArgs: true,
+      recordReturn: true,
+      target: 'argument-target',
+    })
+    const baggage = propagation.createBaggage({ tenant: { value: 'acme' } })
+
+    const { logs, spans } = await withMemoryLogExporter(async () =>
+      ContextAPI.with(propagation.setBaggage(ContextAPI.active(), baggage), async () => {
+        await expect(fn('hello', 3)).resolves.toEqual({ count: 3, first: 'hello' })
+        await waitForEvaluations()
+      })
+    )
+
+    const callSpan = spans.find((s) => s.name === 'Calling argument-target')!
+    expect(callSpan.attributes).toMatchObject({
+      count: 3,
+      first: 'hello',
+      return: '{"count":3,"first":"hello"}',
+      target: 'argument-target',
+    })
+    expect(logs[0]?.attributes.tenant).toBe('acme')
+  })
+
+  it('supports explicit extracted argument names and independent per-evaluator sampling', async () => {
+    const random = vi.spyOn(Math, 'random').mockReturnValueOnce(0.4).mockReturnValueOnce(0.6).mockReturnValue(0.1)
+    const fn = withOnlineEvaluation(async (first: string, second: string) => `${first}${second}`, {
+      evaluators: [
+        new OnlineEvaluator({ evaluator: new AlwaysPass(), sampleRate: 0.5 }),
+        new OnlineEvaluator({ evaluator: new AlwaysFail(), sampleRate: 0.5 }),
+      ],
+      extractArgs: ['renamedFirst', 'renamedSecond'],
+      samplingMode: 'independent',
+      target: 'independent-target',
+    })
+
+    try {
+      const { logs, spans } = await withMemoryLogExporter(async () => {
+        await fn('a', 'b')
+        await waitForEvaluations()
+      })
+      expect(logs).toHaveLength(1)
+      expect(logs[0]?.attributes[GEN_AI_EVAL_NAME]).toBe('AlwaysPass')
+      const callSpan = spans.find((s) => s.name === 'Calling independent-target')!
+      expect(callSpan.attributes).toMatchObject({ renamedFirst: 'a', renamedSecond: 'b' })
+    } finally {
+      random.mockRestore()
+    }
   })
 
   it('event name is gen_ai.evaluation.result', async () => {
@@ -276,6 +398,64 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     const src = JSON.parse(logs[0]!.attributes[GEN_AI_EVALUATOR_SOURCE] as string) as { arguments: unknown; name: string }
     expect(src.name).toBe('Equals')
     expect(src.arguments).toEqual({ value: 'expected' })
+  })
+
+  it('emits one log per named output when an evaluator returns a result object', async () => {
+    class MultiOutput extends Evaluator {
+      static evaluatorName = 'MultiOutput'
+
+      evaluate(): Record<string, boolean | number | string> {
+        return { assertion: true, label: 'great', score: 0.95 }
+      }
+    }
+
+    const fn = withOnlineEvaluation(async () => 'x', { evaluators: [new MultiOutput()], target: 'multi-output-target' })
+    const { logs } = await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+
+    expect(logs.map((log) => log.attributes[GEN_AI_EVAL_NAME]).sort()).toEqual(['assertion', 'label', 'score'])
+    expect(logs.find((log) => log.attributes[GEN_AI_EVAL_NAME] === 'assertion')?.attributes[GEN_AI_SCORE_VALUE]).toBe(1)
+    expect(logs.find((log) => log.attributes[GEN_AI_EVAL_NAME] === 'label')?.attributes[GEN_AI_SCORE_LABEL]).toBe('great')
+    expect(logs.find((log) => log.attributes[GEN_AI_EVAL_NAME] === 'score')?.attributes[GEN_AI_SCORE_VALUE]).toBe(0.95)
+  })
+
+  it('cleans up captured spans and does not dispatch evaluators when the wrapped call fails', async () => {
+    const fn = withOnlineEvaluation(
+      async () => {
+        throw new Error('call failed')
+      },
+      { evaluators: [new AlwaysPass()], target: 'failing-call-target' }
+    )
+
+    const { logs } = await withMemoryLogExporter(async () => {
+      await expect(fn()).rejects.toThrow('call failed')
+      await waitForEvaluations()
+    })
+
+    expect(logs).toHaveLength(0)
+  })
+
+  it('OnlineEvaluator.tryRun can execute without a parent call span reference', async () => {
+    const evaluator = new OnlineEvaluator({ evaluator: new AlwaysPass() })
+    const { result, spans } = await withMemoryLogExporter(() =>
+      evaluator.tryRun(
+        {
+          attributes: {},
+          duration: 0,
+          inputs: 'x',
+          metrics: {},
+          output: 'x',
+          spanTree: { any: () => false } as never,
+        },
+        null
+      )
+    )
+
+    expect(result.results[0]?.name).toBe('AlwaysPass')
+    const evaluatorSpan = spans.find((s) => s.name === SPAN_NAME_EVALUATOR_LITERAL)
+    expect(evaluatorSpan?.parentSpanContext).toBeUndefined()
   })
 
   it('captures wrapped-call spans into online evaluator context', async () => {
@@ -340,6 +520,30 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     })
 
     expect(logs).toHaveLength(1)
+  })
+
+  it('waitForEvaluations times out when dispatches remain pending', async () => {
+    let releaseSlow!: () => void
+    const slow = new Promise<void>((resolve) => {
+      releaseSlow = resolve
+    })
+
+    class SlowEvaluator extends Evaluator {
+      static evaluatorName = 'SlowTimeoutEvaluator'
+      async evaluate(): Promise<boolean> {
+        await slow
+        return true
+      }
+    }
+
+    const fn = withOnlineEvaluation(async () => 'x', { evaluators: [new SlowEvaluator()], target: 'timeout-target' })
+
+    await withMemoryLogExporter(async () => {
+      await fn()
+      await expect(waitForEvaluations({ timeoutMs: 0 })).rejects.toThrow('waitForEvaluations:')
+      releaseSlow()
+      await waitForEvaluations()
+    })
   })
 })
 

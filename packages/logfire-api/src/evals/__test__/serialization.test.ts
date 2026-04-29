@@ -2,16 +2,22 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildDatasetJsonSchema,
   Case,
+  ConfusionMatrixEvaluator,
   Contains,
   Dataset,
+  decodeEvaluator,
+  decodeReportEvaluator,
   decodeSpec,
   encodeEvaluatorSpec,
   Equals,
   EqualsExpected,
+  Evaluator,
   IsInstance,
   MaxDuration,
   parseYaml,
+  ReportEvaluator,
   stringifyYaml,
 } from '../../evals'
 
@@ -45,6 +51,113 @@ describe('EvaluatorSpec encoding', () => {
 
   it('decodeSpec parses kwargs long form', () => {
     expect(decodeSpec({ Contains: { value: 'foo' } })).toEqual({ arguments: { value: 'foo' }, name: 'Contains' })
+  })
+
+  it('decodeSpec rejects malformed encodings and preserves explicit null positional values', () => {
+    expect(() => decodeSpec(null)).toThrow('Invalid evaluator encoding: null')
+    expect(() => decodeSpec(1)).toThrow('Invalid evaluator encoding: 1')
+    expect(() => decodeSpec({})).toThrow('Evaluator encoding must be a single-key object (got keys: )')
+    expect(() => decodeSpec({ A: 1, B: 2 })).toThrow('Evaluator encoding must be a single-key object (got keys: A, B)')
+    expect(decodeSpec({ MaybeNull: null })).toEqual({ arguments: [null], name: 'MaybeNull' })
+  })
+
+  it('decodeEvaluator constructs from map/object registries and reports unknown names', () => {
+    class PairEvaluator extends Evaluator {
+      static evaluatorName = 'PairEvaluator'
+      readonly left: string
+      readonly right: number
+
+      constructor(left: string, right: number) {
+        super()
+        this.left = left
+        this.right = right
+      }
+      evaluate(): boolean {
+        return this.left === 'x' && this.right === 2
+      }
+    }
+
+    class ValueEvaluator extends Evaluator {
+      static evaluatorName = 'ValueEvaluator'
+      readonly value: unknown
+      constructor(opts: { value: unknown }) {
+        super()
+        this.value = opts.value
+      }
+      evaluate(): boolean {
+        return true
+      }
+    }
+
+    const pair = decodeEvaluator({ PairEvaluator: ['x', 2] }, new Map([['PairEvaluator', PairEvaluator as never]]), new Map())
+    expect(pair).toBeInstanceOf(PairEvaluator)
+    expect((pair as PairEvaluator).evaluate()).toBe(true)
+
+    const value = decodeEvaluator(
+      { ValueEvaluator: 42 },
+      { ValueEvaluator: ValueEvaluator as never },
+      new Map([['ValueEvaluator', 'value']])
+    )
+    expect(value).toBeInstanceOf(ValueEvaluator)
+    expect((value as ValueEvaluator).value).toBe(42)
+
+    expect(() => decodeEvaluator('Missing', new Map([['ValueEvaluator', ValueEvaluator as never]]), new Map())).toThrow(
+      'Unknown evaluator name: "Missing" (registered: ValueEvaluator)'
+    )
+  })
+
+  it('decodeReportEvaluator constructs report evaluators and reports unknown names', () => {
+    class TableReportEvaluator extends ReportEvaluator {
+      static evaluatorName = 'TableReportEvaluator'
+      readonly title: string
+      constructor(opts: { title: string }) {
+        super()
+        this.title = opts.title
+      }
+      evaluate() {
+        return { columns: ['x'], rows: [[this.title]], title: this.title, type: 'table' as const }
+      }
+    }
+
+    const decoded = decodeReportEvaluator(
+      { TableReportEvaluator: { title: 'custom' } },
+      { TableReportEvaluator: TableReportEvaluator as never },
+      new Map()
+    )
+    expect(decoded).toBeInstanceOf(TableReportEvaluator)
+    expect((decoded as TableReportEvaluator).title).toBe('custom')
+    expect(() => decodeReportEvaluator('MissingReport', {}, new Map())).toThrow('Unknown report evaluator name: "MissingReport"')
+  })
+
+  it('custom json schema providers narrow evaluator argument schemas', () => {
+    class SchemaEvaluator extends Evaluator {
+      static evaluatorName = 'SchemaEvaluator'
+      static jsonSchema() {
+        return { additionalProperties: false, properties: { value: { type: 'string' } }, required: ['value'], type: 'object' }
+      }
+      evaluate(): boolean {
+        return true
+      }
+    }
+
+    class NullSchemaEvaluator extends Evaluator {
+      static evaluatorName = 'NullSchemaEvaluator'
+      static jsonSchema() {
+        return null
+      }
+      evaluate(): boolean {
+        return true
+      }
+    }
+
+    const schema = buildDatasetJsonSchema({
+      customEvaluators: [SchemaEvaluator as never, NullSchemaEvaluator as never],
+    })
+    const text = JSON.stringify(schema)
+    expect(text).toContain('"SchemaEvaluator"')
+    expect(text).toContain('"value":{"type":"string"}')
+    expect(text).toContain('"NullSchemaEvaluator"')
+    expect(text).toContain('"properties":{"NullSchemaEvaluator":{}}')
   })
 })
 
@@ -117,6 +230,78 @@ describe('Dataset YAML round-trip', () => {
     expect(restored.cases[0]?.expectedOutput).toBe(1)
   })
 
+  it('toObject includes schema, report evaluators, case metadata and per-case evaluators', () => {
+    const dataset = new Dataset({
+      cases: [
+        new Case({
+          evaluators: [new Contains({ value: 'ok' })],
+          expectedOutput: 'ok',
+          inputs: 'input',
+          metadata: { split: 'test' },
+          name: 'case-a',
+        }),
+      ],
+      evaluators: [new EqualsExpected()],
+      name: 'object-test',
+      reportEvaluators: [new ConfusionMatrixEvaluator({ expected: { from: 'expected_output' }, predicted: { from: 'output' } })],
+    })
+
+    expect(dataset.toObject({ schemaPath: './schema.json' })).toEqual({
+      $schema: './schema.json',
+      cases: [
+        {
+          evaluators: [{ Contains: 'ok' }],
+          expected_output: 'ok',
+          inputs: 'input',
+          metadata: { split: 'test' },
+          name: 'case-a',
+        },
+      ],
+      evaluators: ['EqualsExpected'],
+      name: 'object-test',
+      report_evaluators: [
+        {
+          ConfusionMatrixEvaluator: {
+            expected: { from: 'expected_output' },
+            predicted: { from: 'output' },
+          },
+        },
+      ],
+    })
+  })
+
+  it('uses defaultName and custom evaluator registries when restoring objects', () => {
+    class CustomEvaluator extends Evaluator {
+      static evaluatorName = 'CustomEvaluator'
+      readonly value: string
+      constructor(opts: { value: string }) {
+        super()
+        this.value = opts.value
+      }
+      evaluate(): boolean {
+        return true
+      }
+    }
+
+    const restored = Dataset.fromObject(
+      {
+        cases: [{ evaluators: [{ CustomEvaluator: 'case' }], inputs: 1 }],
+        evaluators: [{ CustomEvaluator: 'dataset' }],
+      },
+      {
+        customEvaluators: [CustomEvaluator as never],
+        defaultName: 'default-name',
+        primaryArgKeys: { CustomEvaluator: 'value' },
+      }
+    )
+
+    expect(restored.name).toBe('default-name')
+    expect(restored.evaluators[0]).toBeInstanceOf(CustomEvaluator)
+    expect((restored.evaluators[0] as CustomEvaluator).value).toBe('dataset')
+    expect(restored.cases[0]?.evaluators[0]).toBeInstanceOf(CustomEvaluator)
+    expect((restored.cases[0]?.evaluators[0] as CustomEvaluator).value).toBe('case')
+  })
+
   it('Dataset.jsonSchema() includes registered built-in evaluators', () => {
     const schema = new Dataset({ cases: [], name: 'x' }).jsonSchema()
     const text = JSON.stringify(schema)
@@ -176,6 +361,39 @@ describe('Dataset YAML round-trip', () => {
       expect((await fs.stat(schemaPath)).mtimeMs).toBe(firstMtime)
     } finally {
       await fs.rm(tmpdir, { force: true, recursive: true })
+    }
+  })
+
+  it('prefers Deno readTextFile/writeTextFile helpers when present', async () => {
+    const originalDeno = (globalThis as { Deno?: unknown }).Deno
+    const files = new Map<string, string>()
+    const calls: string[] = []
+    ;(globalThis as { Deno?: unknown }).Deno = {
+      readTextFile: (path: string) => {
+        calls.push(`read:${path}`)
+        const text = files.get(path)
+        return text === undefined ? Promise.reject(new Error(`missing ${path}`)) : Promise.resolve(text)
+      },
+      writeTextFile: (path: string, text: string) => {
+        calls.push(`write:${path}`)
+        files.set(path, text)
+        return Promise.resolve()
+      },
+    }
+
+    try {
+      const ds = new Dataset({
+        cases: [new Case({ inputs: { v: 1 }, name: 'tmp' })],
+        name: 'deno-file-test',
+      })
+      await ds.toFile('/tmp/deno-dataset.yaml', { schemaPath: 'deno.schema.json' })
+      expect(calls).toEqual(['write:/tmp/deno-dataset.yaml', 'read:/tmp/deno.schema.json', 'write:/tmp/deno.schema.json'])
+      expect(files.get('/tmp/deno-dataset.yaml')).toContain('# yaml-language-server: $schema=deno.schema.json')
+      const restored = await Dataset.fromFile('/tmp/deno-dataset.yaml')
+      expect(restored.name).toBe('deno-file-test')
+      expect(restored.cases[0]?.inputs).toEqual({ v: 1 })
+    } finally {
+      ;(globalThis as { Deno?: unknown }).Deno = originalDeno
     }
   })
 

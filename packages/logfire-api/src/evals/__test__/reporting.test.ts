@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   Case,
   CaseLifecycle,
+  computeAssertionPassRate,
   computeAverages,
   ConfusionMatrixEvaluator,
   Dataset,
@@ -13,6 +14,7 @@ import {
   Evaluator,
   type EvaluatorContext,
   EXPERIMENT_ANALYSES_KEY,
+  EXPERIMENT_REPORT_EVALUATOR_FAILURES_KEY,
   KolmogorovSmirnovEvaluator,
   PrecisionRecallEvaluator,
   renderReport,
@@ -24,7 +26,32 @@ import {
   SPAN_NAME_CASE,
   SPAN_NAME_EXPERIMENT,
 } from '../../evals'
+import { buildThresholdInputs, trapezoidalAuc, uniqueSortedThresholds } from '../reportEvaluators'
 import { withMemoryExporter } from './withMemoryExporter'
+
+const resultJson = (name: string, value: boolean | number | string) => ({
+  name,
+  reason: null,
+  source: { arguments: null, name: 'Source' },
+  value,
+})
+
+const makeReportCase = (overrides: Partial<ReportCase> = {}): ReportCase => ({
+  assertions: {},
+  attributes: {},
+  evaluator_failures: [],
+  inputs: 'input',
+  labels: {},
+  metrics: {},
+  name: 'case',
+  output: 'output',
+  scores: {},
+  span_id: null,
+  task_duration: 0.1,
+  total_duration: 0.2,
+  trace_id: null,
+  ...overrides,
+})
 
 describe('lifecycle hooks', () => {
   it('runs setup → task → prepareContext → evaluators → teardown in order', async () => {
@@ -298,6 +325,44 @@ describe('report-level evaluators land on the experiment span', () => {
     expect(captured?.report.cases[0]?.name).toBe('1')
   })
 
+  it('records report evaluator failures and serializes them onto the experiment span', async () => {
+    class BrokenReportEvaluator extends ReportEvaluator<string, string> {
+      static evaluatorName = 'BrokenReportEvaluator'
+      evaluatorVersion = 'v1'
+
+      evaluate(): never {
+        throw new Error('report boom')
+      }
+    }
+
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'x', name: 'x' })],
+      name: 'report-failure-test',
+      reportEvaluators: [new BrokenReportEvaluator()],
+    })
+
+    const { result, spans } = await withMemoryExporter(async () => dataset.evaluate((input) => input))
+
+    expect(result.report_evaluator_failures).toMatchObject([
+      {
+        error_message: 'report boom',
+        error_type: 'Error',
+        name: 'BrokenReportEvaluator',
+        source: { arguments: null, name: 'BrokenReportEvaluator' },
+      },
+    ])
+    const experimentSpan = spans.find((s) => s.name === SPAN_NAME_EXPERIMENT)!
+    const failuresAttr = JSON.parse(experimentSpan.attributes[EXPERIMENT_REPORT_EVALUATOR_FAILURES_KEY] as string) as unknown[]
+    expect(failuresAttr).toMatchObject([
+      {
+        error_message: 'report boom',
+        error_type: 'Error',
+        name: 'BrokenReportEvaluator',
+        source: { arguments: null, name: 'BrokenReportEvaluator' },
+      },
+    ])
+  })
+
   it('PrecisionRecall + ROCAUC + KS emit Python-compatible analysis shapes', async () => {
     const dataset = new Dataset<{ score: number }, number>({
       cases: [
@@ -409,24 +474,222 @@ describe('report-level evaluators land on the experiment span', () => {
   })
 
   it('computes label averages as normalized frequencies', () => {
-    const makeCase = (label: string): ReportCase => ({
-      assertions: {},
-      attributes: {},
-      evaluator_failures: [],
-      inputs: 'x',
-      labels: { grade: { name: 'grade', reason: null, source: { arguments: null, name: 'Labeler' }, value: label } },
-      metrics: {},
-      name: label,
-      output: 'x',
-      scores: {},
-      span_id: null,
-      task_duration: 0,
-      total_duration: 0,
-      trace_id: null,
-    })
+    const makeCase = (label: string): ReportCase => makeReportCase({ labels: { grade: resultJson('grade', label) }, name: label })
 
     expect(computeAverages('labels', [makeCase('good'), makeCase('good'), makeCase('bad')]).labels).toEqual({
       grade: { bad: 1 / 3, good: 2 / 3 },
+    })
+  })
+
+  it('computes assertion pass rate plus score and metric means', () => {
+    const cases = [
+      makeReportCase({
+        assertions: { ok: resultJson('ok', true) },
+        metrics: { latency: 10 },
+        scores: { quality: resultJson('quality', 0.5) },
+        task_duration: 1,
+        total_duration: 2,
+      }),
+      makeReportCase({
+        assertions: { ok: resultJson('ok', false) },
+        metrics: { latency: 20 },
+        scores: { quality: resultJson('quality', 1) },
+        task_duration: 3,
+        total_duration: 4,
+      }),
+    ]
+
+    expect(computeAssertionPassRate(cases)).toBe(0.5)
+    expect(computeAssertionPassRate([makeReportCase()])).toBeNull()
+    expect(computeAverages('means', cases)).toEqual({
+      assertions: 0.5,
+      labels: {},
+      metrics: { latency: { count: 2, mean: 15 } },
+      name: 'means',
+      scores: { quality: { count: 2, mean: 0.75 } },
+      task_duration: 2,
+      total_duration: 3,
+    })
+    expect(computeAverages('empty', [])).toEqual({
+      assertions: null,
+      labels: {},
+      metrics: {},
+      name: 'empty',
+      scores: {},
+      task_duration: 0,
+      total_duration: 0,
+    })
+  })
+})
+
+describe('report evaluator edge cases', () => {
+  it('ReportEvaluator default getSpec uses the registry key and null arguments', () => {
+    class MinimalReportEvaluator extends ReportEvaluator {
+      static evaluatorName = 'MinimalReportEvaluator'
+      evaluate() {
+        return { columns: [], rows: [], title: 'empty', type: 'table' as const }
+      }
+    }
+
+    expect(new MinimalReportEvaluator().getSpec()).toEqual({ arguments: null, name: 'MinimalReportEvaluator' })
+    expect(new MinimalReportEvaluator().toJSON()).toBeNull()
+  })
+
+  it('ConfusionMatrixEvaluator extracts labels and metadata and skips missing values', () => {
+    const evaluator = new ConfusionMatrixEvaluator({
+      expected: { from: 'metadata', key: 'expected' },
+      predicted: { from: 'labels', key: 'predicted' },
+      title: 'Custom Matrix',
+    })
+    const report: EvaluationReport = {
+      analyses: [],
+      cases: [
+        makeReportCase({
+          labels: { predicted: resultJson('predicted', 'B') },
+          metadata: { expected: 'A' },
+          name: 'a-to-b',
+        }),
+        makeReportCase({
+          labels: { predicted: resultJson('predicted', 'A') },
+          metadata: { expected: true },
+          name: 'bool-to-a',
+        }),
+        makeReportCase({ labels: {}, metadata: { expected: 'A' }, name: 'missing-predicted' }),
+      ],
+      failures: [],
+      name: 'matrix',
+      report_evaluator_failures: [],
+      span_id: null,
+      trace_id: null,
+    }
+
+    expect(evaluator.evaluate({ cases: report.cases, name: 'matrix', report })).toEqual({
+      class_labels: ['A', 'B', 'true'],
+      matrix: [
+        [0, 1, 0],
+        [0, 0, 0],
+        [1, 0, 0],
+      ],
+      title: 'Custom Matrix',
+      type: 'confusion_matrix',
+    })
+    expect(evaluator.toJSON()).toEqual({
+      expected: { from: 'metadata', key: 'expected' },
+      predicted: { from: 'labels', key: 'predicted' },
+      title: 'Custom Matrix',
+    })
+  })
+
+  it('threshold helpers support all sources, downsampling and empty AUC', () => {
+    const cases = [
+      makeReportCase({
+        assertions: { positive: resultJson('positive', true) },
+        expected_output: { positive: false },
+        labels: { positive: resultJson('positive', 'yes') },
+        metrics: { m: 0.8 },
+        scores: { s: resultJson('s', 0.7) },
+      }),
+      makeReportCase({
+        assertions: { positive: resultJson('positive', false) },
+        expected_output: { positive: true },
+        labels: { positive: resultJson('positive', '') },
+        metrics: { m: 0.2 },
+        scores: { s: resultJson('s', 0.1) },
+      }),
+      makeReportCase({ metrics: {}, scores: {} }),
+    ]
+
+    expect(
+      buildThresholdInputs(cases, { positiveFrom: 'assertions', positiveKey: 'positive', scoreFrom: 'scores', scoreKey: 's' })
+    ).toEqual({
+      positives: [true, false],
+      scores: [0.7, 0.1],
+    })
+    expect(
+      buildThresholdInputs(cases, { positiveFrom: 'expected_output', positiveKey: 'positive', scoreFrom: 'metrics', scoreKey: 'm' })
+    ).toEqual({
+      positives: [false, true],
+      scores: [0.8, 0.2],
+    })
+    expect(buildThresholdInputs(cases, { positiveFrom: 'labels', positiveKey: 'positive', scoreFrom: 'scores', scoreKey: 's' })).toEqual({
+      positives: [true, false],
+      scores: [0.7, 0.1],
+    })
+    expect(buildThresholdInputs(cases, { positiveFrom: 'expected_output', scoreFrom: 'scores', scoreKey: 's' })).toEqual({
+      positives: [true, true],
+      scores: [0.7, 0.1],
+    })
+    expect(buildThresholdInputs(cases, { positiveFrom: 'assertions', scoreFrom: 'scores', scoreKey: 's' })).toEqual({
+      positives: [],
+      scores: [],
+    })
+    expect(uniqueSortedThresholds([], 3)).toEqual([])
+    expect(uniqueSortedThresholds([3, 2, 1, 0], 2)).toEqual([3, 0])
+    expect(uniqueSortedThresholds([3, 2, 1], 1)).toEqual([3])
+    expect(uniqueSortedThresholds([3, 2, 1], 0)).toEqual([])
+    expect(trapezoidalAuc([0], [1])).toBe(0)
+    expect(trapezoidalAuc([0, 0.5, 1], [0, 1, 1])).toBe(0.75)
+  })
+
+  it('threshold report evaluators return empty/NaN analyses and custom specs when inputs are absent', () => {
+    const report: EvaluationReport = {
+      analyses: [],
+      cases: [makeReportCase()],
+      failures: [],
+      name: 'empty-thresholds',
+      report_evaluator_failures: [],
+      span_id: null,
+      trace_id: null,
+    }
+    const ctx = { cases: report.cases, name: report.name, report }
+    const pr = new PrecisionRecallEvaluator({
+      nThresholds: 5,
+      positiveFrom: 'assertions',
+      positiveKey: 'ok',
+      scoreFrom: 'scores',
+      scoreKey: 'score',
+      title: 'Custom PR',
+    })
+    const roc = new ROCAUCEvaluator({
+      nThresholds: 5,
+      positiveFrom: 'labels',
+      positiveKey: 'grade',
+      scoreFrom: 'metrics',
+      scoreKey: 'score',
+      title: 'Custom ROC',
+    })
+    const ks = new KolmogorovSmirnovEvaluator({
+      positiveFrom: 'expected_output',
+      scoreFrom: 'scores',
+      scoreKey: 'score',
+      title: 'Custom KS',
+    })
+
+    expect(pr.evaluate(ctx)[0]).toEqual({ curves: [], title: 'Custom PR', type: 'precision_recall' })
+    expect(Number.isNaN(pr.evaluate(ctx)[1].value)).toBe(true)
+    expect(Number.isNaN(roc.evaluate(ctx)[1].value)).toBe(true)
+    expect(ks.evaluate(ctx)[1]).toEqual({ title: 'KS Statistic', type: 'scalar', value: 0 })
+    expect(pr.toJSON()).toEqual({
+      n_thresholds: 5,
+      positive_from: 'assertions',
+      positive_key: 'ok',
+      score_from: 'scores',
+      score_key: 'score',
+      title: 'Custom PR',
+    })
+    expect(roc.toJSON()).toEqual({
+      n_thresholds: 5,
+      positive_from: 'labels',
+      positive_key: 'grade',
+      score_from: 'metrics',
+      score_key: 'score',
+      title: 'Custom ROC',
+    })
+    expect(ks.toJSON()).toEqual({
+      positive_from: 'expected_output',
+      score_from: 'scores',
+      score_key: 'score',
+      title: 'Custom KS',
     })
   })
 })
@@ -464,5 +727,48 @@ describe('renderReport', () => {
     expect(text).toContain('Cases: 1')
     expect(text).toContain('one')
     expect(text).toContain('ok=✓')
+  })
+
+  it('renders optional inputs, outputs, failures, analyses and scalar formatting', () => {
+    const report: EvaluationReport = {
+      analyses: [{ title: 'Quality', type: 'scalar', value: 0.95 }],
+      cases: [
+        makeReportCase({
+          assertions: { bad: resultJson('bad', false) },
+          inputs: { prompt: 'a very long prompt that should be truncated in the table' },
+          labels: { grade: resultJson('grade', 'good') },
+          output: { answer: 'a very long answer that should be truncated in the table' },
+          scores: { quality: resultJson('quality', 0.75) },
+        }),
+      ],
+      failures: [
+        {
+          error_message: 'boom',
+          error_type: 'Error',
+          inputs: 'bad',
+          name: 'failed',
+          span_id: null,
+          trace_id: null,
+        },
+      ],
+      name: 'render-full',
+      report_evaluator_failures: [],
+      span_id: null,
+      trace_id: null,
+    }
+
+    const text = renderReport(report, { includeInput: true, includeOutput: true })
+    expect(text).toContain('input')
+    expect(text).toContain('output')
+    expect(text).toContain('quality=0.75')
+    expect(text).toContain('grade=good')
+    expect(text).toContain('bad=✗')
+    expect(text).toContain('Failures:')
+    expect(text).toContain('failed: Error: boom')
+    expect(text).toContain('Analyses: 1')
+    expect(text).toContain('Quality (scalar)')
+    expect(text).toContain('…')
+
+    expect(renderReport(report, { includeFailures: false })).not.toContain('\nFailures:\n')
   })
 })

@@ -18,11 +18,15 @@ import {
   Equals,
   EqualsExpected,
   EVALS_OTEL_SCOPE,
+  Evaluator,
   EXPERIMENT_METADATA_KEY,
   EXPERIMENT_REPEAT_KEY,
   EXPERIMENT_SOURCE_CASE_NAME_KEY,
   GEN_AI_OPERATION_NAME,
+  getCurrentTaskRun,
+  incrementEvalMetric,
   OPERATION_EXPERIMENT,
+  setEvalAttribute,
   SPAN_NAME_CASE,
   SPAN_NAME_EVALUATOR_LITERAL,
   SPAN_NAME_EXECUTE,
@@ -191,5 +195,91 @@ describe('offline evals — span attribute parity', () => {
     const { result } = await withMemoryExporter(() => dataset.evaluate((s) => s))
     expect(result.cases[0]?.assertions.Contains?.value).toBe(true)
     expect(result.cases[0]?.assertions.Contains?.reason).toBe('output contains value')
+  })
+
+  it('supports addCase/addEvaluator, task helpers, progress callbacks and custom evaluator versions', async () => {
+    class VersionedEvaluator extends Evaluator {
+      static evaluatorName = 'VersionedEvaluator'
+      evaluatorVersion = '2026-01-01'
+
+      evaluate(): Record<string, boolean | number | string> {
+        return { label: 'ok', score: 0.5, versioned: true }
+      }
+    }
+
+    const dataset = new Dataset<{ n: number }, number>({ name: 'mutation-test' })
+    dataset.addCase({ inputs: { n: 1 }, name: 'one' })
+    dataset.addCase({ inputs: { n: 2 }, name: 'two' })
+    dataset.addEvaluator(new Equals({ value: 1 }), { specificCase: 'one' })
+    dataset.addEvaluator(new VersionedEvaluator())
+
+    expect(() => {
+      dataset.addCase({ inputs: { n: 3 }, name: 'one' })
+    }).toThrow('Duplicate case name: "one"')
+    dataset.cases.pop()
+    expect(() => {
+      dataset.addEvaluator(new EqualsExpected(), { specificCase: 'missing' })
+    }).toThrow('addEvaluator: no case named "missing"')
+
+    const progress: { caseName: string; done: number; total: number }[] = []
+    const { result } = await withMemoryExporter(() =>
+      dataset.evaluate(
+        ({ n }) => {
+          expect(getCurrentTaskRun()).toBeDefined()
+          setEvalAttribute('seen', n)
+          incrementEvalMetric('calls', 1)
+          incrementEvalMetric('calls', 2)
+          return n
+        },
+        { progress: (event) => progress.push(event) }
+      )
+    )
+
+    expect(progress.map((event) => event.caseName).sort()).toEqual(['one', 'two'])
+    expect(progress.map((event) => event.done).sort()).toEqual([1, 2])
+    expect(progress.map((event) => event.total)).toEqual([2, 2])
+    const casesByName = [...result.cases].sort((a, b) => a.name.localeCompare(b.name))
+    expect(casesByName.map((c) => c.attributes)).toEqual([{ seen: 1 }, { seen: 2 }])
+    expect(casesByName.map((c) => c.metrics)).toEqual([{ calls: 3 }, { calls: 3 }])
+    expect(casesByName[0]?.assertions.Equals?.value).toBe(true)
+    expect(casesByName[0]?.assertions.versioned?.evaluator_version).toBe('2026-01-01')
+    expect(casesByName[0]?.scores.score?.value).toBe(0.5)
+    expect(casesByName[0]?.labels.label?.value).toBe('ok')
+
+    setEvalAttribute('outside', true)
+    incrementEvalMetric('outside', 1)
+    expect(getCurrentTaskRun()).toBeUndefined()
+  })
+
+  it('records non-Error task failures without rejecting the experiment', async () => {
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'x', name: 'x' })],
+      name: 'non-error-failure',
+    })
+
+    const { result, spans } = await withMemoryExporter(() =>
+      dataset.evaluate(() => {
+        // eslint-disable-next-line no-throw-literal, @typescript-eslint/only-throw-error
+        throw 'string boom'
+      })
+    )
+
+    expect(result.failures).toMatchObject([{ error_message: 'string boom', error_type: 'Error', name: 'x' }])
+    const caseSpan = spans.find((s) => s.name === SPAN_NAME_CASE)
+    expect(caseSpan?.events.some((event) => event.attributes?.['exception.message'] === 'string boom')).toBe(true)
+  })
+
+  it('returns an empty report when aborted before cases start', async () => {
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'x', name: 'x' })],
+      name: 'aborted-before-start',
+    })
+    const controller = new AbortController()
+    controller.abort()
+
+    const { result } = await withMemoryExporter(() => dataset.evaluate((input) => input, { signal: controller.signal }))
+
+    expect(result.cases).toEqual([])
+    expect(result.failures).toEqual([])
   })
 })

@@ -1,9 +1,31 @@
 /* eslint-disable @typescript-eslint/require-await */
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
+
 import { trace as TraceAPI } from '@opentelemetry/api'
 import { describe, expect, it } from 'vitest'
 
-import { Case, Dataset, HasMatchingSpan } from '../../evals'
+import { Case, Dataset, HasMatchingSpan, SpanTree, SpanTreeRecordingError } from '../../evals'
 import { withMemoryExporter } from './withMemoryExporter'
+
+const fakeSpan = (opts: {
+  attributes?: Record<string, unknown>
+  durationMs?: number
+  name: string
+  parentSpanId?: string
+  spanId: string
+  startMs?: number
+}): ReadableSpan =>
+  ({
+    attributes: opts.attributes ?? {},
+    endTime: [0, ((opts.startMs ?? 0) + (opts.durationMs ?? 1)) * 1_000_000],
+    name: opts.name,
+    parentSpanContext:
+      opts.parentSpanId === undefined
+        ? undefined
+        : { isRemote: false, spanId: opts.parentSpanId, traceFlags: 1, traceId: 'trace000000000000000000000001' },
+    spanContext: () => ({ isRemote: false, spanId: opts.spanId, traceFlags: 1, traceId: 'trace000000000000000000000001' }),
+    startTime: [0, (opts.startMs ?? 0) * 1_000_000],
+  }) as unknown as ReadableSpan
 
 describe('span tree capture + HasMatchingSpan', () => {
   it('captures user-task spans into ctx.spanTree and matches with HasMatchingSpan', async () => {
@@ -68,5 +90,63 @@ describe('span tree capture + HasMatchingSpan', () => {
     expect(m?.input_tokens).toBe(100)
     expect(m?.output_tokens).toBe(50)
     expect(m?.cost).toBeCloseTo(0.001)
+  })
+
+  it('builds deterministic trees and evaluates structural span queries', () => {
+    const tree = SpanTree.fromSpans([
+      fakeSpan({
+        attributes: { child: true, route: '/slow' },
+        durationMs: 20,
+        name: 'child-slow',
+        parentSpanId: 'root',
+        spanId: 'b',
+        startMs: 20,
+      }),
+      fakeSpan({
+        attributes: { child: true, route: '/fast' },
+        durationMs: 3,
+        name: 'child-fast',
+        parentSpanId: 'root',
+        spanId: 'a',
+        startMs: 10,
+      }),
+      fakeSpan({ attributes: { leaf: true }, durationMs: 1, name: 'leaf', parentSpanId: 'a', spanId: 'leaf', startMs: 12 }),
+      fakeSpan({ attributes: { root: true }, durationMs: 50, name: 'root-op', spanId: 'root', startMs: 0 }),
+    ])
+
+    expect(tree.roots.map((node) => node.name)).toEqual(['root-op'])
+    expect(tree.roots[0]?.children.map((node) => node.name)).toEqual(['child-fast', 'child-slow'])
+    expect(Array.from(tree.all()).map((node) => node.name)).toEqual(['root-op', 'child-fast', 'leaf', 'child-slow'])
+
+    expect(tree.any({ minChildCount: 2, minDescendantCount: 3, nameContains: 'root' })).toBe(true)
+    expect(tree.any({ maxDuration: 5, nameMatchesRegex: '^child-' })).toBe(true)
+    expect(tree.any({ hasAttributes: { route: '/fast' }, nameEquals: 'child-fast' })).toBe(true)
+    expect(tree.any({ hasAttributeKeys: ['leaf'], someAncestorHas: { nameEquals: 'root-op' } })).toBe(true)
+    expect(tree.any({ allChildrenHave: { nameContains: 'child' }, nameEquals: 'root-op' })).toBe(true)
+    expect(tree.any({ allDescendantsHave: { maxDuration: 20 }, nameEquals: 'root-op' })).toBe(true)
+    expect(tree.any({ and_: [{ nameContains: 'child' }, { not_: { nameContains: 'slow' } }] })).toBe(true)
+    expect(tree.any({ or_: [{ nameEquals: 'missing' }, { nameEquals: 'leaf' }] })).toBe(true)
+
+    expect(tree.find({ someDescendantHas: { nameEquals: 'leaf' } }).map((node) => node.name)).toEqual(['root-op', 'child-fast'])
+    expect(tree.first({ maxChildCount: 0 })?.name).toBe('leaf')
+    expect(tree.any({ hasAttributes: { route: '/missing' } })).toBe(false)
+    expect(tree.any({ hasAttributeKeys: ['missing'] })).toBe(false)
+    expect(tree.any({ maxChildCount: 1, nameEquals: 'root-op' })).toBe(false)
+    expect(tree.any({ maxDescendantCount: 2, nameEquals: 'root-op' })).toBe(false)
+  })
+
+  it('throws the stored recording error when querying an unavailable tree', () => {
+    const err = new SpanTreeRecordingError('capture unavailable')
+    const tree = SpanTree.fromError(err)
+
+    expect(() => {
+      tree.ensureAvailable()
+    }).toThrow(err)
+    expect(() => {
+      tree.find({ nameEquals: 'x' })
+    }).toThrow(err)
+    expect(() => {
+      tree.first({ nameEquals: 'x' })
+    }).toThrow(err)
   })
 })
