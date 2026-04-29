@@ -26,3 +26,8 @@ const report = await dataset.evaluate(({ text }) => text.toUpperCase())
 `Dataset.toFile` / `Dataset.fromFile` are available in Node, Bun, and Deno.
 Browser and Cloudflare Worker runtimes can use in-memory datasets and online
 evaluation, but not filesystem-backed dataset helpers.
+
+Serialized datasets use Python-compatible snake_case evaluator options and
+span queries. For online evaluation, JavaScript parameter-name extraction is
+best effort; use `extractArgs: ['argName']` when evaluator code needs stable
+`context.inputs` keys in bundled or minified builds.

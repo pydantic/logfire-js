@@ -159,6 +159,30 @@ describe('lifecycle hooks', () => {
     const caseSpan = spans.find((s) => s.name === SPAN_NAME_CASE)
     expect(caseSpan?.events.some((event) => event.attributes?.['exception.message'] === 'teardown boom')).toBe(true)
   })
+
+  it('records prepareContext errors as case failures without rejecting the experiment', async () => {
+    const events: string[] = []
+    class PrepareThrows extends CaseLifecycle<string, string> {
+      prepareContext(): EvaluatorContext<string, string> {
+        throw new Error('prepare boom')
+      }
+      async teardown(result: ReportCase<string, string> | ReportCaseFailure<string, string>): Promise<void> {
+        events.push(`teardown(${result.name})`)
+      }
+    }
+    const ds = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'a' })],
+      name: 'prepare-failure-test',
+    })
+
+    const { result, spans } = await withMemoryExporter(async () => ds.evaluate((input) => input, { lifecycle: PrepareThrows }))
+
+    expect(result.cases).toHaveLength(0)
+    expect(result.failures).toMatchObject([{ error_message: 'prepare boom', error_type: 'Error', name: 'a' }])
+    expect(events).toEqual(['teardown(a)'])
+    const caseSpan = spans.find((s) => s.name === SPAN_NAME_CASE)
+    expect(caseSpan?.events.some((event) => event.attributes?.['exception.message'] === 'prepare boom')).toBe(true)
+  })
 })
 
 describe('retry support via p-retry', () => {
@@ -382,11 +406,14 @@ describe('report-level evaluators land on the experiment span', () => {
 
     // Encode the score into a metric so the report evaluators can see it.
     const { result } = await withMemoryExporter(async () =>
-      dataset.evaluate(async (inputs) => {
-        const { incrementEvalMetric } = await import('../../evals')
-        incrementEvalMetric('pred', inputs.score)
-        return inputs.score >= 0.5 ? 1 : 0
-      })
+      dataset.evaluate(
+        async (inputs) => {
+          const { incrementEvalMetric } = await import('../../evals')
+          incrementEvalMetric('pred', inputs.score)
+          return inputs.score >= 0.5 ? 1 : 0
+        },
+        { name: 'thresholds-test' }
+      )
     )
 
     // Each of PR / ROC / KS contributes 2 analyses (curve + scalar AUC/KS).
@@ -406,10 +433,10 @@ describe('report-level evaluators land on the experiment span', () => {
             ],
           },
         ],
-        title: 'Precision–Recall',
+        title: 'Precision-Recall Curve',
         type: 'precision_recall',
       },
-      { title: 'Precision–Recall AUC', type: 'scalar', value: 1 },
+      { title: 'Precision-Recall Curve AUC', type: 'scalar', value: 1 },
       {
         curves: [
           {
@@ -446,6 +473,7 @@ describe('report-level evaluators land on the experiment span', () => {
             name: 'Positive',
             points: [
               { x: 0.1, y: 0 },
+              { x: 0.1, y: 0 },
               { x: 0.3, y: 0 },
               { x: 0.6, y: 0.5 },
               { x: 0.9, y: 1 },
@@ -455,6 +483,7 @@ describe('report-level evaluators land on the experiment span', () => {
           {
             name: 'Negative',
             points: [
+              { x: 0.1, y: 0 },
               { x: 0.1, y: 0.5 },
               { x: 0.3, y: 1 },
               { x: 0.6, y: 1 },
@@ -574,8 +603,10 @@ describe('report evaluator edge cases', () => {
       type: 'confusion_matrix',
     })
     expect(evaluator.toJSON()).toEqual({
-      expected: { from: 'metadata', key: 'expected' },
-      predicted: { from: 'labels', key: 'predicted' },
+      expected_from: 'metadata',
+      expected_key: 'expected',
+      predicted_from: 'labels',
+      predicted_key: 'predicted',
       title: 'Custom Matrix',
     })
   })
@@ -605,12 +636,9 @@ describe('report evaluator edge cases', () => {
       positives: [true, false],
       scores: [0.7, 0.1],
     })
-    expect(
+    expect(() =>
       buildThresholdInputs(cases, { positiveFrom: 'expected_output', positiveKey: 'positive', scoreFrom: 'metrics', scoreKey: 'm' })
-    ).toEqual({
-      positives: [false, true],
-      scores: [0.8, 0.2],
-    })
+    ).toThrow("'positiveKey' is not supported when positiveFrom='expected_output'")
     expect(buildThresholdInputs(cases, { positiveFrom: 'labels', positiveKey: 'positive', scoreFrom: 'scores', scoreKey: 's' })).toEqual({
       positives: [true, false],
       scores: [0.7, 0.1],
@@ -619,16 +647,42 @@ describe('report evaluator edge cases', () => {
       positives: [true, true],
       scores: [0.7, 0.1],
     })
-    expect(buildThresholdInputs(cases, { positiveFrom: 'assertions', scoreFrom: 'scores', scoreKey: 's' })).toEqual({
-      positives: [],
-      scores: [],
-    })
+    expect(() => buildThresholdInputs(cases, { positiveFrom: 'assertions', scoreFrom: 'scores', scoreKey: 's' })).toThrow(
+      "'positiveKey' is required when positiveFrom='assertions'"
+    )
     expect(uniqueSortedThresholds([], 3)).toEqual([])
     expect(uniqueSortedThresholds([3, 2, 1, 0], 2)).toEqual([3, 0])
-    expect(uniqueSortedThresholds([3, 2, 1], 1)).toEqual([3])
-    expect(uniqueSortedThresholds([3, 2, 1], 0)).toEqual([])
+    expect(uniqueSortedThresholds([3, 2, 1], 1)).toEqual([3, 2, 1])
+    expect(uniqueSortedThresholds([3, 2, 1], 0)).toEqual([3, 2, 1])
     expect(trapezoidalAuc([0], [1])).toBe(0)
     expect(trapezoidalAuc([0, 0.5, 1], [0, 1, 1])).toBe(0.75)
+  })
+
+  it('computes PR/ROC AUC at full resolution before downsampling display points', () => {
+    const report: EvaluationReport = {
+      analyses: [],
+      cases: [
+        makeReportCase({ assertions: { p: resultJson('p', true) }, name: 'a', scores: { s: resultJson('s', 0.9) } }),
+        makeReportCase({ assertions: { p: resultJson('p', false) }, name: 'b', scores: { s: resultJson('s', 0.8) } }),
+        makeReportCase({ assertions: { p: resultJson('p', true) }, name: 'c', scores: { s: resultJson('s', 0.7) } }),
+        makeReportCase({ assertions: { p: resultJson('p', false) }, name: 'd', scores: { s: resultJson('s', 0.6) } }),
+      ],
+      failures: [],
+      name: 'full-resolution',
+      report_evaluator_failures: [],
+      span_id: null,
+      trace_id: null,
+    }
+    const ctx = { cases: report.cases, name: report.name, report }
+    const pr = new PrecisionRecallEvaluator({ nThresholds: 2, positiveFrom: 'assertions', positiveKey: 'p', scoreKey: 's' })
+    const roc = new ROCAUCEvaluator({ nThresholds: 2, positiveFrom: 'assertions', positiveKey: 'p', scoreKey: 's' })
+    const ks = new KolmogorovSmirnovEvaluator({ nThresholds: 2, positiveFrom: 'assertions', positiveKey: 'p', scoreKey: 's' })
+
+    expect(pr.evaluate(ctx)[0].curves[0]?.points).toHaveLength(2)
+    expect(pr.evaluate(ctx)[1].value).toBeCloseTo(19 / 24)
+    expect(roc.evaluate(ctx)[0].curves[0]?.points).toHaveLength(2)
+    expect(roc.evaluate(ctx)[1].value).toBe(0.75)
+    expect(ks.evaluate(ctx)[0].curves[0]?.points).toHaveLength(2)
   })
 
   it('threshold report evaluators return empty/NaN analyses and custom specs when inputs are absent', () => {
@@ -668,12 +722,11 @@ describe('report evaluator edge cases', () => {
     expect(pr.evaluate(ctx)[0]).toEqual({ curves: [], title: 'Custom PR', type: 'precision_recall' })
     expect(Number.isNaN(pr.evaluate(ctx)[1].value)).toBe(true)
     expect(Number.isNaN(roc.evaluate(ctx)[1].value)).toBe(true)
-    expect(ks.evaluate(ctx)[1]).toEqual({ title: 'KS Statistic', type: 'scalar', value: 0 })
+    expect(Number.isNaN(ks.evaluate(ctx)[1].value)).toBe(true)
     expect(pr.toJSON()).toEqual({
       n_thresholds: 5,
       positive_from: 'assertions',
       positive_key: 'ok',
-      score_from: 'scores',
       score_key: 'score',
       title: 'Custom PR',
     })
@@ -687,7 +740,6 @@ describe('report evaluator edge cases', () => {
     })
     expect(ks.toJSON()).toEqual({
       positive_from: 'expected_output',
-      score_from: 'scores',
       score_key: 'score',
       title: 'Custom KS',
     })

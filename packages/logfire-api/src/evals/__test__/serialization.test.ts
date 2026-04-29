@@ -260,14 +260,7 @@ describe('Dataset YAML round-trip', () => {
       ],
       evaluators: ['EqualsExpected'],
       name: 'object-test',
-      report_evaluators: [
-        {
-          ConfusionMatrixEvaluator: {
-            expected: { from: 'expected_output' },
-            predicted: { from: 'output' },
-          },
-        },
-      ],
+      report_evaluators: ['ConfusionMatrixEvaluator'],
     })
   })
 
@@ -338,7 +331,33 @@ describe('Dataset YAML round-trip', () => {
     expect(text).toContain('Contains')
     expect(text).toContain('IsInstance')
     expect(text).toContain('LLMJudge')
+    expect(text).toContain('case_sensitive')
+    expect(text).toContain('predicted_from')
+    expect(text).toContain('score_key')
     expect(schema.title).toBe('PydanticEvalsDataset')
+  })
+
+  it('reads and writes Python-compatible flat ConfusionMatrixEvaluator options', () => {
+    const restored = Dataset.fromObject({
+      cases: [{ inputs: 'x' }],
+      name: 'flat-report-evaluator',
+      report_evaluators: [
+        {
+          ConfusionMatrixEvaluator: {
+            expected_from: 'metadata',
+            predicted_from: 'labels',
+            predicted_key: 'predicted',
+          },
+        },
+      ],
+    })
+
+    expect(restored.reportEvaluators[0]).toBeInstanceOf(ConfusionMatrixEvaluator)
+    expect(restored.reportEvaluators[0]?.toJSON()).toEqual({
+      expected_from: 'metadata',
+      predicted_from: 'labels',
+      predicted_key: 'predicted',
+    })
   })
 
   it('toFile + fromFile work on Node and round-trip via the filesystem', async () => {

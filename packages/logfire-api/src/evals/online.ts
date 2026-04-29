@@ -67,7 +67,7 @@ const DEFAULT_CONFIG: OnlineEvalConfig = {
   enabled: true,
   includeBaggage: true,
   sampleRate: 1.0,
-  samplingMode: 'correlated',
+  samplingMode: 'independent',
 }
 
 /** Mutate the process-wide online-eval defaults. */
@@ -203,6 +203,7 @@ export function withOnlineEvaluation<F extends (...args: never[]) => Promise<unk
   const target = opts.target ?? (fn.name === '' ? 'task' : fn.name)
   const msgTemplate = opts.msgTemplate ?? `Calling ${target}`
   const spanName = opts.spanName ?? msgTemplate
+  const contextArgNames = getContextArgNames(fn as unknown as (...args: unknown[]) => unknown, opts.extractArgs)
 
   const onlineEvaluators = opts.evaluators.map((e) => (e instanceof OnlineEvaluator ? e : new OnlineEvaluator({ evaluator: e })))
 
@@ -257,7 +258,7 @@ export function withOnlineEvaluation<F extends (...args: never[]) => Promise<unk
           try {
             output = await callFn()
             if (opts.recordReturn === true) {
-              span.setAttribute('return', JSON.stringify(output))
+              span.setAttribute('return', encodeReturnAttribute(output))
             }
             return ref
           } finally {
@@ -285,6 +286,7 @@ export function withOnlineEvaluation<F extends (...args: never[]) => Promise<unk
       callSpanRef,
       cfg,
       durationSec,
+      inputNames: contextArgNames,
       metrics,
       output,
       sampledEvaluators,
@@ -339,6 +341,7 @@ interface DispatchArgs {
   callSpanRef: SpanReference
   cfg: OnlineEvalConfig
   durationSec: number
+  inputNames: null | readonly string[]
   metrics: Record<string, number>
   output: unknown
   sampledEvaluators: OnlineEvaluator[]
@@ -351,7 +354,7 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
   const ctx: EvaluatorContext = {
     attributes: {},
     duration: args.durationSec,
-    inputs: args.args.length === 1 ? args.args[0] : args.args,
+    inputs: buildEvaluatorInputs(args.args, args.inputNames),
     metadata: args.cfg.metadata,
     metrics: args.metrics,
     name: undefined,
@@ -359,32 +362,44 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
     spanTree: args.spanTree,
   }
 
+  const emitOtel = args.userOptions.emitOtelEvents ?? args.cfg.emitOtelEvents
+  const globalSink = args.userOptions.sink ?? args.cfg.sink
+  const hasPerEvaluatorSink = args.sampledEvaluators.some((ev) => ev.sink !== undefined)
+  if (!emitOtel && globalSink === undefined && !hasPerEvaluatorSink) return
+
+  const runs = await Promise.all(
+    args.sampledEvaluators.map(async (ev) => ({
+      ev,
+      ...(await ev.tryRun(ctx, args.callSpanRef, {
+        onError: args.userOptions.onError ?? args.cfg.onError,
+        onMaxConcurrency: args.userOptions.onMaxConcurrency ?? args.cfg.onMaxConcurrency,
+      })),
+    }))
+  )
+
   const allResults: EvaluationResultJson[] = []
   const allFailures: EvaluatorFailureRecord[] = []
-  for (const ev of args.sampledEvaluators) {
-    const { failures, results } = await ev.tryRun(ctx, args.callSpanRef, {
-      onError: args.userOptions.onError ?? args.cfg.onError,
-      onMaxConcurrency: args.userOptions.onMaxConcurrency ?? args.cfg.onMaxConcurrency,
-    })
+  const perEvaluatorSinks = new Map<
+    EvaluationSink,
+    { evaluators: Evaluator[]; failures: EvaluatorFailureRecord[]; onError?: OnErrorCallback; results: EvaluationResultJson[] }
+  >()
+  for (const { ev, failures, results } of runs) {
     allResults.push(...results)
     allFailures.push(...failures)
     if (ev.sink !== undefined) {
-      await submitSink(
-        ev.sink,
-        {
-          context: ctx,
-          failures,
-          results,
-          spanReference: args.callSpanRef,
-          target: args.target,
-        },
-        [ev.evaluator],
-        ev.onError ?? args.userOptions.onError ?? args.cfg.onError
-      )
+      const group = perEvaluatorSinks.get(ev.sink) ?? {
+        evaluators: [],
+        failures: [],
+        onError: ev.onError ?? args.userOptions.onError ?? args.cfg.onError,
+        results: [],
+      }
+      group.evaluators.push(ev.evaluator)
+      group.failures.push(...failures)
+      group.results.push(...results)
+      perEvaluatorSinks.set(ev.sink, group)
     }
   }
 
-  const emitOtel = args.userOptions.emitOtelEvents ?? args.cfg.emitOtelEvents
   if (emitOtel) {
     for (const r of allResults)
       emitEvaluationResult(r, { baggageAttrs: args.baggageAttrs, parentSpanRef: args.callSpanRef, target: args.target })
@@ -392,21 +407,40 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
       emitEvaluatorFailure(f, { baggageAttrs: args.baggageAttrs, parentSpanRef: args.callSpanRef, target: args.target })
   }
 
-  const sink = args.userOptions.sink ?? args.cfg.sink
-  if (sink !== undefined) {
-    await submitSink(
-      sink,
-      {
-        context: ctx,
-        failures: allFailures,
-        results: allResults,
-        spanReference: args.callSpanRef,
-        target: args.target,
-      },
-      args.sampledEvaluators.map((ev) => ev.evaluator),
-      args.userOptions.onError ?? args.cfg.onError
+  const sinkSubmissions: Promise<void>[] = []
+  for (const [sink, group] of perEvaluatorSinks) {
+    sinkSubmissions.push(
+      submitSink(
+        sink,
+        {
+          context: ctx,
+          failures: group.failures,
+          results: group.results,
+          spanReference: args.callSpanRef,
+          target: args.target,
+        },
+        group.evaluators,
+        group.onError
+      )
     )
   }
+  if (globalSink !== undefined) {
+    sinkSubmissions.push(
+      submitSink(
+        globalSink,
+        {
+          context: ctx,
+          failures: allFailures,
+          results: allResults,
+          spanReference: args.callSpanRef,
+          target: args.target,
+        },
+        args.sampledEvaluators.map((ev) => ev.evaluator),
+        args.userOptions.onError ?? args.cfg.onError
+      )
+    )
+  }
+  await Promise.all(sinkSubmissions)
 }
 
 function buildOnlineExporterContextId(): string {
@@ -462,6 +496,31 @@ function runWithParentSpanContext<R>(parentSpanRef: null | SpanReference, fn: ()
     traceId: parentSpanRef.traceId,
   })
   return ContextAPI.with(parentContext, fn)
+}
+
+function getContextArgNames(fn: (...args: unknown[]) => unknown, extractArgs: WithOnlineOptions['extractArgs']): null | readonly string[] {
+  const names = Array.isArray(extractArgs) ? extractArgs : extractParamNames(fn)
+  return names.length === 0 ? null : names
+}
+
+function buildEvaluatorInputs(args: readonly unknown[], argNames: null | readonly string[]): unknown {
+  if (argNames === null) return args.length === 1 ? args[0] : [...args]
+  const inputs: Record<string, unknown> = {}
+  for (let i = 0; i < args.length; i++) {
+    inputs[argNames[i] ?? `arg${i.toString()}`] = args[i]
+  }
+  return inputs
+}
+
+function encodeReturnAttribute(output: unknown): boolean | number | string {
+  if (typeof output === 'string' || typeof output === 'number' || typeof output === 'boolean') return output
+  if (output === undefined || typeof output === 'function' || typeof output === 'symbol') return String(output)
+  if (output instanceof Error) return `${output.name}: ${output.message}`
+  try {
+    return JSON.stringify(output)
+  } catch {
+    return '[unserializable]'
+  }
 }
 
 function extractParamNames(fn: (...args: unknown[]) => unknown): string[] {

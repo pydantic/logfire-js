@@ -288,6 +288,13 @@ Cloudflare Worker usage is limited to in-memory datasets and online evaluation;
 browser offline runs should keep `maxConcurrency: 1` because there is no
 `AsyncLocalStorage` equivalent.
 
+Dataset YAML/JSON uses the Python `pydantic-evals` field names for portable
+files, for example `predicted_from`, `expected_from`, and snake_case
+`SpanQuery` keys. Online evaluator `context.inputs` is built from JavaScript
+function parameter names when they can be inspected; pass
+`extractArgs: ['name', ...]` when bundled or minified code needs stable input
+names.
+
 ### Configuring the instrumentation
 
 The `logfire.configure` function accepts a set of configuration options that

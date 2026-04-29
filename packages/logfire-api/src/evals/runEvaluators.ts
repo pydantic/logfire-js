@@ -27,25 +27,38 @@ export async function runEvaluators(
 ): Promise<RunEvaluatorsResult> {
   const result: RunEvaluatorsResult = { assertions: {}, failures: [], labels: {}, scores: {} }
 
-  for (const evaluator of evaluators) {
-    const evaluatorName = evaluator.getResultName()
-    const spec = evaluator.getSpec()
-    try {
-      const runOnce = (): Promise<EvaluatorOutput> =>
-        evalsSpan(
-          SPAN_MSG_TEMPLATE_EVALUATOR,
-          {
-            attributes: { [ATTR_EVALUATOR_NAME]: evaluatorName },
-            spanName: SPAN_NAME_EVALUATOR_LITERAL,
-          },
-          async () => evaluator.evaluate(ctx)
-        )
-      const raw = retryEvaluators === undefined ? await runOnce() : await pRetry(runOnce, retryEvaluators)
-      for (const item of evaluationResultsFromOutput(raw, evaluatorName, spec, evaluator.evaluatorVersion)) {
-        place(result, item)
+  const runs = await Promise.all(
+    evaluators.map(async (evaluator) => {
+      const evaluatorName = evaluator.getResultName()
+      const spec = evaluator.getSpec()
+      try {
+        const runOnce = (): Promise<EvaluatorOutput> =>
+          evalsSpan(
+            SPAN_MSG_TEMPLATE_EVALUATOR,
+            {
+              attributes: { [ATTR_EVALUATOR_NAME]: evaluatorName },
+              spanName: SPAN_NAME_EVALUATOR_LITERAL,
+            },
+            async () => evaluator.evaluate(ctx)
+          )
+        const raw = retryEvaluators === undefined ? await runOnce() : await pRetry(runOnce, retryEvaluators)
+        return {
+          failures: [],
+          results: evaluationResultsFromOutput(raw, evaluatorName, spec, evaluator.evaluatorVersion),
+        }
+      } catch (err) {
+        return {
+          failures: [buildEvaluatorFailureRecord(err, evaluatorName, spec, evaluator.evaluatorVersion)],
+          results: [],
+        }
       }
-    } catch (err) {
-      result.failures.push(buildEvaluatorFailureRecord(err, evaluatorName, spec, evaluator.evaluatorVersion))
+    })
+  )
+
+  for (const run of runs) {
+    result.failures.push(...run.failures)
+    for (const item of run.results) {
+      place(result, item)
     }
   }
   return result
@@ -53,10 +66,20 @@ export async function runEvaluators(
 
 function place(out: RunEvaluatorsResult, result: EvaluationResultJson): void {
   if (typeof result.value === 'boolean') {
-    out.assertions[result.name] = result
+    const name = nextResultName(out.assertions, result.name)
+    out.assertions[name] = { ...result, name }
   } else if (typeof result.value === 'number') {
-    out.scores[result.name] = result
+    const name = nextResultName(out.scores, result.name)
+    out.scores[name] = { ...result, name }
   } else {
-    out.labels[result.name] = result
+    const name = nextResultName(out.labels, result.name)
+    out.labels[name] = { ...result, name }
   }
+}
+
+function nextResultName(existing: Record<string, EvaluationResultJson>, baseName: string): string {
+  if (existing[baseName] === undefined) return baseName
+  let i = 2
+  while (existing[`${baseName}_${i.toString()}`] !== undefined) i++
+  return `${baseName}_${i.toString()}`
 }

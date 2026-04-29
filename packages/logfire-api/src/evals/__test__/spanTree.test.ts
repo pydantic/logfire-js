@@ -120,19 +120,45 @@ describe('span tree capture + HasMatchingSpan', () => {
 
     expect(tree.any({ minChildCount: 2, minDescendantCount: 3, nameContains: 'root' })).toBe(true)
     expect(tree.any({ maxDuration: 5, nameMatchesRegex: '^child-' })).toBe(true)
+    expect(tree.any({ max_duration: 0.004, name_equals: 'child-fast' })).toBe(true)
+    expect(tree.any({ max_duration: 0.002, name_equals: 'child-fast' })).toBe(false)
     expect(tree.any({ hasAttributes: { route: '/fast' }, nameEquals: 'child-fast' })).toBe(true)
     expect(tree.any({ hasAttributeKeys: ['leaf'], someAncestorHas: { nameEquals: 'root-op' } })).toBe(true)
     expect(tree.any({ allChildrenHave: { nameContains: 'child' }, nameEquals: 'root-op' })).toBe(true)
     expect(tree.any({ allDescendantsHave: { maxDuration: 20 }, nameEquals: 'root-op' })).toBe(true)
+    expect(tree.any({ max_depth: 0, name_equals: 'root-op' })).toBe(true)
+    expect(tree.any({ min_depth: 2, name_equals: 'leaf' })).toBe(true)
+    expect(tree.any({ name_equals: 'root-op', no_child_has: { name_equals: 'leaf' } })).toBe(true)
+    expect(tree.any({ name_equals: 'root-op', no_descendant_has: { name_equals: 'missing' } })).toBe(true)
+    expect(tree.any({ name_equals: 'leaf', no_ancestor_has: { name_equals: 'missing' } })).toBe(true)
     expect(tree.any({ and_: [{ nameContains: 'child' }, { not_: { nameContains: 'slow' } }] })).toBe(true)
     expect(tree.any({ or_: [{ nameEquals: 'missing' }, { nameEquals: 'leaf' }] })).toBe(true)
+    expect(() => tree.any({ name_equals: 'leaf', or_: [{ name_equals: 'leaf' }] })).toThrow(
+      "Cannot combine 'or_' conditions with other conditions at the same level"
+    )
 
     expect(tree.find({ someDescendantHas: { nameEquals: 'leaf' } }).map((node) => node.name)).toEqual(['root-op', 'child-fast'])
+    expect(
+      tree.any({
+        name_equals: 'root-op',
+        some_descendant_has: { name_equals: 'leaf' },
+        stop_recursing_when: { name_equals: 'child-fast' },
+      })
+    ).toBe(false)
     expect(tree.first({ maxChildCount: 0 })?.name).toBe('leaf')
     expect(tree.any({ hasAttributes: { route: '/missing' } })).toBe(false)
     expect(tree.any({ hasAttributeKeys: ['missing'] })).toBe(false)
     expect(tree.any({ maxChildCount: 1, nameEquals: 'root-op' })).toBe(false)
     expect(tree.any({ maxDescendantCount: 2, nameEquals: 'root-op' })).toBe(false)
+  })
+
+  it('serializes HasMatchingSpan queries with snake_case field names', () => {
+    expect(new HasMatchingSpan({ query: { maxDuration: 0.1, someChildHas: { nameEquals: 'child' } } }).toJSON()).toEqual({
+      query: {
+        max_duration: 0.1,
+        some_child_has: { name_equals: 'child' },
+      },
+    })
   })
 
   it('throws the stored recording error when querying an unavailable tree', () => {

@@ -13,10 +13,22 @@ export class IsInstance extends Evaluator {
 
   readonly typeName: string
 
-  constructor(opts: { evaluationName?: string; typeName: string }) {
+  constructor(opts: { evaluation_name?: string; evaluationName?: string; type_name?: string; typeName?: string }) {
     super()
-    this.typeName = opts.typeName
-    if (opts.evaluationName !== undefined) this.evaluationName = opts.evaluationName
+    this.typeName = opts.typeName ?? opts.type_name ?? ''
+    this.evaluationName = opts.evaluationName ?? opts.evaluation_name
+  }
+
+  static jsonSchema(): Record<string, unknown> {
+    return {
+      additionalProperties: false,
+      properties: {
+        evaluation_name: { type: 'string' },
+        type_name: { type: 'string' },
+      },
+      required: ['type_name'],
+      type: 'object',
+    }
   }
 
   evaluate(ctx: EvaluatorContext): EvaluationReason {

@@ -11,9 +11,19 @@ import { deepEqual } from './Equals'
 export class EqualsExpected extends Evaluator {
   static evaluatorName = 'EqualsExpected'
 
-  constructor(opts: { evaluationName?: string } = {}) {
+  constructor(opts: { evaluation_name?: string; evaluationName?: string } = {}) {
     super()
-    if (opts.evaluationName !== undefined) this.evaluationName = opts.evaluationName
+    this.evaluationName = opts.evaluationName ?? opts.evaluation_name
+  }
+
+  static jsonSchema(): Record<string, unknown> {
+    return {
+      additionalProperties: false,
+      properties: {
+        evaluation_name: { type: 'string' },
+      },
+      type: 'object',
+    }
   }
 
   evaluate(ctx: EvaluatorContext): EvaluatorOutput {

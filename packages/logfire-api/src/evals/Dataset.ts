@@ -123,7 +123,7 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
     options: EvaluateOptions<Inputs, Output, Metadata> = {}
   ): Promise<EvaluationReport<Inputs, Output, Metadata>> {
     const taskName = options.taskName ?? (task.name === '' ? 'task' : task.name)
-    const experimentName = options.name ?? this.name
+    const experimentName = options.name ?? taskName
     const repeat = options.repeat ?? 1
     const totalCases = this.cases.length * repeat
     if (options.maxConcurrency !== undefined && (!Number.isInteger(options.maxConcurrency) || options.maxConcurrency < 1)) {
@@ -177,7 +177,7 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
           }
           try {
             const sourceCaseName = c.name ?? `Case ${(positionalIndex + 1).toString()}`
-            const caseName = repeat > 1 ? `${sourceCaseName} [run/${(runIndex + 1).toString()}]` : sourceCaseName
+            const caseName = repeat > 1 ? `${sourceCaseName} [${(runIndex + 1).toString()}/${repeat.toString()}]` : sourceCaseName
             const result = await runOneCase({
               caseName,
               dataset: this,
@@ -386,25 +386,17 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
     } catch (err) {
       // Drain bucket so we don't leak even on task failure.
       evalsProcessor.drainBucket(exporterContextId)
-      const isErr = err instanceof Error
       // Still record the exception on the case span — the platform shows it.
-      if (isErr) {
-        caseSpan.recordException(err)
-      } else {
-        caseSpan.recordException(String(err))
-      }
-      const failure: ReportCaseFailure<Inputs, Output, Metadata> = {
-        error_message: isErr ? err.message : String(err),
-        error_stacktrace: isErr ? err.stack : undefined,
-        error_type: isErr ? err.constructor.name : 'Error',
-        expected_output: originalCase.expectedOutput,
+      recordException(caseSpan, err)
+      const failure = buildCaseFailure(err, {
+        caseName,
+        expectedOutput: originalCase.expectedOutput,
         inputs: originalCase.inputs,
         metadata: originalCase.metadata,
-        name: caseName,
-        source_case_name: sourceCaseName,
+        sourceCaseName,
         span_id,
         trace_id,
-      }
+      })
       await runLifecycleTeardown(lifecycle, failure, caseSpan)
       return failure
     }
@@ -431,10 +423,25 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
       spanTree,
     }
     if (lifecycle?.prepareContext !== undefined) {
-      ctx = await lifecycle.prepareContext(ctx)
+      try {
+        ctx = await lifecycle.prepareContext(ctx)
+      } catch (err) {
+        recordException(caseSpan, err)
+        const failure = buildCaseFailure(err, {
+          caseName,
+          expectedOutput: originalCase.expectedOutput,
+          inputs: originalCase.inputs,
+          metadata: originalCase.metadata,
+          sourceCaseName,
+          span_id,
+          trace_id,
+        })
+        await runLifecycleTeardown(lifecycle, failure, caseSpan)
+        return failure
+      }
     }
 
-    const allEvaluators: Evaluator<Inputs, Output, Metadata>[] = [...datasetEvaluators, ...originalCase.evaluators]
+    const allEvaluators: Evaluator<Inputs, Output, Metadata>[] = [...originalCase.evaluators, ...datasetEvaluators]
     const evResult = await runEvaluators(allEvaluators as Evaluator[], ctx as EvaluatorContext, retryEvaluators)
 
     const totalDuration = nowSec() - totalStart
@@ -471,6 +478,41 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
     await runLifecycleTeardown(lifecycle, reportCase, caseSpan)
     return reportCase
   })
+}
+
+function buildCaseFailure<Inputs, Output, Metadata>(
+  err: unknown,
+  opts: {
+    caseName: string
+    expectedOutput?: Output
+    inputs: Inputs
+    metadata?: Metadata
+    sourceCaseName?: string
+    span_id: null | string
+    trace_id: null | string
+  }
+): ReportCaseFailure<Inputs, Output, Metadata> {
+  const isErr = err instanceof Error
+  return {
+    error_message: isErr ? err.message : String(err),
+    error_stacktrace: isErr ? err.stack : undefined,
+    error_type: isErr ? err.constructor.name : 'Error',
+    expected_output: opts.expectedOutput,
+    inputs: opts.inputs,
+    metadata: opts.metadata,
+    name: opts.caseName,
+    source_case_name: opts.sourceCaseName,
+    span_id: opts.span_id,
+    trace_id: opts.trace_id,
+  }
+}
+
+function recordException(span: Span, err: unknown): void {
+  if (err instanceof Error) {
+    span.recordException(err)
+  } else {
+    span.recordException(String(err))
+  }
 }
 
 function nowSec(): number {

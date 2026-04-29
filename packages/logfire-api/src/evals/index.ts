@@ -107,7 +107,15 @@ export {
   stringifyYaml,
   type ToOptions,
 } from './serialization'
-export { EvalsSpanProcessor, getEvalsSpanProcessor, SpanNode, type SpanQuery, SpanTree, SpanTreeRecordingError } from './spanTree'
+export {
+  EvalsSpanProcessor,
+  getEvalsSpanProcessor,
+  SpanNode,
+  type SpanQuery,
+  spanQueryToSnakeCase,
+  SpanTree,
+  SpanTreeRecordingError,
+} from './spanTree'
 export type {
   EvaluateOptions,
   EvaluationReason,

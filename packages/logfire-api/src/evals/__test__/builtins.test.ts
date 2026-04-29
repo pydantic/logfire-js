@@ -27,38 +27,26 @@ const ctx = (output: unknown, extra: Partial<EvaluatorContext> = {}): EvaluatorC
 describe('built-in evaluator edge cases', () => {
   it('Contains supports strings, arrays, objects, asStrings and non-iterables', () => {
     expect(new Contains({ caseSensitive: false, value: 'needle' }).evaluate(ctx('A NEEDLE appears'))).toEqual({
-      reason: 'output contains value',
       value: true,
     })
-    expect(new Contains({ caseSensitive: false, value: 'needle' }).evaluate(ctx('haystack'))).toEqual({
-      reason: 'output does not contain value',
-      value: false,
-    })
+    expect(new Contains({ caseSensitive: false, value: 'needle' }).evaluate(ctx('haystack'))).toMatchObject({ value: false })
     expect(new Contains({ asStrings: true, value: 23 }).evaluate(ctx(12345))).toEqual({
-      reason: 'output contains value',
       value: true,
     })
     expect(new Contains({ value: { ok: true } }).evaluate(ctx([{ ok: false }, { ok: true }]))).toEqual({
-      reason: 'value found in output array',
       value: true,
     })
-    expect(new Contains({ value: 'missing' }).evaluate(ctx(['present']))).toEqual({
-      reason: 'value not found in output array',
-      value: false,
-    })
+    expect(new Contains({ value: 'missing' }).evaluate(ctx(['present']))).toMatchObject({ value: false })
     expect(new Contains({ value: 'status' }).evaluate(ctx({ status: 'ok' }))).toEqual({
-      reason: 'key matches value',
       value: true,
     })
-    expect(new Contains({ value: 'ok' }).evaluate(ctx({ status: 'ok' }))).toEqual({
-      reason: 'object value matches',
-      value: true,
-    })
-    expect(new Contains({ value: 'missing' }).evaluate(ctx({ status: 'ok' }))).toEqual({
-      reason: 'value not found in object',
+    expect(new Contains({ value: { status: 'ok' } }).evaluate(ctx({ extra: true, status: 'ok' }))).toEqual({ value: true })
+    expect(new Contains({ value: 'ok' }).evaluate(ctx({ status: 'ok' }))).toMatchObject({ value: false })
+    expect(new Contains({ value: 'missing' }).evaluate(ctx({ status: 'ok' }))).toMatchObject({ value: false })
+    expect(new Contains({ value: 'x' }).evaluate(ctx(123))).toEqual({
+      reason: 'Containment check failed: output is not iterable',
       value: false,
     })
-    expect(new Contains({ value: 'x' }).evaluate(ctx(123))).toEqual({ reason: 'output is not iterable', value: false })
   })
 
   it('deepEqual covers primitive, array and object mismatches', () => {
@@ -145,7 +133,13 @@ describe('built-in evaluator edge cases', () => {
       judge_assertion: true,
       judge_score: { reason: 'solid', value: 0.9 },
     })
-    expect(judge.toJSON()).toEqual({ include_expected_output: true, include_input: true, rubric: 'grade it' })
+    expect(judge.toJSON()).toEqual({
+      assertion: { evaluation_name: 'judge_assertion' },
+      include_expected_output: true,
+      include_input: true,
+      rubric: 'grade it',
+      score: { evaluation_name: 'judge_score', include_reason: true },
+    })
 
     const assertionOnly = new LLMJudge({
       judge: () => ({ pass: false, reason: 'nope', score: 0.1 }),
@@ -160,7 +154,18 @@ describe('built-in evaluator edge cases', () => {
       assertion: false,
       judge: () => ({ pass: true, score: 1 }),
       rubric: 'score only',
+      score: {},
     })
     await expect(scoreOnly.evaluate(ctx('actual'))).resolves.toEqual({ LLMJudge: 1 })
+
+    const bothDefaults = new LLMJudge({
+      judge: () => ({ pass: true, reason: 'ok', score: 0.8 }),
+      rubric: 'both',
+      score: {},
+    })
+    await expect(bothDefaults.evaluate(ctx('actual'))).resolves.toEqual({
+      LLMJudge_pass: { reason: 'ok', value: true },
+      LLMJudge_score: 0.8,
+    })
   })
 })

@@ -3,14 +3,19 @@ import type { ReportCase } from '../reporting'
 
 import { registerReportEvaluator } from '../registry'
 import { type PrecisionRecallAnalysis, ReportEvaluator, type ReportEvaluatorContext, type ScalarAnalysis } from '../ReportEvaluator'
-import { buildThresholdInputs, type PositiveFrom, type ScoreFrom, trapezoidalAuc, uniqueSortedThresholds } from './scoreCommon'
+import { buildThresholdInputs, downsample, type PositiveFrom, type ScoreFrom, trapezoidalAuc, uniqueSortedThresholds } from './scoreCommon'
 
 export interface PrecisionRecallOptions {
+  n_thresholds?: number
   nThresholds?: number
-  positiveFrom: PositiveFrom
+  positive_from?: PositiveFrom
+  positive_key?: string
+  positiveFrom?: PositiveFrom
   positiveKey?: string
+  score_from?: ScoreFrom
+  score_key?: string
   scoreFrom?: ScoreFrom
-  scoreKey: string
+  scoreKey?: string
   title?: string
 }
 
@@ -26,12 +31,28 @@ export class PrecisionRecallEvaluator extends ReportEvaluator {
 
   constructor(opts: PrecisionRecallOptions) {
     super()
-    this.scoreKey = opts.scoreKey
-    this.scoreFrom = opts.scoreFrom ?? 'scores'
-    this.positiveFrom = opts.positiveFrom
-    this.positiveKey = opts.positiveKey
-    this.nThresholds = opts.nThresholds ?? 100
-    this.title = opts.title ?? 'Precision–Recall'
+    this.scoreKey = opts.scoreKey ?? opts.score_key ?? ''
+    this.scoreFrom = opts.scoreFrom ?? opts.score_from ?? 'scores'
+    this.positiveFrom = opts.positiveFrom ?? opts.positive_from ?? 'expected_output'
+    this.positiveKey = opts.positiveKey ?? opts.positive_key
+    this.nThresholds = opts.nThresholds ?? opts.n_thresholds ?? 100
+    this.title = opts.title ?? 'Precision-Recall Curve'
+  }
+
+  static jsonSchema(): Record<string, unknown> {
+    return {
+      additionalProperties: false,
+      properties: {
+        n_thresholds: { default: 100, type: 'integer' },
+        positive_from: { enum: ['assertions', 'expected_output', 'labels'] },
+        positive_key: { type: 'string' },
+        score_from: { default: 'scores', enum: ['metrics', 'scores'] },
+        score_key: { type: 'string' },
+        title: { default: 'Precision-Recall Curve', type: 'string' },
+      },
+      required: ['score_key', 'positive_from'],
+      type: 'object',
+    }
   }
 
   evaluate(ctx: ReportEvaluatorContext): [PrecisionRecallAnalysis, ScalarAnalysis] {
@@ -43,7 +64,7 @@ export class PrecisionRecallEvaluator extends ReportEvaluator {
       scoreKey: this.scoreKey,
     })
 
-    const thresholds = uniqueSortedThresholds(inputs.scores, this.nThresholds)
+    const thresholds = uniqueSortedThresholds(inputs.scores)
     const points: { precision: number; recall: number; threshold: number }[] = []
     if (inputs.scores.length > 0) {
       points.push({ precision: 1, recall: 0, threshold: Math.max(...inputs.scores) })
@@ -67,14 +88,14 @@ export class PrecisionRecallEvaluator extends ReportEvaluator {
     }
 
     // Recall ascending → AUC under PR curve (a.k.a. average precision).
-    const sorted = points.map((p) => [p.recall, p.precision] as const).sort((a, b) => a[0] - b[0])
-    const xs = sorted.map(([r]) => r)
-    const ys = sorted.map(([, p]) => p)
+    const xs = points.map((p) => p.recall)
+    const ys = points.map((p) => p.precision)
     const auc = inputs.scores.length === 0 ? Number.NaN : trapezoidalAuc(xs, ys)
+    const displayPoints = downsample(points, this.nThresholds)
 
     return [
       {
-        curves: inputs.scores.length === 0 ? [] : [{ auc, name: ctx.name, points }],
+        curves: inputs.scores.length === 0 ? [] : [{ auc, name: ctx.name, points: displayPoints }],
         title: this.title,
         type: 'precision_recall',
       },
@@ -85,12 +106,12 @@ export class PrecisionRecallEvaluator extends ReportEvaluator {
   toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = {
       positive_from: this.positiveFrom,
-      score_from: this.scoreFrom,
       score_key: this.scoreKey,
     }
     if (this.positiveKey !== undefined) out.positive_key = this.positiveKey
+    if (this.scoreFrom !== 'scores') out.score_from = this.scoreFrom
     if (this.nThresholds !== 100) out.n_thresholds = this.nThresholds
-    if (this.title !== 'Precision–Recall') out.title = this.title
+    if (this.title !== 'Precision-Recall Curve') out.title = this.title
     return out
   }
 }

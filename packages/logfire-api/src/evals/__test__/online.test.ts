@@ -6,6 +6,7 @@ import {
   ATTR_EVALUATOR_NAME,
   configureOnlineEvals,
   disableEvaluation,
+  emitEvaluatorFailure,
   Equals,
   ERROR_TYPE,
   EVAL_RESULT_EVENT_NAME,
@@ -49,6 +50,13 @@ class NumericScore extends Evaluator {
   static evaluatorName = 'NumericScore'
   evaluate(): number {
     return 0.75
+  }
+}
+
+class TinyScore extends Evaluator {
+  static evaluatorName = 'TinyScore'
+  evaluate(): number {
+    return 1.23e-7
   }
 }
 
@@ -160,6 +168,17 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     })
     expect(logs[0]!.attributes[GEN_AI_SCORE_VALUE]).toBe(0.75)
     expect(logs[0]!.attributes[GEN_AI_SCORE_LABEL]).toBeUndefined()
+    expect(logs[0]!.body).toBe('evaluation: NumericScore=0.75')
+    expect((logs[0] as { severityNumber?: unknown }).severityNumber).toBeUndefined()
+  })
+
+  it('formats numeric result bodies like Python general format', async () => {
+    const fn = withOnlineEvaluation(async () => 'x', { evaluators: [new TinyScore()], target: 't' })
+    const { logs } = await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+    expect(logs[0]!.body).toBe('evaluation: TinyScore=1.23e-07')
   })
 
   it('string output → score.label only (no value)', async () => {
@@ -193,6 +212,24 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     // SimpleLogRecordProcessor doesn't expose severity directly via .severityNumber on most versions —
     // check via body shape
     expect(logs[0]!.body).toContain('failed: evaluator boom')
+  })
+
+  it('emits Python-compatible evaluator failure fallbacks when message/type are missing', async () => {
+    const { logs } = await withMemoryLogExporter(() => {
+      emitEvaluatorFailure(
+        {
+          error_message: '',
+          error_type: '',
+          name: 'MissingFailureFields',
+          source: { arguments: null, name: 'MissingFailureFields' },
+        },
+        { target: 'fallback-target' }
+      )
+    })
+
+    expect(logs).toHaveLength(1)
+    expect(logs[0]?.body).toBe('evaluation: MissingFailureFields failed')
+    expect(logs[0]?.attributes[ERROR_TYPE]).toBe('pydantic_evals.EvaluatorFailure')
   })
 
   it('converts online evaluator failures without calling onError', async () => {
@@ -361,6 +398,84 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     expect(evaluatorSinkPayloads[0]?.results[0]?.name).toBe('AlwaysPass')
   })
 
+  it('skips evaluator execution when OTel events and sinks are both disabled', async () => {
+    let attempts = 0
+    class Counting extends Evaluator {
+      static evaluatorName = 'NoSinkCounting'
+      evaluate(): boolean {
+        attempts++
+        return true
+      }
+    }
+
+    const fn = withOnlineEvaluation(async () => 'x', {
+      emitOtelEvents: false,
+      evaluators: [new Counting()],
+      target: 'short-circuit-target',
+    })
+
+    const { logs } = await withMemoryLogExporter(async () => {
+      await expect(fn()).resolves.toBe('x')
+      await waitForEvaluations()
+    })
+
+    expect(attempts).toBe(0)
+    expect(logs).toHaveLength(0)
+  })
+
+  it('batches OnlineEvaluator sinks by sink identity', async () => {
+    const sinkPayloads: SinkPayload[] = []
+    const sharedSink = (payload: SinkPayload): void => {
+      sinkPayloads.push(payload)
+    }
+    const fn = withOnlineEvaluation(async () => 'x', {
+      emitOtelEvents: false,
+      evaluators: [
+        new OnlineEvaluator({ evaluator: new AlwaysPass(), sink: sharedSink }),
+        new OnlineEvaluator({ evaluator: new AlwaysFail(), sink: sharedSink }),
+      ],
+      target: 'batched-sink-target',
+    })
+
+    await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+
+    expect(sinkPayloads).toHaveLength(1)
+    expect(sinkPayloads[0]?.results.map((result) => result.name).sort()).toEqual(['AlwaysFail', 'AlwaysPass'])
+  })
+
+  it('runs sampled online evaluators concurrently', async () => {
+    let fastStarted = false
+    class SlowOnlineEvaluator extends Evaluator {
+      static evaluatorName = 'SlowOnlineEvaluator'
+      async evaluate(): Promise<boolean> {
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        return fastStarted
+      }
+    }
+    class FastOnlineEvaluator extends Evaluator {
+      static evaluatorName = 'FastOnlineEvaluator'
+      evaluate(): boolean {
+        fastStarted = true
+        return true
+      }
+    }
+
+    const fn = withOnlineEvaluation(async () => 'x', {
+      evaluators: [new SlowOnlineEvaluator(), new FastOnlineEvaluator()],
+      target: 'parallel-online-target',
+    })
+
+    const { logs } = await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+
+    expect(logs.find((log) => log.attributes[GEN_AI_EVAL_NAME] === 'SlowOnlineEvaluator')?.attributes[GEN_AI_SCORE_VALUE]).toBe(1)
+  })
+
   it('calls onError with Python-style arguments for sink failures', async () => {
     const errors: { error: unknown; evaluator: Evaluator; location: string; output: unknown }[] = []
     const fn = withOnlineEvaluation(async () => 'x', {
@@ -417,15 +532,18 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     expect(logs[0]?.attributes.tenant).toBe('acme')
   })
 
-  it('supports explicit extracted argument names and independent per-evaluator sampling', async () => {
+  it('uses independent per-evaluator sampling by default and names context inputs when possible', async () => {
     const random = vi.spyOn(Math, 'random').mockReturnValueOnce(0.4).mockReturnValueOnce(0.6).mockReturnValue(0.1)
+    const sinkPayloads: SinkPayload[] = []
     const fn = withOnlineEvaluation(async (first: string, second: string) => `${first}${second}`, {
       evaluators: [
         new OnlineEvaluator({ evaluator: new AlwaysPass(), sampleRate: 0.5 }),
         new OnlineEvaluator({ evaluator: new AlwaysFail(), sampleRate: 0.5 }),
       ],
       extractArgs: ['renamedFirst', 'renamedSecond'],
-      samplingMode: 'independent',
+      sink: (payload) => {
+        sinkPayloads.push(payload)
+      },
       target: 'independent-target',
     })
 
@@ -438,6 +556,7 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
       expect(logs[0]?.attributes[GEN_AI_EVAL_NAME]).toBe('AlwaysPass')
       const callSpan = spans.find((s) => s.name === 'Calling independent-target')!
       expect(callSpan.attributes).toMatchObject({ renamedFirst: 'a', renamedSecond: 'b' })
+      expect(sinkPayloads[0]?.context.inputs).toEqual({ renamedFirst: 'a', renamedSecond: 'b' })
     } finally {
       random.mockRestore()
     }

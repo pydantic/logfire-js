@@ -77,7 +77,7 @@ describe('offline evals — span attribute parity', () => {
 
     // Experiment span attributes — Condition-2 ingest discriminator + sort-by-pass-rate fields.
     const expAttrs = experiment!.attributes
-    expect(expAttrs[ATTR_NAME]).toBe('sentiment-classifier')
+    expect(expAttrs[ATTR_NAME]).toBe('classify')
     expect(expAttrs[ATTR_DATASET_NAME]).toBe('sentiment-classifier')
     expect(expAttrs[ATTR_TASK_NAME]).toBe('classify')
     expect(expAttrs[ATTR_N_CASES]).toBe(2)
@@ -88,7 +88,7 @@ describe('offline evals — span attribute parity', () => {
     const metadata = JSON.parse(expAttrs[EXPERIMENT_METADATA_KEY] as string) as Record<string, unknown>
     expect(metadata.n_cases).toBe(2)
     expect(metadata.averages).toBeDefined()
-    expect((metadata.averages as { name: string }).name).toBe('sentiment-classifier')
+    expect((metadata.averages as { name: string }).name).toBe('classify')
 
     // Each case span has case_name as a top-level attribute (UI detection requirement)
     for (const c of cases) {
@@ -147,6 +147,68 @@ describe('offline evals — span attribute parity', () => {
     expect(scores).toEqual({})
   })
 
+  it('runs case evaluators before dataset evaluators and suffixes duplicate result names', async () => {
+    class SameNameEvaluator extends Evaluator {
+      static evaluatorName = 'SameNameEvaluator'
+      private readonly value: boolean
+      constructor(evaluationName: string, value: boolean) {
+        super()
+        this.evaluationName = evaluationName
+        this.value = value
+      }
+      evaluate(): boolean {
+        return this.value
+      }
+    }
+
+    const dataset = new Dataset<string, string>({
+      cases: [
+        new Case<string, string>({
+          evaluators: [new SameNameEvaluator('duplicate', true)],
+          inputs: 'x',
+          name: 'case',
+        }),
+      ],
+      evaluators: [new SameNameEvaluator('duplicate', false)],
+      name: 'ordering-test',
+    })
+
+    const { result } = await withMemoryExporter(() => dataset.evaluate((input) => input))
+
+    expect(Object.keys(result.cases[0]!.assertions)).toEqual(['duplicate', 'duplicate_2'])
+    expect(result.cases[0]?.assertions.duplicate?.value).toBe(true)
+    expect(result.cases[0]?.assertions.duplicate_2?.value).toBe(false)
+  })
+
+  it('runs evaluators for a case concurrently', async () => {
+    let fastStarted = false
+    class SlowEvaluator extends Evaluator {
+      static evaluatorName = 'SlowEvaluator'
+      async evaluate(): Promise<boolean> {
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        return fastStarted
+      }
+    }
+    class FastEvaluator extends Evaluator {
+      static evaluatorName = 'FastEvaluator'
+      evaluate(): boolean {
+        fastStarted = true
+        return true
+      }
+    }
+
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'x', name: 'case' })],
+      evaluators: [new SlowEvaluator(), new FastEvaluator()],
+      name: 'parallel-evaluator-test',
+    })
+
+    const { result } = await withMemoryExporter(() => dataset.evaluate((input) => input))
+
+    expect(result.cases[0]?.assertions.SlowEvaluator?.value).toBe(true)
+    expect(result.cases[0]?.assertions.FastEvaluator?.value).toBe(true)
+  })
+
   it('emits logfire.experiment.repeat and source_case_name on multi-run experiments', async () => {
     const dataset = new Dataset({
       cases: [new Case({ inputs: 'hi', name: 'x' })],
@@ -162,7 +224,7 @@ describe('offline evals — span attribute parity', () => {
     expect(cases).toHaveLength(3)
     for (const c of cases) {
       expect(c.attributes[EXPERIMENT_SOURCE_CASE_NAME_KEY]).toBe('x')
-      expect(c.attributes[ATTR_CASE_NAME]).toMatch(/^x \[run\/\d+\]$/)
+      expect(c.attributes[ATTR_CASE_NAME]).toMatch(/^x \[\d+\/3\]$/)
     }
   })
 
@@ -194,7 +256,7 @@ describe('offline evals — span attribute parity', () => {
     })
     const { result } = await withMemoryExporter(() => dataset.evaluate((s) => s))
     expect(result.cases[0]?.assertions.Contains?.value).toBe(true)
-    expect(result.cases[0]?.assertions.Contains?.reason).toBe('output contains value')
+    expect(result.cases[0]?.assertions.Contains?.reason).toBeNull()
   })
 
   it('supports addCase/addEvaluator, task helpers, progress callbacks and custom evaluator versions', async () => {
