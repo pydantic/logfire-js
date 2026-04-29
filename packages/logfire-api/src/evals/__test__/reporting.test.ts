@@ -21,6 +21,7 @@ import {
   ReportEvaluator,
   type ReportEvaluatorContext,
   ROCAUCEvaluator,
+  SPAN_NAME_CASE,
   SPAN_NAME_EXPERIMENT,
 } from '../../evals'
 import { withMemoryExporter } from './withMemoryExporter'
@@ -81,6 +82,55 @@ describe('lifecycle hooks', () => {
       )
     })
     expect(events).toEqual(['teardown'])
+  })
+
+  it('records teardown errors on failed cases without rejecting the experiment', async () => {
+    class TeardownThrows extends CaseLifecycle<string, string> {
+      async teardown(): Promise<void> {
+        throw new Error('teardown boom')
+      }
+    }
+    const ds = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'a' })],
+      name: 'teardown-failure-test',
+    })
+
+    const { result, spans } = await withMemoryExporter(async () =>
+      ds.evaluate(
+        () => {
+          throw new Error('task boom')
+        },
+        { lifecycle: TeardownThrows }
+      )
+    )
+
+    expect(result.cases).toHaveLength(0)
+    expect(result.failures).toHaveLength(1)
+    expect(result.failures[0]?.error_message).toBe('task boom')
+    const caseSpan = spans.find((s) => s.name === SPAN_NAME_CASE)
+    expect(caseSpan?.events.some((event) => event.attributes?.['exception.message'] === 'teardown boom')).toBe(true)
+  })
+
+  it('records teardown errors on successful cases without rejecting the experiment', async () => {
+    class TeardownThrows extends CaseLifecycle<string, string> {
+      async teardown(): Promise<void> {
+        throw new Error('teardown boom')
+      }
+    }
+    const ds = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'a' })],
+      name: 'teardown-success-test',
+    })
+
+    const { result, spans } = await withMemoryExporter(async () =>
+      ds.evaluate((input) => input.toUpperCase(), { lifecycle: TeardownThrows })
+    )
+
+    expect(result.cases).toHaveLength(1)
+    expect(result.cases[0]?.output).toBe('A')
+    expect(result.failures).toHaveLength(0)
+    const caseSpan = spans.find((s) => s.name === SPAN_NAME_CASE)
+    expect(caseSpan?.events.some((event) => event.attributes?.['exception.message'] === 'teardown boom')).toBe(true)
   })
 })
 
@@ -173,6 +223,19 @@ describe('retry support via p-retry', () => {
     expect(failed.result.cases[0]?.evaluator_failures).toMatchObject([
       { error_message: 'persistent evaluator', error_type: 'Error', name: 'AlwaysThrowsEvaluator' },
     ])
+  })
+})
+
+describe('evaluate options validation', () => {
+  it('rejects non-positive maxConcurrency before starting the experiment', async () => {
+    const ds = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'a' })],
+      name: 'invalid-concurrency-test',
+    })
+
+    await expect(ds.evaluate((input) => input, { maxConcurrency: 0 })).rejects.toThrow(
+      'Dataset.evaluate: maxConcurrency must be a positive integer (got 0)'
+    )
   })
 })
 

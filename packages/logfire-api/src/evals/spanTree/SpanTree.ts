@@ -70,11 +70,11 @@ export interface SpanQuery {
   hasAttributes?: Record<string, unknown>
   maxChildCount?: number
   maxDescendantCount?: number
-  /** Min duration in milliseconds. */
+  /** Max duration in milliseconds. */
   maxDuration?: number
   minChildCount?: number
   minDescendantCount?: number
-  /** Max duration in milliseconds. */
+  /** Min duration in milliseconds. */
   minDuration?: number
   nameContains?: string
   nameEquals?: string

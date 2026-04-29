@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   ATTR_EVALUATOR_NAME,
+  configureOnlineEvals,
   Equals,
   ERROR_TYPE,
   EVAL_RESULT_EVENT_NAME,
@@ -18,6 +19,7 @@ import {
   GEN_AI_SCORE_VALUE,
   HasMatchingSpan,
   OnlineEvaluator,
+  type SinkPayload,
   SPAN_NAME_EVALUATOR_LITERAL,
   waitForEvaluations,
   withOnlineEvaluation,
@@ -176,6 +178,77 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
       await waitForEvaluations()
     })
     expect(logs).toHaveLength(0)
+  })
+
+  it('sampling errors call onSamplingError and skip evaluation without failing the wrapped call', async () => {
+    const samplingErrors: unknown[] = []
+    const fn = withOnlineEvaluation(async () => 'x', {
+      evaluators: [new AlwaysPass()],
+      onSamplingError: (err) => {
+        samplingErrors.push(err)
+      },
+      sampleRate: () => {
+        throw new Error('sampling boom')
+      },
+      target: 'sampling-error-target',
+    })
+
+    const { logs } = await withMemoryLogExporter(async () => {
+      await expect(fn()).resolves.toBe('x')
+      await waitForEvaluations()
+    })
+
+    expect(logs).toHaveLength(0)
+    expect(samplingErrors).toHaveLength(1)
+    expect(samplingErrors[0]).toBeInstanceOf(Error)
+    expect((samplingErrors[0] as Error).message).toBe('sampling boom')
+  })
+
+  it('global enabled=false bypasses evaluators and leaves the wrapped call intact', async () => {
+    let evaluateCount = 0
+    class Counting extends Evaluator {
+      static evaluatorName = 'Counting'
+      evaluate(): boolean {
+        evaluateCount++
+        return true
+      }
+    }
+
+    configureOnlineEvals({ enabled: false })
+    try {
+      const fn = withOnlineEvaluation(async () => 'x', { evaluators: [new Counting()], target: 'disabled-target' })
+      const { logs } = await withMemoryLogExporter(async () => {
+        await expect(fn()).resolves.toBe('x')
+        await waitForEvaluations()
+      })
+
+      expect(evaluateCount).toBe(0)
+      expect(logs).toHaveLength(0)
+    } finally {
+      configureOnlineEvals({ enabled: true })
+    }
+  })
+
+  it('emitOtelEvents=false still runs evaluators and sends sink payloads without log records', async () => {
+    const sinkPayloads: SinkPayload[] = []
+    const fn = withOnlineEvaluation(async () => 'x', {
+      emitOtelEvents: false,
+      evaluators: [new AlwaysPass()],
+      sink: (payload) => {
+        sinkPayloads.push(payload)
+      },
+      target: 'sink-only-target',
+    })
+
+    const { logs } = await withMemoryLogExporter(async () => {
+      await expect(fn()).resolves.toBe('x')
+      await waitForEvaluations()
+    })
+
+    expect(logs).toHaveLength(0)
+    expect(sinkPayloads).toHaveLength(1)
+    expect(sinkPayloads[0]?.results).toHaveLength(1)
+    expect(sinkPayloads[0]?.results[0]?.name).toBe('AlwaysPass')
   })
 
   it('event name is gen_ai.evaluation.result', async () => {

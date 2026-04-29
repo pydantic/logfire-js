@@ -1,5 +1,5 @@
 /* eslint-disable camelcase */
-import { trace as TraceAPI } from '@opentelemetry/api'
+import { type Span, trace as TraceAPI } from '@opentelemetry/api'
 import pRetry from 'p-retry'
 
 import type { CaseLifecycle, CaseLifecycleClass } from './CaseLifecycle'
@@ -124,6 +124,9 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
     const experimentName = options.name ?? this.name
     const repeat = options.repeat ?? 1
     const totalCases = this.cases.length * repeat
+    if (options.maxConcurrency !== undefined && (!Number.isInteger(options.maxConcurrency) || options.maxConcurrency < 1)) {
+      throw new Error(`Dataset.evaluate: maxConcurrency must be a positive integer (got ${options.maxConcurrency.toString()})`)
+    }
 
     const initialAttrs: Record<string, unknown> = {
       [ATTR_DATASET_NAME]: this.name,
@@ -403,7 +406,7 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
         span_id,
         trace_id,
       }
-      if (lifecycle?.teardown !== undefined) await lifecycle.teardown(failure)
+      await runLifecycleTeardown(lifecycle, failure, caseSpan)
       return failure
     }
 
@@ -466,7 +469,7 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
       total_duration: totalDuration,
       trace_id,
     }
-    if (lifecycle?.teardown !== undefined) await lifecycle.teardown(reportCase)
+    await runLifecycleTeardown(lifecycle, reportCase, caseSpan)
     return reportCase
   })
 }
@@ -530,18 +533,28 @@ function resolveSiblingPath(filePath: string, siblingPath: string): string {
 
 /**
  * Best-effort detection of whether the evals span processor is wired up to the
- * active TracerProvider. We use the presence of the singleton plus a heuristic
- * (active tracer-provider exposes a function we can call) to decide whether
- * an empty bucket means "no spans were emitted" vs. "the processor isn't
- * installed". For now we always assume installed — the explicit null path is
- * exercised by users running on a custom TracerProvider that didn't install
- * the processor; we'll wire that path up in Phase 3 when we add auto-install
- * to logfire-node.configure().
+ * active TracerProvider. If the provider is not the default no-op/proxy
+ * provider, we assume the processor is installed; users with custom providers
+ * can explicitly add `getEvalsSpanProcessor()`.
  */
 function isProcessorInstalledOnGlobal(): boolean {
-  // The simpler heuristic: if the tracer provider isn't a NoopTracerProvider,
-  // we assume the processor was installed. Users on a custom provider can
-  // explicitly install via `getEvalsSpanProcessor()`.
   const tp = TraceAPI.getTracerProvider()
   return typeof tp === 'object' && tp.constructor.name !== 'NoopTracerProvider' && tp.constructor.name !== 'ProxyTracerProvider'
+}
+
+async function runLifecycleTeardown<Inputs, Output, Metadata>(
+  lifecycle: CaseLifecycle<Inputs, Output, Metadata> | null,
+  result: ReportCase<Inputs, Output, Metadata> | ReportCaseFailure<Inputs, Output, Metadata>,
+  caseSpan: Span
+): Promise<void> {
+  if (lifecycle?.teardown === undefined) return
+  try {
+    await lifecycle.teardown(result)
+  } catch (err) {
+    if (err instanceof Error) {
+      caseSpan.recordException(err)
+    } else {
+      caseSpan.recordException(String(err))
+    }
+  }
 }

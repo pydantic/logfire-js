@@ -111,7 +111,7 @@ export interface RetryConfig {
  * `Dataset.evaluate(...)` kwargs but with TS-idiomatic naming.
  */
 export interface EvaluateOptions<Inputs = unknown, Output = unknown, Metadata = unknown> {
-  // Generic params reserved for future use (lifecycle, retry strategies)
+  // Phantom fields anchor the generic parameters for callers using this type directly.
   _phantomInputs?: Inputs
   _phantomMetadata?: Metadata
   _phantomOutput?: Output

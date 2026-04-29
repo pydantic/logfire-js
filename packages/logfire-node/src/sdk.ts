@@ -1,3 +1,6 @@
+import type { LogRecordProcessor } from '@opentelemetry/sdk-logs'
+import type { SpanProcessor } from '@opentelemetry/sdk-trace-base'
+
 import { diag, DiagConsoleLogger, metrics } from '@opentelemetry/api'
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node'
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
@@ -29,7 +32,8 @@ import { logfireSpanProcessor } from './traceExporter'
 import { removeEmptyKeys } from './utils'
 
 let activeSdk: NodeSDK | undefined
-let activeProcessor: import('@opentelemetry/sdk-trace-base').SpanProcessor | undefined
+let activeLogProcessor: LogRecordProcessor | undefined
+let activeProcessor: SpanProcessor | undefined
 
 /**
  * Force-flush all pending spans to the configured exporter. Mirrors Python's
@@ -38,9 +42,7 @@ let activeProcessor: import('@opentelemetry/sdk-trace-base').SpanProcessor | und
  * top-level-await once and exit).
  */
 export async function forceFlush(): Promise<void> {
-  if (activeProcessor) {
-    await activeProcessor.forceFlush()
-  }
+  await Promise.all([activeProcessor?.forceFlush(), activeLogProcessor?.forceFlush()])
 }
 
 /**
@@ -51,6 +53,8 @@ export async function shutdown(): Promise<void> {
   if (activeSdk) {
     await activeSdk.shutdown()
     activeSdk = undefined
+    activeLogProcessor = undefined
+    activeProcessor = undefined
   }
 }
 
@@ -83,7 +87,7 @@ export function start() {
 
   const propagator = logfireConfig.distributedTracing ? new W3CTraceContextPropagator() : undefined
 
-  let processor: import('@opentelemetry/sdk-trace-base').SpanProcessor = logfireSpanProcessor(logfireConfig.console)
+  let processor: SpanProcessor = logfireSpanProcessor(logfireConfig.console)
   if (logfireConfig.sampling?.tail) {
     processor = new TailSamplingProcessor(processor, logfireConfig.sampling.tail)
   }
@@ -94,6 +98,7 @@ export function start() {
     headRate !== undefined && headRate < 1.0 ? new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(headRate) }) : undefined
 
   const logProcessor = logfireLogRecordProcessor()
+  activeLogProcessor = logProcessor ?? undefined
 
   const sdk = new NodeSDK({
     autoDetectResources: false,
