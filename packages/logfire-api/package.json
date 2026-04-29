@@ -56,6 +56,7 @@
   "scripts": {
     "dev": "vite build",
     "build": "vite build",
+    "coverage:evals": "vitest run src/evals --coverage --coverage.provider=v8 --coverage.include='src/evals/**/*.ts' --coverage.exclude='src/evals/__test__/**' --coverage.exclude='src/evals/**/index.ts' --coverage.exclude='src/evals/types.ts'",
     "lint": "eslint",
     "preview": "vite preview",
     "typecheck": "tsc",

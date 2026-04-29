@@ -1,5 +1,7 @@
 node_modules
 packages/*/*.tgz
+coverage
+packages/*/coverage
 .env
 scratch/
 **/.turbo
