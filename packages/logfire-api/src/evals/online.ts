@@ -17,10 +17,11 @@ import type { EvaluationResultJson, EvaluatorContext, EvaluatorFailureRecord, Ev
 
 import { ATTR_EVALUATOR_NAME, SPAN_MSG_TEMPLATE_EVALUATOR, SPAN_NAME_EVALUATOR_LITERAL } from './constants'
 import { getCurrentTaskRun } from './currentTaskRun'
+import { extractMetricsFromSpanTree } from './extractMetrics'
 import { evalsSpan } from './internal'
 import { buildEvaluationResultJson, emitEvaluationResult, emitEvaluatorFailure, spanReferenceFromSpan } from './otelEmit'
 import { Semaphore } from './Semaphore'
-import { SpanTree } from './spanTree'
+import { buildSpanTree, getEvalsSpanProcessor, SpanTree, SpanTreeRecordingError } from './spanTree'
 
 export type SamplingMode = 'correlated' | 'independent'
 
@@ -229,18 +230,38 @@ export function withOnlineEvaluation<F extends (...args: never[]) => Promise<unk
       }
     }
 
-    const callSpanRef = await evalsSpan(msgTemplate, { attributes: callAttrs, spanName }, async (span) => {
-      const ref = spanReferenceFromSpan(span)
-      try {
-        output = await callFn()
-        if (opts.recordReturn === true) {
-          span.setAttribute('return', JSON.stringify(output))
-        }
-        return ref
-      } finally {
-        durationSec = performance.now() / 1000 - start
-      }
-    })
+    const evalsProcessor = getEvalsSpanProcessor()
+    const exporterContextId = buildOnlineExporterContextId()
+    evalsProcessor.openBucket(exporterContextId)
+
+    let callSpanRef: { spanId: string; traceId: string }
+    try {
+      callSpanRef = await evalsProcessor.runWithBucket(exporterContextId, () =>
+        evalsSpan(msgTemplate, { attributes: callAttrs, spanName }, async (span) => {
+          const ref = spanReferenceFromSpan(span)
+          try {
+            output = await callFn()
+            if (opts.recordReturn === true) {
+              span.setAttribute('return', JSON.stringify(output))
+            }
+            return ref
+          } finally {
+            durationSec = performance.now() / 1000 - start
+          }
+        })
+      )
+    } catch (err) {
+      evalsProcessor.drainBucket(exporterContextId)
+      throw err
+    }
+
+    const capturedSpans = evalsProcessor.drainBucket(exporterContextId)
+    const spanTree =
+      capturedSpans.length === 0 && !isProcessorInstalledOnGlobal()
+        ? buildSpanTree([], new SpanTreeRecordingError())
+        : buildSpanTree(capturedSpans, null)
+    const metrics: Record<string, number> = {}
+    extractMetricsFromSpanTree(spanTree, metrics)
 
     // Dispatch evaluators in the background — don't await, but track for tests.
     const dispatch = dispatchEvaluators({
@@ -249,8 +270,10 @@ export function withOnlineEvaluation<F extends (...args: never[]) => Promise<unk
       callSpanRef,
       cfg,
       durationSec,
+      metrics,
       output,
       sampledEvaluators,
+      spanTree,
       target,
       userOptions: opts,
     })
@@ -301,8 +324,10 @@ interface DispatchArgs {
   callSpanRef: { spanId: string; traceId: string }
   cfg: OnlineEvalConfig
   durationSec: number
+  metrics: Record<string, number>
   output: unknown
   sampledEvaluators: OnlineEvaluator[]
+  spanTree: SpanTree
   target: string
   userOptions: WithOnlineOptions
 }
@@ -312,10 +337,10 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
     attributes: {},
     duration: args.durationSec,
     inputs: args.args.length === 1 ? args.args[0] : args.args,
-    metrics: {},
+    metrics: args.metrics,
     name: undefined,
     output: args.output,
-    spanTree: new SpanTree(),
+    spanTree: args.spanTree,
   }
 
   const allResults: EvaluationResultJson[] = []
@@ -344,6 +369,15 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
       target: args.target,
     })
   }
+}
+
+function buildOnlineExporterContextId(): string {
+  return `online-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
+function isProcessorInstalledOnGlobal(): boolean {
+  const tp = TraceAPI.getTracerProvider()
+  return typeof tp === 'object' && tp.constructor.name !== 'NoopTracerProvider' && tp.constructor.name !== 'ProxyTracerProvider'
 }
 
 function processOutput(

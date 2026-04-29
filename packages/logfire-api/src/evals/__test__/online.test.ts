@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/require-await */
+import { trace as TraceAPI } from '@opentelemetry/api'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -15,6 +16,7 @@ import {
   GEN_AI_EXPLANATION,
   GEN_AI_SCORE_LABEL,
   GEN_AI_SCORE_VALUE,
+  HasMatchingSpan,
   OnlineEvaluator,
   SPAN_NAME_EVALUATOR_LITERAL,
   waitForEvaluations,
@@ -201,6 +203,34 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     const src = JSON.parse(logs[0]!.attributes[GEN_AI_EVALUATOR_SOURCE] as string) as { arguments: unknown; name: string }
     expect(src.name).toBe('Equals')
     expect(src.arguments).toEqual({ value: 'expected' })
+  })
+
+  it('captures wrapped-call spans into online evaluator context', async () => {
+    const fn = withOnlineEvaluation(
+      async (input: string) => {
+        const tracer = TraceAPI.getTracer('online-user-code')
+        await tracer.startActiveSpan('inner-op', async (span) => {
+          span.setAttribute('user.input', input)
+          span.end()
+        })
+        return input.toUpperCase()
+      },
+      {
+        evaluators: [new HasMatchingSpan({ query: { nameEquals: 'inner-op' } })],
+        target: 'online-span-target',
+      }
+    )
+
+    const { logs } = await withMemoryLogExporter(async () => {
+      const result = await fn('hi')
+      expect(result).toBe('HI')
+      await waitForEvaluations()
+    })
+
+    expect(logs).toHaveLength(1)
+    expect(logs[0]!.body).toBe('evaluation: HasMatchingSpan=True')
+    expect(logs[0]!.attributes[GEN_AI_SCORE_VALUE]).toBe(1)
+    expect(logs[0]!.attributes[GEN_AI_SCORE_LABEL]).toBe('pass')
   })
 
   it('drops online evaluations at maxConcurrency without blocking the wrapped call', async () => {
