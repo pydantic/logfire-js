@@ -13,15 +13,7 @@
 
 import 'dotenv/config'
 import * as logfire from '@pydantic/logfire-node'
-import {
-  Case,
-  Contains,
-  Dataset,
-  EqualsExpected,
-  renderReport,
-  waitForEvaluations,
-  withOnlineEvaluation,
-} from '@pydantic/logfire-node/evals'
+import { Case, Contains, Dataset, EqualsExpected, renderReport, waitForEvaluations, withOnlineEvaluation } from 'logfire/evals'
 
 logfire.configure({
   console: false,

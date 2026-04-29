@@ -20,7 +20,8 @@
   "description": "",
   "dependencies": {
     "@pydantic/logfire-node": "workspace:*",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "logfire": "workspace:*"
   },
   "devDependencies": {
     "@opentelemetry/semantic-conventions": "catalog:",

@@ -430,6 +430,9 @@ importers:
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
+      logfire:
+        specifier: workspace:*
+        version: link:../../packages/logfire-api
     devDependencies:
       '@opentelemetry/semantic-conventions':
         specifier: 'catalog:'

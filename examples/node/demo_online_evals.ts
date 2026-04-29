@@ -15,13 +15,7 @@
  */
 
 import * as logfire from '@pydantic/logfire-node'
-import {
-  Evaluator,
-  type EvaluatorContext,
-  type EvaluatorOutput,
-  waitForEvaluations,
-  withOnlineEvaluation,
-} from '@pydantic/logfire-node/evals'
+import { Evaluator, type EvaluatorContext, type EvaluatorOutput, waitForEvaluations, withOnlineEvaluation } from 'logfire/evals'
 
 logfire.configure({
   advanced: { baseUrl: process.env.LOGFIRE_BASE_URL ?? 'http://localhost:3000' },

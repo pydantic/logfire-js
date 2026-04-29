@@ -32,7 +32,7 @@ import {
   registerEvaluator,
   renderReport,
   setDefaultJudge,
-} from '@pydantic/logfire-node/evals'
+} from 'logfire/evals'
 
 logfire.configure({
   advanced: { baseUrl: process.env.LOGFIRE_BASE_URL ?? 'http://localhost:3000' },
