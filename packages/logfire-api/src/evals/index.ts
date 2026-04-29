@@ -82,12 +82,16 @@ export {
   type ScoreFrom,
 } from './reportEvaluators'
 export {
+  averageFromAggregates,
+  averages,
+  caseGroups,
   computeAssertionPassRate,
   computeAverages,
   type EvaluationReport,
   type ReportCase,
   type ReportCaseAggregate,
   type ReportCaseFailure,
+  type ReportCaseGroup,
 } from './reporting'
 export { detectRuntime, hasAsyncLocalStorage, hasNodeFs, type RuntimeName } from './runtime'
 export {

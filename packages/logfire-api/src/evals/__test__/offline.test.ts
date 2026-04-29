@@ -356,4 +356,129 @@ describe('offline evals — span attribute parity', () => {
     expect(result.cases).toEqual([])
     expect(result.failures).toEqual([])
   })
+
+  it('uses taskName and explicit name option for the report and span attributes', async () => {
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'one' })],
+      name: 'naming-test',
+    })
+
+    const { result: customTask, spans: customSpans } = await withMemoryExporter(() =>
+      dataset.evaluate((s) => s, { taskName: 'custom_task' })
+    )
+    expect(customTask.name).toBe('custom_task')
+    const exp1 = customSpans.find((s) => s.name === SPAN_NAME_EXPERIMENT)
+    expect(exp1!.attributes[ATTR_TASK_NAME]).toBe('custom_task')
+    expect(exp1!.attributes[ATTR_NAME]).toBe('custom_task')
+
+    const { result: customExp, spans: customExpSpans } = await withMemoryExporter(() =>
+      dataset.evaluate((s) => s, { name: 'custom_experiment', taskName: 'custom_task' })
+    )
+    expect(customExp.name).toBe('custom_experiment')
+    const exp2 = customExpSpans.find((s) => s.name === SPAN_NAME_EXPERIMENT)
+    expect(exp2!.attributes[ATTR_TASK_NAME]).toBe('custom_task')
+    expect(exp2!.attributes[ATTR_NAME]).toBe('custom_experiment')
+  })
+
+  it('passes options.metadata through to report.experiment_metadata and the span', async () => {
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'one' })],
+      name: 'metadata-test',
+    })
+    const metadata = { max_tokens: 1000, model: 'gpt-4o', prompt_version: 'v2.1' }
+
+    const { result, spans } = await withMemoryExporter(() => dataset.evaluate((s) => s, { metadata }))
+
+    expect(result.experiment_metadata).toEqual(metadata)
+    const exp = spans.find((s) => s.name === SPAN_NAME_EXPERIMENT)
+    const meta = JSON.parse(exp!.attributes[EXPERIMENT_METADATA_KEY] as string) as { metadata?: unknown }
+    expect(meta.metadata).toEqual(metadata)
+  })
+
+  it('returns an empty report for a dataset with no cases', async () => {
+    const dataset = new Dataset<string, string>({ cases: [], name: 'empty' })
+    const { result } = await withMemoryExporter(() => dataset.evaluate(() => 'unused'))
+    expect(result.cases).toEqual([])
+    expect(result.failures).toEqual([])
+  })
+
+  it('assigns positional names to unnamed cases interleaved with named ones', async () => {
+    const dataset = new Dataset<string, string>({
+      cases: [
+        new Case<string, string>({ inputs: 'a' }),
+        new Case<string, string>({ inputs: 'b', name: 'My Case' }),
+        new Case<string, string>({ inputs: 'c' }),
+      ],
+      name: 'unnamed',
+    })
+
+    const { result } = await withMemoryExporter(() => dataset.evaluate((s) => s.toUpperCase()))
+    expect([...result.cases].sort((a, b) => a.name.localeCompare(b.name)).map((c) => c.name)).toEqual(['Case 1', 'Case 3', 'My Case'])
+  })
+
+  it('incrementEvalMetric with amount 0 does not create the metric', async () => {
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'x' })],
+      name: 'increment-zero',
+    })
+    const { result } = await withMemoryExporter(() =>
+      dataset.evaluate((input) => {
+        incrementEvalMetric('phantom', 0)
+        incrementEvalMetric('real', 1)
+        return input
+      })
+    )
+    expect(result.cases[0]?.metrics).toEqual({ real: 1 })
+  })
+
+  it('respects maxConcurrency by serializing case execution', async () => {
+    let inFlight = 0
+    let peakInFlight = 0
+    const dataset = new Dataset<string, string>({
+      cases: [
+        new Case<string, string>({ inputs: 'a', name: 'a' }),
+        new Case<string, string>({ inputs: 'b', name: 'b' }),
+        new Case<string, string>({ inputs: 'c', name: 'c' }),
+        new Case<string, string>({ inputs: 'd', name: 'd' }),
+      ],
+      name: 'concurrency-test',
+    })
+
+    await withMemoryExporter(() =>
+      dataset.evaluate(
+        async (input) => {
+          inFlight += 1
+          peakInFlight = Math.max(peakInFlight, inFlight)
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          inFlight -= 1
+          return input
+        },
+        { maxConcurrency: 1 }
+      )
+    )
+    expect(peakInFlight).toBe(1)
+  })
+
+  it('records evaluator failures as evaluator_failures without aborting the experiment', async () => {
+    class FailingEvaluator extends Evaluator {
+      static evaluatorName = 'FailingEvaluator'
+      evaluate(): never {
+        throw new Error('Evaluator error')
+      }
+    }
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'one' }), new Case<string, string>({ inputs: 'b', name: 'two' })],
+      evaluators: [new FailingEvaluator()],
+      name: 'failing-eval',
+    })
+
+    const { result } = await withMemoryExporter(() => dataset.evaluate((s) => s.toUpperCase()))
+
+    expect(result.cases).toHaveLength(2)
+    expect(result.failures).toEqual([])
+    for (const c of result.cases) {
+      expect(c.assertions).toEqual({})
+      expect(c.evaluator_failures).toMatchObject([{ error_message: 'Evaluator error', error_type: 'Error', name: 'FailingEvaluator' }])
+    }
+  })
 })

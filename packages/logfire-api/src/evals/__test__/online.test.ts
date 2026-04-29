@@ -792,6 +792,97 @@ class CountingEvaluator extends Evaluator {
   }
 }
 
+describe('sampling', () => {
+  it('passes a SamplingContext with args and target to the sampleRate callable', async () => {
+    const seen: { args: unknown[]; target: string }[] = []
+    const fn = withOnlineEvaluation(async (a: number, b: string) => `${a.toString()}:${b}`, {
+      evaluators: [new AlwaysPass()],
+      sampleRate: (ctx) => {
+        seen.push({ args: ctx.args, target: ctx.target })
+        return 1
+      },
+      target: 'sampling-ctx-target',
+    })
+    await withMemoryLogExporter(async () => {
+      await fn(7, 'q')
+      await waitForEvaluations()
+    })
+    expect(seen).toEqual([{ args: [7, 'q'], target: 'sampling-ctx-target' }])
+  })
+
+  it('correlated sampling mode shares a single draw across evaluators in one call', async () => {
+    // Math.random gets called multiple times per fn() (sampling seed + exporter id + spans).
+    // Use a counter to give the sampling seed a known value and a benign default for the rest.
+    let calls = 0
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => {
+      calls += 1
+      if (calls === 1) return 0.4 // first call sampling seed → < 0.5, both included
+      if (calls === 2) return 0.99 // exporter id, ignored
+      if (calls === 3) return 0.6 // second call sampling seed → ≥ 0.5, both excluded
+      return 0.99
+    })
+    try {
+      const fn = withOnlineEvaluation(async () => 'x', {
+        evaluators: [new AlwaysPass(), new AlwaysFail()],
+        sampleRate: 0.5,
+        samplingMode: 'correlated',
+        target: 'correlated',
+      })
+      const { logs } = await withMemoryLogExporter(async () => {
+        await fn()
+        await fn()
+        await waitForEvaluations()
+      })
+      expect(logs).toHaveLength(2)
+      expect(logs.map((l) => l.attributes[GEN_AI_EVAL_NAME]).sort()).toEqual(['AlwaysFail', 'AlwaysPass'])
+    } finally {
+      random.mockRestore()
+    }
+  })
+
+  it('configureOnlineEvals({samplingMode}) applies globally', async () => {
+    configureOnlineEvals({ samplingMode: 'correlated' })
+    let calls = 0
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => {
+      calls += 1
+      if (calls === 1) return 0.1 // sampling seed → < 0.5, both included
+      return 0.99
+    })
+    try {
+      const fn = withOnlineEvaluation(async () => 'x', {
+        evaluators: [new AlwaysPass(), new AlwaysFail()],
+        sampleRate: 0.5,
+        target: 'correlated-global',
+      })
+      const { logs } = await withMemoryLogExporter(async () => {
+        await fn()
+        await waitForEvaluations()
+      })
+      expect(logs).toHaveLength(2)
+    } finally {
+      random.mockRestore()
+      configureOnlineEvals({ samplingMode: 'independent' })
+    }
+  })
+})
+
+describe('evaluator output edge cases', () => {
+  it('an evaluator returning an empty result map emits no events', async () => {
+    class EmptyResult extends Evaluator {
+      static evaluatorName = 'EmptyResult'
+      evaluate(): Record<string, never> {
+        return {}
+      }
+    }
+    const fn = withOnlineEvaluation(async () => 'x', { evaluators: [new EmptyResult()], target: 'empty-result' })
+    const { logs } = await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+    expect(logs).toHaveLength(0)
+  })
+})
+
 describe('online suppression inside Dataset.evaluate', () => {
   it('does not double-evaluate: online wrapper skipped when invoked from within evaluate', async () => {
     CountingEvaluator.count = 0

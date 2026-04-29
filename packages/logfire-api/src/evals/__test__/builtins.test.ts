@@ -68,11 +68,24 @@ describe('built-in evaluator edge cases', () => {
     expect(eq.getResultName()).toBe('exact')
     expect(eq.toJSON()).toEqual({ evaluation_name: 'exact', value: { nested: ['x'] } })
     expect(eq.evaluate(ctx({ nested: ['x'] }))).toBe(true)
+    expect(new Equals({ value: 'completely-different-type' }).evaluate(ctx({ x: 1 }))).toBe(false)
 
     const expected = new EqualsExpected({ evaluationName: 'expected-match' })
     expect(expected.toJSON()).toEqual({ evaluation_name: 'expected-match' })
     expect(expected.evaluate(ctx('x'))).toEqual({})
     expect(expected.evaluate(ctx('x', { expectedOutput: 'x' }))).toBe(true)
+  })
+
+  it('an evaluator can read undefined expected_output and metadata from the context', () => {
+    class NullProbe extends class {
+      evaluate(_c: EvaluatorContext): { has_expected_output: boolean; has_metadata: boolean } {
+        return { has_expected_output: _c.expectedOutput !== undefined, has_metadata: _c.metadata !== undefined }
+      }
+    } {}
+    const result = new NullProbe().evaluate(ctx('out'))
+    expect(result).toEqual({ has_expected_output: false, has_metadata: false })
+    const enriched = new NullProbe().evaluate(ctx('out', { expectedOutput: 'x', metadata: { k: 1 } }))
+    expect(enriched).toEqual({ has_expected_output: true, has_metadata: true })
   })
 
   it('IsInstance handles nullish values, class ancestry and primitive fallbacks', () => {

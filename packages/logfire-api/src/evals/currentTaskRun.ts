@@ -80,5 +80,8 @@ export function setEvalAttribute(name: string, value: unknown): void {
 export function incrementEvalMetric(name: string, amount: number): void {
   const state = getCurrentTaskRun()
   if (state === undefined) return
-  state.metrics[name] = (state.metrics[name] ?? 0) + amount
+  const current = state.metrics[name] ?? 0
+  const next = current + amount
+  if (current === 0 && next === 0) return
+  state.metrics[name] = next
 }

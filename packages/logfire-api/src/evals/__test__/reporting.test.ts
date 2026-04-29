@@ -160,6 +160,57 @@ describe('lifecycle hooks', () => {
     expect(caseSpan?.events.some((event) => event.attributes?.['exception.message'] === 'teardown boom')).toBe(true)
   })
 
+  it('gives each case its own lifecycle instance with isolated state', async () => {
+    class StatefulLifecycle extends CaseLifecycle<string, string> {
+      private setupCalled = false
+      prepareContext(ctx: EvaluatorContext<string, string>): EvaluatorContext<string, string> {
+        if (!this.setupCalled) throw new Error('setup not called before prepareContext')
+        ctx.metrics.case_name_length = this.case.name?.length ?? 0
+        return ctx
+      }
+      async setup(): Promise<void> {
+        this.setupCalled = true
+      }
+    }
+
+    const ds = new Dataset<string, string>({
+      cases: [
+        new Case<string, string>({ inputs: 'a', name: 'short' }),
+        new Case<string, string>({ inputs: 'b', name: 'much_longer_name' }),
+      ],
+      name: 'per-case-state',
+    })
+    const { result } = await withMemoryExporter(async () => ds.evaluate((s) => s.toUpperCase(), { lifecycle: StatefulLifecycle }))
+
+    const byName = Object.fromEntries(result.cases.map((c) => [c.name, c.metrics]))
+    expect(byName.short?.case_name_length).toBe(5)
+    expect(byName.much_longer_name?.case_name_length).toBe(16)
+  })
+
+  it('lets evaluators see metrics added by prepareContext', async () => {
+    class Enricher extends CaseLifecycle<string, string> {
+      prepareContext(ctx: EvaluatorContext<string, string>): EvaluatorContext<string, string> {
+        ctx.metrics.enriched = 1
+        return ctx
+      }
+    }
+
+    class CheckMetric extends Evaluator<string, string> {
+      static evaluatorName = 'CheckMetric'
+      evaluate(ctx: EvaluatorContext<string, string>): boolean {
+        return ctx.metrics.enriched === 1
+      }
+    }
+
+    const ds = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'a', name: 'one' })],
+      evaluators: [new CheckMetric()],
+      name: 'enriched-context',
+    })
+    const { result } = await withMemoryExporter(async () => ds.evaluate((s) => s, { lifecycle: Enricher }))
+    expect(result.cases[0]?.assertions.CheckMetric?.value).toBe(true)
+  })
+
   it('records prepareContext errors as case failures without rejecting the experiment', async () => {
     const events: string[] = []
     class PrepareThrows extends CaseLifecycle<string, string> {
@@ -320,6 +371,43 @@ describe('report-level evaluators land on the experiment span', () => {
     const analysesAttr = experimentSpan.attributes[EXPERIMENT_ANALYSES_KEY]
     expect(typeof analysesAttr).toBe('string')
     expect(JSON.parse(analysesAttr as string)).toEqual(result.analyses)
+  })
+
+  it('awaits async report evaluator return values', async () => {
+    class AsyncReportEvaluator extends ReportEvaluator<string, string> {
+      static evaluatorName = 'AsyncReportEvaluator'
+
+      async evaluate(): Promise<{ title: string; type: 'scalar'; value: number }> {
+        await new Promise((resolve) => setTimeout(resolve, 1))
+        return { title: 'Async Result', type: 'scalar', value: 42 }
+      }
+    }
+
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'x', name: 'x' })],
+      name: 'async-report-eval',
+      reportEvaluators: [new AsyncReportEvaluator()],
+    })
+
+    const { result } = await withMemoryExporter(async () => dataset.evaluate((s) => s))
+    expect(result.analyses).toEqual([{ title: 'Async Result', type: 'scalar', value: 42 }])
+  })
+
+  it("ConfusionMatrixEvaluator with from='labels' requires a key", () => {
+    const evaluator = new ConfusionMatrixEvaluator({
+      expected: { from: 'expected_output' },
+      predicted: { from: 'labels' },
+    })
+    const report: EvaluationReport = {
+      analyses: [],
+      cases: [makeReportCase({ expected_output: 'A', labels: {} })],
+      failures: [],
+      name: 'matrix-needs-key',
+      report_evaluator_failures: [],
+      span_id: null,
+      trace_id: null,
+    }
+    expect(() => evaluator.evaluate({ cases: report.cases, name: report.name, report })).toThrow("'key' is required when from='labels'")
   })
 
   it('passes the experiment name and full report to report evaluators', async () => {

@@ -125,6 +125,9 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
     const taskName = options.taskName ?? (task.name === '' ? 'task' : task.name)
     const experimentName = options.name ?? taskName
     const repeat = options.repeat ?? 1
+    if (!Number.isInteger(repeat) || repeat < 1) {
+      throw new Error(`Dataset.evaluate: repeat must be >= 1 (got ${repeat.toString()})`)
+    }
     const totalCases = this.cases.length * repeat
     if (options.maxConcurrency !== undefined && (!Number.isInteger(options.maxConcurrency) || options.maxConcurrency < 1)) {
       throw new Error(`Dataset.evaluate: maxConcurrency must be a positive integer (got ${options.maxConcurrency.toString()})`)

@@ -1,6 +1,4 @@
 /**
- * TypeScript port of `platform/scripts/demo_online_evals.py`.
- *
  * Wraps a stub "agent" function with `withOnlineEvaluation` and emits a
  * mixture of bool / float / string / failing evaluator outputs so the
  * `gen_ai.evaluation.result` log stream exercises every encoding shape the
