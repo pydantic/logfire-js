@@ -13,7 +13,7 @@ import type { Logger } from '@opentelemetry/api-logs'
 import { context as ContextAPI, trace as TraceAPI } from '@opentelemetry/api'
 import { logs as LogsAPI, SeverityNumber } from '@opentelemetry/api-logs'
 
-import type { EvaluationReason, EvaluationResultJson, EvaluatorFailureRecord, EvaluatorSpec } from './types'
+import type { EvaluationResultJson, EvaluatorFailureRecord } from './types'
 
 import {
   ERROR_TYPE,
@@ -121,31 +121,4 @@ function applyBaggage(attrs: Record<string, unknown>, baggage: Record<string, un
   for (const [k, v] of Object.entries(baggage)) {
     if (!(k in attrs)) attrs[k] = v
   }
-}
-
-/**
- * Combine `EvaluationReason` / scalar evaluator output into a single
- * `EvaluationResultJson` ready for emission. Used by the online wrapper to
- * normalize whatever the evaluator returned.
- */
-export function buildEvaluationResultJson(
-  defaultName: string,
-  value: boolean | EvaluationReason | number | string,
-  source: EvaluatorSpec,
-  evaluatorVersion?: string
-): EvaluationResultJson {
-  const reason = isReason(value) ? (value.reason ?? null) : null
-  const scalar = isReason(value) ? value.value : value
-  const out: EvaluationResultJson = {
-    name: defaultName,
-    reason,
-    source,
-    value: scalar,
-  }
-  if (evaluatorVersion !== undefined) out.evaluator_version = evaluatorVersion
-  return out
-}
-
-function isReason(v: unknown): v is EvaluationReason {
-  return typeof v === 'object' && v !== null && 'value' in v && !Array.isArray(v)
 }

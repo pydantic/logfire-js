@@ -17,11 +17,12 @@ import type { EvaluationResultJson, EvaluatorContext, EvaluatorFailureRecord, Ev
 
 import { ATTR_EVALUATOR_NAME, SPAN_MSG_TEMPLATE_EVALUATOR, SPAN_NAME_EVALUATOR_LITERAL } from './constants'
 import { getCurrentTaskRun } from './currentTaskRun'
+import { buildEvaluatorFailureRecord, evaluationResultsFromOutput } from './evaluatorResults'
 import { extractMetricsFromSpanTree } from './extractMetrics'
 import { evalsSpan } from './internal'
-import { buildEvaluationResultJson, emitEvaluationResult, emitEvaluatorFailure, spanReferenceFromSpan } from './otelEmit'
+import { emitEvaluationResult, emitEvaluatorFailure, type SpanReference, spanReferenceFromSpan } from './otelEmit'
 import { Semaphore } from './Semaphore'
-import { buildSpanTree, getEvalsSpanProcessor, SpanTree, SpanTreeRecordingError } from './spanTree'
+import { buildSpanTree, getEvalsSpanProcessor, isProcessorInstalledOnGlobal, SpanTree, SpanTreeRecordingError } from './spanTree'
 
 export type SamplingMode = 'correlated' | 'independent'
 
@@ -34,19 +35,27 @@ export interface SinkPayload {
   context: EvaluatorContext
   failures: EvaluatorFailureRecord[]
   results: EvaluationResultJson[]
-  spanReference: null | { spanId: string; traceId: string }
+  spanReference: null | SpanReference
   target: string
 }
 
 export type EvaluationSink = (payload: SinkPayload) => Promise<void> | void
+export type OnErrorLocation = 'on_max_concurrency' | 'sink'
+export type OnErrorCallback = (
+  e: unknown,
+  context: EvaluatorContext,
+  evaluator: Evaluator,
+  location: OnErrorLocation
+) => Promise<void> | void
+export type OnMaxConcurrencyCallback = (context: EvaluatorContext) => Promise<void> | void
 
 export interface OnlineEvalConfig {
   emitOtelEvents: boolean
   enabled: boolean
   includeBaggage: boolean
   metadata?: Record<string, unknown>
-  onError?: (e: unknown, evaluatorName: string) => void
-  onMaxConcurrency?: (evaluatorName: string) => void
+  onError?: OnErrorCallback
+  onMaxConcurrency?: OnMaxConcurrencyCallback
   onSamplingError?: (e: unknown) => void
   sampleRate: ((ctx: SamplingContext) => boolean | number) | number
   samplingMode: SamplingMode
@@ -73,13 +82,14 @@ export function getOnlineEvalConfig(): Readonly<OnlineEvalConfig> {
 interface OnlineEvaluatorOptions {
   evaluator: Evaluator
   maxConcurrency?: number
-  onError?: (e: unknown, evaluatorName: string) => void
-  onMaxConcurrency?: (evaluatorName: string) => void
+  onError?: OnErrorCallback
+  onMaxConcurrency?: OnMaxConcurrencyCallback
   sampleRate?: number
   sink?: EvaluationSink
 }
 
 export class OnlineEvaluator {
+  readonly onError?: OnErrorCallback
   readonly sampleRate?: number
   readonly sink?: EvaluationSink
   get evaluator(): Evaluator {
@@ -91,9 +101,7 @@ export class OnlineEvaluator {
   private readonly inner: Evaluator
   private readonly maxConcurrencySem: Semaphore
 
-  private readonly onError?: (e: unknown, evaluatorName: string) => void
-
-  private readonly onMaxConcurrency?: (evaluatorName: string) => void
+  private readonly onMaxConcurrency?: OnMaxConcurrencyCallback
 
   constructor(opts: OnlineEvaluatorOptions) {
     this.inner = opts.evaluator
@@ -106,11 +114,19 @@ export class OnlineEvaluator {
 
   async tryRun(
     ctx: EvaluatorContext,
-    parentSpanRef: null | { spanId: string; traceId: string }
+    parentSpanRef: null | SpanReference,
+    hooks: { onError?: OnErrorCallback; onMaxConcurrency?: OnMaxConcurrencyCallback } = {}
   ): Promise<{ failures: EvaluatorFailureRecord[]; results: EvaluationResultJson[] }> {
     const release = this.maxConcurrencySem.tryAcquire()
     if (release === null) {
-      this.onMaxConcurrency?.(this.name)
+      const onMaxConcurrency = this.onMaxConcurrency ?? hooks.onMaxConcurrency
+      if (onMaxConcurrency !== undefined) {
+        try {
+          await onMaxConcurrency(ctx)
+        } catch (err) {
+          await reportPipelineError(this.onError ?? hooks.onError, err, ctx, this.inner, 'on_max_concurrency')
+        }
+      }
       return { failures: [], results: [] }
     }
     try {
@@ -126,8 +142,7 @@ export class OnlineEvaluator {
       )
       return processOutput(out, this.inner)
     } catch (err) {
-      this.onError?.(err, this.name)
-      return { failures: [buildFailureRecord(err, this.name, this.inner.getSpec(), this.inner.evaluatorVersion)], results: [] }
+      return { failures: [buildEvaluatorFailureRecord(err, this.name, this.inner.getSpec(), this.inner.evaluatorVersion)], results: [] }
     } finally {
       release()
     }
@@ -140,8 +155,8 @@ interface WithOnlineOptions {
   extractArgs?: boolean | readonly string[]
   includeBaggage?: boolean
   msgTemplate?: string
-  onError?: (e: unknown, evaluatorName: string) => void
-  onMaxConcurrency?: (evaluatorName: string) => void
+  onError?: OnErrorCallback
+  onMaxConcurrency?: OnMaxConcurrencyCallback
   onSamplingError?: (e: unknown) => void
   recordReturn?: boolean
   sampleRate?: ((ctx: SamplingContext) => boolean | number) | number
@@ -321,7 +336,7 @@ function sampleEvaluators(
 interface DispatchArgs {
   args: unknown[]
   baggageAttrs: Record<string, unknown>
-  callSpanRef: { spanId: string; traceId: string }
+  callSpanRef: SpanReference
   cfg: OnlineEvalConfig
   durationSec: number
   metrics: Record<string, number>
@@ -337,6 +352,7 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
     attributes: {},
     duration: args.durationSec,
     inputs: args.args.length === 1 ? args.args[0] : args.args,
+    metadata: args.cfg.metadata,
     metrics: args.metrics,
     name: undefined,
     output: args.output,
@@ -346,9 +362,26 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
   const allResults: EvaluationResultJson[] = []
   const allFailures: EvaluatorFailureRecord[] = []
   for (const ev of args.sampledEvaluators) {
-    const { failures, results } = await ev.tryRun(ctx, args.callSpanRef)
+    const { failures, results } = await ev.tryRun(ctx, args.callSpanRef, {
+      onError: args.userOptions.onError ?? args.cfg.onError,
+      onMaxConcurrency: args.userOptions.onMaxConcurrency ?? args.cfg.onMaxConcurrency,
+    })
     allResults.push(...results)
     allFailures.push(...failures)
+    if (ev.sink !== undefined) {
+      await submitSink(
+        ev.sink,
+        {
+          context: ctx,
+          failures,
+          results,
+          spanReference: args.callSpanRef,
+          target: args.target,
+        },
+        [ev.evaluator],
+        ev.onError ?? args.userOptions.onError ?? args.cfg.onError
+      )
+    }
   }
 
   const emitOtel = args.userOptions.emitOtelEvents ?? args.cfg.emitOtelEvents
@@ -361,13 +394,18 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
 
   const sink = args.userOptions.sink ?? args.cfg.sink
   if (sink !== undefined) {
-    await sink({
-      context: ctx,
-      failures: allFailures,
-      results: allResults,
-      spanReference: args.callSpanRef,
-      target: args.target,
-    })
+    await submitSink(
+      sink,
+      {
+        context: ctx,
+        failures: allFailures,
+        results: allResults,
+        spanReference: args.callSpanRef,
+        target: args.target,
+      },
+      args.sampledEvaluators.map((ev) => ev.evaluator),
+      args.userOptions.onError ?? args.cfg.onError
+    )
   }
 }
 
@@ -375,50 +413,47 @@ function buildOnlineExporterContextId(): string {
   return `online-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
-function isProcessorInstalledOnGlobal(): boolean {
-  const tp = TraceAPI.getTracerProvider()
-  return typeof tp === 'object' && tp.constructor.name !== 'NoopTracerProvider' && tp.constructor.name !== 'ProxyTracerProvider'
-}
-
 function processOutput(
   raw: EvaluatorOutput,
   evaluator: Evaluator
 ): { failures: EvaluatorFailureRecord[]; results: EvaluationResultJson[] } {
-  const results: EvaluationResultJson[] = []
-  const spec = evaluator.getSpec()
-  if (typeof raw === 'boolean' || typeof raw === 'number' || typeof raw === 'string' || isReason(raw)) {
-    results.push(buildEvaluationResultJson(evaluator.getResultName(), raw, spec, evaluator.evaluatorVersion))
-  } else {
-    for (const [name, val] of Object.entries(raw)) {
-      results.push(buildEvaluationResultJson(name, val, spec, evaluator.evaluatorVersion))
+  return {
+    failures: [],
+    results: evaluationResultsFromOutput(raw, evaluator.getResultName(), evaluator.getSpec(), evaluator.evaluatorVersion),
+  }
+}
+
+async function submitSink(
+  sink: EvaluationSink,
+  payload: SinkPayload,
+  evaluators: readonly Evaluator[],
+  onError: OnErrorCallback | undefined
+): Promise<void> {
+  try {
+    await sink(payload)
+  } catch (err) {
+    for (const evaluator of evaluators) {
+      await reportPipelineError(onError, err, payload.context, evaluator, 'sink')
     }
   }
-  return { failures: [], results }
 }
 
-function isReason(v: unknown): v is { reason?: string; value: boolean | number | string } {
-  return typeof v === 'object' && v !== null && 'value' in v && !Array.isArray(v)
-}
-
-function buildFailureRecord(
+async function reportPipelineError(
+  onError: OnErrorCallback | undefined,
   err: unknown,
-  name: string,
-  spec: ReturnType<Evaluator['getSpec']>,
-  evaluatorVersion?: string
-): EvaluatorFailureRecord {
-  const isErr = err instanceof Error
-  const out: EvaluatorFailureRecord = {
-    error_message: isErr ? err.message : String(err),
-    error_type: isErr ? err.constructor.name : 'Error',
-    name,
-    source: spec,
+  ctx: EvaluatorContext,
+  evaluator: Evaluator,
+  location: OnErrorLocation
+): Promise<void> {
+  if (onError === undefined) return
+  try {
+    await onError(err, ctx, evaluator, location)
+  } catch {
+    // Match Python pydantic-evals: error handlers must not break sibling evaluators.
   }
-  if (isErr && err.stack !== undefined) out.error_stacktrace = err.stack
-  if (evaluatorVersion !== undefined) out.evaluator_version = evaluatorVersion
-  return out
 }
 
-function runWithParentSpanContext<R>(parentSpanRef: null | { spanId: string; traceId: string }, fn: () => R): R {
+function runWithParentSpanContext<R>(parentSpanRef: null | SpanReference, fn: () => R): R {
   if (parentSpanRef === null) return fn()
   const parentContext = TraceAPI.setSpanContext(ContextAPI.active(), {
     isRemote: false,

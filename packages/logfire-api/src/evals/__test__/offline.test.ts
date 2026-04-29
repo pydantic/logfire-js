@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/require-await */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { ATTRIBUTES_MESSAGE_KEY, ATTRIBUTES_MESSAGE_TEMPLATE_KEY } from '../../constants'
 import {
@@ -249,6 +249,18 @@ describe('offline evals — span attribute parity', () => {
     setEvalAttribute('outside', true)
     incrementEvalMetric('outside', 1)
     expect(getCurrentTaskRun()).toBeUndefined()
+
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let messages: string[] = []
+    try {
+      await withMemoryExporter(() => dataset.evaluate(({ n }) => n, { progress: true }))
+      messages = error.mock.calls.map((call) => String(call[0]))
+    } finally {
+      error.mockRestore()
+    }
+    expect(messages).toHaveLength(2)
+    expect(messages.every((message) => /^\[\d\/2\] (?:one|two)$/.test(message))).toBe(true)
+    expect(messages.map((message) => message.replace(/^\[\d\/2\] /, '')).sort()).toEqual(['one', 'two'])
   })
 
   it('records non-Error task failures without rejecting the experiment', async () => {

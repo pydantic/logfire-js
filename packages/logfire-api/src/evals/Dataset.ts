@@ -1,5 +1,6 @@
 /* eslint-disable camelcase */
-import { type Span, trace as TraceAPI } from '@opentelemetry/api'
+import type { Span } from '@opentelemetry/api'
+
 import pRetry from 'p-retry'
 
 import type { CaseLifecycle, CaseLifecycleClass } from './CaseLifecycle'
@@ -39,6 +40,7 @@ import {
   SPAN_NAME_REPORT_EVALUATOR_LITERAL,
 } from './constants'
 import { runWithTaskRun } from './currentTaskRun'
+import { buildEvaluatorFailureRecord } from './evaluatorResults'
 import { extractMetricsFromSpanTree } from './extractMetrics'
 import { evalsSpan, setEvalsSpanAttributes } from './internal'
 import { computeAssertionPassRate, computeAverages, type EvaluationReport, type ReportCase, type ReportCaseFailure } from './reporting'
@@ -55,7 +57,7 @@ import {
   stringifyYaml,
   type ToOptions,
 } from './serialization'
-import { buildSpanTree, getEvalsSpanProcessor, SpanTree, SpanTreeRecordingError } from './spanTree'
+import { buildSpanTree, getEvalsSpanProcessor, isProcessorInstalledOnGlobal, SpanTree, SpanTreeRecordingError } from './spanTree'
 
 export interface DatasetOptions<Inputs, Output, Metadata = unknown> {
   cases?: readonly Case<Inputs, Output, Metadata>[]
@@ -194,10 +196,7 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
               cases.push(result)
             }
             done += 1
-            const progress = options.progress
-            if (typeof progress === 'function') {
-              progress({ caseName, done, total: totalCases })
-            }
+            reportProgress(options.progress, { caseName, done, total: totalCases })
           } finally {
             release()
           }
@@ -239,14 +238,7 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
             const list = Array.isArray(out) ? out : [out]
             for (const item of list) analyses.push(item)
           } catch (err) {
-            const isErr = err instanceof Error
-            reportEvaluatorFailures.push({
-              error_message: isErr ? err.message : String(err),
-              error_stacktrace: isErr ? err.stack : undefined,
-              error_type: isErr ? err.constructor.name : 'Error',
-              name: evaluatorName,
-              source: re.getSpec(),
-            })
+            reportEvaluatorFailures.push(buildEvaluatorFailureRecord(err, evaluatorName, re.getSpec(), re.evaluatorVersion))
           }
         }
 
@@ -316,6 +308,14 @@ function assertUniqueNames(cases: readonly Case[]): void {
   }
 }
 
+function reportProgress(progress: EvaluateOptions['progress'], event: { caseName: string; done: number; total: number }): void {
+  if (typeof progress === 'function') {
+    progress(event)
+  } else if (progress === true) {
+    console.error(`[${event.done.toString()}/${event.total.toString()}] ${event.caseName}`)
+  }
+}
+
 async function runOneCase<Inputs, Output, Metadata>(args: {
   caseName: string
   dataset: Dataset<Inputs, Output, Metadata>
@@ -352,7 +352,6 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
 
     const taskRunState: TaskRunState = {
       attributes: {},
-      caseSpan,
       exporterContextId,
       metrics: {},
     }
@@ -529,17 +528,6 @@ function resolveSiblingPath(filePath: string, siblingPath: string): string {
   const lastSep = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
   const dir = lastSep === -1 ? '.' : trimmed.slice(0, lastSep)
   return dir === '.' ? siblingPath : `${dir}${sep}${siblingPath}`
-}
-
-/**
- * Best-effort detection of whether the evals span processor is wired up to the
- * active TracerProvider. If the provider is not the default no-op/proxy
- * provider, we assume the processor is installed; users with custom providers
- * can explicitly add `getEvalsSpanProcessor()`.
- */
-function isProcessorInstalledOnGlobal(): boolean {
-  const tp = TraceAPI.getTracerProvider()
-  return typeof tp === 'object' && tp.constructor.name !== 'NoopTracerProvider' && tp.constructor.name !== 'ProxyTracerProvider'
 }
 
 async function runLifecycleTeardown<Inputs, Output, Metadata>(

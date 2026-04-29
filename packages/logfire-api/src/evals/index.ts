@@ -29,26 +29,24 @@ export * from './constants'
 export { getCurrentTaskRun, incrementEvalMetric, runWithTaskRun, setEvalAttribute } from './currentTaskRun'
 export { Dataset, type DatasetOptions } from './Dataset'
 export { Evaluator } from './Evaluator'
+export { buildEvaluationResultJson } from './evaluatorResults'
 export {
   configureOnlineEvals,
   disableEvaluation,
   type EvaluationSink,
   getOnlineEvalConfig,
+  type OnErrorCallback,
+  type OnErrorLocation,
   type OnlineEvalConfig,
   OnlineEvaluator,
+  type OnMaxConcurrencyCallback,
   type SamplingContext,
   type SamplingMode,
   type SinkPayload,
   waitForEvaluations,
   withOnlineEvaluation,
 } from './online'
-export {
-  buildEvaluationResultJson,
-  emitEvaluationResult,
-  emitEvaluatorFailure,
-  type SpanReference,
-  spanReferenceFromSpan,
-} from './otelEmit'
+export { emitEvaluationResult, emitEvaluatorFailure, type SpanReference, spanReferenceFromSpan } from './otelEmit'
 export {
   evaluatorRegistryKey,
   getEvaluatorClass,

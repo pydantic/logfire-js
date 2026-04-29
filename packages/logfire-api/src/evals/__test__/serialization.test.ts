@@ -17,6 +17,7 @@ import {
   IsInstance,
   MaxDuration,
   parseYaml,
+  registerEvaluator,
   ReportEvaluator,
   stringifyYaml,
 } from '../../evals'
@@ -300,6 +301,33 @@ describe('Dataset YAML round-trip', () => {
     expect((restored.evaluators[0] as CustomEvaluator).value).toBe('dataset')
     expect(restored.cases[0]?.evaluators[0]).toBeInstanceOf(CustomEvaluator)
     expect((restored.cases[0]?.evaluators[0] as CustomEvaluator).value).toBe('case')
+  })
+
+  it('falls back to globally registered custom evaluators when no custom registry is provided', () => {
+    class GloballyRegisteredEvaluator extends Evaluator {
+      static evaluatorName = 'GloballyRegisteredEvaluator'
+      readonly value: string
+      constructor(opts: { value: string }) {
+        super()
+        this.value = opts.value
+      }
+      evaluate(): boolean {
+        return true
+      }
+    }
+
+    registerEvaluator(GloballyRegisteredEvaluator as never)
+    const restored = Dataset.fromObject(
+      {
+        cases: [{ inputs: 1 }],
+        evaluators: [{ GloballyRegisteredEvaluator: 'global' }],
+        name: 'global-registry',
+      },
+      { primaryArgKeys: { GloballyRegisteredEvaluator: 'value' } }
+    )
+
+    expect(restored.evaluators[0]).toBeInstanceOf(GloballyRegisteredEvaluator)
+    expect((restored.evaluators[0] as GloballyRegisteredEvaluator).value).toBe('global')
   })
 
   it('Dataset.jsonSchema() includes registered built-in evaluators', () => {

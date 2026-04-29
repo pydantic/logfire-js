@@ -195,21 +195,48 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     expect(logs[0]!.body).toContain('failed: evaluator boom')
   })
 
-  it('calls evaluator onError hooks for online evaluator failures', async () => {
-    const errors: { error: unknown; name: string }[] = []
+  it('converts online evaluator failures without calling onError', async () => {
+    const errors: unknown[] = []
+    const globalErrors: unknown[] = []
+    const sinkPayloads: SinkPayload[] = []
     const fn = withOnlineEvaluation(async () => 'x', {
-      evaluators: [new OnlineEvaluator({ evaluator: new Throwing(), onError: (error, name) => errors.push({ error, name }) })],
+      evaluators: [
+        new OnlineEvaluator({
+          evaluator: new Throwing(),
+          onError: (error) => {
+            errors.push(error)
+          },
+        }),
+      ],
+      sink: (payload) => {
+        sinkPayloads.push(payload)
+      },
       target: 'error-hook-target',
     })
-
-    await withMemoryLogExporter(async () => {
-      await fn()
-      await waitForEvaluations()
+    const globalFn = withOnlineEvaluation(async () => 'x', {
+      evaluators: [new Throwing()],
+      target: 'global-error-hook-target',
     })
 
-    expect(errors).toHaveLength(1)
-    expect(errors[0]?.name).toBe('Throwing')
-    expect(errors[0]?.error).toBeInstanceOf(Error)
+    configureOnlineEvals({
+      onError: (error) => {
+        globalErrors.push(error)
+      },
+    })
+    try {
+      await withMemoryLogExporter(async () => {
+        await fn()
+        await globalFn()
+        await waitForEvaluations()
+      })
+    } finally {
+      configureOnlineEvals({ onError: undefined })
+    }
+
+    expect(errors).toHaveLength(0)
+    expect(globalErrors).toHaveLength(0)
+    expect(sinkPayloads).toHaveLength(1)
+    expect(sinkPayloads[0]?.failures[0]?.name).toBe('Throwing')
   })
 
   it('zero sample-rate skips all evaluators (no logs emitted)', async () => {
@@ -297,24 +324,67 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
 
   it('emitOtelEvents=false still runs evaluators and sends sink payloads without log records', async () => {
     const sinkPayloads: SinkPayload[] = []
+    const evaluatorSinkPayloads: SinkPayload[] = []
     const fn = withOnlineEvaluation(async () => 'x', {
       emitOtelEvents: false,
-      evaluators: [new AlwaysPass()],
+      evaluators: [
+        new OnlineEvaluator({
+          evaluator: new AlwaysPass(),
+          sink: (payload) => {
+            evaluatorSinkPayloads.push(payload)
+          },
+        }),
+      ],
       sink: (payload) => {
         sinkPayloads.push(payload)
       },
       target: 'sink-only-target',
     })
 
-    const { logs } = await withMemoryLogExporter(async () => {
+    configureOnlineEvals({ metadata: { suite: 'online' } })
+    try {
+      const { logs } = await withMemoryLogExporter(async () => {
+        await expect(fn()).resolves.toBe('x')
+        await waitForEvaluations()
+      })
+
+      expect(logs).toHaveLength(0)
+    } finally {
+      configureOnlineEvals({ metadata: undefined })
+    }
+    expect(sinkPayloads).toHaveLength(1)
+    expect(sinkPayloads[0]?.context.metadata).toEqual({ suite: 'online' })
+    expect(sinkPayloads[0]?.context.attributes).toEqual({})
+    expect(sinkPayloads[0]?.results).toHaveLength(1)
+    expect(sinkPayloads[0]?.results[0]?.name).toBe('AlwaysPass')
+    expect(evaluatorSinkPayloads).toHaveLength(1)
+    expect(evaluatorSinkPayloads[0]?.results[0]?.name).toBe('AlwaysPass')
+  })
+
+  it('calls onError with Python-style arguments for sink failures', async () => {
+    const errors: { error: unknown; evaluator: Evaluator; location: string; output: unknown }[] = []
+    const fn = withOnlineEvaluation(async () => 'x', {
+      emitOtelEvents: false,
+      evaluators: [new AlwaysPass()],
+      onError: (error, context, evaluator, location) => {
+        errors.push({ error, evaluator, location, output: context.output })
+      },
+      sink: () => {
+        throw new Error('sink boom')
+      },
+      target: 'sink-error-target',
+    })
+
+    await withMemoryLogExporter(async () => {
       await expect(fn()).resolves.toBe('x')
       await waitForEvaluations()
     })
 
-    expect(logs).toHaveLength(0)
-    expect(sinkPayloads).toHaveLength(1)
-    expect(sinkPayloads[0]?.results).toHaveLength(1)
-    expect(sinkPayloads[0]?.results[0]?.name).toBe('AlwaysPass')
+    expect(errors).toHaveLength(1)
+    expect(errors[0]?.error).toBeInstanceOf(Error)
+    expect(errors[0]?.evaluator).toBeInstanceOf(AlwaysPass)
+    expect(errors[0]?.location).toBe('sink')
+    expect(errors[0]?.output).toBe('x')
   })
 
   it('extracts call arguments, records return values and propagates baggage to emitted logs', async () => {
@@ -505,21 +575,68 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     const evaluator = new OnlineEvaluator({
       evaluator: new SlowEvaluator(),
       maxConcurrency: 1,
-      onMaxConcurrency: (name) => {
-        drops.push(name)
-      },
     })
-    const fn = withOnlineEvaluation(async () => 'x', { evaluators: [evaluator], target: 'slow-target' })
+    const fn = withOnlineEvaluation(async () => 'x', {
+      evaluators: [evaluator],
+      onMaxConcurrency: (context) => {
+        drops.push(String(context.output))
+      },
+      target: 'slow-target',
+    })
 
     const { logs } = await withMemoryLogExporter(async () => {
       await fn()
       await fn()
-      expect(drops).toEqual(['SlowEvaluator'])
+      expect(drops).toEqual(['x'])
       releaseSlow()
       await waitForEvaluations()
     })
 
     expect(logs).toHaveLength(1)
+  })
+
+  it('routes onMaxConcurrency callback errors through onError', async () => {
+    let releaseSlow!: () => void
+    const slow = new Promise<void>((resolve) => {
+      releaseSlow = resolve
+    })
+    const errors: { evaluator: Evaluator; location: string; output: unknown }[] = []
+
+    class SlowEvaluator extends Evaluator {
+      static evaluatorName = 'SlowEvaluatorWithDropError'
+
+      async evaluate(): Promise<boolean> {
+        await slow
+        return true
+      }
+    }
+
+    const evaluator = new OnlineEvaluator({
+      evaluator: new SlowEvaluator(),
+      maxConcurrency: 1,
+      onMaxConcurrency: () => {
+        throw new Error('drop hook boom')
+      },
+    })
+    const fn = withOnlineEvaluation(async () => 'x', {
+      evaluators: [evaluator],
+      onError: (_error, context, droppedEvaluator, location) => {
+        errors.push({ evaluator: droppedEvaluator, location, output: context.output })
+      },
+      target: 'slow-target',
+    })
+
+    await withMemoryLogExporter(async () => {
+      await fn()
+      await fn()
+      releaseSlow()
+      await waitForEvaluations()
+    })
+
+    expect(errors).toHaveLength(1)
+    expect(errors[0]?.evaluator).toBeInstanceOf(SlowEvaluator)
+    expect(errors[0]?.location).toBe('on_max_concurrency')
+    expect(errors[0]?.output).toBe('x')
   })
 
   it('waitForEvaluations times out when dispatches remain pending', async () => {

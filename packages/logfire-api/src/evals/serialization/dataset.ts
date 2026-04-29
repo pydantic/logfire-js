@@ -14,7 +14,7 @@ import { Case } from '../Case'
 import { Dataset } from '../Dataset'
 import { getEvaluatorClass, getReportEvaluatorClass, listRegisteredEvaluators, listRegisteredReportEvaluators } from '../registry'
 import { BUILTIN_PRIMARY_ARG_KEYS } from './builtinsPrimaryArgs'
-import { decodeEvaluator, decodeReportEvaluator, type EncodedEvaluator, encodeEvaluatorSpec } from './spec'
+import { decodeEvaluator, decodeReportEvaluator, type EncodedEvaluator, encodeEvaluatorSpec, type EvaluatorRegistry } from './spec'
 
 export interface FromOptions {
   customEvaluators?: readonly EvaluatorClass[]
@@ -123,7 +123,7 @@ function buildRegistry<T extends { evaluatorName?: string; name: string }>(
   defaults: readonly T[],
   custom: readonly T[] | undefined,
   globalLookup: (name: string) => T | undefined
-): Map<string, T> {
+): EvaluatorRegistry<T> {
   const map = new Map<string, T>()
   for (const cls of defaults) {
     map.set(cls.evaluatorName ?? cls.name, cls)
@@ -135,12 +135,12 @@ function buildRegistry<T extends { evaluatorName?: string; name: string }>(
   }
   // Fallback: also try the global registry (in case the user didn't explicitly
   // pass `customEvaluators` but did `registerEvaluator` somewhere).
-  return new Proxy(map, {
-    get(target, prop, receiver): unknown {
-      if (prop === 'get') {
-        return (key: string): T | undefined => target.get(key) ?? globalLookup(key)
-      }
-      return Reflect.get(target, prop, receiver) as unknown
+  return {
+    get(name: string): T | undefined {
+      return map.get(name) ?? globalLookup(name)
     },
-  })
+    keys(): Iterable<string> {
+      return map.keys()
+    },
+  }
 }
