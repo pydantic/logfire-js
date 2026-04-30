@@ -1,4 +1,5 @@
 import type { SamplingOptions } from 'logfire'
+import type { VariablesConfigOptions } from 'logfire/vars'
 
 import type { DiagLogLevel } from '@opentelemetry/api'
 import type { InstrumentationConfigMap } from '@opentelemetry/auto-instrumentations-node'
@@ -6,6 +7,7 @@ import type { Instrumentation } from '@opentelemetry/instrumentation'
 import type { MetricReader } from '@opentelemetry/sdk-metrics'
 import type { IdGenerator, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as logfireApi from 'logfire'
+import { configureVariables } from 'logfire/vars'
 
 import { start } from './sdk'
 
@@ -46,6 +48,11 @@ export interface LogfireConfigOptions {
    * Additional span processors to be added to the OpenTelemetry SDK
    */
   additionalSpanProcessors?: SpanProcessor[]
+  /**
+   * API key for Logfire platform APIs, including managed variables.
+   * Defaults to the `LOGFIRE_API_KEY` environment variable.
+   */
+  apiKey?: string
   /**
    * Advanced configuration options
    */
@@ -124,6 +131,12 @@ export interface LogfireConfigOptions {
    * Defaults to the `LOGFIRE_TOKEN` environment variable.
    */
   token?: string
+  /**
+   * Managed variables configuration. Omit this to lazily use the remote provider
+   * when `apiKey` / `LOGFIRE_API_KEY` is available, pass `false` to disable
+   * managed variables, or pass local/remote provider options from `logfire/vars`.
+   */
+  variables?: VariablesConfigOptions
 }
 
 const DEFAULT_OTEL_SCOPE = 'logfire'
@@ -140,6 +153,7 @@ const DEFAULT_AUTO_INSTRUMENTATION_CONFIG: InstrumentationConfigMap = {
 
 export interface LogfireConfig {
   additionalSpanProcessors: SpanProcessor[]
+  apiKey: string | undefined
   authorizationHeaders: Record<string, string>
   baseUrl: string
   codeSource: CodeSource | undefined
@@ -160,10 +174,13 @@ export interface LogfireConfig {
   serviceVersion: string | undefined
   token: string | undefined
   traceExporterUrl: string
+  variables: VariablesConfigOptions
+  variablesBaseUrl: string | undefined
 }
 
 const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   additionalSpanProcessors: [],
+  apiKey: undefined,
   authorizationHeaders: {},
   baseUrl: '',
   codeSource: undefined,
@@ -183,6 +200,8 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   serviceVersion: process.env['LOGFIRE_SERVICE_VERSION'],
   token: '',
   traceExporterUrl: '',
+  variables: undefined,
+  variablesBaseUrl: undefined,
 }
 
 export const logfireConfig: LogfireConfig = DEFAULT_LOGFIRE_CONFIG
@@ -207,20 +226,48 @@ export function configure(config: LogfireConfigOptions = {}): void {
   }
 
   const token = cnf.token ?? env['LOGFIRE_TOKEN']
+  const apiKey = cnf.apiKey ?? env['LOGFIRE_API_KEY']
   const sendToLogfire = logfireApi.resolveSendToLogfire(process.env, cnf.sendToLogfire, token)
   const baseUrl =
     !sendToLogfire || token === undefined || token === '' ? '' : logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, token)
   const console = 'console' in cnf ? cnf.console : env['LOGFIRE_CONSOLE'] === 'true'
+  const deploymentEnvironment = cnf.environment ?? env['LOGFIRE_ENVIRONMENT']
+  const serviceName = cnf.serviceName ?? env['LOGFIRE_SERVICE_NAME']
+  const serviceVersion = cnf.serviceVersion ?? env['LOGFIRE_SERVICE_VERSION']
+  const variablesBaseUrl =
+    apiKey !== undefined && apiKey !== '' ? logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, apiKey) : cnf.advanced?.baseUrl
+
+  const variablesRuntimeOptions: {
+    apiKey?: string
+    baseUrl?: string
+    resourceAttributes: Record<string, unknown>
+  } = {
+    resourceAttributes: {
+      ...(deploymentEnvironment !== undefined && deploymentEnvironment !== ''
+        ? { 'deployment.environment.name': deploymentEnvironment }
+        : {}),
+      ...(serviceName !== undefined && serviceName !== '' ? { 'service.name': serviceName } : {}),
+      ...(serviceVersion !== undefined && serviceVersion !== '' ? { 'service.version': serviceVersion } : {}),
+    },
+  }
+  if (apiKey !== undefined && apiKey !== '') {
+    variablesRuntimeOptions.apiKey = apiKey
+  }
+  if (variablesBaseUrl !== undefined) {
+    variablesRuntimeOptions.baseUrl = variablesBaseUrl
+  }
+  configureVariables(cnf.variables, variablesRuntimeOptions)
 
   Object.assign(logfireConfig, {
     additionalSpanProcessors: cnf.additionalSpanProcessors ?? [],
+    apiKey,
     authorizationHeaders: {
       Authorization: token ?? '',
     },
     baseUrl,
     codeSource: cnf.codeSource,
     console,
-    deploymentEnvironment: cnf.environment ?? env['LOGFIRE_ENVIRONMENT'],
+    deploymentEnvironment,
     diagLogLevel: cnf.diagLogLevel,
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),
     idGenerator: cnf.advanced?.idGenerator ?? new logfireApi.ULIDGenerator(),
@@ -231,10 +278,12 @@ export function configure(config: LogfireConfigOptions = {}): void {
     nodeAutoInstrumentations: cnf.nodeAutoInstrumentations ?? DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
     sampling: resolveSampling(sampling),
     sendToLogfire,
-    serviceName: cnf.serviceName ?? env['LOGFIRE_SERVICE_NAME'],
-    serviceVersion: cnf.serviceVersion ?? env['LOGFIRE_SERVICE_VERSION'],
+    serviceName,
+    serviceVersion,
     token,
     traceExporterUrl: `${baseUrl}/${TRACE_ENDPOINT_PATH}`,
+    variables: cnf.variables,
+    variablesBaseUrl,
   })
 
   start()

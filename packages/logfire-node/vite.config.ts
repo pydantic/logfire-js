@@ -6,9 +6,12 @@ const packageDefines = {
   PACKAGE_VERSION: JSON.stringify(process.env['npm_package_version'] ?? '0.0.0'),
 }
 
-const copyCjsDeclarations = () => {
-  if (existsSync('dist/index.d.ts')) {
-    copyFileSync('dist/index.d.ts', 'dist/index.d.cts')
+const copyCjsDeclarations = (names: string[]) => {
+  for (const name of names) {
+    const src = `dist/${name}.d.ts`
+    if (existsSync(src)) {
+      copyFileSync(src, `dist/${name}.d.cts`)
+    }
   }
 }
 
@@ -20,12 +23,17 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
       resolver: 'tsc',
     },
     deps: {
-      neverBundle: [/^@opentelemetry/, /^node:/, 'logfire', 'logfire/evals', 'picocolors'],
+      neverBundle: [/^@opentelemetry/, /^node:/, 'logfire', 'logfire/evals', 'logfire/vars', 'picocolors'],
     },
-    entry: 'src/index.ts',
+    entry: {
+      index: 'src/index.ts',
+      vars: 'src/vars.ts',
+    },
     format: ['esm', 'cjs'],
     hooks: {
-      'build:done': copyCjsDeclarations,
+      'build:done': () => {
+        copyCjsDeclarations(['index', 'vars'])
+      },
     },
     minify: true,
     outExtensions: ({ format }) => ({

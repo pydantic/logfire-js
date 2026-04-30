@@ -106,6 +106,28 @@ deno run --config scripts/runtime-smoke/deno.json --allow-read --allow-write scr
 bun run scripts/runtime-smoke/evals-bun.ts
 ```
 
+## Managed Variables
+
+Managed variables are available from `@pydantic/logfire-node/vars` or
+`logfire/vars`. Configure Node with `apiKey` or `LOGFIRE_API_KEY` to use the
+remote Logfire provider.
+
+```ts
+import * as logfire from '@pydantic/logfire-node'
+import { defineVar } from '@pydantic/logfire-node/vars'
+
+logfire.configure({
+  apiKey: process.env.LOGFIRE_API_KEY,
+  serviceName: 'example-node-script',
+  variables: { pollingInterval: 60 },
+})
+
+const featureEnabled = defineVar('feature_enabled', { default: false })
+const resolved = await featureEnabled.get({ targetingKey: 'user-123' })
+```
+
+Use local variables for tests and development without network access.
+
 ## Contributing
 
 See [CONTRIBUTING.md](https://github.com/pydantic/logfire-js/blob/main/CONTRIBUTING.md) for development instructions.
