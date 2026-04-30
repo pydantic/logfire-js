@@ -32,7 +32,7 @@ export async function runEvaluators(
       const evaluatorName = evaluator.getResultName()
       const spec = evaluator.getSpec()
       try {
-        const runOnce = (): Promise<EvaluatorOutput> =>
+        const runOnce = async (): Promise<EvaluatorOutput> =>
           evalsSpan(
             SPAN_MSG_TEMPLATE_EVALUATOR,
             {
@@ -78,8 +78,12 @@ function place(out: RunEvaluatorsResult, result: EvaluationResultJson): void {
 }
 
 function nextResultName(existing: Record<string, EvaluationResultJson>, baseName: string): string {
-  if (existing[baseName] === undefined) return baseName
+  if (existing[baseName] === undefined) {
+    return baseName
+  }
   let i = 2
-  while (existing[`${baseName}_${i.toString()}`] !== undefined) i++
+  while (existing[`${baseName}_${i.toString()}`] !== undefined) {
+    i++
+  }
   return `${baseName}_${i.toString()}`
 }

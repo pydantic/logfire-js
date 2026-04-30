@@ -1,8 +1,9 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-condition */
-/* eslint-disable @typescript-eslint/no-deprecated */
-import { Context } from '@opentelemetry/api'
-import { ExportResult, ExportResultCode, hrTimeToMicroseconds } from '@opentelemetry/core'
-import { ReadableSpan, SimpleSpanProcessor, Span, SpanExporter, SpanProcessor } from '@opentelemetry/sdk-trace-web'
+import type { Context } from '@opentelemetry/api'
+import type { ExportResult } from '@opentelemetry/core'
+import { ExportResultCode, hrTimeToMicroseconds } from '@opentelemetry/core'
+import type { ReadableSpan, Span, SpanExporter, SpanProcessor } from '@opentelemetry/sdk-trace-web'
+import { SimpleSpanProcessor } from '@opentelemetry/sdk-trace-web'
 import { ATTR_HTTP_URL } from '@opentelemetry/semantic-conventions/incubating'
 
 // not present in the semantic conventions
@@ -41,10 +42,10 @@ class LogfireConsoleSpanExporter implements SpanExporter {
     this.sendSpans(spans, resultCallback)
   }
 
-  forceFlush(): Promise<void> {
+  async forceFlush(): Promise<void> {
     return Promise.resolve()
   }
-  shutdown(): Promise<void> {
+  async shutdown(): Promise<void> {
     this.sendSpans([])
     return this.forceFlush()
   }
@@ -94,8 +95,8 @@ class LogfireConsoleSpanExporter implements SpanExporter {
 }
 
 export class LogfireSpanProcessor implements SpanProcessor {
-  private console?: SpanProcessor
-  private wrapped: SpanProcessor
+  private readonly console?: SpanProcessor
+  private readonly wrapped: SpanProcessor
 
   constructor(wrapped: SpanProcessor, enableConsole: boolean) {
     if (enableConsole) {
@@ -126,8 +127,9 @@ export class LogfireSpanProcessor implements SpanProcessor {
 
     // same for the interaction spans
     if (ATTR_TARGET_XPATH in span.attributes) {
-      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-      Reflect.set(span, 'name', `${span.attributes[ATTR_EVENT_TYPE] ?? 'unknown'} ${span.attributes[ATTR_TARGET_XPATH] ?? ''}`)
+      const eventType = String(span.attributes[ATTR_EVENT_TYPE] ?? 'unknown')
+      const targetXPath = String(span.attributes[ATTR_TARGET_XPATH] ?? '')
+      Reflect.set(span, 'name', `${eventType} ${targetXPath}`)
     }
     this.console?.onStart(span, parentContext)
     this.wrapped.onStart(span, parentContext)

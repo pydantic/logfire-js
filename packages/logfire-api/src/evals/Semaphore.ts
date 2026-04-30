@@ -3,7 +3,7 @@
  */
 export class Semaphore {
   private permits: number
-  private waiters: (() => void)[] = []
+  private readonly waiters: (() => void)[] = []
 
   constructor(permits: number) {
     this.permits = permits
@@ -25,7 +25,9 @@ export class Semaphore {
   }
 
   tryAcquire(): (() => void) | null {
-    if (this.permits <= 0) return null
+    if (this.permits <= 0) {
+      return null
+    }
     this.permits--
     return () => {
       this.release()

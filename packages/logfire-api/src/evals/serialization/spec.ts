@@ -31,13 +31,19 @@ export function encodeEvaluatorSpec(evaluator: Evaluator | ReportEvaluator): Enc
   const name = evaluatorRegistryKey(cls)
   const args = evaluator.toJSON()
 
-  if (args === null) return name
+  if (args === null) {
+    return name
+  }
   if (Array.isArray(args)) {
-    if (args.length === 0) return name
+    if (args.length === 0) {
+      return name
+    }
     return { [name]: args }
   }
   const keys = Object.keys(args)
-  if (keys.length === 0) return name
+  if (keys.length === 0) {
+    return name
+  }
   if (keys.length === 1) {
     const onlyKey = keys[0]!
     const onlyVal = args[onlyKey]
@@ -129,12 +135,16 @@ function isStringKeyedDict(v: unknown): boolean {
 }
 
 function lookup<T>(registry: RegistryInput<T>, name: string): T | undefined {
-  if (isLookupRegistry(registry)) return registry.get(name)
+  if (isLookupRegistry(registry)) {
+    return registry.get(name)
+  }
   return registry[name]
 }
 
 function keys<T>(registry: RegistryInput<T>): Iterable<string> {
-  if (isLookupRegistry(registry)) return registry.keys()
+  if (isLookupRegistry(registry)) {
+    return registry.keys()
+  }
   return Object.keys(registry)
 }
 

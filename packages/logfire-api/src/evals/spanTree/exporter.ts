@@ -15,7 +15,8 @@ import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
 import { context as ContextAPI, createContextKey, trace as TraceAPI } from '@opentelemetry/api'
 
-import { SpanTree, SpanTreeRecordingError } from './SpanTree'
+import type { SpanTreeRecordingError } from './SpanTree'
+import { SpanTree } from './SpanTree'
 
 const CONTEXT_KEY = createContextKey('logfire.evals.exporter_context_id')
 
@@ -30,7 +31,7 @@ interface CaseBucket {
  * builds a `SpanTree`.
  */
 export class EvalsSpanProcessor implements SpanProcessor {
-  private buckets = new Map<string, CaseBucket>()
+  private readonly buckets = new Map<string, CaseBucket>()
 
   /** Pop and return the spans captured for a bucket. */
   drainBucket(id: string): ReadableSpan[] {
@@ -39,15 +40,19 @@ export class EvalsSpanProcessor implements SpanProcessor {
     return bucket?.spans ?? []
   }
 
-  forceFlush(): Promise<void> {
+  async forceFlush(): Promise<void> {
     return Promise.resolve()
   }
 
   onEnd(span: ReadableSpan): void {
     const id = (span as ReadableSpan & { [EXPORTER_ID_SYMBOL]?: string })[EXPORTER_ID_SYMBOL]
-    if (id === undefined) return
+    if (id === undefined) {
+      return
+    }
     const bucket = this.buckets.get(id)
-    if (bucket === undefined) return
+    if (bucket === undefined) {
+      return
+    }
     bucket.spans.push(span)
   }
 
@@ -73,7 +78,7 @@ export class EvalsSpanProcessor implements SpanProcessor {
     return ContextAPI.with(ctx, fn)
   }
 
-  shutdown(): Promise<void> {
+  async shutdown(): Promise<void> {
     this.buckets.clear()
     return Promise.resolve()
   }
@@ -94,7 +99,9 @@ export function getEvalsSpanProcessor(): EvalsSpanProcessor {
 
 /** Build a `SpanTree` for a drained bucket, or return one carrying a recording error. */
 export function buildSpanTree(spans: ReadableSpan[], recordingError: null | SpanTreeRecordingError): SpanTree {
-  if (recordingError !== null) return SpanTree.fromError(recordingError)
+  if (recordingError !== null) {
+    return SpanTree.fromError(recordingError)
+  }
   return SpanTree.fromSpans(spans)
 }
 

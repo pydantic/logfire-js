@@ -2,7 +2,8 @@ import type { EvaluatorContext } from '../types'
 
 import { Evaluator } from '../Evaluator'
 import { registerEvaluator } from '../registry'
-import { type SpanQuery, spanQueryToSnakeCase } from '../spanTree'
+import { spanQueryToSnakeCase } from '../spanTree'
+import type { SpanQuery } from '../spanTree'
 
 /** True iff a span matching `query` was emitted under the user's task. */
 export class HasMatchingSpan extends Evaluator {
@@ -34,7 +35,9 @@ export class HasMatchingSpan extends Evaluator {
 
   toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = { query: spanQueryToSnakeCase(this.query) }
-    if (this.evaluationName !== undefined) out.evaluation_name = this.evaluationName
+    if (this.evaluationName !== undefined) {
+      out.evaluation_name = this.evaluationName
+    }
     return out
   }
 }

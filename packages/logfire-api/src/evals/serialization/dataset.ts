@@ -14,7 +14,8 @@ import { Case } from '../Case'
 import { Dataset } from '../Dataset'
 import { getEvaluatorClass, getReportEvaluatorClass, listRegisteredEvaluators, listRegisteredReportEvaluators } from '../registry'
 import { BUILTIN_PRIMARY_ARG_KEYS } from './builtinsPrimaryArgs'
-import { decodeEvaluator, decodeReportEvaluator, type EncodedEvaluator, encodeEvaluatorSpec, type EvaluatorRegistry } from './spec'
+import { decodeEvaluator, decodeReportEvaluator, encodeEvaluatorSpec } from './spec'
+import type { EncodedEvaluator, EvaluatorRegistry } from './spec'
 
 export interface FromOptions {
   customEvaluators?: readonly EvaluatorClass[]
@@ -68,11 +69,15 @@ export function datasetToObject<I, O, M>(dataset: Dataset<I, O, M>, options: ToO
     cases: dataset.cases.map(serializeCase),
     name: dataset.name,
   }
-  if (dataset.evaluators.length > 0) out.evaluators = dataset.evaluators.map((e) => encodeEvaluatorSpec(e))
+  if (dataset.evaluators.length > 0) {
+    out.evaluators = dataset.evaluators.map((e) => encodeEvaluatorSpec(e))
+  }
   if (dataset.reportEvaluators.length > 0) {
     out.report_evaluators = dataset.reportEvaluators.map((e) => encodeEvaluatorSpec(e))
   }
-  if (options.schemaPath !== undefined) out.$schema = options.schemaPath
+  if (options.schemaPath !== undefined) {
+    out.$schema = options.schemaPath
+  }
   return out
 }
 
@@ -112,10 +117,18 @@ export function datasetFromObject<I = unknown, O = unknown, M = unknown>(data: u
 
 function serializeCase<I, O, M>(c: Case<I, O, M>): SerializedCase {
   const out: SerializedCase = { inputs: c.inputs }
-  if (c.name !== undefined) out.name = c.name
-  if (c.expectedOutput !== undefined) out.expected_output = c.expectedOutput
-  if (c.metadata !== undefined) out.metadata = c.metadata
-  if (c.evaluators.length > 0) out.evaluators = c.evaluators.map((e) => encodeEvaluatorSpec(e))
+  if (c.name !== undefined) {
+    out.name = c.name
+  }
+  if (c.expectedOutput !== undefined) {
+    out.expected_output = c.expectedOutput
+  }
+  if (c.metadata !== undefined) {
+    out.metadata = c.metadata
+  }
+  if (c.evaluators.length > 0) {
+    out.evaluators = c.evaluators.map((e) => encodeEvaluatorSpec(e))
+  }
   return out
 }
 

@@ -22,6 +22,11 @@ import {
   stringifyYaml,
 } from '../../evals'
 
+const sleep = async (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+
 describe('EvaluatorSpec encoding', () => {
   it('null toJSON → bare string', () => {
     expect(encodeEvaluatorSpec(new EqualsExpected())).toBe('EqualsExpected')
@@ -366,9 +371,9 @@ describe('Dataset YAML round-trip', () => {
       evaluators: [new EqualsExpected()],
       name: 'file-test',
     })
-    const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
-    const os: typeof import('node:os') = await import('node:os')
-    const path: typeof import('node:path') = await import('node:path')
+    const fs = await import('node:fs/promises')
+    const os = await import('node:os')
+    const path = await import('node:path')
     const tmpdir = await fs.mkdtemp(path.join(os.tmpdir(), 'logfire-evals-'))
     const filePath = path.join(tmpdir, 'dataset.yaml')
     try {
@@ -387,9 +392,9 @@ describe('Dataset YAML round-trip', () => {
       evaluators: [new EqualsExpected()],
       name: 'file-test',
     })
-    const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
-    const os: typeof import('node:os') = await import('node:os')
-    const path: typeof import('node:path') = await import('node:path')
+    const fs = await import('node:fs/promises')
+    const os = await import('node:os')
+    const path = await import('node:path')
     const tmpdir = await fs.mkdtemp(path.join(os.tmpdir(), 'logfire-evals-schema-'))
     const filePath = path.join(tmpdir, 'dataset.yaml')
     const schemaPath = path.join(tmpdir, 'dataset.schema.json')
@@ -401,7 +406,7 @@ describe('Dataset YAML round-trip', () => {
       expect(parsedSchema.title).toBe('PydanticEvalsDataset')
       const firstMtime = (await fs.stat(schemaPath)).mtimeMs
 
-      await new Promise((resolve) => setTimeout(resolve, 20))
+      await sleep(20)
       await ds.toFile(filePath, { schemaPath: 'dataset.schema.json' })
 
       expect(await fs.readFile(schemaPath, 'utf8')).toBe(firstSchema)
@@ -416,12 +421,12 @@ describe('Dataset YAML round-trip', () => {
     const files = new Map<string, string>()
     const calls: string[] = []
     ;(globalThis as { Deno?: unknown }).Deno = {
-      readTextFile: (path: string) => {
+      readTextFile: async (path: string) => {
         calls.push(`read:${path}`)
         const text = files.get(path)
         return text === undefined ? Promise.reject(new Error(`missing ${path}`)) : Promise.resolve(text)
       },
-      writeTextFile: (path: string, text: string) => {
+      writeTextFile: async (path: string, text: string) => {
         calls.push(`write:${path}`)
         files.set(path, text)
         return Promise.resolve()
@@ -445,7 +450,7 @@ describe('Dataset YAML round-trip', () => {
   })
 
   it('rejects malformed dataset objects with a helpful zod error', () => {
-    expect(() => Dataset.fromObject({ cases: 'not-an-array', name: 'x' })).toThrow()
+    expect(() => Dataset.fromObject({ cases: 'not-an-array', name: 'x' })).toThrow(/expected array/i)
   })
 })
 

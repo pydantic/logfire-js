@@ -1,4 +1,5 @@
-import { logfireApiConfig, ScrubbedNote } from '.'
+import type { ScrubbedNote } from '.'
+import { logfireApiConfig } from '.'
 import { ATTRIBUTES_SCRUBBED_KEY, ATTRIBUTES_SPAN_TYPE_KEY, ATTRIBUTES_TAGS_KEY, JSON_NULL_FIELDS_KEY, JSON_SCHEMA_KEY } from './constants'
 
 export type AttributeValue = boolean | number | string | string[]

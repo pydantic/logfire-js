@@ -1,5 +1,5 @@
-/* eslint-disable perfectionist/sort-objects */
-import { Span, SpanStatusCode, context as TheContextAPI, trace as TheTraceAPI } from '@opentelemetry/api'
+import type { Span } from '@opentelemetry/api'
+import { SpanStatusCode, context as TheContextAPI, trace as TheTraceAPI } from '@opentelemetry/api'
 import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 
 import * as AttributeScrubbingExports from './AttributeScrubber'
@@ -121,13 +121,11 @@ type SpanArgsVariant2<R> = [
  * The span will be ended automatically after the function call.
  */
 export function span<R>(msgTemplate: string, options: SpanArgsVariant2<R>[0]): R
-// eslint-disable-next-line no-redeclare
 export function span<R>(msgTemplate: string, attributes: Record<string, unknown>, options: LogOptions, callback: (span: Span) => R): R
-// eslint-disable-next-line no-redeclare
 export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | SpanArgsVariant2<R>): R {
-  let attributes: Record<string, unknown> = {}
-  let level: LogFireLevel = Level.Info
-  let tags: string[] = []
+  let attributes: Record<string, unknown>
+  let level: LogFireLevel
+  let tags: string[]
   let callback!: SpanCallback<R>
   let parentSpan: Span | undefined
   let spanName: string | undefined
@@ -184,8 +182,8 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
         )
         // we need this clunky detection because of zone.js promises
       } else if (typeof result === 'object' && result !== null && 'finally' in result && typeof result.finally === 'function') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-        result.finally(() => {
+        const resultWithFinally = result as { finally: (onFinally: () => void) => unknown }
+        resultWithFinally.finally(() => {
           span.end()
         })
       } else {
@@ -196,35 +194,35 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
   )
 }
 
-export function log(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function log(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   startSpan(message, attributes, { ...options, log: true }).end()
 }
 
-export function debug(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function debug(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Debug })
 }
 
-export function info(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function info(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Info })
 }
 
-export function trace(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function trace(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Trace })
 }
 
-export function error(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function error(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Error })
 }
 
-export function fatal(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function fatal(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Fatal })
 }
 
-export function notice(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function notice(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Notice })
 }
 
-export function warning(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function warning(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Warning })
 }
 
@@ -247,10 +245,9 @@ function recordSpanException(span: Span, thrown: unknown): void {
  * Captures the error stack trace and message in the respective semantic attributes and sets the correct level and status.
  * Computes a fingerprint for the error to enable issue grouping in the Logfire backend (if errorFingerprinting is enabled).
  */
-export function reportError(message: string, error: Error, extraAttributes: Record<string, unknown> = {}) {
+export function reportError(message: string, error: Error, extraAttributes: Record<string, unknown> = {}): void {
   const attributes: Record<string, unknown> = {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    [ATTR_EXCEPTION_MESSAGE]: error.message ?? 'error',
+    [ATTR_EXCEPTION_MESSAGE]: error.message,
     [ATTR_EXCEPTION_STACKTRACE]: error.stack,
     ...extraAttributes,
   }

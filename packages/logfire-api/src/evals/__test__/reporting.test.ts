@@ -10,22 +10,18 @@ import {
   Dataset,
   Equals,
   EqualsExpected,
-  type EvaluationReport,
   Evaluator,
-  type EvaluatorContext,
   EXPERIMENT_ANALYSES_KEY,
   EXPERIMENT_REPORT_EVALUATOR_FAILURES_KEY,
   KolmogorovSmirnovEvaluator,
   PrecisionRecallEvaluator,
   renderReport,
-  type ReportCase,
-  type ReportCaseFailure,
   ReportEvaluator,
-  type ReportEvaluatorContext,
   ROCAUCEvaluator,
   SPAN_NAME_CASE,
   SPAN_NAME_EXPERIMENT,
 } from '../../evals'
+import type { EvaluationReport, EvaluatorContext, ReportCase, ReportCaseFailure, ReportEvaluatorContext } from '../../evals'
 import { buildThresholdInputs, trapezoidalAuc, uniqueSortedThresholds } from '../reportEvaluators'
 import { withMemoryExporter } from './withMemoryExporter'
 
@@ -35,6 +31,11 @@ const resultJson = (name: string, value: boolean | number | string) => ({
   source: { arguments: null, name: 'Source' },
   value,
 })
+
+const sleep = async (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
 
 const makeReportCase = (overrides: Partial<ReportCase> = {}): ReportCase => ({
   assertions: {},
@@ -164,7 +165,9 @@ describe('lifecycle hooks', () => {
     class StatefulLifecycle extends CaseLifecycle<string, string> {
       private setupCalled = false
       prepareContext(ctx: EvaluatorContext<string, string>): EvaluatorContext<string, string> {
-        if (!this.setupCalled) throw new Error('setup not called before prepareContext')
+        if (!this.setupCalled) {
+          throw new Error('setup not called before prepareContext')
+        }
         ctx.metrics.case_name_length = this.case.name?.length ?? 0
         return ctx
       }
@@ -247,7 +250,9 @@ describe('retry support via p-retry', () => {
       ds.evaluate(
         () => {
           attempts++
-          if (attempts < 3) throw new Error('still flaky')
+          if (attempts < 3) {
+            throw new Error('still flaky')
+          }
           return 'OK'
         },
         { retryTask: { factor: 1, minTimeout: 1, retries: 5 } }
@@ -282,7 +287,9 @@ describe('retry support via p-retry', () => {
 
       evaluate(): boolean {
         this.attempts += 1
-        if (this.attempts < 3) throw new Error('not yet')
+        if (this.attempts < 3) {
+          throw new Error('not yet')
+        }
         return true
       }
     }
@@ -378,7 +385,7 @@ describe('report-level evaluators land on the experiment span', () => {
       static evaluatorName = 'AsyncReportEvaluator'
 
       async evaluate(): Promise<{ title: string; type: 'scalar'; value: number }> {
-        await new Promise((resolve) => setTimeout(resolve, 1))
+        await sleep(1)
         return { title: 'Async Result', type: 'scalar', value: 42 }
       }
     }

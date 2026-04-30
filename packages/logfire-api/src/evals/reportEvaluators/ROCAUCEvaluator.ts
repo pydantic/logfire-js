@@ -2,8 +2,10 @@
 import type { ReportCase } from '../reporting'
 
 import { registerReportEvaluator } from '../registry'
-import { ReportEvaluator, type ReportEvaluatorContext, type ROCAnalysis, type ScalarAnalysis } from '../ReportEvaluator'
-import { buildThresholdInputs, downsample, type PositiveFrom, type ScoreFrom, trapezoidalAuc, uniqueSortedThresholds } from './scoreCommon'
+import { ReportEvaluator } from '../ReportEvaluator'
+import type { ReportEvaluatorContext, ROCAnalysis, ScalarAnalysis } from '../ReportEvaluator'
+import { buildThresholdInputs, downsample, trapezoidalAuc, uniqueSortedThresholds } from './scoreCommon'
+import type { PositiveFrom, ScoreFrom } from './scoreCommon'
 
 export interface ROCAUCOptions {
   n_thresholds?: number
@@ -76,11 +78,15 @@ export class ROCAUCEvaluator extends ReportEvaluator {
       },
       { title: `${this.title} AUC`, type: 'scalar', value: Number.NaN },
     ]
-    if (inputs.scores.length === 0) return emptyResult
+    if (inputs.scores.length === 0) {
+      return emptyResult
+    }
 
     const totalPositives = inputs.positives.filter(Boolean).length
     const totalNegatives = inputs.positives.length - totalPositives
-    if (totalPositives === 0 || totalNegatives === 0) return emptyResult
+    if (totalPositives === 0 || totalNegatives === 0) {
+      return emptyResult
+    }
 
     const thresholds = uniqueSortedThresholds(inputs.scores)
     const points: { x: number; y: number }[] = [{ x: 0, y: 0 }]
@@ -90,8 +96,11 @@ export class ROCAUCEvaluator extends ReportEvaluator {
       for (let i = 0; i < inputs.scores.length; i++) {
         const positive = inputs.positives[i]!
         const above = inputs.scores[i]! >= t
-        if (above && positive) tp++
-        else if (above && !positive) fp++
+        if (above && positive) {
+          tp++
+        } else if (above && !positive) {
+          fp++
+        }
       }
       const fpr = fp / totalNegatives
       const tpr = tp / totalPositives
@@ -133,10 +142,18 @@ export class ROCAUCEvaluator extends ReportEvaluator {
       positive_from: this.positiveFrom,
       score_key: this.scoreKey,
     }
-    if (this.positiveKey !== undefined) out.positive_key = this.positiveKey
-    if (this.scoreFrom !== 'scores') out.score_from = this.scoreFrom
-    if (this.nThresholds !== 100) out.n_thresholds = this.nThresholds
-    if (this.title !== 'ROC Curve') out.title = this.title
+    if (this.positiveKey !== undefined) {
+      out.positive_key = this.positiveKey
+    }
+    if (this.scoreFrom !== 'scores') {
+      out.score_from = this.scoreFrom
+    }
+    if (this.nThresholds !== 100) {
+      out.n_thresholds = this.nThresholds
+    }
+    if (this.title !== 'ROC Curve') {
+      out.title = this.title
+    }
     return out
   }
 }

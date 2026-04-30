@@ -1,10 +1,10 @@
 import type { SamplingOptions } from 'logfire'
 
-import { DiagLogLevel } from '@opentelemetry/api'
-import { InstrumentationConfigMap } from '@opentelemetry/auto-instrumentations-node'
-import { Instrumentation } from '@opentelemetry/instrumentation'
-import { MetricReader } from '@opentelemetry/sdk-metrics'
-import { IdGenerator, SpanProcessor } from '@opentelemetry/sdk-trace-base'
+import type { DiagLogLevel } from '@opentelemetry/api'
+import type { InstrumentationConfigMap } from '@opentelemetry/auto-instrumentations-node'
+import type { Instrumentation } from '@opentelemetry/instrumentation'
+import type { MetricReader } from '@opentelemetry/sdk-metrics'
+import type { IdGenerator, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as logfireApi from 'logfire'
 
 import { start } from './sdk'
@@ -188,7 +188,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
 
 export const logfireConfig: LogfireConfig = DEFAULT_LOGFIRE_CONFIG
 
-export function configure(config: LogfireConfigOptions = {}) {
+export function configure(config: LogfireConfigOptions = {}): void {
   const { errorFingerprinting, otelScope, sampling, scrubbing, ...cnf } = config
 
   const env = process.env
@@ -199,7 +199,8 @@ export function configure(config: LogfireConfigOptions = {}) {
 
   const token = cnf.token ?? env.LOGFIRE_TOKEN
   const sendToLogfire = logfireApi.resolveSendToLogfire(process.env, cnf.sendToLogfire, token)
-  const baseUrl = !sendToLogfire || !token ? '' : logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, token)
+  const baseUrl =
+    !sendToLogfire || token === undefined || token === '' ? '' : logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, token)
   const console = 'console' in cnf ? cnf.console : env.LOGFIRE_CONSOLE === 'true'
 
   Object.assign(logfireConfig, {

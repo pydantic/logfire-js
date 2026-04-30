@@ -1,4 +1,4 @@
-import { BaseScrubber, ScrubbedNote } from './AttributeScrubber'
+import type { BaseScrubber, ScrubbedNote } from './AttributeScrubber'
 import { ATTRIBUTES_SCRUBBED_KEY, MESSAGE_FORMATTED_VALUE_LENGTH_LIMIT } from './constants'
 
 // TypeScript equivalent of Python's TypedDict
@@ -22,7 +22,7 @@ class KnownFormattingError extends Error {
 
 class ChunksFormatter {
   // Internal regex to parse format strings (similar to Python's Formatter.parse)
-  private parseRegex = /(\{\{)|(\}\})|(\{([^{}]*)(?::([^{}]*))?\})/g
+  private readonly parseRegex = /(\{\{)|(\}\})|(\{([^{}]*)(?::([^{}]*))?\})/g
 
   chunks(
     formatString: string,
@@ -103,13 +103,13 @@ class ChunksFormatter {
       const precedingText = formatString.substring(lastIndex, match.index)
       literalText += precedingText
 
-      if (doubleLBrace) {
+      if (doubleLBrace !== undefined) {
         // {{ is escaped to {
         literalText += '{'
-      } else if (doubleRBrace) {
+      } else if (doubleRBrace !== undefined) {
         // }} is escaped to }
         literalText += '}'
-      } else if (curlyContent) {
+      } else if (curlyContent !== undefined) {
         // Found a field, add the accumulated literal text and the field info
         result.push([literalText, fieldName ?? null, formatSpec ?? null, null])
         literalText = ''
@@ -123,7 +123,7 @@ class ChunksFormatter {
       literalText += formatString.substring(lastIndex)
     }
 
-    if (literalText) {
+    if (literalText !== '') {
       result.push([literalText, null, null, null])
     }
 
@@ -171,7 +171,7 @@ class ChunksFormatter {
         let actualFieldName = fieldName
         if (fieldName.endsWith('=')) {
           const lastResult = result[result.length - 1] ?? null
-          if (lastResult !== null && lastResult.type === 'lit') {
+          if (lastResult?.type === 'lit') {
             lastResult.value += fieldName
           } else {
             result.push({ type: 'lit', value: fieldName })
@@ -203,7 +203,7 @@ class ChunksFormatter {
         scrubbed.push(...valueScrubbed)
 
         const argChunk: ArgChunk = { type: 'arg', value: cleanValue }
-        if (formatSpec) {
+        if (formatSpec !== null && formatSpec !== '') {
           argChunk.spec = formatSpec
         }
         result.push(argChunk)

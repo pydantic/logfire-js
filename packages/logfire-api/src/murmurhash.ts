@@ -68,12 +68,24 @@ export function murmurhash3x64128(str: string): string {
   const tail = nblocks * 16
   const remainder = len & 15
 
-  if (remainder >= 15) k2 ^= BigInt(getByte(tail + 14)) << 48n
-  if (remainder >= 14) k2 ^= BigInt(getByte(tail + 13)) << 40n
-  if (remainder >= 13) k2 ^= BigInt(getByte(tail + 12)) << 32n
-  if (remainder >= 12) k2 ^= BigInt(getByte(tail + 11)) << 24n
-  if (remainder >= 11) k2 ^= BigInt(getByte(tail + 10)) << 16n
-  if (remainder >= 10) k2 ^= BigInt(getByte(tail + 9)) << 8n
+  if (remainder >= 15) {
+    k2 ^= BigInt(getByte(tail + 14)) << 48n
+  }
+  if (remainder >= 14) {
+    k2 ^= BigInt(getByte(tail + 13)) << 40n
+  }
+  if (remainder >= 13) {
+    k2 ^= BigInt(getByte(tail + 12)) << 32n
+  }
+  if (remainder >= 12) {
+    k2 ^= BigInt(getByte(tail + 11)) << 24n
+  }
+  if (remainder >= 11) {
+    k2 ^= BigInt(getByte(tail + 10)) << 16n
+  }
+  if (remainder >= 10) {
+    k2 ^= BigInt(getByte(tail + 9)) << 8n
+  }
   if (remainder >= 9) {
     k2 ^= BigInt(getByte(tail + 8))
     k2 = (k2 * c2) & mask64
@@ -82,13 +94,27 @@ export function murmurhash3x64128(str: string): string {
     h2 ^= k2
   }
 
-  if (remainder >= 8) k1 ^= BigInt(getByte(tail + 7)) << 56n
-  if (remainder >= 7) k1 ^= BigInt(getByte(tail + 6)) << 48n
-  if (remainder >= 6) k1 ^= BigInt(getByte(tail + 5)) << 40n
-  if (remainder >= 5) k1 ^= BigInt(getByte(tail + 4)) << 32n
-  if (remainder >= 4) k1 ^= BigInt(getByte(tail + 3)) << 24n
-  if (remainder >= 3) k1 ^= BigInt(getByte(tail + 2)) << 16n
-  if (remainder >= 2) k1 ^= BigInt(getByte(tail + 1)) << 8n
+  if (remainder >= 8) {
+    k1 ^= BigInt(getByte(tail + 7)) << 56n
+  }
+  if (remainder >= 7) {
+    k1 ^= BigInt(getByte(tail + 6)) << 48n
+  }
+  if (remainder >= 6) {
+    k1 ^= BigInt(getByte(tail + 5)) << 40n
+  }
+  if (remainder >= 5) {
+    k1 ^= BigInt(getByte(tail + 4)) << 32n
+  }
+  if (remainder >= 4) {
+    k1 ^= BigInt(getByte(tail + 3)) << 24n
+  }
+  if (remainder >= 3) {
+    k1 ^= BigInt(getByte(tail + 2)) << 16n
+  }
+  if (remainder >= 2) {
+    k1 ^= BigInt(getByte(tail + 1)) << 8n
+  }
   if (remainder >= 1) {
     k1 ^= BigInt(getByte(tail))
     k1 = (k1 * c1) & mask64

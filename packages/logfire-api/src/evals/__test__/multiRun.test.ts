@@ -1,18 +1,8 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/require-await */
 import { describe, expect, it } from 'vite-plus/test'
 
-import {
-  averageFromAggregates,
-  averages,
-  Case,
-  caseGroups,
-  Dataset,
-  type EvaluationReport,
-  Evaluator,
-  type ReportCase,
-  type ReportCaseAggregate,
-  type ReportCaseFailure,
-} from '../../evals'
+import { averageFromAggregates, averages, Case, caseGroups, Dataset, Evaluator } from '../../evals'
+import type { EvaluationReport, ReportCase, ReportCaseAggregate, ReportCaseFailure } from '../../evals'
 import { withMemoryExporter } from './withMemoryExporter'
 
 const resultJson = (name: string, value: boolean | number | string) => ({
@@ -58,7 +48,7 @@ describe('repeat option', () => {
       name: 'repeat-1',
     })
 
-    const { result } = await withMemoryExporter(() =>
+    const { result } = await withMemoryExporter(async () =>
       dataset.evaluate(async (s) => {
         calls += 1
         return s.toUpperCase()
@@ -78,7 +68,7 @@ describe('repeat option', () => {
       name: 'repeat-3',
     })
 
-    const { result } = await withMemoryExporter(() =>
+    const { result } = await withMemoryExporter(async () =>
       dataset.evaluate(
         async (s) => {
           calls += 1
@@ -108,7 +98,7 @@ describe('repeat option', () => {
       name: 'unnamed',
     })
 
-    const { result } = await withMemoryExporter(() => dataset.evaluate(async (s) => s.toUpperCase(), { repeat: 2 }))
+    const { result } = await withMemoryExporter(async () => dataset.evaluate(async (s) => s.toUpperCase(), { repeat: 2 }))
 
     expect(result.cases).toHaveLength(4)
     expect([...result.cases].map((c) => c.name).sort()).toEqual(['Case 1 [1/2]', 'Case 1 [2/2]', 'Case 2 [1/2]', 'Case 2 [2/2]'])
@@ -135,7 +125,7 @@ describe('repeat option', () => {
       name: 'repeat-evaluators',
     })
 
-    const { result } = await withMemoryExporter(() => dataset.evaluate(async (s) => s.toUpperCase(), { repeat: 3 }))
+    const { result } = await withMemoryExporter(async () => dataset.evaluate(async (s) => s.toUpperCase(), { repeat: 3 }))
 
     expect(result.cases).toHaveLength(3)
     for (const c of result.cases) {
@@ -150,7 +140,7 @@ describe('caseGroups()', () => {
       cases: [new Case({ inputs: 'hello', name: 'case1' }), new Case({ inputs: 'world', name: 'case2' })],
       name: 'groups',
     })
-    const { result } = await withMemoryExporter(() => dataset.evaluate(async (s) => s.toUpperCase(), { repeat: 2 }))
+    const { result } = await withMemoryExporter(async () => dataset.evaluate(async (s) => s.toUpperCase(), { repeat: 2 }))
 
     const groups = caseGroups(result)
     expect(groups).toBeDefined()
@@ -168,7 +158,7 @@ describe('caseGroups()', () => {
       cases: [new Case({ inputs: 'hello', name: 'case1' })],
       name: 'single',
     })
-    const { result } = await withMemoryExporter(() => dataset.evaluate(async (s) => s.toUpperCase()))
+    const { result } = await withMemoryExporter(async () => dataset.evaluate(async (s) => s.toUpperCase()))
     expect(caseGroups(result)).toBeUndefined()
   })
 

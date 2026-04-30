@@ -72,8 +72,12 @@ export interface SamplingOptions {
  * of the trace ID and compares against the threshold.
  */
 export function checkTraceIdRatio(traceId: string, rate: number): boolean {
-  if (rate >= 1.0) return true
-  if (rate <= 0.0) return false
+  if (rate >= 1.0) {
+    return true
+  }
+  if (rate <= 0.0) {
+    return false
+  }
 
   let accumulation = 0
   for (let i = 0; i < traceId.length / 8; i++) {
@@ -103,8 +107,12 @@ export function levelOrDuration(options?: {
   return {
     head: options?.head,
     tail: (spanInfo: TailSamplingSpanInfo): number => {
-      if (spanInfo.level.gte(levelThreshold)) return 1.0
-      if (spanInfo.duration >= durationThreshold) return 1.0
+      if (spanInfo.level.gte(levelThreshold)) {
+        return 1.0
+      }
+      if (spanInfo.duration >= durationThreshold) {
+        return 1.0
+      }
       return backgroundRate
     },
   }

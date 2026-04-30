@@ -2,8 +2,10 @@
 import type { ReportCase } from '../reporting'
 
 import { registerReportEvaluator } from '../registry'
-import { type KSAnalysis, ReportEvaluator, type ReportEvaluatorContext, type ScalarAnalysis } from '../ReportEvaluator'
-import { buildThresholdInputs, downsample, type PositiveFrom, type ScoreFrom } from './scoreCommon'
+import { ReportEvaluator } from '../ReportEvaluator'
+import type { KSAnalysis, ReportEvaluatorContext, ScalarAnalysis } from '../ReportEvaluator'
+import { buildThresholdInputs, downsample } from './scoreCommon'
+import type { PositiveFrom, ScoreFrom } from './scoreCommon'
 
 export interface KSOptions {
   n_thresholds?: number
@@ -79,17 +81,24 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
       },
       { title: 'KS Statistic', type: 'scalar', value: Number.NaN },
     ]
-    if (allScores.length === 0 || positiveScores.length === 0 || negativeScores.length === 0) return emptyResult
+    if (allScores.length === 0 || positiveScores.length === 0 || negativeScores.length === 0) {
+      return emptyResult
+    }
 
     const cdf = (sorted: readonly number[], x: number): number => {
-      if (sorted.length === 0) return 0
+      if (sorted.length === 0) {
+        return 0
+      }
       // count of values <= x
       let lo = 0
       let hi = sorted.length
       while (lo < hi) {
         const mid = (lo + hi) >>> 1
-        if (sorted[mid]! <= x) lo = mid + 1
-        else hi = mid
+        if (sorted[mid]! <= x) {
+          lo = mid + 1
+        } else {
+          hi = mid
+        }
       }
       return lo / sorted.length
     }
@@ -100,7 +109,9 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
     let ksStatistic = 0
     for (let i = 1; i < positivePoints.length; i++) {
       const diff = Math.abs((positivePoints[i] as { y: number }).y - (negativePoints[i] as { y: number }).y)
-      if (diff > ksStatistic) ksStatistic = diff
+      if (diff > ksStatistic) {
+        ksStatistic = diff
+      }
     }
     const displayPositivePoints = downsample(positivePoints, this.nThresholds)
     const displayNegativePoints = downsample(negativePoints, this.nThresholds)
@@ -126,10 +137,18 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
       positive_from: this.positiveFrom,
       score_key: this.scoreKey,
     }
-    if (this.positiveKey !== undefined) out.positive_key = this.positiveKey
-    if (this.scoreFrom !== 'scores') out.score_from = this.scoreFrom
-    if (this.nThresholds !== 100) out.n_thresholds = this.nThresholds
-    if (this.title !== 'KS Plot') out.title = this.title
+    if (this.positiveKey !== undefined) {
+      out.positive_key = this.positiveKey
+    }
+    if (this.scoreFrom !== 'scores') {
+      out.score_from = this.scoreFrom
+    }
+    if (this.nThresholds !== 100) {
+      out.n_thresholds = this.nThresholds
+    }
+    if (this.title !== 'KS Plot') {
+      out.title = this.title
+    }
     return out
   }
 }

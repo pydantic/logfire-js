@@ -11,30 +11,37 @@ import {
 } from './constants'
 import { info, span } from './index'
 
+const sleep = async (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+
 const { spanMock } = vi.hoisted(() => {
   const spanMock = {
-    end: vi.fn(),
-    recordException: vi.fn(),
-    setAttribute: vi.fn(),
-    setStatus: vi.fn(),
+    end: vi.fn<() => void>(),
+    recordException: vi.fn<() => void>(),
+    setAttribute: vi.fn<() => void>(),
+    setStatus: vi.fn<() => void>(),
   }
   return { spanMock }
 })
 
 vi.mock('@opentelemetry/api', () => {
   const tracerMock = {
-    startActiveSpan: vi.fn((_name: string, _options: unknown, _context: unknown, fn: (s: typeof spanMock) => unknown) => fn(spanMock)),
-    startSpan: vi.fn(() => spanMock),
+    startActiveSpan: vi.fn<(_name: string, _options: unknown, _context: unknown, fn: (s: typeof spanMock) => unknown) => unknown>(
+      (_name, _options, _context, fn) => fn(spanMock)
+    ),
+    startSpan: vi.fn<() => typeof spanMock>(() => spanMock),
   }
 
   return {
     context: {
-      active: vi.fn(),
+      active: vi.fn<() => unknown>(),
     },
     SpanStatusCode: { ERROR: 2 },
     trace: {
-      getTracer: vi.fn(() => tracerMock),
-      setSpan: vi.fn(),
+      getTracer: vi.fn<() => typeof tracerMock>(() => tracerMock),
+      setSpan: vi.fn<() => void>(),
     },
   }
 })
@@ -140,7 +147,7 @@ describe('span', () => {
   })
 
   test('async callback resolves - span ends normally', async () => {
-    const result = span('test', { callback: () => Promise.resolve('async-ok') })
+    const result = span('test', { callback: async () => Promise.resolve('async-ok') })
     await expect(result).resolves.toBe('async-ok')
 
     expect(spanMock.end).toHaveBeenCalledOnce()
@@ -150,12 +157,12 @@ describe('span', () => {
 
   test('async callback rejects with Error - records exception', async () => {
     const error = new Error('async-boom')
-    const result = span('test', { callback: () => Promise.reject(error) })
+    const result = span('test', { callback: async () => Promise.reject(error) })
 
     await expect(result).rejects.toThrow(error)
 
     // Allow microtask for the .then() handler to run
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await sleep(0)
 
     expect(spanMock.recordException).toHaveBeenCalledWith(error)
     expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: async-boom' })
@@ -166,11 +173,11 @@ describe('span', () => {
 
   test('async callback rejects with string - records exception without fingerprint', async () => {
     // eslint-disable-next-line prefer-promise-reject-errors, @typescript-eslint/prefer-promise-reject-errors
-    const result = span('test', { callback: () => Promise.reject('async-oops') })
+    const result = span('test', { callback: async () => Promise.reject('async-oops') })
 
     await expect(result).rejects.toBe('async-oops')
 
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await sleep(0)
 
     expect(spanMock.recordException).toHaveBeenCalledWith('async-oops')
     expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: async-oops' })
@@ -180,7 +187,7 @@ describe('span', () => {
   })
 
   test('thenable callback result is returned untouched', () => {
-    const then = vi.fn()
+    const then = vi.fn<() => void>()
     const lazyThenable = { then }
 
     const result = span('test', { callback: () => lazyThenable })

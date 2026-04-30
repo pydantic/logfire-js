@@ -14,7 +14,6 @@ import {
   EVAL_RESULT_EVENT_NAME,
   EVALS_OTEL_SCOPE,
   Evaluator,
-  type EvaluatorOutput,
   GEN_AI_EVAL_NAME,
   GEN_AI_EVAL_TARGET,
   GEN_AI_EVALUATOR_SOURCE,
@@ -24,14 +23,19 @@ import {
   getOnlineEvalConfig,
   HasMatchingSpan,
   OnlineEvaluator,
-  type SinkPayload,
   SPAN_NAME_EVALUATOR_LITERAL,
   waitForEvaluations,
   withOnlineEvaluation,
 } from '../../evals'
+import type { EvaluatorOutput, SinkPayload } from '../../evals'
 // Ensure the dispatch-suppression hook holds up: an evaluator running inside
 // Dataset.evaluate must not also fire as an online eval.
 import { withMemoryLogExporter } from './withMemoryLogExporter'
+
+const sleep = async (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
 
 class AlwaysPass extends Evaluator {
   static evaluatorName = 'AlwaysPass'
@@ -459,7 +463,7 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     class SlowOnlineEvaluator extends Evaluator {
       static evaluatorName = 'SlowOnlineEvaluator'
       async evaluate(): Promise<boolean> {
-        await new Promise((resolve) => setTimeout(resolve, 30))
+        await sleep(30)
         return fastStarted
       }
     }
@@ -655,7 +659,7 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
 
   it('OnlineEvaluator.tryRun can execute without a parent call span reference', async () => {
     const evaluator = new OnlineEvaluator({ evaluator: new AlwaysPass() })
-    const { result, spans } = await withMemoryLogExporter(() =>
+    const { result, spans } = await withMemoryLogExporter(async () =>
       evaluator.tryRun(
         {
           attributes: {},
@@ -843,9 +847,15 @@ describe('sampling', () => {
     let calls = 0
     const random = vi.spyOn(Math, 'random').mockImplementation(() => {
       calls += 1
-      if (calls === 1) return 0.4 // first call sampling seed → < 0.5, both included
-      if (calls === 2) return 0.99 // exporter id, ignored
-      if (calls === 3) return 0.6 // second call sampling seed → ≥ 0.5, both excluded
+      if (calls === 1) {
+        return 0.4
+      } // first call sampling seed → < 0.5, both included
+      if (calls === 2) {
+        return 0.99
+      } // exporter id, ignored
+      if (calls === 3) {
+        return 0.6
+      } // second call sampling seed → ≥ 0.5, both excluded
       return 0.99
     })
     try {
@@ -872,7 +882,9 @@ describe('sampling', () => {
     let calls = 0
     const random = vi.spyOn(Math, 'random').mockImplementation(() => {
       calls += 1
-      if (calls === 1) return 0.1 // sampling seed → < 0.5, both included
+      if (calls === 1) {
+        return 0.1
+      } // sampling seed → < 0.5, both included
       return 0.99
     })
     try {

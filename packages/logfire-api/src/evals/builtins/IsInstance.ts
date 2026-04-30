@@ -59,7 +59,9 @@ export class IsInstance extends Evaluator {
 
   toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = { type_name: this.typeName }
-    if (this.evaluationName !== undefined) out.evaluation_name = this.evaluationName
+    if (this.evaluationName !== undefined) {
+      out.evaluation_name = this.evaluationName
+    }
     return out
   }
 }

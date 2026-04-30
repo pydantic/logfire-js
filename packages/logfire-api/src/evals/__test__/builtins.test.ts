@@ -1,17 +1,8 @@
 /* eslint-disable @typescript-eslint/require-await */
 import { describe, expect, it } from 'vite-plus/test'
 
-import {
-  Contains,
-  deepEqual,
-  Equals,
-  EqualsExpected,
-  type EvaluatorContext,
-  IsInstance,
-  LLMJudge,
-  MaxDuration,
-  SpanTree,
-} from '../../evals'
+import { Contains, deepEqual, Equals, EqualsExpected, IsInstance, LLMJudge, MaxDuration, SpanTree } from '../../evals'
+import type { EvaluatorContext } from '../../evals'
 
 const ctx = (output: unknown, extra: Partial<EvaluatorContext> = {}): EvaluatorContext => ({
   attributes: {},

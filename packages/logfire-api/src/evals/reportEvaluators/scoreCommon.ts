@@ -30,7 +30,9 @@ export function buildThresholdInputs(cases: readonly ReportCase[], opts: Thresho
   for (const c of cases) {
     const score = extractScore(c, opts)
     const positive = extractPositive(c, opts)
-    if (score === null || positive === null) continue
+    if (score === null || positive === null) {
+      continue
+    }
     out.scores.push(score)
     out.positives.push(positive)
   }
@@ -59,6 +61,8 @@ function extractPositive(c: ReportCase, opts: ThresholdOptions): boolean | null 
       const r = c.labels[opts.positiveKey!]
       return r === undefined ? null : Boolean(r.value)
     }
+    default:
+      return null
   }
 }
 
@@ -75,14 +79,18 @@ function validateThresholdOptions(opts: ThresholdOptions): void {
 }
 
 export function uniqueSortedThresholds(scores: readonly number[], n = Number.POSITIVE_INFINITY): number[] {
-  if (scores.length === 0) return []
+  if (scores.length === 0) {
+    return []
+  }
   const unique = [...new Set(scores)].sort((a, b) => b - a)
   return downsample(unique, n)
 }
 
 /** AUC via the trapezoidal rule. Expects `xs` already sorted ascending. */
 export function trapezoidalAuc(xs: readonly number[], ys: readonly number[]): number {
-  if (xs.length < 2) return 0
+  if (xs.length < 2) {
+    return 0
+  }
   let auc = 0
   for (let i = 1; i < xs.length; i++) {
     const dx = Math.abs(xs[i]! - xs[i - 1]!)
@@ -93,7 +101,9 @@ export function trapezoidalAuc(xs: readonly number[], ys: readonly number[]): nu
 }
 
 export function downsample<T>(items: readonly T[], maxItems: number): T[] {
-  if (items.length <= maxItems || maxItems <= 1) return [...items]
+  if (items.length <= maxItems || maxItems <= 1) {
+    return [...items]
+  }
   const indices = new Set<number>()
   for (let i = 0; i < maxItems; i++) {
     indices.add(Math.floor((i * (items.length - 1)) / (maxItems - 1)))

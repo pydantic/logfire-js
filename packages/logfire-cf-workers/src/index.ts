@@ -1,5 +1,8 @@
-import { type ReadableSpan, SimpleSpanProcessor, SpanProcessor } from '@opentelemetry/sdk-trace-base'
-import { instrument as baseInstrument, TraceConfig } from '@pydantic/otel-cf-workers'
+import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
+import type { TraceConfig } from '@pydantic/otel-cf-workers'
+import { instrument as baseInstrument } from '@pydantic/otel-cf-workers'
+import type { ScrubbingOptions } from 'logfire'
 import {
   configureLogfireApi,
   debug,
@@ -15,7 +18,6 @@ import {
   reportError,
   resolveBaseUrl,
   resolveSendToLogfire,
-  type ScrubbingOptions,
   serializeAttributes,
   span,
   startSpan,
@@ -65,11 +67,12 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
 
     const additionalSpanProcessors = config.additionalSpanProcessors ?? []
 
-    if (config.console) {
+    if (config.console === true) {
       additionalSpanProcessors.push(new SimpleSpanProcessor(new LogfireCloudflareConsoleSpanExporter()))
     }
 
-    return Object.assign({}, config, {
+    return {
+      ...config,
       additionalSpanProcessors,
       environment: resolvedEnvironment,
       exporter: {
@@ -78,17 +81,17 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
       },
       idGenerator: new ULIDGenerator(),
       postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(spans),
-    }) satisfies TraceConfig
+    } satisfies TraceConfig
   }
 }
 
 export function getTailConfig(config: TailConfigOptions): (env: Env) => TraceConfig {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   return (_env: Env): TraceConfig => {
-    return Object.assign({}, config, {
+    return {
+      ...config,
       exporter: new TailWorkerExporter(),
       idGenerator: new ULIDGenerator(),
-    })
+    }
   }
 }
 
@@ -111,8 +114,7 @@ export const instrument = instrumentInProcess
 function postProcessAttributes(spans: ReadableSpan[]) {
   for (const span of spans) {
     for (const attrKey of Object.keys(span.attributes)) {
-      const attrVal = span.attributes[attrKey]
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      const attrVal = span.attributes[attrKey] as unknown
       if (attrVal === undefined || attrVal === null) {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete span.attributes[attrKey]

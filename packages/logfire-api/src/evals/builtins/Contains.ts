@@ -55,9 +55,15 @@ export class Contains extends Evaluator {
 
   toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = { value: this.value }
-    if (!this.caseSensitive) out.case_sensitive = false
-    if (this.asStrings) out.as_strings = true
-    if (this.evaluationName !== undefined) out.evaluation_name = this.evaluationName
+    if (!this.caseSensitive) {
+      out.case_sensitive = false
+    }
+    if (this.asStrings) {
+      out.as_strings = true
+    }
+    if (this.evaluationName !== undefined) {
+      out.evaluation_name = this.evaluationName
+    }
     return out
   }
 
@@ -66,7 +72,9 @@ export class Contains extends Evaluator {
       const a = this.caseSensitive ? String(output) : String(output).toLowerCase()
       const b = this.caseSensitive ? String(this.value) : String(this.value).toLowerCase()
       const ok = a.includes(b)
-      if (ok) return { value: true }
+      if (ok) {
+        return { value: true }
+      }
       return { reason: `Output string ${truncatedRepr(a, 100)} does not contain expected string ${truncatedRepr(b, 100)}`, value: false }
     }
     if (Array.isArray(output)) {
@@ -118,6 +126,8 @@ function truncatedRepr(value: unknown, maxLength: number): string {
       repr = String(value)
     }
   }
-  if (repr.length <= maxLength) return repr
+  if (repr.length <= maxLength) {
+    return repr
+  }
   return `${repr.slice(0, Math.floor(maxLength / 2))}...${repr.slice(-Math.floor(maxLength / 2))}`
 }

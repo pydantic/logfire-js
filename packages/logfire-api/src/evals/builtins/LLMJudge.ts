@@ -137,9 +137,15 @@ export class LLMJudge extends Evaluator {
 
   toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = { rubric: this.rubric }
-    if (this.includeInput) out.include_input = true
-    if (this.includeExpectedOutput) out.include_expected_output = true
-    if (this.scoreWasProvided || this.score !== false) out.score = this.score === false ? false : outputConfigToJSON(this.score)
+    if (this.includeInput) {
+      out.include_input = true
+    }
+    if (this.includeExpectedOutput) {
+      out.include_expected_output = true
+    }
+    if (this.scoreWasProvided || this.score !== false) {
+      out.score = this.score === false ? false : outputConfigToJSON(this.score)
+    }
     if (this.assertionWasProvided || !isDefaultAssertionConfig(this.assertion)) {
       out.assertion = this.assertion === false ? false : outputConfigToJSON(this.assertion)
     }
@@ -166,8 +172,12 @@ function outputConfigIncludeReason(config: LLMJudgeOutputConfig): boolean {
 function outputConfigToJSON(config: LLMJudgeOutputConfig): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   const name = outputConfigName(config)
-  if (name !== undefined) out.evaluation_name = name
-  if (outputConfigIncludeReason(config)) out.include_reason = true
+  if (name !== undefined) {
+    out.evaluation_name = name
+  }
+  if (outputConfigIncludeReason(config)) {
+    out.include_reason = true
+  }
   return out
 }
 

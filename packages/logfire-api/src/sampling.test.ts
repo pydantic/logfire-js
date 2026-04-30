@@ -155,10 +155,14 @@ function makeProcessor(): SpanProcessor & { calls: { event: string; span: unknow
   const calls: { event: string; span: unknown }[] = []
   return {
     calls,
-    forceFlush: vi.fn().mockResolvedValue(undefined),
-    onEnd: vi.fn((span: ReadableSpan) => calls.push({ event: 'end', span })),
-    onStart: vi.fn((span: Span) => calls.push({ event: 'start', span })),
-    shutdown: vi.fn().mockResolvedValue(undefined),
+    forceFlush: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    onEnd: vi.fn<(span: ReadableSpan) => void>((span) => {
+      calls.push({ event: 'end', span })
+    }),
+    onStart: vi.fn<(span: Span) => void>((span) => {
+      calls.push({ event: 'start', span })
+    }),
+    shutdown: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   }
 }
 

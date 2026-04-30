@@ -14,7 +14,9 @@ import type { SpanTree } from './spanTree/SpanTree'
 export function extractMetricsFromSpanTree(tree: SpanTree, into: Record<string, number>): void {
   for (const node of tree.all()) {
     const attrs = node.attributes
-    if (typeof attrs['gen_ai.request.model'] !== 'string') continue
+    if (typeof attrs['gen_ai.request.model'] !== 'string') {
+      continue
+    }
     if (attrs['gen_ai.operation.name'] === 'chat') {
       into.requests = (into.requests ?? 0) + 1
     }
@@ -23,7 +25,9 @@ export function extractMetricsFromSpanTree(tree: SpanTree, into: Record<string, 
       into.cost = (into.cost ?? 0) + cost
     }
     for (const [k, v] of Object.entries(attrs)) {
-      if (typeof v !== 'number') continue
+      if (typeof v !== 'number') {
+        continue
+      }
       const usagePrefix = 'gen_ai.usage.'
       const detailsPrefix = 'gen_ai.usage.details.'
       if (k.startsWith(detailsPrefix)) {

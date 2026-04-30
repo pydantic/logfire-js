@@ -27,12 +27,16 @@ export class EqualsExpected extends Evaluator {
   }
 
   evaluate(ctx: EvaluatorContext): EvaluatorOutput {
-    if (ctx.expectedOutput === undefined) return {}
+    if (ctx.expectedOutput === undefined) {
+      return {}
+    }
     return deepEqual(ctx.output, ctx.expectedOutput)
   }
 
   toJSON(): null | Record<string, unknown> {
-    if (this.evaluationName === undefined) return null
+    if (this.evaluationName === undefined) {
+      return null
+    }
     return { evaluation_name: this.evaluationName }
   }
 }
