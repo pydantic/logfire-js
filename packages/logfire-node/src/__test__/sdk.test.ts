@@ -1,5 +1,5 @@
 /* eslint-disable import-x/first */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
   const nodeSdkInstances: MockNodeSDK[] = []
@@ -84,10 +84,14 @@ vi.mock('../traceExporter', () => ({
 
 import { forceFlush, shutdown, start } from '../sdk'
 
+let processOnSpy: MockInstance<typeof process.on>
+let processRemoveListenerSpy: MockInstance<typeof process.removeListener>
+
 describe('sdk lifecycle helpers', () => {
   beforeEach(() => {
     mocks.reset()
-    vi.spyOn(process, 'on').mockImplementation(() => process)
+    processOnSpy = vi.spyOn(process, 'on').mockImplementation(() => process)
+    processRemoveListenerSpy = vi.spyOn(process, 'removeListener').mockImplementation(() => process)
   })
 
   afterEach(async () => {
@@ -120,5 +124,28 @@ describe('sdk lifecycle helpers', () => {
 
     expect(mocks.traceForceFlushCalls).toBe(0)
     expect(mocks.logForceFlushCalls).toBe(0)
+  })
+
+  it('start shuts down the previous SDK and replaces process listeners', () => {
+    start()
+    const first = mocks.nodeSdkInstances[0]
+    if (first === undefined) throw new Error('expected first NodeSDK mock instance')
+    const firstListenerCalls = processOnSpy.mock.calls.map(([event, listener]) => [event, listener])
+
+    start()
+
+    expect(first.shutdownCalls).toBe(1)
+    expect(mocks.nodeSdkInstances).toHaveLength(2)
+    expect(processRemoveListenerSpy.mock.calls).toEqual(firstListenerCalls)
+    expect(processOnSpy.mock.calls.map(([event]) => event)).toEqual([
+      'beforeExit',
+      'SIGTERM',
+      'uncaughtExceptionMonitor',
+      'unhandledRejection',
+      'beforeExit',
+      'SIGTERM',
+      'uncaughtExceptionMonitor',
+      'unhandledRejection',
+    ])
   })
 })

@@ -34,6 +34,23 @@ import { removeEmptyKeys } from './utils'
 let activeSdk: NodeSDK | undefined
 let activeLogProcessor: LogRecordProcessor | undefined
 let activeProcessor: SpanProcessor | undefined
+let activeProcessListeners:
+  | undefined
+  | {
+      beforeExit: () => void
+      SIGTERM: () => void
+      uncaughtExceptionMonitor: (error: Error) => void
+      unhandledRejection: (reason: unknown) => void
+    }
+
+function removeActiveProcessListeners(): void {
+  if (activeProcessListeners === undefined) return
+  process.removeListener('beforeExit', activeProcessListeners.beforeExit)
+  process.removeListener('SIGTERM', activeProcessListeners.SIGTERM)
+  process.removeListener('uncaughtExceptionMonitor', activeProcessListeners.uncaughtExceptionMonitor)
+  process.removeListener('unhandledRejection', activeProcessListeners.unhandledRejection)
+  activeProcessListeners = undefined
+}
 
 /**
  * Force-flush all pending spans to the configured exporter. Mirrors Python's
@@ -50,18 +67,25 @@ export async function forceFlush(): Promise<void> {
  * subsequent calls are no-ops. Mirrors Python's `logfire.shutdown()`.
  */
 export async function shutdown(): Promise<void> {
-  if (activeSdk) {
-    await activeSdk.shutdown()
-    activeSdk = undefined
-    activeLogProcessor = undefined
-    activeProcessor = undefined
-  }
+  const sdk = activeSdk
+  if (sdk === undefined) return
+  removeActiveProcessListeners()
+  activeSdk = undefined
+  activeLogProcessor = undefined
+  activeProcessor = undefined
+  await sdk.shutdown()
 }
 
 const LOGFIRE_ATTRIBUTES_NAMESPACE = 'logfire'
 const RESOURCE_ATTRIBUTES_CODE_ROOT_PATH = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.code.root_path`
 
 export function start() {
+  if (activeSdk !== undefined) {
+    shutdown().catch((e: unknown) => {
+      diag.warn('logfire SDK: error shutting down previous SDK', e)
+    })
+  }
+
   if (logfireConfig.diagLogLevel !== undefined) {
     diag.setLogger(new DiagConsoleLogger(), logfireConfig.diagLogLevel)
   }
@@ -122,57 +146,57 @@ export function start() {
   sdk.start()
   diag.info('logfire: starting')
 
-  process.on('uncaughtExceptionMonitor', (error: Error) => {
-    diag.info('logfire: caught uncaught exception', error.message)
-    try {
-      reportError(error.message, error, {})
-    } catch (err: unknown) {
-      diag.warn('logfire: failed to report error', err)
-    }
-    // eslint-disable-next-line no-void
-    void processor.forceFlush()
-  })
-
-  process.on('unhandledRejection', (reason: Error) => {
-    diag.error('unhandled rejection', reason)
-
-    if (reason instanceof Error) {
+  let _shutdown = false
+  const listeners = {
+    beforeExit: () => {
+      if (_shutdown) return
+      _shutdown = true
+      shutdown()
+        .catch((e: unknown) => {
+          diag.warn('logfire SDK: error shutting down', e)
+        })
+        .finally(() => {
+          diag.info('logfire SDK: shutting down')
+        })
+    },
+    SIGTERM: () => {
+      shutdown()
+        .catch((e: unknown) => {
+          diag.warn('logfire SDK: error shutting down', e)
+        })
+        .finally(() => {
+          diag.info('logfire SDK: shutting down')
+        })
+    },
+    uncaughtExceptionMonitor: (error: Error) => {
+      diag.info('logfire: caught uncaught exception', error.message)
       try {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        reportError(reason.message ?? 'error', reason, {})
+        reportError(error.message, error, {})
       } catch (err: unknown) {
         diag.warn('logfire: failed to report error', err)
       }
-    }
-    // eslint-disable-next-line no-void
-    void processor.forceFlush()
-  })
+      // eslint-disable-next-line no-void
+      void processor.forceFlush()
+    },
+    unhandledRejection: (reason: unknown) => {
+      diag.error('unhandled rejection', reason)
 
-  // gracefully shut down the SDK on process exit
-  process.on('SIGTERM', () => {
-    sdk
-      .shutdown()
-      .catch((e: unknown) => {
-        diag.warn('logfire SDK: error shutting down', e)
-      })
-      .finally(() => {
-        diag.info('logfire SDK: shutting down')
-      })
-  })
-
-  let _shutdown = false
-
-  // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  process.on('beforeExit', async () => {
-    if (!_shutdown) {
-      try {
-        await sdk.shutdown()
-      } catch (e) {
-        diag.warn('logfire SDK: error shutting down', e)
-      } finally {
-        _shutdown = true
-        diag.info('logfire SDK: shutting down')
+      if (reason instanceof Error) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          reportError(reason.message ?? 'error', reason, {})
+        } catch (err: unknown) {
+          diag.warn('logfire: failed to report error', err)
+        }
       }
-    }
-  })
+      // eslint-disable-next-line no-void
+      void processor.forceFlush()
+    },
+  }
+  activeProcessListeners = listeners
+
+  process.on('beforeExit', listeners.beforeExit)
+  process.on('SIGTERM', listeners.SIGTERM)
+  process.on('uncaughtExceptionMonitor', listeners.uncaughtExceptionMonitor)
+  process.on('unhandledRejection', listeners.unhandledRejection)
 }

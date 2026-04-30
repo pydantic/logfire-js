@@ -53,11 +53,7 @@ function extractPositive(c: ReportCase, opts: ThresholdOptions): boolean | null 
       return typeof r?.value === 'boolean' ? r.value : null
     }
     case 'expected_output': {
-      if (opts.positiveKey === undefined)
-        return c.expected_output === undefined || c.expected_output === null ? null : Boolean(c.expected_output)
-      if (c.expected_output === null || c.expected_output === undefined) return null
-      const v = (c.expected_output as Record<string, unknown>)[opts.positiveKey]
-      return typeof v === 'boolean' ? v : v === undefined ? null : Boolean(v)
+      return c.expected_output === undefined || c.expected_output === null ? null : Boolean(c.expected_output)
     }
     case 'labels': {
       const r = c.labels[opts.positiveKey!]

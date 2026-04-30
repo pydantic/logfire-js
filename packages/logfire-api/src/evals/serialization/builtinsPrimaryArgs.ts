@@ -7,7 +7,7 @@ export const BUILTIN_PRIMARY_ARG_KEYS: Record<string, string> = {
   Contains: 'value',
   Equals: 'value',
   HasMatchingSpan: 'query',
-  IsInstance: 'typeName',
+  IsInstance: 'type_name',
   LLMJudge: 'rubric',
   MaxDuration: 'seconds',
 }
