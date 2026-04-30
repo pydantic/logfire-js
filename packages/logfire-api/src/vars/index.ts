@@ -1255,6 +1255,12 @@ function inferCodec<T>(defaultValue: ResolveFunction<T> | T): VariableCodec<T> {
         }
         return value as T
       }
+      if (schemaType === 'object') {
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+          throw new TypeError('Expected object')
+        }
+        return value as T
+      }
       throw new TypeError(`Expected ${formatUnknown(schemaType)}`)
     },
   }

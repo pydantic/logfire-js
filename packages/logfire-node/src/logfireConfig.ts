@@ -7,7 +7,6 @@ import type { Instrumentation } from '@opentelemetry/instrumentation'
 import type { MetricReader } from '@opentelemetry/sdk-metrics'
 import type { IdGenerator, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as logfireApi from 'logfire'
-import { configureVariables } from 'logfire/vars'
 
 import { start } from './sdk'
 
@@ -236,27 +235,9 @@ export function configure(config: LogfireConfigOptions = {}): void {
   const serviceVersion = cnf.serviceVersion ?? env['LOGFIRE_SERVICE_VERSION']
   const variablesBaseUrl =
     apiKey !== undefined && apiKey !== '' ? logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, apiKey) : cnf.advanced?.baseUrl
-
-  const variablesRuntimeOptions: {
-    apiKey?: string
-    baseUrl?: string
-    resourceAttributes: Record<string, unknown>
-  } = {
-    resourceAttributes: {
-      ...(deploymentEnvironment !== undefined && deploymentEnvironment !== ''
-        ? { 'deployment.environment.name': deploymentEnvironment }
-        : {}),
-      ...(serviceName !== undefined && serviceName !== '' ? { 'service.name': serviceName } : {}),
-      ...(serviceVersion !== undefined && serviceVersion !== '' ? { 'service.version': serviceVersion } : {}),
-    },
+  if (requiresRemoteVariables(cnf.variables) && (apiKey === undefined || apiKey === '')) {
+    throw new Error('Remote variables require an API key. Set LOGFIRE_API_KEY or pass apiKey to configure().')
   }
-  if (apiKey !== undefined && apiKey !== '') {
-    variablesRuntimeOptions.apiKey = apiKey
-  }
-  if (variablesBaseUrl !== undefined) {
-    variablesRuntimeOptions.baseUrl = variablesBaseUrl
-  }
-  configureVariables(cnf.variables, variablesRuntimeOptions)
 
   Object.assign(logfireConfig, {
     additionalSpanProcessors: cnf.additionalSpanProcessors ?? [],
@@ -306,4 +287,8 @@ function resolveSampling(option: SamplingOptions | undefined): SamplingOptions |
 function resolveDistributedTracing(option: LogfireConfigOptions['distributedTracing']) {
   const envDistributedTracing = process.env['LOGFIRE_DISTRIBUTED_TRACING']
   return (option ?? envDistributedTracing === undefined) ? true : envDistributedTracing === 'true'
+}
+
+function requiresRemoteVariables(options: VariablesConfigOptions): boolean {
+  return options !== undefined && options !== false && !('config' in options)
 }

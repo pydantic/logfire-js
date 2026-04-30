@@ -73,6 +73,27 @@ describe('managed variables', () => {
     await expect(missing.get()).resolves.toMatchObject({ reason: 'unrecognized_variable', value: 'fallback' })
   })
 
+  it('parses inferred object codecs', async () => {
+    configureVariables({
+      config: config({
+        object_config: {
+          labels: { remote: { serialized_value: '{"foo":"remote"}', version: 1 } },
+          name: 'object_config',
+          overrides: [],
+          rollout: { labels: { remote: 1 } },
+        },
+      }),
+      instrument: false,
+    })
+
+    const objectConfig = defineVar('object_config', { default: { foo: 'default' } })
+
+    await expect(objectConfig.get()).resolves.toMatchObject({
+      reason: 'resolved',
+      value: { foo: 'remote' },
+    })
+  })
+
   it('supports explicit labels, label refs, and code defaults', async () => {
     configureVariables({
       config: config({

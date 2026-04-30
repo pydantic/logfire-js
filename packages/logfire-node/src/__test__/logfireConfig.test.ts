@@ -1,14 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  getVariableProvider,
-  LocalVariableProvider,
-  LogfireRemoteVariableProvider,
-  NoOpVariableProvider,
-  shutdownVariables,
-} from 'logfire/vars'
+import { shutdownVariables } from 'logfire/vars'
 
-import { configure } from '../logfireConfig'
+import { configure, logfireConfig } from '../logfireConfig'
 
 vi.mock('../sdk', () => ({
   start: vi.fn<() => void>(),
@@ -41,7 +35,9 @@ describe('managed variables config', () => {
       },
     })
 
-    expect(getVariableProvider()).toBeInstanceOf(LogfireRemoteVariableProvider)
+    expect(logfireConfig.apiKey).toBe('lf-api-key')
+    expect(logfireConfig.variables).toEqual({ polling: false, sse: false })
+    expect(logfireConfig.variablesBaseUrl).toBe('https://example.com')
   })
 
   it('reads LOGFIRE_API_KEY for remote variables', () => {
@@ -55,21 +51,24 @@ describe('managed variables config', () => {
       },
     })
 
-    expect(getVariableProvider()).toBeInstanceOf(LogfireRemoteVariableProvider)
+    expect(logfireConfig.apiKey).toBe('lf-env-api-key')
+    expect(logfireConfig.variables).toEqual({ polling: false, sse: false })
+    expect(logfireConfig.variablesBaseUrl).toBe('https://example.com')
   })
 
-  it('configures local and disabled providers explicitly', () => {
-    configure({
-      variables: {
-        config: {
-          variables: {},
-        },
+  it('stores local and disabled variables config explicitly', () => {
+    const localVariables = {
+      config: {
+        variables: {},
       },
+    }
+    configure({
+      variables: localVariables,
     })
-    expect(getVariableProvider()).toBeInstanceOf(LocalVariableProvider)
+    expect(logfireConfig.variables).toBe(localVariables)
 
     configure({ variables: false })
-    expect(getVariableProvider()).toBeInstanceOf(NoOpVariableProvider)
+    expect(logfireConfig.variables).toBe(false)
   })
 
   it('throws when explicit remote variables have no api key', () => {
