@@ -64,6 +64,19 @@ export interface OnlineEvalConfig {
   sink?: EvaluationSink
 }
 
+export interface OnlineEvalConfigOptions {
+  emitOtelEvents?: boolean
+  enabled?: boolean
+  includeBaggage?: boolean
+  metadata?: Record<string, unknown> | undefined
+  onError?: OnErrorCallback | undefined
+  onMaxConcurrency?: OnMaxConcurrencyCallback | undefined
+  onSamplingError?: ((e: unknown) => void) | undefined
+  sampleRate?: ((ctx: SamplingContext) => boolean | number) | number
+  samplingMode?: SamplingMode
+  sink?: EvaluationSink | undefined
+}
+
 const DEFAULT_CONFIG: OnlineEvalConfig = {
   emitOtelEvents: true,
   enabled: true,
@@ -73,7 +86,7 @@ const DEFAULT_CONFIG: OnlineEvalConfig = {
 }
 
 /** Mutate the process-wide online-eval defaults. */
-export function configureOnlineEvals(opts: Partial<OnlineEvalConfig>): void {
+export function configureOnlineEvals(opts: OnlineEvalConfigOptions): void {
   Object.assign(DEFAULT_CONFIG, opts)
 }
 
@@ -108,10 +121,18 @@ export class OnlineEvaluator {
   constructor(opts: OnlineEvaluatorOptions) {
     this.inner = opts.evaluator
     this.maxConcurrencySem = new Semaphore(opts.maxConcurrency ?? 10)
-    this.onError = opts.onError
-    this.onMaxConcurrency = opts.onMaxConcurrency
-    this.sampleRate = opts.sampleRate
-    this.sink = opts.sink
+    if (opts.onError !== undefined) {
+      this.onError = opts.onError
+    }
+    if (opts.onMaxConcurrency !== undefined) {
+      this.onMaxConcurrency = opts.onMaxConcurrency
+    }
+    if (opts.sampleRate !== undefined) {
+      this.sampleRate = opts.sampleRate
+    }
+    if (opts.sink !== undefined) {
+      this.sink = opts.sink
+    }
   }
 
   async tryRun(
@@ -373,15 +394,16 @@ interface DispatchArgs {
 }
 
 async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
-  const ctx: EvaluatorContext = {
+  let ctx: EvaluatorContext = {
     attributes: {},
     duration: args.durationSec,
     inputs: buildEvaluatorInputs(args.args, args.inputNames),
-    metadata: args.cfg.metadata,
     metrics: args.metrics,
-    name: undefined,
     output: args.output,
     spanTree: args.spanTree,
+  }
+  if (args.cfg.metadata !== undefined) {
+    ctx = { ...ctx, metadata: args.cfg.metadata }
   }
 
   const emitOtel = args.userOptions.emitOtelEvents ?? args.cfg.emitOtelEvents
@@ -392,13 +414,21 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
   }
 
   const runs = await Promise.all(
-    args.sampledEvaluators.map(async (ev) => ({
-      ev,
-      ...(await ev.tryRun(ctx, args.callSpanRef, {
-        onError: args.userOptions.onError ?? args.cfg.onError,
-        onMaxConcurrency: args.userOptions.onMaxConcurrency ?? args.cfg.onMaxConcurrency,
-      })),
-    }))
+    args.sampledEvaluators.map(async (ev) => {
+      const hooks: { onError?: OnErrorCallback; onMaxConcurrency?: OnMaxConcurrencyCallback } = {}
+      const onError = args.userOptions.onError ?? args.cfg.onError
+      if (onError !== undefined) {
+        hooks.onError = onError
+      }
+      const onMaxConcurrency = args.userOptions.onMaxConcurrency ?? args.cfg.onMaxConcurrency
+      if (onMaxConcurrency !== undefined) {
+        hooks.onMaxConcurrency = onMaxConcurrency
+      }
+      return {
+        ev,
+        ...(await ev.tryRun(ctx, args.callSpanRef, hooks)),
+      }
+    })
   )
 
   const allResults: EvaluationResultJson[] = []
@@ -411,11 +441,17 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
     allResults.push(...results)
     allFailures.push(...failures)
     if (ev.sink !== undefined) {
-      const group = perEvaluatorSinks.get(ev.sink) ?? {
-        evaluators: [],
-        failures: [],
-        onError: ev.onError ?? args.userOptions.onError ?? args.cfg.onError,
-        results: [],
+      let group = perEvaluatorSinks.get(ev.sink)
+      if (group === undefined) {
+        group = {
+          evaluators: [],
+          failures: [],
+          results: [],
+        }
+        const onError = ev.onError ?? args.userOptions.onError ?? args.cfg.onError
+        if (onError !== undefined) {
+          group.onError = onError
+        }
       }
       group.evaluators.push(ev.evaluator)
       group.failures.push(...failures)

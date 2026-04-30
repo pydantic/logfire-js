@@ -36,7 +36,10 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
     this.scoreKey = opts.scoreKey ?? opts.score_key ?? ''
     this.scoreFrom = opts.scoreFrom ?? opts.score_from ?? 'scores'
     this.positiveFrom = opts.positiveFrom ?? opts.positive_from ?? 'expected_output'
-    this.positiveKey = opts.positiveKey ?? opts.positive_key
+    const positiveKey = opts.positiveKey ?? opts.positive_key
+    if (positiveKey !== undefined) {
+      this.positiveKey = positiveKey
+    }
     this.nThresholds = opts.nThresholds ?? opts.n_thresholds ?? 100
     this.title = opts.title ?? 'KS Plot'
   }
@@ -59,12 +62,13 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
 
   evaluate(ctx: ReportEvaluatorContext): [KSAnalysis, ScalarAnalysis] {
     const cases = ctx.report.cases.filter((c): c is ReportCase => 'output' in c)
-    const inputs = buildThresholdInputs(cases, {
+    const thresholdOptions = {
       positiveFrom: this.positiveFrom,
-      positiveKey: this.positiveKey,
       scoreFrom: this.scoreFrom,
       scoreKey: this.scoreKey,
-    })
+      ...(this.positiveKey !== undefined ? { positiveKey: this.positiveKey } : {}),
+    }
+    const inputs = buildThresholdInputs(cases, thresholdOptions)
 
     const positiveScores = inputs.scores.filter((_, i) => inputs.positives[i] === true).sort((a, b) => a - b)
     const negativeScores = inputs.scores.filter((_, i) => inputs.positives[i] === false).sort((a, b) => a - b)

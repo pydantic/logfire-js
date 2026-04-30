@@ -153,10 +153,16 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
     diag.setLogger(new DiagConsoleLogger(), options.diagLogLevel)
   }
 
-  configureLogfireApi({
+  const apiConfig: {
+    errorFingerprinting: boolean
+    scrubbing?: false | ScrubbingOptions
+  } = {
     errorFingerprinting: options.errorFingerprinting ?? false,
-    scrubbing: options.scrubbing,
-  })
+  }
+  if (options.scrubbing !== undefined) {
+    apiConfig.scrubbing = options.scrubbing
+  }
+  configureLogfireApi(apiConfig)
 
   const resource = resourceFromAttributes({
     [ATTR_BROWSER_LANGUAGE]: navigator.language,

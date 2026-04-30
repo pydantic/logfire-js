@@ -12,7 +12,10 @@ export class Equals extends Evaluator {
   constructor(opts: { evaluation_name?: string; evaluationName?: string; value: unknown }) {
     super()
     this.value = opts.value
-    this.evaluationName = opts.evaluationName ?? opts.evaluation_name
+    const evaluationName = opts.evaluationName ?? opts.evaluation_name
+    if (evaluationName !== undefined) {
+      this.evaluationName = evaluationName
+    }
   }
 
   static jsonSchema(): Record<string, unknown> {

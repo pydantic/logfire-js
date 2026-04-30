@@ -77,7 +77,9 @@ export class LLMJudge extends Evaluator {
   }) {
     super()
     this.rubric = opts.rubric
-    this.judge = opts.judge
+    if (opts.judge !== undefined) {
+      this.judge = opts.judge
+    }
     this.includeInput = opts.includeInput ?? opts.include_input ?? false
     this.includeExpectedOutput = opts.includeExpectedOutput ?? opts.include_expected_output ?? false
     this.scoreWasProvided = opts.score !== undefined
@@ -115,22 +117,30 @@ export class LLMJudge extends Evaluator {
     if (judge === null) {
       throw new Error('LLMJudge: no judge callback provided. Pass `judge` to the constructor or call `setDefaultJudge(fn)`.')
     }
-    const verdict = await judge({
-      expectedOutput: this.includeExpectedOutput ? ctx.expectedOutput : undefined,
+    const judgeArgs: {
+      expectedOutput?: unknown
+      inputs: unknown
+      output: unknown
+      rubric: string
+    } = {
       inputs: this.includeInput ? ctx.inputs : undefined,
       output: ctx.output,
       rubric: this.rubric,
-    })
+    }
+    if (this.includeExpectedOutput) {
+      judgeArgs.expectedOutput = ctx.expectedOutput
+    }
+    const verdict = await judge(judgeArgs)
     const out: Record<string, boolean | EvaluationReason | number> = {}
     const includeBoth = this.score !== false && this.assertion !== false
     const defaultName = this.getResultName()
     if (this.score !== false) {
       const name = outputConfigName(this.score) ?? (includeBoth ? `${defaultName}_score` : defaultName)
-      out[name] = outputConfigIncludeReason(this.score) ? { reason: verdict.reason, value: verdict.score } : verdict.score
+      out[name] = outputConfigIncludeReason(this.score) ? resultWithOptionalReason(verdict.score, verdict.reason) : verdict.score
     }
     if (this.assertion !== false) {
       const name = outputConfigName(this.assertion) ?? (includeBoth ? `${defaultName}_pass` : defaultName)
-      out[name] = outputConfigIncludeReason(this.assertion) ? { reason: verdict.reason, value: verdict.pass } : verdict.pass
+      out[name] = outputConfigIncludeReason(this.assertion) ? resultWithOptionalReason(verdict.pass, verdict.reason) : verdict.pass
     }
     return out
   }
@@ -155,10 +165,24 @@ export class LLMJudge extends Evaluator {
 registerEvaluator(LLMJudge)
 
 function normalizeOutputConfig(config: LLMJudgeOutputConfig): LLMJudgeOutputConfig {
-  return {
-    evaluationName: config.evaluationName ?? config.evaluation_name,
-    includeReason: config.includeReason ?? config.include_reason,
+  const out: LLMJudgeOutputConfig = {}
+  const evaluationName = config.evaluationName ?? config.evaluation_name
+  if (evaluationName !== undefined) {
+    out.evaluationName = evaluationName
   }
+  const includeReason = config.includeReason ?? config.include_reason
+  if (includeReason !== undefined) {
+    out.includeReason = includeReason
+  }
+  return out
+}
+
+function resultWithOptionalReason(value: boolean | number, reason: string | undefined): EvaluationReason {
+  const result: EvaluationReason = { value }
+  if (reason !== undefined) {
+    result.reason = reason
+  }
+  return result
 }
 
 function outputConfigName(config: LLMJudgeOutputConfig): string | undefined {

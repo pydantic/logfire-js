@@ -18,6 +18,7 @@
     "isolatedDeclarations": true,
     /* Linting */
     "strict": true,
+    "exactOptionalPropertyTypes": true,
     "allowJs": false,
     "noImplicitReturns": true,
     "noImplicitOverride": true,

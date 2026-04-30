@@ -31,7 +31,10 @@ export class Contains extends Evaluator {
     this.value = opts.value
     this.caseSensitive = opts.caseSensitive ?? opts.case_sensitive ?? true
     this.asStrings = opts.asStrings ?? opts.as_strings ?? false
-    this.evaluationName = opts.evaluationName ?? opts.evaluation_name
+    const evaluationName = opts.evaluationName ?? opts.evaluation_name
+    if (evaluationName !== undefined) {
+      this.evaluationName = evaluationName
+    }
   }
 
   static jsonSchema(): Record<string, unknown> {

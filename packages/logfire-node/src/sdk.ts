@@ -133,11 +133,11 @@ export function start(): void {
     idGenerator: new ULIDGenerator(),
     instrumentations: [getNodeAutoInstrumentations(logfireConfig.nodeAutoInstrumentations), ...logfireConfig.instrumentations],
     ...(logProcessor ? { logRecordProcessors: [logProcessor] } : {}),
-    metricReader: logfireConfig.metrics === false ? undefined : periodicMetricReader(),
+    ...(logfireConfig.metrics === false ? {} : { metricReader: periodicMetricReader() }),
     resource,
     ...(sampler ? { sampler } : {}),
     spanProcessors: [processor, getEvalsSpanProcessor(), ...logfireConfig.additionalSpanProcessors],
-    textMapPropagator: propagator,
+    ...(propagator !== undefined ? { textMapPropagator: propagator } : {}),
   })
 
   if (logfireConfig.metrics !== undefined && logfireConfig.metrics !== false && 'additionalReaders' in logfireConfig.metrics) {

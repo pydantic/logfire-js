@@ -50,7 +50,6 @@ function parseStackFrames(stack: string | undefined): StackFrame[] {
       })
     } else if (bareMatch?.[1] !== undefined) {
       frames.push({
-        fileName: undefined,
         functionName: bareMatch[1],
       })
     } else if (firefoxMatch?.[2] !== undefined) {

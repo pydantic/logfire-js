@@ -99,10 +99,10 @@ export function datasetFromObject<I = unknown, O = unknown, M = unknown>(data: u
     const ev = (c.evaluators ?? []).map((e) => decodeEvaluator<I, O, M>(e, evaluatorRegistry, primaryArgKeys))
     return new Case<I, O, M>({
       evaluators: ev,
-      expectedOutput: c.expected_output as O | undefined,
       inputs: c.inputs as I,
-      metadata: c.metadata as M | undefined,
-      name: c.name,
+      ...(c.expected_output !== undefined ? { expectedOutput: c.expected_output as O } : {}),
+      ...(c.metadata !== undefined ? { metadata: c.metadata as M } : {}),
+      ...(c.name !== undefined ? { name: c.name } : {}),
     })
   })
   const evaluators = (parsed.evaluators ?? []).map((e) => decodeEvaluator<I, O, M>(e, evaluatorRegistry, primaryArgKeys))

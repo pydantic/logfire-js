@@ -204,15 +204,20 @@ export function caseGroups<Inputs = unknown, Output = unknown, Metadata = unknow
     if (first === undefined) {
       continue
     }
-    result.push({
-      expected_output: first.expected_output,
+    const group: ReportCaseGroup<Inputs, Output, Metadata> = {
       failures,
       inputs: first.inputs,
-      metadata: first.metadata,
       name,
       runs,
       summary: computeAverages('Averages', runs),
-    })
+    }
+    if (first.expected_output !== undefined) {
+      group.expected_output = first.expected_output
+    }
+    if (first.metadata !== undefined) {
+      group.metadata = first.metadata
+    }
+    result.push(group)
   }
   return result
 }

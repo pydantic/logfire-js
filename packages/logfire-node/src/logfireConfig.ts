@@ -169,7 +169,6 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   codeSource: undefined,
   console: false,
   deploymentEnvironment: undefined,
-  diagLogLevel: undefined,
   distributedTracing: true,
   idGenerator: new logfireApi.ULIDGenerator(),
   instrumentations: [],
@@ -194,7 +193,17 @@ export function configure(config: LogfireConfigOptions = {}): void {
   const env = process.env
 
   if (errorFingerprinting !== undefined || otelScope !== undefined || scrubbing !== undefined) {
-    logfireApi.configureLogfireApi({ errorFingerprinting, otelScope, scrubbing })
+    const apiConfig: logfireApi.LogfireApiConfigOptions = {}
+    if (errorFingerprinting !== undefined) {
+      apiConfig.errorFingerprinting = errorFingerprinting
+    }
+    if (otelScope !== undefined) {
+      apiConfig.otelScope = otelScope
+    }
+    if (scrubbing !== undefined) {
+      apiConfig.scrubbing = scrubbing
+    }
+    logfireApi.configureLogfireApi(apiConfig)
   }
 
   const token = cnf.token ?? env['LOGFIRE_TOKEN']

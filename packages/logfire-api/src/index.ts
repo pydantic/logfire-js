@@ -306,7 +306,9 @@ const defaultExport: {
   info,
   levelOrDuration,
   log,
-  logfireApiConfig,
+  get logfireApiConfig() {
+    return logfireApiConfig
+  },
   notice,
   reportError,
   resolveBaseUrl,

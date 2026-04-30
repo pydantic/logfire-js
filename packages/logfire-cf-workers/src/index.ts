@@ -73,13 +73,13 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
     return {
       ...config,
       additionalSpanProcessors,
-      environment: resolvedEnvironment,
       exporter: {
         headers: { Authorization: token },
         url: `${baseUrl}/v1/traces`,
       },
       idGenerator: new ULIDGenerator(),
       postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(spans),
+      ...(resolvedEnvironment !== undefined ? { environment: resolvedEnvironment } : {}),
     } satisfies TraceConfig
   }
 }

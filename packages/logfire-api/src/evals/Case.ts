@@ -20,10 +20,16 @@ export class Case<Inputs = unknown, Output = unknown, Metadata = unknown> {
   readonly name?: string
 
   constructor(opts: CaseOptions<Inputs, Output, Metadata>) {
-    this.name = opts.name
     this.inputs = opts.inputs
-    this.expectedOutput = opts.expectedOutput
-    this.metadata = opts.metadata
     this.evaluators = opts.evaluators ?? []
+    if (opts.name !== undefined) {
+      this.name = opts.name
+    }
+    if (opts.expectedOutput !== undefined) {
+      this.expectedOutput = opts.expectedOutput
+    }
+    if (opts.metadata !== undefined) {
+      this.metadata = opts.metadata
+    }
   }
 }

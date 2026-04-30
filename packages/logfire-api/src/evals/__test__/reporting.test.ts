@@ -862,7 +862,6 @@ describe('renderReport', () => {
           trace_id: 't',
         },
       ],
-      experiment_metadata: undefined,
       failures: [],
       name: 'demo',
       report_evaluator_failures: [],

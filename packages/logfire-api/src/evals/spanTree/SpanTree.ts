@@ -33,7 +33,10 @@ export class SpanNode {
     this.name = span.name
     this.spanId = span.spanContext().spanId
     this.traceId = span.spanContext().traceId
-    this.parentSpanId = span.parentSpanContext?.spanId
+    const parentSpanId = span.parentSpanContext?.spanId
+    if (parentSpanId !== undefined) {
+      this.parentSpanId = parentSpanId
+    }
     this.startTimeNs = nsFromHrTime(span.startTime)
     this.endTimeNs = nsFromHrTime(span.endTime)
     this.durationMs = (this.endTimeNs - this.startTimeNs) / 1_000_000

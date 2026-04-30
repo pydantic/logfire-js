@@ -104,8 +104,7 @@ export function levelOrDuration(options?: {
   const durationThreshold = options?.durationThreshold ?? 5.0
   const backgroundRate = options?.backgroundRate ?? 0.0
 
-  return {
-    head: options?.head,
+  const result: SamplingOptions = {
     tail: (spanInfo: TailSamplingSpanInfo): number => {
       if (spanInfo.level.gte(levelThreshold)) {
         return 1.0
@@ -116,4 +115,8 @@ export function levelOrDuration(options?: {
       return backgroundRate
     },
   }
+  if (options?.head !== undefined) {
+    result.head = options.head
+  }
+  return result
 }

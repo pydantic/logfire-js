@@ -195,13 +195,13 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
               caseName,
               dataset: this,
               datasetEvaluators: this.evaluators,
-              lifecycleClass: options.lifecycle,
               originalCase: c,
-              retryEvaluators: options.retryEvaluators,
-              retryTask: options.retryTask,
-              sourceCaseName: repeat > 1 ? sourceCaseName : undefined,
               task,
               taskName,
+              ...(options.lifecycle !== undefined ? { lifecycleClass: options.lifecycle } : {}),
+              ...(options.retryEvaluators !== undefined ? { retryEvaluators: options.retryEvaluators } : {}),
+              ...(options.retryTask !== undefined ? { retryTask: options.retryTask } : {}),
+              ...(repeat > 1 ? { sourceCaseName } : {}),
             })
             if ('error_type' in result) {
               failures.push(result)
@@ -224,12 +224,14 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
         const report: EvaluationReport<Inputs, Output, Metadata> = {
           analyses,
           cases,
-          experiment_metadata: options.metadata,
           failures,
           name: experimentName,
           report_evaluator_failures: reportEvaluatorFailures,
           span_id,
           trace_id,
+        }
+        if (options.metadata !== undefined) {
+          report.experiment_metadata = options.metadata
         }
         for (const re of this.reportEvaluators) {
           const evaluatorName = (re.constructor as { evaluatorName?: string; name: string }).evaluatorName ?? re.constructor.name
@@ -244,9 +246,9 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
               async () =>
                 re.evaluate({
                   cases: [...cases, ...failures],
-                  experimentMetadata: options.metadata,
                   name: experimentName,
                   report,
+                  ...(options.metadata !== undefined ? { experimentMetadata: options.metadata } : {}),
                 })
             )
             const list = Array.isArray(out) ? out : [out]
@@ -294,8 +296,8 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
     } = {}
   ): JsonSchema {
     return buildDatasetJsonSchema({
-      customEvaluators: opts.customEvaluators,
-      customReportEvaluators: opts.customReportEvaluators,
+      ...(opts.customEvaluators !== undefined ? { customEvaluators: opts.customEvaluators } : {}),
+      ...(opts.customReportEvaluators !== undefined ? { customReportEvaluators: opts.customReportEvaluators } : {}),
     })
   }
 
@@ -434,12 +436,12 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
       recordException(caseSpan, err)
       const failure = buildCaseFailure(err, {
         caseName,
-        expectedOutput: originalCase.expectedOutput,
         inputs: originalCase.inputs,
-        metadata: originalCase.metadata,
-        sourceCaseName,
         span_id,
         trace_id,
+        ...(originalCase.expectedOutput !== undefined ? { expectedOutput: originalCase.expectedOutput } : {}),
+        ...(originalCase.metadata !== undefined ? { metadata: originalCase.metadata } : {}),
+        ...(sourceCaseName !== undefined ? { sourceCaseName } : {}),
       })
       await runLifecycleTeardown(lifecycle, failure, caseSpan)
       return failure
@@ -458,13 +460,17 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
     let ctx: EvaluatorContext<Inputs, Output, Metadata> = {
       attributes: taskRunState.attributes,
       duration: taskDuration,
-      expectedOutput: originalCase.expectedOutput,
       inputs: originalCase.inputs,
-      metadata: originalCase.metadata,
       metrics: taskRunState.metrics,
       name: caseName,
       output,
       spanTree,
+    }
+    if (originalCase.expectedOutput !== undefined) {
+      ctx = { ...ctx, expectedOutput: originalCase.expectedOutput }
+    }
+    if (originalCase.metadata !== undefined) {
+      ctx = { ...ctx, metadata: originalCase.metadata }
     }
     if (lifecycle?.prepareContext !== undefined) {
       try {
@@ -473,12 +479,12 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
         recordException(caseSpan, err)
         const failure = buildCaseFailure(err, {
           caseName,
-          expectedOutput: originalCase.expectedOutput,
           inputs: originalCase.inputs,
-          metadata: originalCase.metadata,
-          sourceCaseName,
           span_id,
           trace_id,
+          ...(originalCase.expectedOutput !== undefined ? { expectedOutput: originalCase.expectedOutput } : {}),
+          ...(originalCase.metadata !== undefined ? { metadata: originalCase.metadata } : {}),
+          ...(sourceCaseName !== undefined ? { sourceCaseName } : {}),
         })
         await runLifecycleTeardown(lifecycle, failure, caseSpan)
         return failure
@@ -505,19 +511,25 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
       assertions: evResult.assertions,
       attributes: taskRunState.attributes,
       evaluator_failures: evResult.failures,
-      expected_output: originalCase.expectedOutput,
       inputs: originalCase.inputs,
       labels: evResult.labels,
-      metadata: originalCase.metadata,
       metrics: taskRunState.metrics,
       name: caseName,
       output,
       scores: evResult.scores,
-      source_case_name: sourceCaseName,
       span_id,
       task_duration: taskDuration,
       total_duration: totalDuration,
       trace_id,
+    }
+    if (originalCase.expectedOutput !== undefined) {
+      reportCase.expected_output = originalCase.expectedOutput
+    }
+    if (originalCase.metadata !== undefined) {
+      reportCase.metadata = originalCase.metadata
+    }
+    if (sourceCaseName !== undefined) {
+      reportCase.source_case_name = sourceCaseName
     }
     await runLifecycleTeardown(lifecycle, reportCase, caseSpan)
     return reportCase
@@ -537,18 +549,27 @@ function buildCaseFailure<Inputs, Output, Metadata>(
   }
 ): ReportCaseFailure<Inputs, Output, Metadata> {
   const isErr = err instanceof Error
-  return {
+  const failure: ReportCaseFailure<Inputs, Output, Metadata> = {
     error_message: isErr ? err.message : String(err),
-    error_stacktrace: isErr ? err.stack : undefined,
     error_type: isErr ? err.constructor.name : 'Error',
-    expected_output: opts.expectedOutput,
     inputs: opts.inputs,
-    metadata: opts.metadata,
     name: opts.caseName,
-    source_case_name: opts.sourceCaseName,
     span_id: opts.span_id,
     trace_id: opts.trace_id,
   }
+  if (isErr && err.stack !== undefined) {
+    failure.error_stacktrace = err.stack
+  }
+  if (opts.expectedOutput !== undefined) {
+    failure.expected_output = opts.expectedOutput
+  }
+  if (opts.metadata !== undefined) {
+    failure.metadata = opts.metadata
+  }
+  if (opts.sourceCaseName !== undefined) {
+    failure.source_case_name = opts.sourceCaseName
+  }
+  return failure
 }
 
 function recordException(span: Span, err: unknown): void {

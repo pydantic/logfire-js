@@ -38,13 +38,15 @@ export class ConfusionMatrixEvaluator extends ReportEvaluator {
 
   constructor(opts: ConfusionMatrixOptions = {}) {
     super()
+    const predictedKey = opts.predictedKey ?? opts.predicted_key
     this.predicted = opts.predicted ?? {
       from: opts.predictedFrom ?? opts.predicted_from ?? 'output',
-      key: opts.predictedKey ?? opts.predicted_key,
+      ...(predictedKey !== undefined ? { key: predictedKey } : {}),
     }
+    const expectedKey = opts.expectedKey ?? opts.expected_key
     this.expected = opts.expected ?? {
       from: opts.expectedFrom ?? opts.expected_from ?? 'expected_output',
-      key: opts.expectedKey ?? opts.expected_key,
+      ...(expectedKey !== undefined ? { key: expectedKey } : {}),
     }
     this.title = opts.title ?? 'Confusion Matrix'
   }

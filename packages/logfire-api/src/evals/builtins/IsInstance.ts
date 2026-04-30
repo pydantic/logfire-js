@@ -16,7 +16,10 @@ export class IsInstance extends Evaluator {
   constructor(opts: { evaluation_name?: string; evaluationName?: string; type_name?: string; typeName?: string }) {
     super()
     this.typeName = opts.typeName ?? opts.type_name ?? ''
-    this.evaluationName = opts.evaluationName ?? opts.evaluation_name
+    const evaluationName = opts.evaluationName ?? opts.evaluation_name
+    if (evaluationName !== undefined) {
+      this.evaluationName = evaluationName
+    }
   }
 
   static jsonSchema(): Record<string, unknown> {

@@ -111,7 +111,9 @@ export class LogfireAttributeScrubber implements BaseScrubber {
   constructor(patterns?: string[], callback?: ScrubCallback) {
     const allPatterns = [...DEFAULT_PATTERNS, ...(patterns ?? [])]
     this._pattern = new RegExp(allPatterns.join('|'), 'i')
-    this._callback = callback
+    if (callback !== undefined) {
+      this._callback = callback
+    }
   }
 
   /**
