@@ -59,14 +59,14 @@ describe('lifecycle hooks', () => {
     const order: string[] = []
 
     class TraceLifecycle extends CaseLifecycle<string, string> {
-      prepareContext(ctx: EvaluatorContext<string, string>): EvaluatorContext<string, string> {
+      override prepareContext(ctx: EvaluatorContext<string, string>): EvaluatorContext<string, string> {
         order.push('prepareContext')
         return ctx
       }
-      async setup(): Promise<void> {
+      override async setup(): Promise<void> {
         order.push('setup')
       }
-      async teardown(_result: ReportCase<string, string> | ReportCaseFailure<string, string>): Promise<void> {
+      override async teardown(_result: ReportCase<string, string> | ReportCaseFailure<string, string>): Promise<void> {
         order.push(`teardown(${_result.name})`)
       }
     }
@@ -93,7 +93,7 @@ describe('lifecycle hooks', () => {
   it('teardown runs even when the task throws', async () => {
     const events: string[] = []
     class FailingLifecycle extends CaseLifecycle<string, string> {
-      async teardown(): Promise<void> {
+      override async teardown(): Promise<void> {
         events.push('teardown')
       }
     }
@@ -114,7 +114,7 @@ describe('lifecycle hooks', () => {
 
   it('records teardown errors on failed cases without rejecting the experiment', async () => {
     class TeardownThrows extends CaseLifecycle<string, string> {
-      async teardown(): Promise<void> {
+      override async teardown(): Promise<void> {
         throw new Error('teardown boom')
       }
     }
@@ -141,7 +141,7 @@ describe('lifecycle hooks', () => {
 
   it('records teardown errors on successful cases without rejecting the experiment', async () => {
     class TeardownThrows extends CaseLifecycle<string, string> {
-      async teardown(): Promise<void> {
+      override async teardown(): Promise<void> {
         throw new Error('teardown boom')
       }
     }
@@ -164,14 +164,14 @@ describe('lifecycle hooks', () => {
   it('gives each case its own lifecycle instance with isolated state', async () => {
     class StatefulLifecycle extends CaseLifecycle<string, string> {
       private setupCalled = false
-      prepareContext(ctx: EvaluatorContext<string, string>): EvaluatorContext<string, string> {
+      override prepareContext(ctx: EvaluatorContext<string, string>): EvaluatorContext<string, string> {
         if (!this.setupCalled) {
           throw new Error('setup not called before prepareContext')
         }
-        ctx.metrics.case_name_length = this.case.name?.length ?? 0
+        ctx.metrics['case_name_length'] = this.case.name?.length ?? 0
         return ctx
       }
-      async setup(): Promise<void> {
+      override async setup(): Promise<void> {
         this.setupCalled = true
       }
     }
@@ -186,22 +186,22 @@ describe('lifecycle hooks', () => {
     const { result } = await withMemoryExporter(async () => ds.evaluate((s) => s.toUpperCase(), { lifecycle: StatefulLifecycle }))
 
     const byName = Object.fromEntries(result.cases.map((c) => [c.name, c.metrics]))
-    expect(byName.short?.case_name_length).toBe(5)
-    expect(byName.much_longer_name?.case_name_length).toBe(16)
+    expect(byName['short']?.['case_name_length']).toBe(5)
+    expect(byName['much_longer_name']?.['case_name_length']).toBe(16)
   })
 
   it('lets evaluators see metrics added by prepareContext', async () => {
     class Enricher extends CaseLifecycle<string, string> {
-      prepareContext(ctx: EvaluatorContext<string, string>): EvaluatorContext<string, string> {
-        ctx.metrics.enriched = 1
+      override prepareContext(ctx: EvaluatorContext<string, string>): EvaluatorContext<string, string> {
+        ctx.metrics['enriched'] = 1
         return ctx
       }
     }
 
     class CheckMetric extends Evaluator<string, string> {
-      static evaluatorName = 'CheckMetric'
+      static override evaluatorName = 'CheckMetric'
       evaluate(ctx: EvaluatorContext<string, string>): boolean {
-        return ctx.metrics.enriched === 1
+        return ctx.metrics['enriched'] === 1
       }
     }
 
@@ -211,16 +211,16 @@ describe('lifecycle hooks', () => {
       name: 'enriched-context',
     })
     const { result } = await withMemoryExporter(async () => ds.evaluate((s) => s, { lifecycle: Enricher }))
-    expect(result.cases[0]?.assertions.CheckMetric?.value).toBe(true)
+    expect(result.cases[0]?.assertions['CheckMetric']?.value).toBe(true)
   })
 
   it('records prepareContext errors as case failures without rejecting the experiment', async () => {
     const events: string[] = []
     class PrepareThrows extends CaseLifecycle<string, string> {
-      prepareContext(): EvaluatorContext<string, string> {
+      override prepareContext(): EvaluatorContext<string, string> {
         throw new Error('prepare boom')
       }
-      async teardown(result: ReportCase<string, string> | ReportCaseFailure<string, string>): Promise<void> {
+      override async teardown(result: ReportCase<string, string> | ReportCaseFailure<string, string>): Promise<void> {
         events.push(`teardown(${result.name})`)
       }
     }
@@ -282,7 +282,7 @@ describe('retry support via p-retry', () => {
 
   it('retries evaluators and records failure after evaluator retries are exhausted', async () => {
     class FlakyEvaluator extends Evaluator {
-      static evaluatorName = 'FlakyEvaluator'
+      static override evaluatorName = 'FlakyEvaluator'
       attempts = 0
 
       evaluate(): boolean {
@@ -305,11 +305,11 @@ describe('retry support via p-retry', () => {
     )
 
     expect(flaky.attempts).toBe(3)
-    expect(result.cases[0]?.assertions.FlakyEvaluator?.value).toBe(true)
+    expect(result.cases[0]?.assertions['FlakyEvaluator']?.value).toBe(true)
     expect(result.cases[0]?.evaluator_failures).toEqual([])
 
     class AlwaysThrowsEvaluator extends Evaluator {
-      static evaluatorName = 'AlwaysThrowsEvaluator'
+      static override evaluatorName = 'AlwaysThrowsEvaluator'
       attempts = 0
 
       evaluate(): never {
@@ -382,7 +382,7 @@ describe('report-level evaluators land on the experiment span', () => {
 
   it('awaits async report evaluator return values', async () => {
     class AsyncReportEvaluator extends ReportEvaluator<string, string> {
-      static evaluatorName = 'AsyncReportEvaluator'
+      static override evaluatorName = 'AsyncReportEvaluator'
 
       async evaluate(): Promise<{ title: string; type: 'scalar'; value: number }> {
         await sleep(1)
@@ -420,7 +420,7 @@ describe('report-level evaluators land on the experiment span', () => {
   it('passes the experiment name and full report to report evaluators', async () => {
     let captured: ReportEvaluatorContext<{ x: string }, string> | undefined
     class CaptureReportEvaluator extends ReportEvaluator<{ x: string }, string> {
-      static evaluatorName = 'CaptureReportEvaluator'
+      static override evaluatorName = 'CaptureReportEvaluator'
 
       evaluate(ctx: ReportEvaluatorContext<{ x: string }, string>) {
         captured = ctx
@@ -446,8 +446,8 @@ describe('report-level evaluators land on the experiment span', () => {
 
   it('records report evaluator failures and serializes them onto the experiment span', async () => {
     class BrokenReportEvaluator extends ReportEvaluator<string, string> {
-      static evaluatorName = 'BrokenReportEvaluator'
-      evaluatorVersion = 'v1'
+      static override evaluatorName = 'BrokenReportEvaluator'
+      override evaluatorVersion = 'v1'
 
       evaluate(): never {
         throw new Error('report boom')
@@ -649,7 +649,7 @@ describe('report-level evaluators land on the experiment span', () => {
 describe('report evaluator edge cases', () => {
   it('ReportEvaluator default getSpec uses the registry key and null arguments', () => {
     class MinimalReportEvaluator extends ReportEvaluator {
-      static evaluatorName = 'MinimalReportEvaluator'
+      static override evaluatorName = 'MinimalReportEvaluator'
       evaluate() {
         return { columns: [], rows: [], title: 'empty', type: 'table' as const }
       }

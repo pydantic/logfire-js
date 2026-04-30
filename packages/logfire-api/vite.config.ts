@@ -3,7 +3,7 @@ import { defineConfig } from 'vite-plus'
 
 const packageDefines = {
   PACKAGE_TIMESTAMP: String(Date.now()),
-  PACKAGE_VERSION: JSON.stringify(process.env.npm_package_version ?? '0.0.0'),
+  PACKAGE_VERSION: JSON.stringify(process.env['npm_package_version'] ?? '0.0.0'),
 }
 
 const copyCjsDeclarations = (names: string[]) => {

@@ -12,7 +12,7 @@ import { deepEqual } from './Equals'
  * `evaluators/common.py:64–141`.
  */
 export class Contains extends Evaluator {
-  static evaluatorName = 'Contains'
+  static override evaluatorName = 'Contains'
 
   readonly asStrings: boolean
   readonly caseSensitive: boolean
@@ -53,16 +53,16 @@ export class Contains extends Evaluator {
     return result
   }
 
-  toJSON(): Record<string, unknown> {
+  override toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = { value: this.value }
     if (!this.caseSensitive) {
-      out.case_sensitive = false
+      out['case_sensitive'] = false
     }
     if (this.asStrings) {
-      out.as_strings = true
+      out['as_strings'] = true
     }
     if (this.evaluationName !== undefined) {
-      out.evaluation_name = this.evaluationName
+      out['evaluation_name'] = this.evaluationName
     }
     return out
   }

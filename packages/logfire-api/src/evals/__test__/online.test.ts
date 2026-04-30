@@ -38,56 +38,56 @@ const sleep = async (ms: number): Promise<void> =>
   })
 
 class AlwaysPass extends Evaluator {
-  static evaluatorName = 'AlwaysPass'
+  static override evaluatorName = 'AlwaysPass'
   evaluate(): boolean {
     return true
   }
 }
 
 class AlwaysFail extends Evaluator {
-  static evaluatorName = 'AlwaysFail'
+  static override evaluatorName = 'AlwaysFail'
   evaluate(): boolean {
     return false
   }
 }
 
 class NumericScore extends Evaluator {
-  static evaluatorName = 'NumericScore'
+  static override evaluatorName = 'NumericScore'
   evaluate(): number {
     return 0.75
   }
 }
 
 class TinyScore extends Evaluator {
-  static evaluatorName = 'TinyScore'
+  static override evaluatorName = 'TinyScore'
   evaluate(): number {
     return 1.23e-7
   }
 }
 
 class LargeIntegerScore extends Evaluator {
-  static evaluatorName = 'LargeIntegerScore'
+  static override evaluatorName = 'LargeIntegerScore'
   evaluate(): number {
     return 1234567
   }
 }
 
 class CategoryLabel extends Evaluator {
-  static evaluatorName = 'CategoryLabel'
+  static override evaluatorName = 'CategoryLabel'
   evaluate(): string {
     return 'good'
   }
 }
 
 class WithReason extends Evaluator {
-  static evaluatorName = 'WithReason'
+  static override evaluatorName = 'WithReason'
   evaluate(): EvaluatorOutput {
     return { reason: 'because reasons', value: true }
   }
 }
 
 class Throwing extends Evaluator {
-  static evaluatorName = 'Throwing'
+  static override evaluatorName = 'Throwing'
   evaluate(): never {
     throw new Error('evaluator boom')
   }
@@ -147,7 +147,7 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
 
     // source is JSON-encoded EvaluatorSpec
     const src = JSON.parse(rec.attributes[GEN_AI_EVALUATOR_SOURCE] as string) as Record<string, unknown>
-    expect(src.name).toBe('AlwaysPass')
+    expect(src['name']).toBe('AlwaysPass')
 
     // Parented to the call span
     const callSpan = spans.find((s) => s.name === 'Calling mytarget')
@@ -328,7 +328,7 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
   it('global enabled=false bypasses evaluators and leaves the wrapped call intact', async () => {
     let evaluateCount = 0
     class Counting extends Evaluator {
-      static evaluatorName = 'Counting'
+      static override evaluatorName = 'Counting'
       evaluate(): boolean {
         evaluateCount++
         return true
@@ -413,7 +413,7 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
   it('skips evaluator execution when OTel events and sinks are both disabled', async () => {
     let attempts = 0
     class Counting extends Evaluator {
-      static evaluatorName = 'NoSinkCounting'
+      static override evaluatorName = 'NoSinkCounting'
       evaluate(): boolean {
         attempts++
         return true
@@ -461,14 +461,14 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
   it('runs sampled online evaluators concurrently', async () => {
     let fastStarted = false
     class SlowOnlineEvaluator extends Evaluator {
-      static evaluatorName = 'SlowOnlineEvaluator'
+      static override evaluatorName = 'SlowOnlineEvaluator'
       async evaluate(): Promise<boolean> {
         await sleep(30)
         return fastStarted
       }
     }
     class FastOnlineEvaluator extends Evaluator {
-      static evaluatorName = 'FastOnlineEvaluator'
+      static override evaluatorName = 'FastOnlineEvaluator'
       evaluate(): boolean {
         fastStarted = true
         return true
@@ -541,7 +541,7 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
       return: '{"count":3,"first":"hello"}',
       target: 'argument-target',
     })
-    expect(logs[0]?.attributes.tenant).toBe('acme')
+    expect(logs[0]?.attributes['tenant']).toBe('acme')
   })
 
   it('uses independent per-evaluator sampling by default and names context inputs when possible', async () => {
@@ -622,7 +622,7 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
 
   it('emits one log per named output when an evaluator returns a result object', async () => {
     class MultiOutput extends Evaluator {
-      static evaluatorName = 'MultiOutput'
+      static override evaluatorName = 'MultiOutput'
 
       evaluate(): Record<string, boolean | number | string> {
         return { assertion: true, label: 'great', score: 0.95 }
@@ -714,7 +714,7 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     const drops: string[] = []
 
     class SlowEvaluator extends Evaluator {
-      static evaluatorName = 'SlowEvaluator'
+      static override evaluatorName = 'SlowEvaluator'
 
       async evaluate(): Promise<boolean> {
         await slow
@@ -753,7 +753,7 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     const errors: { evaluator: Evaluator; location: string; output: unknown }[] = []
 
     class SlowEvaluator extends Evaluator {
-      static evaluatorName = 'SlowEvaluatorWithDropError'
+      static override evaluatorName = 'SlowEvaluatorWithDropError'
 
       async evaluate(): Promise<boolean> {
         await slow
@@ -796,7 +796,7 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     })
 
     class SlowEvaluator extends Evaluator {
-      static evaluatorName = 'SlowTimeoutEvaluator'
+      static override evaluatorName = 'SlowTimeoutEvaluator'
       async evaluate(): Promise<boolean> {
         await slow
         return true
@@ -816,7 +816,7 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
 
 class CountingEvaluator extends Evaluator {
   static count = 0
-  static evaluatorName = 'Counting'
+  static override evaluatorName = 'Counting'
   evaluate(): boolean {
     CountingEvaluator.count++
     return true
@@ -908,7 +908,7 @@ describe('sampling', () => {
 describe('evaluator output edge cases', () => {
   it('an evaluator returning an empty result map emits no events', async () => {
     class EmptyResult extends Evaluator {
-      static evaluatorName = 'EmptyResult'
+      static override evaluatorName = 'EmptyResult'
       evaluate(): Record<string, never> {
         return {}
       }

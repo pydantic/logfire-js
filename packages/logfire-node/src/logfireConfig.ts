@@ -180,8 +180,8 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   otelScope: DEFAULT_OTEL_SCOPE,
   sampling: undefined,
   sendToLogfire: false,
-  serviceName: process.env.LOGFIRE_SERVICE_NAME,
-  serviceVersion: process.env.LOGFIRE_SERVICE_VERSION,
+  serviceName: process.env['LOGFIRE_SERVICE_NAME'],
+  serviceVersion: process.env['LOGFIRE_SERVICE_VERSION'],
   token: '',
   traceExporterUrl: '',
 }
@@ -197,11 +197,11 @@ export function configure(config: LogfireConfigOptions = {}): void {
     logfireApi.configureLogfireApi({ errorFingerprinting, otelScope, scrubbing })
   }
 
-  const token = cnf.token ?? env.LOGFIRE_TOKEN
+  const token = cnf.token ?? env['LOGFIRE_TOKEN']
   const sendToLogfire = logfireApi.resolveSendToLogfire(process.env, cnf.sendToLogfire, token)
   const baseUrl =
     !sendToLogfire || token === undefined || token === '' ? '' : logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, token)
-  const console = 'console' in cnf ? cnf.console : env.LOGFIRE_CONSOLE === 'true'
+  const console = 'console' in cnf ? cnf.console : env['LOGFIRE_CONSOLE'] === 'true'
 
   Object.assign(logfireConfig, {
     additionalSpanProcessors: cnf.additionalSpanProcessors ?? [],
@@ -211,7 +211,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
     baseUrl,
     codeSource: cnf.codeSource,
     console,
-    deploymentEnvironment: cnf.environment ?? env.LOGFIRE_ENVIRONMENT,
+    deploymentEnvironment: cnf.environment ?? env['LOGFIRE_ENVIRONMENT'],
     diagLogLevel: cnf.diagLogLevel,
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),
     idGenerator: cnf.advanced?.idGenerator ?? new logfireApi.ULIDGenerator(),
@@ -222,8 +222,8 @@ export function configure(config: LogfireConfigOptions = {}): void {
     nodeAutoInstrumentations: cnf.nodeAutoInstrumentations ?? DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
     sampling: resolveSampling(sampling),
     sendToLogfire,
-    serviceName: cnf.serviceName ?? env.LOGFIRE_SERVICE_NAME,
-    serviceVersion: cnf.serviceVersion ?? env.LOGFIRE_SERVICE_VERSION,
+    serviceName: cnf.serviceName ?? env['LOGFIRE_SERVICE_NAME'],
+    serviceVersion: cnf.serviceVersion ?? env['LOGFIRE_SERVICE_VERSION'],
     token,
     traceExporterUrl: `${baseUrl}/${TRACE_ENDPOINT_PATH}`,
   })
@@ -232,7 +232,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
 }
 
 function resolveSampling(option: SamplingOptions | undefined): SamplingOptions | undefined {
-  const envRate = process.env.LOGFIRE_TRACE_SAMPLE_RATE
+  const envRate = process.env['LOGFIRE_TRACE_SAMPLE_RATE']
   if (option) {
     return option
   }
@@ -246,6 +246,6 @@ function resolveSampling(option: SamplingOptions | undefined): SamplingOptions |
 }
 
 function resolveDistributedTracing(option: LogfireConfigOptions['distributedTracing']) {
-  const envDistributedTracing = process.env.LOGFIRE_DISTRIBUTED_TRACING
+  const envDistributedTracing = process.env['LOGFIRE_DISTRIBUTED_TRACING']
   return (option ?? envDistributedTracing === undefined) ? true : envDistributedTracing === 'true'
 }

@@ -47,7 +47,7 @@ describe('span tree capture + HasMatchingSpan', () => {
     )
 
     expect(result.cases).toHaveLength(1)
-    const assertion = result.cases[0]?.assertions.HasMatchingSpan
+    const assertion = result.cases[0]?.assertions['HasMatchingSpan']
     expect(assertion).toBeDefined()
     expect(assertion?.value).toBe(true)
   })
@@ -61,7 +61,7 @@ describe('span tree capture + HasMatchingSpan', () => {
 
     const { result } = await withMemoryExporter(async () => dataset.evaluate((input) => input.toUpperCase()))
 
-    expect(result.cases[0]?.assertions.HasMatchingSpan?.value).toBe(false)
+    expect(result.cases[0]?.assertions['HasMatchingSpan']?.value).toBe(false)
   })
 
   it('extracts gen_ai.usage.* metrics from the span tree onto ctx.metrics', async () => {
@@ -86,10 +86,10 @@ describe('span tree capture + HasMatchingSpan', () => {
     )
 
     const m = result.cases[0]?.metrics
-    expect(m?.requests).toBe(1)
-    expect(m?.input_tokens).toBe(100)
-    expect(m?.output_tokens).toBe(50)
-    expect(m?.cost).toBeCloseTo(0.001)
+    expect(m?.['requests']).toBe(1)
+    expect(m?.['input_tokens']).toBe(100)
+    expect(m?.['output_tokens']).toBe(50)
+    expect(m?.['cost']).toBeCloseTo(0.001)
   })
 
   it('builds deterministic trees and evaluates structural span queries', () => {

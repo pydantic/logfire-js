@@ -30,7 +30,7 @@ export interface ConfusionMatrixOptions {
  * label pair. Mirrors pydantic-evals' `ConfusionMatrixEvaluator`.
  */
 export class ConfusionMatrixEvaluator extends ReportEvaluator {
-  static evaluatorName = 'ConfusionMatrixEvaluator'
+  static override evaluatorName = 'ConfusionMatrixEvaluator'
 
   readonly expected: ExtractOpts
   readonly predicted: ExtractOpts
@@ -101,22 +101,22 @@ export class ConfusionMatrixEvaluator extends ReportEvaluator {
     }
   }
 
-  toJSON(): null | Record<string, unknown> {
+  override toJSON(): null | Record<string, unknown> {
     const out: Record<string, unknown> = {}
     if (this.predicted.from !== 'output') {
-      out.predicted_from = this.predicted.from
+      out['predicted_from'] = this.predicted.from
     }
     if (this.predicted.key !== undefined) {
-      out.predicted_key = this.predicted.key
+      out['predicted_key'] = this.predicted.key
     }
     if (this.expected.from !== 'expected_output') {
-      out.expected_from = this.expected.from
+      out['expected_from'] = this.expected.from
     }
     if (this.expected.key !== undefined) {
-      out.expected_key = this.expected.key
+      out['expected_key'] = this.expected.key
     }
     if (this.title !== 'Confusion Matrix') {
-      out.title = this.title
+      out['title'] = this.title
     }
     return Object.keys(out).length === 0 ? null : out
   }

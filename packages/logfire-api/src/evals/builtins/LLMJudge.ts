@@ -54,7 +54,7 @@ export function getDefaultJudge(): JudgeFn | null {
  * `judge` callback per instance or call `setDefaultJudge(fn)` once at startup.
  */
 export class LLMJudge extends Evaluator {
-  static evaluatorName = 'LLMJudge'
+  static override evaluatorName = 'LLMJudge'
 
   readonly assertion: false | LLMJudgeOutputConfig
   readonly includeExpectedOutput: boolean
@@ -135,19 +135,19 @@ export class LLMJudge extends Evaluator {
     return out
   }
 
-  toJSON(): Record<string, unknown> {
+  override toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = { rubric: this.rubric }
     if (this.includeInput) {
-      out.include_input = true
+      out['include_input'] = true
     }
     if (this.includeExpectedOutput) {
-      out.include_expected_output = true
+      out['include_expected_output'] = true
     }
     if (this.scoreWasProvided || this.score !== false) {
-      out.score = this.score === false ? false : outputConfigToJSON(this.score)
+      out['score'] = this.score === false ? false : outputConfigToJSON(this.score)
     }
     if (this.assertionWasProvided || !isDefaultAssertionConfig(this.assertion)) {
-      out.assertion = this.assertion === false ? false : outputConfigToJSON(this.assertion)
+      out['assertion'] = this.assertion === false ? false : outputConfigToJSON(this.assertion)
     }
     return out
   }
@@ -173,10 +173,10 @@ function outputConfigToJSON(config: LLMJudgeOutputConfig): Record<string, unknow
   const out: Record<string, unknown> = {}
   const name = outputConfigName(config)
   if (name !== undefined) {
-    out.evaluation_name = name
+    out['evaluation_name'] = name
   }
   if (outputConfigIncludeReason(config)) {
-    out.include_reason = true
+    out['include_reason'] = true
   }
   return out
 }

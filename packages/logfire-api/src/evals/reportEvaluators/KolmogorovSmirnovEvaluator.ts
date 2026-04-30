@@ -22,7 +22,7 @@ export interface KSOptions {
 }
 
 export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
-  static evaluatorName = 'KolmogorovSmirnovEvaluator'
+  static override evaluatorName = 'KolmogorovSmirnovEvaluator'
 
   readonly nThresholds: number
   readonly positiveFrom: PositiveFrom
@@ -132,22 +132,22 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
     ]
   }
 
-  toJSON(): Record<string, unknown> {
+  override toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = {
       positive_from: this.positiveFrom,
       score_key: this.scoreKey,
     }
     if (this.positiveKey !== undefined) {
-      out.positive_key = this.positiveKey
+      out['positive_key'] = this.positiveKey
     }
     if (this.scoreFrom !== 'scores') {
-      out.score_from = this.scoreFrom
+      out['score_from'] = this.scoreFrom
     }
     if (this.nThresholds !== 100) {
-      out.n_thresholds = this.nThresholds
+      out['n_thresholds'] = this.nThresholds
     }
     if (this.title !== 'KS Plot') {
-      out.title = this.title
+      out['title'] = this.title
     }
     return out
   }

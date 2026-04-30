@@ -95,9 +95,9 @@ describe('offline evals — span attribute parity', () => {
     expect(expAttrs[ATTRIBUTES_MESSAGE_TEMPLATE_KEY]).toBe(SPAN_NAME_EXPERIMENT)
     // logfire.experiment.metadata MUST be a JSON-encoded object (per fusionfire ingest)
     const metadata = JSON.parse(expAttrs[EXPERIMENT_METADATA_KEY] as string) as Record<string, unknown>
-    expect(metadata.n_cases).toBe(2)
-    expect(metadata.averages).toBeDefined()
-    expect((metadata.averages as { name: string }).name).toBe('classify')
+    expect(metadata['n_cases']).toBe(2)
+    expect(metadata['averages']).toBeDefined()
+    expect((metadata['averages'] as { name: string }).name).toBe('classify')
 
     // Each case span has case_name as a top-level attribute (UI detection requirement)
     for (const c of cases) {
@@ -113,7 +113,7 @@ describe('offline evals — span attribute parity', () => {
       expect(e.name).toBe(SPAN_NAME_EVALUATOR_LITERAL)
       expect(e.attributes[ATTRIBUTES_MESSAGE_TEMPLATE_KEY]).toBe('Calling evaluator: {evaluator_name}')
       expect(e.attributes[ATTRIBUTES_MESSAGE_KEY]).toContain('Calling evaluator: ')
-      expect(e.attributes.evaluator_name).toBe('EqualsExpected')
+      expect(e.attributes['evaluator_name']).toBe('EqualsExpected')
     }
 
     // Cases are children of the experiment span (within the same trace).
@@ -145,11 +145,11 @@ describe('offline evals — span attribute parity', () => {
     expect(caseSpan).toBeDefined()
     const assertions = JSON.parse(caseSpan!.attributes[ATTR_ASSERTIONS] as string) as Record<string, unknown>
     expect(Object.keys(assertions).sort()).toEqual(['Equals', 'EqualsExpected'])
-    const eq = assertions.Equals as Record<string, unknown>
-    expect(eq.name).toBe('Equals')
-    expect(eq.value).toBe(true)
-    expect((eq.source as { name: string }).name).toBe('Equals')
-    expect((eq.source as { arguments: unknown }).arguments).toEqual({ value: 1 })
+    const eq = assertions['Equals'] as Record<string, unknown>
+    expect(eq['name']).toBe('Equals')
+    expect(eq['value']).toBe(true)
+    expect((eq['source'] as { name: string }).name).toBe('Equals')
+    expect((eq['source'] as { arguments: unknown }).arguments).toEqual({ value: 1 })
 
     const scoresAttr = caseSpan!.attributes[ATTR_SCORES] as string
     const scores = JSON.parse(scoresAttr) as Record<string, unknown>
@@ -158,7 +158,7 @@ describe('offline evals — span attribute parity', () => {
 
   it('runs case evaluators before dataset evaluators and suffixes duplicate result names', async () => {
     class SameNameEvaluator extends Evaluator {
-      static evaluatorName = 'SameNameEvaluator'
+      static override evaluatorName = 'SameNameEvaluator'
       private readonly value: boolean
       constructor(evaluationName: string, value: boolean) {
         super()
@@ -185,21 +185,21 @@ describe('offline evals — span attribute parity', () => {
     const { result } = await withMemoryExporter(async () => dataset.evaluate((input) => input))
 
     expect(Object.keys(result.cases[0]!.assertions)).toEqual(['duplicate', 'duplicate_2'])
-    expect(result.cases[0]?.assertions.duplicate?.value).toBe(true)
-    expect(result.cases[0]?.assertions.duplicate_2?.value).toBe(false)
+    expect(result.cases[0]?.assertions['duplicate']?.value).toBe(true)
+    expect(result.cases[0]?.assertions['duplicate_2']?.value).toBe(false)
   })
 
   it('runs evaluators for a case concurrently', async () => {
     let fastStarted = false
     class SlowEvaluator extends Evaluator {
-      static evaluatorName = 'SlowEvaluator'
+      static override evaluatorName = 'SlowEvaluator'
       async evaluate(): Promise<boolean> {
         await sleep(30)
         return fastStarted
       }
     }
     class FastEvaluator extends Evaluator {
-      static evaluatorName = 'FastEvaluator'
+      static override evaluatorName = 'FastEvaluator'
       evaluate(): boolean {
         fastStarted = true
         return true
@@ -214,8 +214,8 @@ describe('offline evals — span attribute parity', () => {
 
     const { result } = await withMemoryExporter(async () => dataset.evaluate((input) => input))
 
-    expect(result.cases[0]?.assertions.SlowEvaluator?.value).toBe(true)
-    expect(result.cases[0]?.assertions.FastEvaluator?.value).toBe(true)
+    expect(result.cases[0]?.assertions['SlowEvaluator']?.value).toBe(true)
+    expect(result.cases[0]?.assertions['FastEvaluator']?.value).toBe(true)
   })
 
   it('emits logfire.experiment.repeat and source_case_name on multi-run experiments', async () => {
@@ -266,14 +266,14 @@ describe('offline evals — span attribute parity', () => {
       name: 'contains-test',
     })
     const { result } = await withMemoryExporter(async () => dataset.evaluate((s) => s))
-    expect(result.cases[0]?.assertions.Contains?.value).toBe(true)
-    expect(result.cases[0]?.assertions.Contains?.reason).toBeNull()
+    expect(result.cases[0]?.assertions['Contains']?.value).toBe(true)
+    expect(result.cases[0]?.assertions['Contains']?.reason).toBeNull()
   })
 
   it('supports addCase/addEvaluator, task helpers, progress callbacks and custom evaluator versions', async () => {
     class VersionedEvaluator extends Evaluator {
-      static evaluatorName = 'VersionedEvaluator'
-      evaluatorVersion = '2026-01-01'
+      static override evaluatorName = 'VersionedEvaluator'
+      override evaluatorVersion = '2026-01-01'
 
       evaluate(): Record<string, boolean | number | string> {
         return { label: 'ok', score: 0.5, versioned: true }
@@ -318,10 +318,10 @@ describe('offline evals — span attribute parity', () => {
     const casesByName = [...result.cases].sort((a, b) => a.name.localeCompare(b.name))
     expect(casesByName.map((c) => c.attributes)).toEqual([{ seen: 1 }, { seen: 2 }])
     expect(casesByName.map((c) => c.metrics)).toEqual([{ calls: 3 }, { calls: 3 }])
-    expect(casesByName[0]?.assertions.Equals?.value).toBe(true)
-    expect(casesByName[0]?.assertions.versioned?.evaluator_version).toBe('2026-01-01')
-    expect(casesByName[0]?.scores.score?.value).toBe(0.5)
-    expect(casesByName[0]?.labels.label?.value).toBe('ok')
+    expect(casesByName[0]?.assertions['Equals']?.value).toBe(true)
+    expect(casesByName[0]?.assertions['versioned']?.evaluator_version).toBe('2026-01-01')
+    expect(casesByName[0]?.scores['score']?.value).toBe(0.5)
+    expect(casesByName[0]?.labels['label']?.value).toBe('ok')
 
     setEvalAttribute('outside', true)
     incrementEvalMetric('outside', 1)
@@ -477,7 +477,7 @@ describe('offline evals — span attribute parity', () => {
 
   it('records evaluator failures as evaluator_failures without aborting the experiment', async () => {
     class FailingEvaluator extends Evaluator {
-      static evaluatorName = 'FailingEvaluator'
+      static override evaluatorName = 'FailingEvaluator'
       evaluate(): never {
         throw new Error('Evaluator error')
       }

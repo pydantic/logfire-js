@@ -5,7 +5,7 @@ import { registerEvaluator } from '../registry'
 
 /** True iff `output` is structurally equal to a fixed `value`. */
 export class Equals extends Evaluator {
-  static evaluatorName = 'Equals'
+  static override evaluatorName = 'Equals'
 
   readonly value: unknown
 
@@ -31,10 +31,10 @@ export class Equals extends Evaluator {
     return deepEqual(ctx.output, this.value)
   }
 
-  toJSON(): Record<string, unknown> {
+  override toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = { value: this.value }
     if (this.evaluationName !== undefined) {
-      out.evaluation_name = this.evaluationName
+      out['evaluation_name'] = this.evaluationName
     }
     return out
   }

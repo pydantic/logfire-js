@@ -9,7 +9,7 @@ export async function exportTailEventsToLogfire(
   events: TraceItem[],
   env: Record<string, string | undefined>
 ): Promise<Response | undefined> {
-  const token = env.LOGFIRE_TOKEN
+  const token = env['LOGFIRE_TOKEN']
   if (token === undefined || token === '') {
     console.warn('No token provided, not sending payload to Logfire')
     return undefined

@@ -113,7 +113,7 @@ describe('repeat option', () => {
 
   it('evaluators run on every repeated run', async () => {
     class AlwaysPass extends Evaluator<string, string> {
-      static evaluatorName = 'AlwaysPass'
+      static override evaluatorName = 'AlwaysPass'
       evaluate(): boolean {
         return true
       }
@@ -129,7 +129,7 @@ describe('repeat option', () => {
 
     expect(result.cases).toHaveLength(3)
     for (const c of result.cases) {
-      expect(c.assertions.AlwaysPass?.value).toBe(true)
+      expect(c.assertions['AlwaysPass']?.value).toBe(true)
     }
   })
 })
@@ -240,7 +240,7 @@ describe('averages()', () => {
 
     const result = averages(makeReport({ cases, failures }))
     expect(result).toBeDefined()
-    expect(result!.scores.score?.mean).toBeCloseTo(0.6)
+    expect(result!.scores['score']?.mean).toBeCloseTo(0.6)
   })
 
   it('falls back to flat averaging for single-run reports', () => {
@@ -251,7 +251,7 @@ describe('averages()', () => {
     const result = averages(makeReport({ cases }))
     expect(result).toBeDefined()
     expect(result!.name).toBe('Averages')
-    expect(result!.scores.s?.mean).toBeCloseTo(0.3)
+    expect(result!.scores['s']?.mean).toBeCloseTo(0.3)
   })
 
   it('returns undefined for an empty report', () => {
@@ -291,14 +291,14 @@ describe('averageFromAggregates()', () => {
 
     const result = averageFromAggregates('Averages', [agg1, agg2])
     expect(result.name).toBe('Averages')
-    expect(result.scores.s1?.mean).toBeCloseTo(0.5)
-    expect(result.scores.s2?.mean).toBeCloseTo(0.5)
-    expect(result.metrics.m1?.mean).toBeCloseTo(15)
+    expect(result.scores['s1']?.mean).toBeCloseTo(0.5)
+    expect(result.scores['s2']?.mean).toBeCloseTo(0.5)
+    expect(result.metrics['m1']?.mean).toBeCloseTo(15)
     expect(result.assertions).toBeCloseTo(0.75)
     expect(result.task_duration).toBeCloseTo(2)
     expect(result.total_duration).toBeCloseTo(3)
-    expect(result.labels.l1?.a).toBeCloseTo(0.375)
-    expect(result.labels.l1?.b).toBeCloseTo(0.625)
+    expect(result.labels['l1']?.['a']).toBeCloseTo(0.375)
+    expect(result.labels['l1']?.['b']).toBeCloseTo(0.625)
   })
 
   it('returns an empty aggregate for an empty input', () => {
@@ -332,12 +332,12 @@ describe('averageFromAggregates()', () => {
     })
 
     const result = averageFromAggregates('Averages', [agg1, agg2])
-    expect(result.scores.s1?.mean).toBeCloseTo(1)
-    expect(result.scores.s2?.mean).toBeCloseTo(2)
-    expect(result.metrics.m1?.mean).toBeCloseTo(10)
-    expect(result.metrics.m2?.mean).toBeCloseTo(20)
-    expect(result.labels.sentiment).toEqual({ negative: 0.2, positive: 0.8 })
-    expect(result.labels.topic).toEqual({ arts: 0.4, science: 0.6 })
+    expect(result.scores['s1']?.mean).toBeCloseTo(1)
+    expect(result.scores['s2']?.mean).toBeCloseTo(2)
+    expect(result.metrics['m1']?.mean).toBeCloseTo(10)
+    expect(result.metrics['m2']?.mean).toBeCloseTo(20)
+    expect(result.labels['sentiment']).toEqual({ negative: 0.2, positive: 0.8 })
+    expect(result.labels['topic']).toEqual({ arts: 0.4, science: 0.6 })
     expect(result.assertions).toBeCloseTo(1)
   })
 })

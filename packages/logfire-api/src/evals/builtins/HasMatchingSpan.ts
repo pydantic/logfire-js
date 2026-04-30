@@ -7,7 +7,7 @@ import type { SpanQuery } from '../spanTree'
 
 /** True iff a span matching `query` was emitted under the user's task. */
 export class HasMatchingSpan extends Evaluator {
-  static evaluatorName = 'HasMatchingSpan'
+  static override evaluatorName = 'HasMatchingSpan'
 
   readonly query: SpanQuery
 
@@ -33,10 +33,10 @@ export class HasMatchingSpan extends Evaluator {
     return ctx.spanTree.any(this.query)
   }
 
-  toJSON(): Record<string, unknown> {
+  override toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = { query: spanQueryToSnakeCase(this.query) }
     if (this.evaluationName !== undefined) {
-      out.evaluation_name = this.evaluationName
+      out['evaluation_name'] = this.evaluationName
     }
     return out
   }

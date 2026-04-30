@@ -9,7 +9,7 @@ import { registerEvaluator } from '../registry'
  * class names.
  */
 export class IsInstance extends Evaluator {
-  static evaluatorName = 'IsInstance'
+  static override evaluatorName = 'IsInstance'
 
   readonly typeName: string
 
@@ -57,10 +57,10 @@ export class IsInstance extends Evaluator {
     return { reason: `output is not instance of ${this.typeName}`, value: false }
   }
 
-  toJSON(): Record<string, unknown> {
+  override toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = { type_name: this.typeName }
     if (this.evaluationName !== undefined) {
-      out.evaluation_name = this.evaluationName
+      out['evaluation_name'] = this.evaluationName
     }
     return out
   }

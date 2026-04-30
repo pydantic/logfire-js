@@ -261,12 +261,12 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
         // Set after-evaluation attributes on the experiment span before it ends.
         const experimentMetadata: Record<string, unknown> = { n_cases: totalCases }
         if (repeat > 1) {
-          experimentMetadata.repeat = repeat
+          experimentMetadata['repeat'] = repeat
         }
         if (options.metadata !== undefined) {
-          experimentMetadata.metadata = options.metadata
+          experimentMetadata['metadata'] = options.metadata
         }
-        experimentMetadata.averages = computeAverages(experimentName, cases)
+        experimentMetadata['averages'] = computeAverages(experimentName, cases)
 
         const finalAttrs: Record<string, unknown> = { [EXPERIMENT_METADATA_KEY]: experimentMetadata }
         const passRate = computeAssertionPassRate(cases)

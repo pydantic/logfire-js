@@ -5,7 +5,7 @@ import { registerEvaluator } from '../registry'
 
 /** True iff the task ran in at most `seconds` seconds. */
 export class MaxDuration extends Evaluator {
-  static evaluatorName = 'MaxDuration'
+  static override evaluatorName = 'MaxDuration'
 
   readonly seconds: number
 
@@ -29,7 +29,7 @@ export class MaxDuration extends Evaluator {
     return ctx.duration <= this.seconds
   }
 
-  toJSON(): Record<string, unknown> {
+  override toJSON(): Record<string, unknown> {
     return { seconds: this.seconds }
   }
 }

@@ -102,7 +102,7 @@ function resolveScrubber(scrubbing: LogfireApiConfigOptions['scrubbing']) {
 }
 
 export function resolveSendToLogfire(env: Env, option: SendToLogfire, token: string | undefined): boolean {
-  const sendToLogfireConfig = option ?? env.LOGFIRE_SEND_TO_LOGFIRE ?? 'if-token-present'
+  const sendToLogfireConfig = option ?? env['LOGFIRE_SEND_TO_LOGFIRE'] ?? 'if-token-present'
 
   if (sendToLogfireConfig === 'if-token-present') {
     if (token !== undefined && token !== '') {
@@ -116,7 +116,7 @@ export function resolveSendToLogfire(env: Env, option: SendToLogfire, token: str
 }
 
 export function resolveBaseUrl(env: Env, passedUrl: string | undefined, token: string): string {
-  let url = passedUrl ?? env.LOGFIRE_BASE_URL ?? getBaseUrlFromToken(token)
+  let url = passedUrl ?? env['LOGFIRE_BASE_URL'] ?? getBaseUrlFromToken(token)
   if (url.endsWith('/')) {
     url = url.slice(0, -1)
   }
@@ -141,7 +141,7 @@ function getBaseUrlFromToken(token: string | undefined): string {
   if (token !== undefined && token !== '') {
     const match = PYDANTIC_LOGFIRE_TOKEN_PATTERN.exec(token)
     if (match) {
-      const region = match.groups?.region
+      const region = match.groups?.['region']
       if (region !== undefined && region in REGIONS) {
         regionKey = region
       }
