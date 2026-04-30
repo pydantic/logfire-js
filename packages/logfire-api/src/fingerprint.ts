@@ -92,7 +92,7 @@ function extractModuleName(filePath: string): string {
  * when code is edited, but the same logical error should produce the
  * same fingerprint.
  */
-export function canonicalizeError(error: Error, seen = new WeakSet<Error>()): string {
+export function canonicalizeError(error: Error, seen: WeakSet<Error> = new WeakSet<Error>()): string {
   if (seen.has(error)) {
     return '[circular]'
   }

@@ -78,7 +78,7 @@ function validateThresholdOptions(opts: ThresholdOptions): void {
   }
 }
 
-export function uniqueSortedThresholds(scores: readonly number[], n = Number.POSITIVE_INFINITY): number[] {
+export function uniqueSortedThresholds(scores: readonly number[], n: number = Number.POSITIVE_INFINITY): number[] {
   if (scores.length === 0) {
     return []
   }

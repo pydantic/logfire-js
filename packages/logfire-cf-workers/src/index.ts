@@ -26,8 +26,7 @@ import {
   warning,
 } from 'logfire'
 
-// Import all exports to construct default export
-import * as exportTailEventsExports from './exportTailEventsToLogfire'
+import { exportTailEventsToLogfire } from './exportTailEventsToLogfire'
 import { LogfireCloudflareConsoleSpanExporter } from './LogfireCloudflareConsoleSpanExporter'
 import { TailWorkerExporter } from './TailWorkerExporter'
 export * from './exportTailEventsToLogfire'
@@ -109,7 +108,7 @@ export function instrumentTail<T>(handler: T, config: TailConfigOptions): T {
 /**
  * Alias for `instrumentInProcess` to maintain compatibility with previous versions.
  */
-export const instrument = instrumentInProcess
+export const instrument: typeof instrumentInProcess = instrumentInProcess
 
 function postProcessAttributes(spans: ReadableSpan[]) {
   for (const span of spans) {
@@ -125,9 +124,34 @@ function postProcessAttributes(spans: ReadableSpan[]) {
   return spans
 }
 
-// Create default export by listing all exports explicitly
-export default {
-  ...exportTailEventsExports,
+const defaultExport: {
+  exportTailEventsToLogfire: typeof exportTailEventsToLogfire
+  Level: typeof Level
+  LogfireAttributeScrubber: typeof LogfireAttributeScrubber
+  NoopAttributeScrubber: typeof NoopAttributeScrubber
+  ULIDGenerator: typeof ULIDGenerator
+  configureLogfireApi: typeof configureLogfireApi
+  debug: typeof debug
+  error: typeof error
+  fatal: typeof fatal
+  getTailConfig: typeof getTailConfig
+  info: typeof info
+  instrument: typeof instrument
+  instrumentInProcess: typeof instrumentInProcess
+  instrumentTail: typeof instrumentTail
+  log: typeof log
+  logfireApiConfig: typeof logfireApiConfig
+  notice: typeof notice
+  reportError: typeof reportError
+  resolveBaseUrl: typeof resolveBaseUrl
+  resolveSendToLogfire: typeof resolveSendToLogfire
+  serializeAttributes: typeof serializeAttributes
+  span: typeof span
+  startSpan: typeof startSpan
+  trace: typeof trace
+  warning: typeof warning
+} = {
+  exportTailEventsToLogfire,
   configureLogfireApi,
   debug,
   error,
@@ -154,3 +178,5 @@ export default {
   ULIDGenerator,
   warning,
 }
+
+export default defaultExport

@@ -12,7 +12,7 @@ const copyCjsDeclarations = () => {
   }
 }
 
-export default defineConfig({
+const config: ReturnType<typeof defineConfig> = defineConfig({
   define: packageDefines,
   pack: {
     define: packageDefines,
@@ -37,3 +37,5 @@ export default defineConfig({
     },
   },
 })
+
+export default config

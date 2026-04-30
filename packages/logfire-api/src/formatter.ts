@@ -216,7 +216,7 @@ class ChunksFormatter {
 }
 
 // Create singleton instance
-export const chunksFormatter = new ChunksFormatter()
+export const chunksFormatter: ChunksFormatter = new ChunksFormatter()
 
 /**
  * Format a string with additional information about attributes and templates

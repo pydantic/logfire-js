@@ -22,8 +22,7 @@ import {
   warning,
 } from 'logfire'
 
-// Import all exports to construct default export
-import * as logfireConfigExports from './logfireConfig'
+import { configure, logfireConfig } from './logfireConfig'
 import { forceFlush, shutdown } from './sdk'
 
 export * from './logfireConfig'
@@ -31,9 +30,34 @@ export { forceFlush, shutdown } from './sdk'
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from 'logfire'
 
-// Create default export by listing all exports explicitly
-export default {
-  ...logfireConfigExports,
+const defaultExport: {
+  configure: typeof configure
+  logfireConfig: typeof logfireConfig
+  DiagLogLevel: typeof DiagLogLevel
+  Level: typeof Level
+  LogfireAttributeScrubber: typeof LogfireAttributeScrubber
+  NoopAttributeScrubber: typeof NoopAttributeScrubber
+  ULIDGenerator: typeof ULIDGenerator
+  configureLogfireApi: typeof configureLogfireApi
+  debug: typeof debug
+  error: typeof error
+  fatal: typeof fatal
+  forceFlush: typeof forceFlush
+  info: typeof info
+  log: typeof log
+  logfireApiConfig: typeof logfireApiConfig
+  notice: typeof notice
+  reportError: typeof reportError
+  resolveBaseUrl: typeof resolveBaseUrl
+  resolveSendToLogfire: typeof resolveSendToLogfire
+  serializeAttributes: typeof serializeAttributes
+  shutdown: typeof shutdown
+  span: typeof span
+  startSpan: typeof startSpan
+  trace: typeof trace
+  warning: typeof warning
+} = {
+  configure,
   configureLogfireApi,
   debug,
   DiagLogLevel,
@@ -44,6 +68,7 @@ export default {
   // Re-export all from logfire
   Level,
   log,
+  logfireConfig,
   logfireApiConfig,
   LogfireAttributeScrubber,
   NoopAttributeScrubber,
@@ -59,3 +84,5 @@ export default {
   ULIDGenerator,
   warning,
 }
+
+export default defaultExport

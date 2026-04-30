@@ -2,7 +2,7 @@ import type { Span } from '@opentelemetry/api'
 import { SpanStatusCode, context as TheContextAPI, trace as TheTraceAPI } from '@opentelemetry/api'
 import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 
-import * as AttributeScrubbingExports from './AttributeScrubber'
+import { LogfireAttributeScrubber, NoopAttributeScrubber, NoopScrubber } from './AttributeScrubber'
 import {
   ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY,
   ATTRIBUTES_LEVEL_KEY,
@@ -11,14 +11,12 @@ import {
   ATTRIBUTES_SPAN_TYPE_KEY,
   ATTRIBUTES_TAGS_KEY,
 } from './constants'
-import * as fingerprintExports from './fingerprint'
-import { computeFingerprint } from './fingerprint'
+import { canonicalizeError, computeFingerprint } from './fingerprint'
 import { logfireFormatWithExtras } from './formatter'
-import { logfireApiConfig, serializeAttributes } from './logfireApiConfig'
-import * as logfireApiConfigExports from './logfireApiConfig'
-import * as samplingExports from './sampling'
+import { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire, serializeAttributes } from './logfireApiConfig'
+import { SpanLevel, checkTraceIdRatio, levelOrDuration } from './sampling'
 import { TailSamplingProcessor } from './TailSamplingProcessor'
-import * as ULIDGeneratorExports from './ULIDGenerator'
+import { ULIDGenerator } from './ULIDGenerator'
 
 export * from './AttributeScrubber'
 export { canonicalizeError, computeFingerprint } from './fingerprint'
@@ -263,27 +261,62 @@ export function reportError(message: string, error: Error, extraAttributes: Reco
   span.end()
 }
 
-const defaultExport = {
-  ...AttributeScrubbingExports,
-  ...fingerprintExports,
-  ...samplingExports,
-  ...ULIDGeneratorExports,
-  ...logfireApiConfigExports,
-
-  serializeAttributes,
+const defaultExport: {
+  LogfireAttributeScrubber: typeof LogfireAttributeScrubber
+  NoopAttributeScrubber: typeof NoopAttributeScrubber
+  NoopScrubber: NoopAttributeScrubber
+  SpanLevel: typeof SpanLevel
+  TailSamplingProcessor: typeof TailSamplingProcessor
+  ULIDGenerator: typeof ULIDGenerator
+  canonicalizeError: typeof canonicalizeError
+  checkTraceIdRatio: typeof checkTraceIdRatio
+  configureLogfireApi: typeof configureLogfireApi
+  computeFingerprint: typeof computeFingerprint
+  debug: typeof debug
+  error: typeof error
+  fatal: typeof fatal
+  info: typeof info
+  levelOrDuration: typeof levelOrDuration
+  log: typeof log
+  logfireApiConfig: typeof logfireApiConfig
+  notice: typeof notice
+  reportError: typeof reportError
+  resolveBaseUrl: typeof resolveBaseUrl
+  resolveSendToLogfire: typeof resolveSendToLogfire
+  serializeAttributes: typeof serializeAttributes
+  span: typeof span
+  startSpan: typeof startSpan
+  trace: typeof trace
+  warning: typeof warning
+  Level: typeof Level
+} = {
+  LogfireAttributeScrubber,
+  NoopAttributeScrubber,
+  NoopScrubber,
+  SpanLevel,
   TailSamplingProcessor,
-  Level,
-  startSpan,
-  span,
-  log,
+  ULIDGenerator,
+  canonicalizeError,
+  checkTraceIdRatio,
+  configureLogfireApi,
+  computeFingerprint,
   debug,
-  info,
-  trace,
   error,
   fatal,
+  info,
+  levelOrDuration,
+  log,
+  logfireApiConfig,
   notice,
-  warning,
   reportError,
+  resolveBaseUrl,
+  resolveSendToLogfire,
+  serializeAttributes,
+  span,
+  startSpan,
+  trace,
+  warning,
+  Level,
 }
 
 export default defaultExport

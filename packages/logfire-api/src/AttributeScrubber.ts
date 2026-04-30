@@ -217,4 +217,4 @@ export class NoopAttributeScrubber implements BaseScrubber {
 /**
  * A singleton instance of NoopAttributeScrubber for convenience
  */
-export const NoopScrubber = new NoopAttributeScrubber()
+export const NoopScrubber: NoopAttributeScrubber = new NoopAttributeScrubber()

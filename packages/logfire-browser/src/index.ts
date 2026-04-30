@@ -225,8 +225,30 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   }
 }
 
-// Create default export by listing all exports explicitly
-export default {
+const defaultExport: {
+  DiagLogLevel: typeof DiagLogLevel
+  Level: typeof Level
+  LogfireAttributeScrubber: typeof LogfireAttributeScrubber
+  NoopAttributeScrubber: typeof NoopAttributeScrubber
+  ULIDGenerator: typeof ULIDGenerator
+  configure: typeof configure
+  configureLogfireApi: typeof configureLogfireApi
+  debug: typeof debug
+  error: typeof error
+  fatal: typeof fatal
+  info: typeof info
+  log: typeof log
+  logfireApiConfig: typeof logfireApiConfig
+  notice: typeof notice
+  reportError: typeof reportError
+  resolveBaseUrl: typeof resolveBaseUrl
+  resolveSendToLogfire: typeof resolveSendToLogfire
+  serializeAttributes: typeof serializeAttributes
+  span: typeof span
+  startSpan: typeof startSpan
+  trace: typeof trace
+  warning: typeof warning
+} = {
   configure,
   configureLogfireApi,
   debug,
@@ -251,3 +273,5 @@ export default {
   ULIDGenerator,
   warning,
 }
+
+export default defaultExport
