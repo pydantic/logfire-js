@@ -8,6 +8,7 @@
     "start": "node --experimental-strip-types --disable-warning=ExperimentalWarning index.ts",
     "start-and-throw-error": "TRIGGER_ERROR=true node --experimental-strip-types --disable-warning=ExperimentalWarning index.ts",
     "sampling": "node --experimental-strip-types --disable-warning=ExperimentalWarning sampling.ts",
+    "variables": "node --experimental-strip-types --disable-warning=ExperimentalWarning variables.ts",
     "evals": "node --experimental-strip-types --disable-warning=ExperimentalWarning evals.ts",
     "demo-evals": "node --experimental-strip-types --disable-warning=ExperimentalWarning demo_evals.ts",
     "demo-online-evals": "node --experimental-strip-types --disable-warning=ExperimentalWarning demo_online_evals.ts",
