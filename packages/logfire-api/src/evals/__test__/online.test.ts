@@ -569,6 +569,25 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     }
   })
 
+  it('does not inspect argument names for evaluator inputs when extractArgs is false', async () => {
+    const sinkPayloads: SinkPayload[] = []
+    const fn = withOnlineEvaluation(async (first: string, second: string) => `${first}${second}`, {
+      evaluators: [new AlwaysPass()],
+      extractArgs: false,
+      sink: (payload) => {
+        sinkPayloads.push(payload)
+      },
+      target: 'positional-target',
+    })
+
+    await withMemoryLogExporter(async () => {
+      await fn('a', 'b')
+      await waitForEvaluations()
+    })
+
+    expect(sinkPayloads[0]?.context.inputs).toEqual(['a', 'b'])
+  })
+
   it('event name is gen_ai.evaluation.result', async () => {
     const fn = withOnlineEvaluation(async () => 'x', { evaluators: [new AlwaysPass()], target: 't' })
     const { logs } = await withMemoryLogExporter(async () => {

@@ -499,6 +499,7 @@ function runWithParentSpanContext<R>(parentSpanRef: null | SpanReference, fn: ()
 }
 
 function getContextArgNames(fn: (...args: unknown[]) => unknown, extractArgs: WithOnlineOptions['extractArgs']): null | readonly string[] {
+  if (extractArgs === false) return null
   const names = Array.isArray(extractArgs) ? extractArgs : extractParamNames(fn)
   return names.length === 0 ? null : names
 }

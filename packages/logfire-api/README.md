@@ -30,4 +30,5 @@ evaluation, but not filesystem-backed dataset helpers.
 Serialized datasets use Python-compatible snake_case evaluator options and
 span queries. For online evaluation, JavaScript parameter-name extraction is
 best effort; use `extractArgs: ['argName']` when evaluator code needs stable
-`context.inputs` keys in bundled or minified builds.
+`context.inputs` keys in bundled or minified builds, or `extractArgs: false`
+to keep positional input values.

@@ -293,7 +293,7 @@ files, for example `predicted_from`, `expected_from`, and snake_case
 `SpanQuery` keys. Online evaluator `context.inputs` is built from JavaScript
 function parameter names when they can be inspected; pass
 `extractArgs: ['name', ...]` when bundled or minified code needs stable input
-names.
+names, or `extractArgs: false` to keep positional input values.
 
 ### Configuring the instrumentation
 
