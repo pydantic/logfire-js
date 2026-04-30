@@ -1,0 +1,2 @@
+vp run --filter "./packages/*" build
+vp run --filter "./packages/*" test

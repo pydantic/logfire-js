@@ -1,10 +1,12 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/require-await */
 import { context as ContextAPI, propagation, trace as TraceAPI } from '@opentelemetry/api'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vite-plus/test'
 
 import {
   ATTR_EVALUATOR_NAME,
+  Case,
   configureOnlineEvals,
+  Dataset,
   disableEvaluation,
   emitEvaluatorFailure,
   Equals,
@@ -29,7 +31,6 @@ import {
 } from '../../evals'
 // Ensure the dispatch-suppression hook holds up: an evaluator running inside
 // Dataset.evaluate must not also fire as an online eval.
-import { Case, Dataset } from '../../evals'
 import { withMemoryLogExporter } from './withMemoryLogExporter'
 
 class AlwaysPass extends Evaluator {

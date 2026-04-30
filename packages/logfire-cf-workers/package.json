@@ -44,13 +44,14 @@
     }
   },
   "scripts": {
-    "dev": "vite build",
-    "build": "vite build",
-    "lint": "eslint",
-    "preview": "vite preview",
+    "dev": "vp pack --watch",
+    "build": "vp pack",
+    "lint": "vp lint",
+    "preview": "vp preview",
     "typecheck": "tsc",
     "prepack": "cp ../../LICENSE .",
-    "postpack": "rm LICENSE"
+    "postpack": "rm LICENSE",
+    "test": "vp test --passWithNoTests"
   },
   "dependencies": {
     "@pydantic/otel-cf-workers": "^1.0.0-rc.55",

@@ -2,7 +2,7 @@
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 
 import { trace as TraceAPI } from '@opentelemetry/api'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vite-plus/test'
 
 import { Case, Dataset, HasMatchingSpan, SpanTree, SpanTreeRecordingError } from '../../evals'
 import { withMemoryExporter } from './withMemoryExporter'

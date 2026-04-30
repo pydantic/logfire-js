@@ -2,7 +2,7 @@
 import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
 import { ROOT_CONTEXT } from '@opentelemetry/api'
-import { describe, expect, test, vi } from 'vitest'
+import { describe, expect, test, vi } from 'vite-plus/test'
 
 import { ATTRIBUTES_LEVEL_KEY } from './constants'
 import { checkTraceIdRatio, levelOrDuration, SpanLevel } from './sampling'

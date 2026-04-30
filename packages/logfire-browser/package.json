@@ -43,14 +43,14 @@
     }
   },
   "scripts": {
-    "dev": "vite build",
-    "build": "vite build",
-    "lint": "eslint",
-    "preview": "vite preview",
+    "dev": "vp pack --watch",
+    "build": "vp pack",
+    "lint": "vp lint",
+    "preview": "vp preview",
     "typecheck": "tsc",
     "prepack": "cp ../../LICENSE .",
     "postpack": "rm LICENSE",
-    "test": "vitest run --passWithNoTests"
+    "test": "vp test --passWithNoTests"
   },
   "dependencies": {
     "@opentelemetry/api": "catalog:",
