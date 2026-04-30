@@ -1,3 +1,6 @@
+import type { LogRecordProcessor } from '@opentelemetry/sdk-logs'
+import type { SpanProcessor } from '@opentelemetry/sdk-trace-base'
+
 import { diag, DiagConsoleLogger, metrics } from '@opentelemetry/api'
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node'
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
@@ -20,16 +23,69 @@ import {
   ATTR_VCS_REPOSITORY_URL_FULL,
 } from '@opentelemetry/semantic-conventions/incubating'
 import { reportError, TailSamplingProcessor, ULIDGenerator } from 'logfire'
+import { getEvalsSpanProcessor } from 'logfire/evals'
 
 import { logfireConfig } from './logfireConfig'
+import { logfireLogRecordProcessor } from './logsExporter'
 import { periodicMetricReader } from './metricExporter'
 import { logfireSpanProcessor } from './traceExporter'
 import { removeEmptyKeys } from './utils'
+
+let activeSdk: NodeSDK | undefined
+let activeLogProcessor: LogRecordProcessor | undefined
+let activeProcessor: SpanProcessor | undefined
+let activeProcessListeners:
+  | undefined
+  | {
+      beforeExit: () => void
+      SIGTERM: () => void
+      uncaughtExceptionMonitor: (error: Error) => void
+      unhandledRejection: (reason: unknown) => void
+    }
+
+function removeActiveProcessListeners(): void {
+  if (activeProcessListeners === undefined) return
+  process.removeListener('beforeExit', activeProcessListeners.beforeExit)
+  process.removeListener('SIGTERM', activeProcessListeners.SIGTERM)
+  process.removeListener('uncaughtExceptionMonitor', activeProcessListeners.uncaughtExceptionMonitor)
+  process.removeListener('unhandledRejection', activeProcessListeners.unhandledRejection)
+  activeProcessListeners = undefined
+}
+
+/**
+ * Force-flush all pending spans to the configured exporter. Mirrors Python's
+ * `logfire.force_flush()`. Call this before process exit when the default
+ * `beforeExit` cleanup might not have time to finish (e.g. short scripts that
+ * top-level-await once and exit).
+ */
+export async function forceFlush(): Promise<void> {
+  await Promise.all([activeProcessor?.forceFlush(), activeLogProcessor?.forceFlush()])
+}
+
+/**
+ * Shut down the OTel SDK, flushing pending spans and metrics. Idempotent —
+ * subsequent calls are no-ops. Mirrors Python's `logfire.shutdown()`.
+ */
+export async function shutdown(): Promise<void> {
+  const sdk = activeSdk
+  if (sdk === undefined) return
+  removeActiveProcessListeners()
+  activeSdk = undefined
+  activeLogProcessor = undefined
+  activeProcessor = undefined
+  await sdk.shutdown()
+}
 
 const LOGFIRE_ATTRIBUTES_NAMESPACE = 'logfire'
 const RESOURCE_ATTRIBUTES_CODE_ROOT_PATH = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.code.root_path`
 
 export function start() {
+  if (activeSdk !== undefined) {
+    shutdown().catch((e: unknown) => {
+      diag.warn('logfire SDK: error shutting down previous SDK', e)
+    })
+  }
+
   if (logfireConfig.diagLogLevel !== undefined) {
     diag.setLogger(new DiagConsoleLogger(), logfireConfig.diagLogLevel)
   }
@@ -55,24 +111,29 @@ export function start() {
 
   const propagator = logfireConfig.distributedTracing ? new W3CTraceContextPropagator() : undefined
 
-  let processor: import('@opentelemetry/sdk-trace-base').SpanProcessor = logfireSpanProcessor(logfireConfig.console)
+  let processor: SpanProcessor = logfireSpanProcessor(logfireConfig.console)
   if (logfireConfig.sampling?.tail) {
     processor = new TailSamplingProcessor(processor, logfireConfig.sampling.tail)
   }
+  activeProcessor = processor
 
   const headRate = logfireConfig.sampling?.head
   const sampler =
     headRate !== undefined && headRate < 1.0 ? new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(headRate) }) : undefined
+
+  const logProcessor = logfireLogRecordProcessor()
+  activeLogProcessor = logProcessor ?? undefined
 
   const sdk = new NodeSDK({
     autoDetectResources: false,
     contextManager,
     idGenerator: new ULIDGenerator(),
     instrumentations: [getNodeAutoInstrumentations(logfireConfig.nodeAutoInstrumentations), ...logfireConfig.instrumentations],
+    ...(logProcessor ? { logRecordProcessors: [logProcessor] } : {}),
     metricReader: logfireConfig.metrics === false ? undefined : periodicMetricReader(),
     resource,
     ...(sampler ? { sampler } : {}),
-    spanProcessors: [processor, ...logfireConfig.additionalSpanProcessors],
+    spanProcessors: [processor, getEvalsSpanProcessor(), ...logfireConfig.additionalSpanProcessors],
     textMapPropagator: propagator,
   })
 
@@ -81,60 +142,61 @@ export function start() {
     metrics.setGlobalMeterProvider(meterProvider)
   }
 
+  activeSdk = sdk
   sdk.start()
   diag.info('logfire: starting')
 
-  process.on('uncaughtExceptionMonitor', (error: Error) => {
-    diag.info('logfire: caught uncaught exception', error.message)
-    try {
-      reportError(error.message, error, {})
-    } catch (err: unknown) {
-      diag.warn('logfire: failed to report error', err)
-    }
-    // eslint-disable-next-line no-void
-    void processor.forceFlush()
-  })
-
-  process.on('unhandledRejection', (reason: Error) => {
-    diag.error('unhandled rejection', reason)
-
-    if (reason instanceof Error) {
+  let _shutdown = false
+  const listeners = {
+    beforeExit: () => {
+      if (_shutdown) return
+      _shutdown = true
+      shutdown()
+        .catch((e: unknown) => {
+          diag.warn('logfire SDK: error shutting down', e)
+        })
+        .finally(() => {
+          diag.info('logfire SDK: shutting down')
+        })
+    },
+    SIGTERM: () => {
+      shutdown()
+        .catch((e: unknown) => {
+          diag.warn('logfire SDK: error shutting down', e)
+        })
+        .finally(() => {
+          diag.info('logfire SDK: shutting down')
+        })
+    },
+    uncaughtExceptionMonitor: (error: Error) => {
+      diag.info('logfire: caught uncaught exception', error.message)
       try {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-        reportError(reason.message ?? 'error', reason, {})
+        reportError(error.message, error, {})
       } catch (err: unknown) {
         diag.warn('logfire: failed to report error', err)
       }
-    }
-    // eslint-disable-next-line no-void
-    void processor.forceFlush()
-  })
+      // eslint-disable-next-line no-void
+      void processor.forceFlush()
+    },
+    unhandledRejection: (reason: unknown) => {
+      diag.error('unhandled rejection', reason)
 
-  // gracefully shut down the SDK on process exit
-  process.on('SIGTERM', () => {
-    sdk
-      .shutdown()
-      .catch((e: unknown) => {
-        diag.warn('logfire SDK: error shutting down', e)
-      })
-      .finally(() => {
-        diag.info('logfire SDK: shutting down')
-      })
-  })
-
-  let _shutdown = false
-
-  // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  process.on('beforeExit', async () => {
-    if (!_shutdown) {
-      try {
-        await sdk.shutdown()
-      } catch (e) {
-        diag.warn('logfire SDK: error shutting down', e)
-      } finally {
-        _shutdown = true
-        diag.info('logfire SDK: shutting down')
+      if (reason instanceof Error) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          reportError(reason.message ?? 'error', reason, {})
+        } catch (err: unknown) {
+          diag.warn('logfire: failed to report error', err)
+        }
       }
-    }
-  })
+      // eslint-disable-next-line no-void
+      void processor.forceFlush()
+    },
+  }
+  activeProcessListeners = listeners
+
+  process.on('beforeExit', listeners.beforeExit)
+  process.on('SIGTERM', listeners.SIGTERM)
+  process.on('uncaughtExceptionMonitor', listeners.uncaughtExceptionMonitor)
+  process.on('unhandledRejection', listeners.unhandledRejection)
 }

@@ -56,6 +56,56 @@ logfire.info(
 Run the script with `node hello.js`, and you should see the span being logged in
 the live view of your Logfire project.
 
+## Evaluations
+
+`logfire/evals` provides offline + online evaluation primitives that emit OTel
+spans / log events compatible with the Logfire Evaluations UI. The wire format
+matches the Python `pydantic-evals` package, so dataset YAML / JSON files
+round-trip across the two languages. Add `logfire` as a direct dependency in
+projects that import this subpath.
+
+```ts
+import * as logfire from '@pydantic/logfire-node'
+import { Case, Dataset, Equals, EqualsExpected, withOnlineEvaluation } from 'logfire/evals'
+
+logfire.configure({ serviceName: 'sentiment-classifier' })
+
+async function classify({ text }: { text: string }): Promise<string> {
+  return text.toLowerCase().includes('love') ? 'POSITIVE' : 'NEUTRAL'
+}
+
+// Offline — runs your task against a labeled dataset and emits an experiment span.
+const dataset = new Dataset<{ text: string }, string>({
+  cases: [new Case({ inputs: { text: 'I love this!' }, expectedOutput: 'POSITIVE', name: 'a' })],
+  evaluators: [new EqualsExpected()],
+  name: 'sentiment-classifier',
+})
+const report = await dataset.evaluate(classify)
+
+// Online — wraps a function so each call also dispatches evaluators in the background.
+const monitored = withOnlineEvaluation(classify, {
+  evaluators: [new Equals({ value: 'POSITIVE' })],
+  target: 'sentiment-classifier',
+})
+await monitored({ text: 'I love this!' })
+```
+
+Runtime notes:
+
+- `Dataset.toFile` / `Dataset.fromFile` work in Node, Bun, and Deno. Browser and
+  Cloudflare Worker runtimes can use in-memory datasets and online evaluation,
+  but not filesystem-backed dataset helpers.
+- Browser offline evaluations should use `maxConcurrency: 1`; without
+  `AsyncLocalStorage`, concurrent case runs cannot isolate
+  `setEvalAttribute` / `incrementEvalMetric` state.
+- Manual non-Node smoke checks live under `scripts/runtime-smoke`:
+
+```sh
+pnpm build
+deno run --config scripts/runtime-smoke/deno.json --allow-read --allow-write scripts/runtime-smoke/evals-deno.ts
+bun run scripts/runtime-smoke/evals-bun.ts
+```
+
 ## Contributing
 
 See [CONTRIBUTING.md](https://github.com/pydantic/logfire-js/blob/main/CONTRIBUTING.md) for development instructions.

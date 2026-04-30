@@ -259,6 +259,42 @@ Optionally, you can use the Logfire API package for creating manual spans.
 Install the `logfire` NPM package and call the respective methods
 from your code.
 
+## Evaluations
+
+The `logfire/evals` subpath provides offline datasets and online evaluation
+wrappers that emit Logfire-compatible OpenTelemetry spans and log events. Add
+`logfire` as a direct dependency in projects that import this subpath.
+
+```ts
+import { Case, Dataset, Equals, EqualsExpected, withOnlineEvaluation } from 'logfire/evals'
+
+const dataset = new Dataset<{ text: string }, string>({
+  cases: [new Case({ expectedOutput: 'HELLO', inputs: { text: 'hello' }, name: 'hello' })],
+  evaluators: [new EqualsExpected()],
+  name: 'uppercase',
+})
+
+await dataset.evaluate(({ text }) => text.toUpperCase())
+
+const monitored = withOnlineEvaluation(async (text: string) => text.toUpperCase(), {
+  evaluators: [new Equals({ value: 'HELLO' })],
+  target: 'uppercase',
+})
+await monitored('hello')
+```
+
+Dataset file helpers are available in Node, Bun, and Deno. Browser and
+Cloudflare Worker usage is limited to in-memory datasets and online evaluation;
+browser offline runs should keep `maxConcurrency: 1` because there is no
+`AsyncLocalStorage` equivalent.
+
+Dataset YAML/JSON uses the Python `pydantic-evals` field names for portable
+files, for example `predicted_from`, `expected_from`, and snake_case
+`SpanQuery` keys. Online evaluator `context.inputs` is built from JavaScript
+function parameter names when they can be inspected; pass
+`extractArgs: ['name', ...]` when bundled or minified code needs stable input
+names, or `extractArgs: false` to keep positional input values.
+
 ### Configuring the instrumentation
 
 The `logfire.configure` function accepts a set of configuration options that
