@@ -21,9 +21,15 @@ interface MaybeWorkers {
 
 export function detectRuntime(): RuntimeName {
   const g = globalThis as MaybeBun & MaybeDeno & MaybeProcess & MaybeWorkers
-  if (g.Bun !== undefined) return 'bun'
-  if (g.Deno !== undefined && typeof g.Deno.readTextFile === 'function') return 'deno'
-  if (g.process?.versions?.node !== undefined) return 'node'
+  if (g.Bun !== undefined) {
+    return 'bun'
+  }
+  if (g.Deno !== undefined && typeof g.Deno.readTextFile === 'function') {
+    return 'deno'
+  }
+  if (g.process?.versions?.node !== undefined) {
+    return 'node'
+  }
   // CF Workers expose a navigator.userAgent of 'Cloudflare-Workers' and have
   // no `process`. This must come before the generic browser check.
   if (typeof g.navigator?.userAgent === 'string' && g.navigator.userAgent.toLowerCase().includes('cloudflare')) {

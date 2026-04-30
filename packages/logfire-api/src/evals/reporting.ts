@@ -83,10 +83,14 @@ export function computeAssertionPassRate(cases: readonly ReportCase[]): null | n
   for (const c of cases) {
     for (const a of Object.values(c.assertions)) {
       total += 1
-      if (a.value === true) passed += 1
+      if (a.value === true) {
+        passed += 1
+      }
     }
   }
-  if (total === 0) return null
+  if (total === 0) {
+    return null
+  }
   return passed / total
 }
 
@@ -123,7 +127,9 @@ export function computeAverages(name: string, cases: readonly ReportCase[]): Rep
     }
     for (const a of Object.values(c.assertions)) {
       assertionsTotal += 1
-      if (a.value === true) assertionsPassed += 1
+      if (a.value === true) {
+        assertionsPassed += 1
+      }
     }
     taskDurationSum += c.task_duration
     totalDurationSum += c.total_duration
@@ -168,7 +174,9 @@ export function caseGroups<Inputs = unknown, Output = unknown, Metadata = unknow
 ): ReportCaseGroup<Inputs, Output, Metadata>[] | undefined {
   const hasSource =
     report.cases.some((c) => c.source_case_name !== undefined) || report.failures.some((f) => f.source_case_name !== undefined)
-  if (!hasSource) return undefined
+  if (!hasSource) {
+    return undefined
+  }
 
   const groups = new Map<
     string,
@@ -182,23 +190,34 @@ export function caseGroups<Inputs = unknown, Output = unknown, Metadata = unknow
     }
     return g
   }
-  for (const c of report.cases) ensure(c.source_case_name ?? c.name).runs.push(c)
-  for (const f of report.failures) ensure(f.source_case_name ?? f.name).failures.push(f)
+  for (const c of report.cases) {
+    ensure(c.source_case_name ?? c.name).runs.push(c)
+  }
+  for (const f of report.failures) {
+    ensure(f.source_case_name ?? f.name).failures.push(f)
+  }
 
   const result: ReportCaseGroup<Inputs, Output, Metadata>[] = []
   for (const [name, { failures, runs }] of groups) {
     // ensure() only inserts a group when a case or failure is added, so at least one of the two arrays is non-empty.
     const first = runs[0] ?? failures[0]
-    if (first === undefined) continue
-    result.push({
-      expected_output: first.expected_output,
+    if (first === undefined) {
+      continue
+    }
+    const group: ReportCaseGroup<Inputs, Output, Metadata> = {
       failures,
       inputs: first.inputs,
-      metadata: first.metadata,
       name,
       runs,
       summary: computeAverages('Averages', runs),
-    })
+    }
+    if (first.expected_output !== undefined) {
+      group.expected_output = first.expected_output
+    }
+    if (first.metadata !== undefined) {
+      group.metadata = first.metadata
+    }
+    result.push(group)
   }
   return result
 }
@@ -235,20 +254,28 @@ export function averageFromAggregates(name: string, aggregates: readonly ReportC
 
   const avgLabels: Record<string, Record<string, number>> = {}
   const labelKeys = new Set<string>()
-  for (const a of aggregates) for (const k of Object.keys(a.labels)) labelKeys.add(k)
+  for (const a of aggregates) {
+    for (const k of Object.keys(a.labels)) {
+      labelKeys.add(k)
+    }
+  }
   for (const key of labelKeys) {
     const combined: Record<string, number> = {}
     let n = 0
     for (const a of aggregates) {
       const dist = a.labels[key]
-      if (dist === undefined) continue
+      if (dist === undefined) {
+        continue
+      }
       n += 1
       for (const [labelVal, freq] of Object.entries(dist)) {
         combined[labelVal] = (combined[labelVal] ?? 0) + freq
       }
     }
     const out: Record<string, number> = {}
-    for (const [k, v] of Object.entries(combined)) out[k] = v / n
+    for (const [k, v] of Object.entries(combined)) {
+      out[k] = v / n
+    }
     avgLabels[key] = out
   }
 
@@ -283,9 +310,13 @@ export function averages<Inputs = unknown, Output = unknown, Metadata = unknown>
   const groups = caseGroups(report)
   if (groups !== undefined) {
     const nonEmpty = groups.filter((g) => g.runs.length > 0).map((g) => g.summary)
-    if (nonEmpty.length === 0) return undefined
+    if (nonEmpty.length === 0) {
+      return undefined
+    }
     return averageFromAggregates('Averages', nonEmpty)
   }
-  if (report.cases.length > 0) return computeAverages('Averages', report.cases)
+  if (report.cases.length > 0) {
+    return computeAverages('Averages', report.cases)
+  }
   return undefined
 }

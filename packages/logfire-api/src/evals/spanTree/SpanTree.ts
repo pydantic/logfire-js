@@ -33,7 +33,10 @@ export class SpanNode {
     this.name = span.name
     this.spanId = span.spanContext().spanId
     this.traceId = span.spanContext().traceId
-    this.parentSpanId = span.parentSpanContext?.spanId
+    const parentSpanId = span.parentSpanContext?.spanId
+    if (parentSpanId !== undefined) {
+      this.parentSpanId = parentSpanId
+    }
     this.startTimeNs = nsFromHrTime(span.startTime)
     this.endTimeNs = nsFromHrTime(span.endTime)
     this.durationMs = (this.endTimeNs - this.startTimeNs) / 1_000_000
@@ -127,78 +130,126 @@ function matchesQuery(node: SpanNode, q: SpanQuery): boolean {
     return or.some((sub) => matchesQuery(node, sub))
   }
   const not = queryValue(q, 'not_', 'not_') as SpanQuery | undefined
-  if (not !== undefined && matchesQuery(node, not)) return false
+  if (not !== undefined && matchesQuery(node, not)) {
+    return false
+  }
   const and = queryValue(q, 'and_', 'and_') as SpanQuery[] | undefined
-  if (and !== undefined && !and.every((sub) => matchesQuery(node, sub))) return false
+  if (and !== undefined && !and.every((sub) => matchesQuery(node, sub))) {
+    return false
+  }
 
   const nameEquals = queryValue(q, 'name_equals', 'nameEquals') as string | undefined
   const nameContains = queryValue(q, 'name_contains', 'nameContains') as string | undefined
   const nameMatchesRegex = queryValue(q, 'name_matches_regex', 'nameMatchesRegex') as string | undefined
-  if (nameEquals !== undefined && node.name !== nameEquals) return false
-  if (nameContains !== undefined && !node.name.includes(nameContains)) return false
+  if (nameEquals !== undefined && node.name !== nameEquals) {
+    return false
+  }
+  if (nameContains !== undefined && !node.name.includes(nameContains)) {
+    return false
+  }
   if (nameMatchesRegex !== undefined) {
     const match = new RegExp(nameMatchesRegex).exec(node.name)
-    if (match?.index !== 0) return false
+    if (match?.index !== 0) {
+      return false
+    }
   }
 
   const durationSec = node.durationMs / 1000
   const minDuration = queryValue(q, 'min_duration', 'minDuration') as number | undefined
   const maxDuration = queryValue(q, 'max_duration', 'maxDuration') as number | undefined
-  if (minDuration !== undefined && durationSec < minDuration) return false
-  if (maxDuration !== undefined && durationSec > maxDuration) return false
+  if (minDuration !== undefined && durationSec < minDuration) {
+    return false
+  }
+  if (maxDuration !== undefined && durationSec > maxDuration) {
+    return false
+  }
 
   const hasAttributes = queryValue(q, 'has_attributes', 'hasAttributes') as Record<string, unknown> | undefined
   if (hasAttributes !== undefined) {
     for (const [k, v] of Object.entries(hasAttributes)) {
-      if (node.attributes[k] !== v) return false
+      if (node.attributes[k] !== v) {
+        return false
+      }
     }
   }
   const hasAttributeKeys = queryValue(q, 'has_attribute_keys', 'hasAttributeKeys') as string[] | undefined
   if (hasAttributeKeys !== undefined) {
     for (const k of hasAttributeKeys) {
-      if (!(k in node.attributes)) return false
+      if (!(k in node.attributes)) {
+        return false
+      }
     }
   }
   const minChildCount = queryValue(q, 'min_child_count', 'minChildCount') as number | undefined
   const maxChildCount = queryValue(q, 'max_child_count', 'maxChildCount') as number | undefined
-  if (minChildCount !== undefined && node.children.length < minChildCount) return false
-  if (maxChildCount !== undefined && node.children.length > maxChildCount) return false
+  if (minChildCount !== undefined && node.children.length < minChildCount) {
+    return false
+  }
+  if (maxChildCount !== undefined && node.children.length > maxChildCount) {
+    return false
+  }
 
   const someChildHas = queryValue(q, 'some_child_has', 'someChildHas') as SpanQuery | undefined
   const allChildrenHave = queryValue(q, 'all_children_have', 'allChildrenHave') as SpanQuery | undefined
   const noChildHas = queryValue(q, 'no_child_has', 'noChildHas') as SpanQuery | undefined
-  if (someChildHas !== undefined && !node.children.some((c) => matchesQuery(c, someChildHas))) return false
-  if (allChildrenHave !== undefined && !node.children.every((c) => matchesQuery(c, allChildrenHave))) return false
-  if (noChildHas !== undefined && node.children.some((c) => matchesQuery(c, noChildHas))) return false
+  if (someChildHas !== undefined && !node.children.some((c) => matchesQuery(c, someChildHas))) {
+    return false
+  }
+  if (allChildrenHave !== undefined && !node.children.every((c) => matchesQuery(c, allChildrenHave))) {
+    return false
+  }
+  if (noChildHas !== undefined && node.children.some((c) => matchesQuery(c, noChildHas))) {
+    return false
+  }
 
   const descendants = Array.from(node.descendants())
   const minDescendantCount = queryValue(q, 'min_descendant_count', 'minDescendantCount') as number | undefined
   const maxDescendantCount = queryValue(q, 'max_descendant_count', 'maxDescendantCount') as number | undefined
-  if (minDescendantCount !== undefined && descendants.length < minDescendantCount) return false
-  if (maxDescendantCount !== undefined && descendants.length > maxDescendantCount) return false
+  if (minDescendantCount !== undefined && descendants.length < minDescendantCount) {
+    return false
+  }
+  if (maxDescendantCount !== undefined && descendants.length > maxDescendantCount) {
+    return false
+  }
 
   const stopRecursingWhen = queryValue(q, 'stop_recursing_when', 'stopRecursingWhen') as SpanQuery | undefined
   const prunedDescendants = stopRecursingWhen === undefined ? descendants : findDescendants(node, stopRecursingWhen)
   const someDescendantHas = queryValue(q, 'some_descendant_has', 'someDescendantHas') as SpanQuery | undefined
   const allDescendantsHave = queryValue(q, 'all_descendants_have', 'allDescendantsHave') as SpanQuery | undefined
   const noDescendantHas = queryValue(q, 'no_descendant_has', 'noDescendantHas') as SpanQuery | undefined
-  if (someDescendantHas !== undefined && !prunedDescendants.some((d) => matchesQuery(d, someDescendantHas))) return false
-  if (allDescendantsHave !== undefined && !prunedDescendants.every((d) => matchesQuery(d, allDescendantsHave))) return false
-  if (noDescendantHas !== undefined && prunedDescendants.some((d) => matchesQuery(d, noDescendantHas))) return false
+  if (someDescendantHas !== undefined && !prunedDescendants.some((d) => matchesQuery(d, someDescendantHas))) {
+    return false
+  }
+  if (allDescendantsHave !== undefined && !prunedDescendants.every((d) => matchesQuery(d, allDescendantsHave))) {
+    return false
+  }
+  if (noDescendantHas !== undefined && prunedDescendants.some((d) => matchesQuery(d, noDescendantHas))) {
+    return false
+  }
 
   const ancestors = Array.from(node.ancestors())
   const minDepth = queryValue(q, 'min_depth', 'minDepth') as number | undefined
   const maxDepth = queryValue(q, 'max_depth', 'maxDepth') as number | undefined
-  if (minDepth !== undefined && ancestors.length < minDepth) return false
-  if (maxDepth !== undefined && ancestors.length > maxDepth) return false
+  if (minDepth !== undefined && ancestors.length < minDepth) {
+    return false
+  }
+  if (maxDepth !== undefined && ancestors.length > maxDepth) {
+    return false
+  }
 
   const prunedAncestors = stopRecursingWhen === undefined ? ancestors : findAncestors(node, stopRecursingWhen)
   const someAncestorHas = queryValue(q, 'some_ancestor_has', 'someAncestorHas') as SpanQuery | undefined
   const allAncestorsHave = queryValue(q, 'all_ancestors_have', 'allAncestorsHave') as SpanQuery | undefined
   const noAncestorHas = queryValue(q, 'no_ancestor_has', 'noAncestorHas') as SpanQuery | undefined
-  if (someAncestorHas !== undefined && !prunedAncestors.some((a) => matchesQuery(a, someAncestorHas))) return false
-  if (allAncestorsHave !== undefined && !prunedAncestors.every((a) => matchesQuery(a, allAncestorsHave))) return false
-  if (noAncestorHas !== undefined && prunedAncestors.some((a) => matchesQuery(a, noAncestorHas))) return false
+  if (someAncestorHas !== undefined && !prunedAncestors.some((a) => matchesQuery(a, someAncestorHas))) {
+    return false
+  }
+  if (allAncestorsHave !== undefined && !prunedAncestors.every((a) => matchesQuery(a, allAncestorsHave))) {
+    return false
+  }
+  if (noAncestorHas !== undefined && prunedAncestors.some((a) => matchesQuery(a, noAncestorHas))) {
+    return false
+  }
   return true
 }
 
@@ -247,7 +298,9 @@ const RECURSIVE_QUERY_KEYS = new Set([
 export function spanQueryToSnakeCase(query: SpanQuery): SpanQuery {
   const out: Record<string, unknown> = {}
   for (const [rawKey, rawValue] of Object.entries(query as Record<string, unknown>)) {
-    if (rawValue === undefined) continue
+    if (rawValue === undefined) {
+      continue
+    }
     const key = QUERY_KEY_MAP[rawKey] ?? rawKey
     if (RECURSIVE_QUERY_KEYS.has(key)) {
       out[key] = Array.isArray(rawValue)
@@ -276,7 +329,9 @@ function findDescendants(node: SpanNode, stopRecursingWhen: SpanQuery): SpanNode
   const visit = (children: readonly SpanNode[]): void => {
     for (const child of children) {
       out.push(child)
-      if (!matchesQuery(child, stopRecursingWhen)) visit(child.children)
+      if (!matchesQuery(child, stopRecursingWhen)) {
+        visit(child.children)
+      }
     }
   }
   visit(node.children)
@@ -288,7 +343,9 @@ function findAncestors(node: SpanNode, stopRecursingWhen: SpanQuery): SpanNode[]
   let current = node.parent
   while (current !== null) {
     out.push(current)
-    if (matchesQuery(current, stopRecursingWhen)) break
+    if (matchesQuery(current, stopRecursingWhen)) {
+      break
+    }
     current = current.parent
   }
   return out
@@ -327,7 +384,9 @@ export class SpanTree {
     // sort siblings by start time so traversal is deterministic
     const sortRecursive = (nodes: SpanNode[]): void => {
       nodes.sort((a, b) => a.startTimeNs - b.startTimeNs)
-      for (const n of nodes) sortRecursive(n.children)
+      for (const n of nodes) {
+        sortRecursive(n.children)
+      }
     }
     sortRecursive(roots)
     return new SpanTree(roots)
@@ -346,14 +405,18 @@ export class SpanTree {
 
   /** Throws if span-tree recording wasn't available. Mirrors Python's `span_tree` property. */
   ensureAvailable(): void {
-    if (this.recordingError !== null) throw this.recordingError
+    if (this.recordingError !== null) {
+      throw this.recordingError
+    }
   }
 
   find(query: SpanQuery): SpanNode[] {
     this.ensureAvailable()
     const results: SpanNode[] = []
     for (const node of this.all()) {
-      if (matchesQuery(node, query)) results.push(node)
+      if (matchesQuery(node, query)) {
+        results.push(node)
+      }
     }
     return results
   }
@@ -361,7 +424,9 @@ export class SpanTree {
   first(query: SpanQuery): null | SpanNode {
     this.ensureAvailable()
     for (const node of this.all()) {
-      if (matchesQuery(node, query)) return node
+      if (matchesQuery(node, query)) {
+        return node
+      }
     }
     return null
   }

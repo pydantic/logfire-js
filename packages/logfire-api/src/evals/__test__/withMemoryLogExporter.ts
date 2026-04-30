@@ -9,6 +9,7 @@ import { context as ContextAPI, trace as TraceAPI } from '@opentelemetry/api'
 import { logs as LogsAPI } from '@opentelemetry/api-logs'
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
 import { InMemoryLogRecordExporter, LoggerProvider, SimpleLogRecordProcessor } from '@opentelemetry/sdk-logs'
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 
 import { getEvalsSpanProcessor } from '../spanTree'
@@ -18,7 +19,7 @@ let installedContextManager: AsyncLocalStorageContextManager | null = null
 export interface WithMemoryLogExporterResult<R> {
   logs: ReadableLogRecord[]
   result: R
-  spans: import('@opentelemetry/sdk-trace-base').ReadableSpan[]
+  spans: ReadableSpan[]
 }
 
 export async function withMemoryLogExporter<R>(fn: () => Promise<R> | R): Promise<WithMemoryLogExporterResult<R>> {

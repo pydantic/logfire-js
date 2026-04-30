@@ -1,5 +1,8 @@
-import { type ReadableSpan, SimpleSpanProcessor, SpanProcessor } from '@opentelemetry/sdk-trace-base'
-import { instrument as baseInstrument, TraceConfig } from '@pydantic/otel-cf-workers'
+import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
+import type { TraceConfig } from '@pydantic/otel-cf-workers'
+import { instrument as baseInstrument } from '@pydantic/otel-cf-workers'
+import type { ScrubbingOptions } from 'logfire'
 import {
   configureLogfireApi,
   debug,
@@ -15,7 +18,6 @@ import {
   reportError,
   resolveBaseUrl,
   resolveSendToLogfire,
-  type ScrubbingOptions,
   serializeAttributes,
   span,
   startSpan,
@@ -24,8 +26,7 @@ import {
   warning,
 } from 'logfire'
 
-// Import all exports to construct default export
-import * as exportTailEventsExports from './exportTailEventsToLogfire'
+import { exportTailEventsToLogfire } from './exportTailEventsToLogfire'
 import { LogfireCloudflareConsoleSpanExporter } from './LogfireCloudflareConsoleSpanExporter'
 import { TailWorkerExporter } from './TailWorkerExporter'
 export * from './exportTailEventsToLogfire'
@@ -65,30 +66,31 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
 
     const additionalSpanProcessors = config.additionalSpanProcessors ?? []
 
-    if (config.console) {
+    if (config.console === true) {
       additionalSpanProcessors.push(new SimpleSpanProcessor(new LogfireCloudflareConsoleSpanExporter()))
     }
 
-    return Object.assign({}, config, {
+    return {
+      ...config,
       additionalSpanProcessors,
-      environment: resolvedEnvironment,
       exporter: {
         headers: { Authorization: token },
         url: `${baseUrl}/v1/traces`,
       },
       idGenerator: new ULIDGenerator(),
       postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(spans),
-    }) satisfies TraceConfig
+      ...(resolvedEnvironment !== undefined ? { environment: resolvedEnvironment } : {}),
+    } satisfies TraceConfig
   }
 }
 
 export function getTailConfig(config: TailConfigOptions): (env: Env) => TraceConfig {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   return (_env: Env): TraceConfig => {
-    return Object.assign({}, config, {
+    return {
+      ...config,
       exporter: new TailWorkerExporter(),
       idGenerator: new ULIDGenerator(),
-    })
+    }
   }
 }
 
@@ -106,13 +108,12 @@ export function instrumentTail<T>(handler: T, config: TailConfigOptions): T {
 /**
  * Alias for `instrumentInProcess` to maintain compatibility with previous versions.
  */
-export const instrument = instrumentInProcess
+export const instrument: typeof instrumentInProcess = instrumentInProcess
 
 function postProcessAttributes(spans: ReadableSpan[]) {
   for (const span of spans) {
     for (const attrKey of Object.keys(span.attributes)) {
-      const attrVal = span.attributes[attrKey]
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      const attrVal = span.attributes[attrKey] as unknown
       if (attrVal === undefined || attrVal === null) {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
         delete span.attributes[attrKey]
@@ -123,9 +124,34 @@ function postProcessAttributes(spans: ReadableSpan[]) {
   return spans
 }
 
-// Create default export by listing all exports explicitly
-export default {
-  ...exportTailEventsExports,
+const defaultExport: {
+  exportTailEventsToLogfire: typeof exportTailEventsToLogfire
+  Level: typeof Level
+  LogfireAttributeScrubber: typeof LogfireAttributeScrubber
+  NoopAttributeScrubber: typeof NoopAttributeScrubber
+  ULIDGenerator: typeof ULIDGenerator
+  configureLogfireApi: typeof configureLogfireApi
+  debug: typeof debug
+  error: typeof error
+  fatal: typeof fatal
+  getTailConfig: typeof getTailConfig
+  info: typeof info
+  instrument: typeof instrument
+  instrumentInProcess: typeof instrumentInProcess
+  instrumentTail: typeof instrumentTail
+  log: typeof log
+  logfireApiConfig: typeof logfireApiConfig
+  notice: typeof notice
+  reportError: typeof reportError
+  resolveBaseUrl: typeof resolveBaseUrl
+  resolveSendToLogfire: typeof resolveSendToLogfire
+  serializeAttributes: typeof serializeAttributes
+  span: typeof span
+  startSpan: typeof startSpan
+  trace: typeof trace
+  warning: typeof warning
+} = {
+  exportTailEventsToLogfire,
   configureLogfireApi,
   debug,
   error,
@@ -152,3 +178,5 @@ export default {
   ULIDGenerator,
   warning,
 }
+
+export default defaultExport

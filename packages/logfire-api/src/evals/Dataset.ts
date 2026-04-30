@@ -1,4 +1,3 @@
-/* eslint-disable camelcase */
 import type { Span } from '@opentelemetry/api'
 
 import pRetry from 'p-retry'
@@ -6,9 +5,18 @@ import pRetry from 'p-retry'
 import type { CaseLifecycle, CaseLifecycleClass } from './CaseLifecycle'
 import type { Evaluator } from './Evaluator'
 import type { ReportAnalysis, ReportEvaluator } from './ReportEvaluator'
-import type { EvaluateOptions, EvaluatorContext, EvaluatorFailureRecord, TaskRunState } from './types'
+import type {
+  EvaluateOptions,
+  EvaluatorClass,
+  EvaluatorContext,
+  EvaluatorFailureRecord,
+  ReportEvaluatorClass,
+  RetryConfig,
+  TaskRunState,
+} from './types'
 
-import { Case, type CaseOptions } from './Case'
+import { Case } from './Case'
+import type { CaseOptions } from './Case'
 import {
   ATTR_ASSERTION_PASS_RATE,
   ATTR_ASSERTIONS,
@@ -43,21 +51,15 @@ import { runWithTaskRun } from './currentTaskRun'
 import { buildEvaluatorFailureRecord } from './evaluatorResults'
 import { extractMetricsFromSpanTree } from './extractMetrics'
 import { evalsSpan, setEvalsSpanAttributes } from './internal'
-import { computeAssertionPassRate, computeAverages, type EvaluationReport, type ReportCase, type ReportCaseFailure } from './reporting'
+import { computeAssertionPassRate, computeAverages } from './reporting'
+import type { EvaluationReport, ReportCase, ReportCaseFailure } from './reporting'
 import { runEvaluators } from './runEvaluators'
 import { hasNodeFs } from './runtime'
 import { Semaphore } from './Semaphore'
-import {
-  buildDatasetJsonSchema,
-  datasetFromObject,
-  datasetToObject,
-  type FromOptions,
-  type JsonSchema,
-  parseYaml,
-  stringifyYaml,
-  type ToOptions,
-} from './serialization'
-import { buildSpanTree, getEvalsSpanProcessor, isProcessorInstalledOnGlobal, SpanTree, SpanTreeRecordingError } from './spanTree'
+import { buildDatasetJsonSchema, datasetFromObject, datasetToObject, parseYaml, stringifyYaml } from './serialization'
+import type { FromOptions, JsonSchema, ToOptions } from './serialization'
+import type { SpanTree } from './spanTree'
+import { buildSpanTree, getEvalsSpanProcessor, isProcessorInstalledOnGlobal, SpanTreeRecordingError } from './spanTree'
 
 export interface DatasetOptions<Inputs, Output, Metadata = unknown> {
   cases?: readonly Case<Inputs, Output, Metadata>[]
@@ -81,7 +83,9 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
   }
 
   static async fromFile<I = unknown, O = unknown, M = unknown>(filePath: string, options: FromOptions = {}): Promise<Dataset<I, O, M>> {
-    if (!hasNodeFs()) throw new Error('Dataset.fromFile is only supported on Node, Bun, and Deno (no filesystem in browser/CF Workers)')
+    if (!hasNodeFs()) {
+      throw new Error('Dataset.fromFile is only supported on Node, Bun, and Deno (no filesystem in browser/CF Workers)')
+    }
     const text = await readTextFile(filePath)
     const format: 'json' | 'yaml' = filePath.endsWith('.json') ? 'json' : 'yaml'
     const defaultName = options.defaultName ?? fileStem(filePath)
@@ -140,8 +144,12 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
       [ATTR_TASK_NAME]: taskName,
       [GEN_AI_OPERATION_NAME]: OPERATION_EXPERIMENT,
     }
-    if (options.metadata !== undefined) initialAttrs[ATTR_METADATA] = options.metadata
-    if (repeat > 1) initialAttrs[EXPERIMENT_REPEAT_KEY] = repeat
+    if (options.metadata !== undefined) {
+      initialAttrs[ATTR_METADATA] = options.metadata
+    }
+    if (repeat > 1) {
+      initialAttrs[EXPERIMENT_REPEAT_KEY] = repeat
+    }
 
     return evalsSpan(
       SPAN_NAME_EXPERIMENT,
@@ -172,9 +180,11 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
           positionalIndex: number
           runIndex: number
         }): Promise<void> => {
-          if (options.signal?.aborted) return
+          if (isSignalAborted(options.signal)) {
+            return
+          }
           const release = await sem.acquire()
-          if (options.signal?.aborted) {
+          if (isSignalAborted(options.signal)) {
             release()
             return
           }
@@ -185,13 +195,13 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
               caseName,
               dataset: this,
               datasetEvaluators: this.evaluators,
-              lifecycleClass: options.lifecycle,
               originalCase: c,
-              retryEvaluators: options.retryEvaluators,
-              retryTask: options.retryTask,
-              sourceCaseName: repeat > 1 ? sourceCaseName : undefined,
               task,
               taskName,
+              ...(options.lifecycle !== undefined ? { lifecycleClass: options.lifecycle } : {}),
+              ...(options.retryEvaluators !== undefined ? { retryEvaluators: options.retryEvaluators } : {}),
+              ...(options.retryTask !== undefined ? { retryTask: options.retryTask } : {}),
+              ...(repeat > 1 ? { sourceCaseName } : {}),
             })
             if ('error_type' in result) {
               failures.push(result)
@@ -214,16 +224,19 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
         const report: EvaluationReport<Inputs, Output, Metadata> = {
           analyses,
           cases,
-          experiment_metadata: options.metadata,
           failures,
           name: experimentName,
           report_evaluator_failures: reportEvaluatorFailures,
           span_id,
           trace_id,
         }
+        if (options.metadata !== undefined) {
+          report.experiment_metadata = options.metadata
+        }
         for (const re of this.reportEvaluators) {
           const evaluatorName = (re.constructor as { evaluatorName?: string; name: string }).evaluatorName ?? re.constructor.name
           try {
+            // eslint-disable-next-line no-await-in-loop -- report evaluators run sequentially to keep analysis ordering deterministic.
             const out = await evalsSpan(
               SPAN_MSG_TEMPLATE_REPORT_EVALUATOR,
               {
@@ -233,13 +246,15 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
               async () =>
                 re.evaluate({
                   cases: [...cases, ...failures],
-                  experimentMetadata: options.metadata,
                   name: experimentName,
                   report,
+                  ...(options.metadata !== undefined ? { experimentMetadata: options.metadata } : {}),
                 })
             )
             const list = Array.isArray(out) ? out : [out]
-            for (const item of list) analyses.push(item)
+            for (const item of list) {
+              analyses.push(item)
+            }
           } catch (err) {
             reportEvaluatorFailures.push(buildEvaluatorFailureRecord(err, evaluatorName, re.getSpec(), re.evaluatorVersion))
           }
@@ -247,15 +262,25 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
 
         // Set after-evaluation attributes on the experiment span before it ends.
         const experimentMetadata: Record<string, unknown> = { n_cases: totalCases }
-        if (repeat > 1) experimentMetadata.repeat = repeat
-        if (options.metadata !== undefined) experimentMetadata.metadata = options.metadata
-        experimentMetadata.averages = computeAverages(experimentName, cases)
+        if (repeat > 1) {
+          experimentMetadata['repeat'] = repeat
+        }
+        if (options.metadata !== undefined) {
+          experimentMetadata['metadata'] = options.metadata
+        }
+        experimentMetadata['averages'] = computeAverages(experimentName, cases)
 
         const finalAttrs: Record<string, unknown> = { [EXPERIMENT_METADATA_KEY]: experimentMetadata }
         const passRate = computeAssertionPassRate(cases)
-        if (passRate !== null) finalAttrs[ATTR_ASSERTION_PASS_RATE] = passRate
-        if (analyses.length > 0) finalAttrs[EXPERIMENT_ANALYSES_KEY] = analyses
-        if (reportEvaluatorFailures.length > 0) finalAttrs[EXPERIMENT_REPORT_EVALUATOR_FAILURES_KEY] = reportEvaluatorFailures
+        if (passRate !== null) {
+          finalAttrs[ATTR_ASSERTION_PASS_RATE] = passRate
+        }
+        if (analyses.length > 0) {
+          finalAttrs[EXPERIMENT_ANALYSES_KEY] = analyses
+        }
+        if (reportEvaluatorFailures.length > 0) {
+          finalAttrs[EXPERIMENT_REPORT_EVALUATOR_FAILURES_KEY] = reportEvaluatorFailures
+        }
         setEvalsSpanAttributes(experimentSpan, finalAttrs)
 
         return report
@@ -266,18 +291,20 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
   /** JSON-schema description of the dataset file format, suitable for IDE auto-complete. */
   jsonSchema(
     opts: {
-      customEvaluators?: readonly import('./types').EvaluatorClass[]
-      customReportEvaluators?: readonly import('./types').ReportEvaluatorClass[]
+      customEvaluators?: readonly EvaluatorClass[]
+      customReportEvaluators?: readonly ReportEvaluatorClass[]
     } = {}
   ): JsonSchema {
     return buildDatasetJsonSchema({
-      customEvaluators: opts.customEvaluators,
-      customReportEvaluators: opts.customReportEvaluators,
+      ...(opts.customEvaluators !== undefined ? { customEvaluators: opts.customEvaluators } : {}),
+      ...(opts.customReportEvaluators !== undefined ? { customReportEvaluators: opts.customReportEvaluators } : {}),
     })
   }
 
   async toFile(filePath: string, opts: ToOptions = {}): Promise<void> {
-    if (!hasNodeFs()) throw new Error('Dataset.toFile is only supported on Node, Bun, and Deno (no filesystem in browser/CF Workers)')
+    if (!hasNodeFs()) {
+      throw new Error('Dataset.toFile is only supported on Node, Bun, and Deno (no filesystem in browser/CF Workers)')
+    }
     const format: 'json' | 'yaml' = filePath.endsWith('.json') ? 'json' : 'yaml'
     const text = this.toText(format, opts)
     const finalText =
@@ -295,7 +322,9 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
 
   toText(format: 'json' | 'yaml', opts: ToOptions = {}): string {
     const obj = datasetToObject(this, opts)
-    if (format === 'json') return JSON.stringify(obj, null, 2)
+    if (format === 'json') {
+      return JSON.stringify(obj, null, 2)
+    }
     return stringifyYaml(obj)
   }
 }
@@ -303,12 +332,18 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
 function assertUniqueNames(cases: readonly Case[]): void {
   const seen = new Set<string>()
   for (const c of cases) {
-    if (c.name === undefined) continue
+    if (c.name === undefined) {
+      continue
+    }
     if (seen.has(c.name)) {
       throw new Error(`Duplicate case name: ${JSON.stringify(c.name)}`)
     }
     seen.add(c.name)
   }
+}
+
+function isSignalAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true
 }
 
 function reportProgress(progress: EvaluateOptions['progress'], event: { caseName: string; done: number; total: number }): void {
@@ -325,8 +360,8 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
   datasetEvaluators: readonly Evaluator<Inputs, Output, Metadata>[]
   lifecycleClass?: CaseLifecycleClass<Inputs, Output, Metadata>
   originalCase: Case<Inputs, Output, Metadata>
-  retryEvaluators?: import('./types').RetryConfig
-  retryTask?: import('./types').RetryConfig
+  retryEvaluators?: RetryConfig
+  retryTask?: RetryConfig
   sourceCaseName?: string
   task: (inputs: Inputs) => Output | Promise<Output>
   taskName: string
@@ -342,9 +377,15 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
     [ATTR_INPUTS]: originalCase.inputs,
     [ATTR_TASK_NAME]: taskName,
   }
-  if (originalCase.metadata !== undefined) caseAttrs[ATTR_METADATA] = originalCase.metadata
-  if (originalCase.expectedOutput !== undefined) caseAttrs[ATTR_EXPECTED_OUTPUT] = originalCase.expectedOutput
-  if (sourceCaseName !== undefined) caseAttrs[EXPERIMENT_SOURCE_CASE_NAME_KEY] = sourceCaseName
+  if (originalCase.metadata !== undefined) {
+    caseAttrs[ATTR_METADATA] = originalCase.metadata
+  }
+  if (originalCase.expectedOutput !== undefined) {
+    caseAttrs[ATTR_EXPECTED_OUTPUT] = originalCase.expectedOutput
+  }
+  if (sourceCaseName !== undefined) {
+    caseAttrs[EXPERIMENT_SOURCE_CASE_NAME_KEY] = sourceCaseName
+  }
 
   const totalStart = nowSec()
 
@@ -365,7 +406,9 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
     let output: Output
     let taskDuration = 0
     try {
-      if (lifecycle?.setup !== undefined) await lifecycle.setup()
+      if (lifecycle?.setup !== undefined) {
+        await lifecycle.setup()
+      }
 
       const runTaskOnce = async (): Promise<Output> => {
         return evalsSpan(SPAN_NAME_EXECUTE, { attributes: { task: taskName } }, async (): Promise<Output> => {
@@ -393,12 +436,12 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
       recordException(caseSpan, err)
       const failure = buildCaseFailure(err, {
         caseName,
-        expectedOutput: originalCase.expectedOutput,
         inputs: originalCase.inputs,
-        metadata: originalCase.metadata,
-        sourceCaseName,
         span_id,
         trace_id,
+        ...(originalCase.expectedOutput !== undefined ? { expectedOutput: originalCase.expectedOutput } : {}),
+        ...(originalCase.metadata !== undefined ? { metadata: originalCase.metadata } : {}),
+        ...(sourceCaseName !== undefined ? { sourceCaseName } : {}),
       })
       await runLifecycleTeardown(lifecycle, failure, caseSpan)
       return failure
@@ -417,13 +460,17 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
     let ctx: EvaluatorContext<Inputs, Output, Metadata> = {
       attributes: taskRunState.attributes,
       duration: taskDuration,
-      expectedOutput: originalCase.expectedOutput,
       inputs: originalCase.inputs,
-      metadata: originalCase.metadata,
       metrics: taskRunState.metrics,
       name: caseName,
       output,
       spanTree,
+    }
+    if (originalCase.expectedOutput !== undefined) {
+      ctx = { ...ctx, expectedOutput: originalCase.expectedOutput }
+    }
+    if (originalCase.metadata !== undefined) {
+      ctx = { ...ctx, metadata: originalCase.metadata }
     }
     if (lifecycle?.prepareContext !== undefined) {
       try {
@@ -432,12 +479,12 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
         recordException(caseSpan, err)
         const failure = buildCaseFailure(err, {
           caseName,
-          expectedOutput: originalCase.expectedOutput,
           inputs: originalCase.inputs,
-          metadata: originalCase.metadata,
-          sourceCaseName,
           span_id,
           trace_id,
+          ...(originalCase.expectedOutput !== undefined ? { expectedOutput: originalCase.expectedOutput } : {}),
+          ...(originalCase.metadata !== undefined ? { metadata: originalCase.metadata } : {}),
+          ...(sourceCaseName !== undefined ? { sourceCaseName } : {}),
         })
         await runLifecycleTeardown(lifecycle, failure, caseSpan)
         return failure
@@ -464,19 +511,25 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
       assertions: evResult.assertions,
       attributes: taskRunState.attributes,
       evaluator_failures: evResult.failures,
-      expected_output: originalCase.expectedOutput,
       inputs: originalCase.inputs,
       labels: evResult.labels,
-      metadata: originalCase.metadata,
       metrics: taskRunState.metrics,
       name: caseName,
       output,
       scores: evResult.scores,
-      source_case_name: sourceCaseName,
       span_id,
       task_duration: taskDuration,
       total_duration: totalDuration,
       trace_id,
+    }
+    if (originalCase.expectedOutput !== undefined) {
+      reportCase.expected_output = originalCase.expectedOutput
+    }
+    if (originalCase.metadata !== undefined) {
+      reportCase.metadata = originalCase.metadata
+    }
+    if (sourceCaseName !== undefined) {
+      reportCase.source_case_name = sourceCaseName
     }
     await runLifecycleTeardown(lifecycle, reportCase, caseSpan)
     return reportCase
@@ -496,18 +549,27 @@ function buildCaseFailure<Inputs, Output, Metadata>(
   }
 ): ReportCaseFailure<Inputs, Output, Metadata> {
   const isErr = err instanceof Error
-  return {
+  const failure: ReportCaseFailure<Inputs, Output, Metadata> = {
     error_message: isErr ? err.message : String(err),
-    error_stacktrace: isErr ? err.stack : undefined,
     error_type: isErr ? err.constructor.name : 'Error',
-    expected_output: opts.expectedOutput,
     inputs: opts.inputs,
-    metadata: opts.metadata,
     name: opts.caseName,
-    source_case_name: opts.sourceCaseName,
     span_id: opts.span_id,
     trace_id: opts.trace_id,
   }
+  if (isErr && err.stack !== undefined) {
+    failure.error_stacktrace = err.stack
+  }
+  if (opts.expectedOutput !== undefined) {
+    failure.expected_output = opts.expectedOutput
+  }
+  if (opts.metadata !== undefined) {
+    failure.metadata = opts.metadata
+  }
+  if (opts.sourceCaseName !== undefined) {
+    failure.source_case_name = opts.sourceCaseName
+  }
+  return failure
 }
 
 function recordException(span: Span, err: unknown): void {
@@ -531,8 +593,10 @@ interface DenoTextFileRuntime {
 
 async function readTextFile(filePath: string): Promise<string> {
   const deno = (globalThis as DenoTextFileRuntime).Deno
-  if (typeof deno?.readTextFile === 'function') return deno.readTextFile(filePath)
-  const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
+  if (typeof deno?.readTextFile === 'function') {
+    return deno.readTextFile(filePath)
+  }
+  const fs = await import('node:fs/promises')
   return fs.readFile(filePath, 'utf8')
 }
 
@@ -542,7 +606,7 @@ async function writeTextFile(filePath: string, text: string): Promise<void> {
     await deno.writeTextFile(filePath, text)
     return
   }
-  const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
+  const fs = await import('node:fs/promises')
   await fs.writeFile(filePath, text, 'utf8')
 }
 
@@ -553,7 +617,9 @@ async function writeTextFileIfChanged(filePath: string, text: string): Promise<v
   } catch {
     existing = undefined
   }
-  if (existing !== text) await writeTextFile(filePath, text)
+  if (existing !== text) {
+    await writeTextFile(filePath, text)
+  }
 }
 
 function fileStem(filePath: string): string {
@@ -567,7 +633,9 @@ function fileStem(filePath: string): string {
 }
 
 function resolveSiblingPath(filePath: string, siblingPath: string): string {
-  if (/^(?:[a-zA-Z]:[\\/]|[\\/]|[a-zA-Z][a-zA-Z\d+.-]*:)/.test(siblingPath)) return siblingPath
+  if (/^(?:[a-zA-Z]:[\\/]|[\\/]|[a-zA-Z][a-zA-Z\d+.-]*:)/.test(siblingPath)) {
+    return siblingPath
+  }
   const trimmed = filePath.replace(/[\\/]+$/, '')
   const sep = trimmed.includes('\\') ? '\\' : '/'
   const lastSep = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
@@ -580,7 +648,9 @@ async function runLifecycleTeardown<Inputs, Output, Metadata>(
   result: ReportCase<Inputs, Output, Metadata> | ReportCaseFailure<Inputs, Output, Metadata>,
   caseSpan: Span
 ): Promise<void> {
-  if (lifecycle?.teardown === undefined) return
+  if (lifecycle?.teardown === undefined) {
+    return
+  }
   try {
     await lifecycle.teardown(result)
   } catch (err) {

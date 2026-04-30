@@ -19,6 +19,7 @@ This repository is the Pydantic Logfire JavaScript SDK monorepo. It provides Ope
 
 - Use the Node.js version in `.node-version`. The root `package.json` also enforces Node.js 24 through `engines`.
 - Use pnpm 10.28.0. The package manager is pinned in `packageManager`.
+- Use Vite+ (`vp`) for the JavaScript toolchain entrypoint. Vite+ manages Vite, Vitest, Oxlint, Oxfmt, and package build tasks.
 - Run workspace commands from the repository root unless a package-level command is explicitly needed.
 
 ## Useful Commands
@@ -26,7 +27,7 @@ This repository is the Pydantic Logfire JavaScript SDK monorepo. It provides Ope
 Install dependencies:
 
 ```bash
-pnpm install
+vp install
 ```
 
 Build all packages:
@@ -56,15 +57,15 @@ pnpm run check
 Run focused checks for one package:
 
 ```bash
-pnpm --filter logfire test
-pnpm --filter @pydantic/logfire-node test
-pnpm --filter @pydantic/logfire-browser typecheck
+vp run logfire#test
+vp run @pydantic/logfire-node#test
+vp run @pydantic/logfire-browser#typecheck
 ```
 
-Run a single Vitest test by name from a package filter:
+Run a single Vite+ test by name from a package:
 
 ```bash
-pnpm --filter logfire test -- -t "test name pattern"
+vp run logfire#test -- -t "test name pattern"
 ```
 
 Format or verify formatting:
@@ -103,10 +104,11 @@ pnpm run changeset-add
 - Tests use Vitest and usually live alongside source files as `*.test.ts`.
 - Prefer exact assertions over fuzzy matching for stable output. Use `toBe` or `toEqual` with deterministic inputs instead of `toContain` or broad regex matching.
 - When testing formatted errors or stack output, mock stack strings so assertions stay deterministic.
-- For changes under `packages/logfire-api/src/evals`, consider the focused coverage script:
+- The focused eval coverage script is temporarily disabled during the Vite+ migration because Vite+ coverage currently reports mixed Vitest package versions. For eval changes, run the package tests and typecheck instead:
 
 ```bash
-pnpm --filter logfire run coverage:evals
+vp run logfire#test
+vp run logfire#typecheck
 ```
 
 ## Package-Specific Notes

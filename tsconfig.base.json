@@ -9,17 +9,27 @@
     /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "moduleDetection": "force",
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
     "noEmit": true,
+    "isolatedDeclarations": true,
     /* Linting */
     "strict": true,
-    "allowJs": true,
+    "exactOptionalPropertyTypes": true,
+    "allowJs": false,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noUncheckedIndexedAccess": true,
+    "noPropertyAccessFromIndexSignature": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
     "erasableSyntaxOnly": true
   }
 }

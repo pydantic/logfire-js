@@ -1,5 +1,6 @@
-import { ExportResult, ExportResultCode, hrTimeToMicroseconds } from '@opentelemetry/core'
-import { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base'
+import type { ExportResult } from '@opentelemetry/core'
+import { ExportResultCode, hrTimeToMicroseconds } from '@opentelemetry/core'
+import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base'
 import pc from 'picocolors'
 
 const LevelLabels = {
@@ -27,10 +28,10 @@ export class LogfireConsoleSpanExporter implements SpanExporter {
     this.sendSpans(spans, resultCallback)
   }
 
-  forceFlush(): Promise<void> {
+  async forceFlush(): Promise<void> {
     return Promise.resolve()
   }
-  shutdown(): Promise<void> {
+  async shutdown(): Promise<void> {
     this.sendSpans([])
     return this.forceFlush()
   }

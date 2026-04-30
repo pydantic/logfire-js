@@ -44,7 +44,9 @@ let activeProcessListeners:
     }
 
 function removeActiveProcessListeners(): void {
-  if (activeProcessListeners === undefined) return
+  if (activeProcessListeners === undefined) {
+    return
+  }
   process.removeListener('beforeExit', activeProcessListeners.beforeExit)
   process.removeListener('SIGTERM', activeProcessListeners.SIGTERM)
   process.removeListener('uncaughtExceptionMonitor', activeProcessListeners.uncaughtExceptionMonitor)
@@ -68,7 +70,9 @@ export async function forceFlush(): Promise<void> {
  */
 export async function shutdown(): Promise<void> {
   const sdk = activeSdk
-  if (sdk === undefined) return
+  if (sdk === undefined) {
+    return
+  }
   removeActiveProcessListeners()
   activeSdk = undefined
   activeLogProcessor = undefined
@@ -79,7 +83,7 @@ export async function shutdown(): Promise<void> {
 const LOGFIRE_ATTRIBUTES_NAMESPACE = 'logfire'
 const RESOURCE_ATTRIBUTES_CODE_ROOT_PATH = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.code.root_path`
 
-export function start() {
+export function start(): void {
   if (activeSdk !== undefined) {
     shutdown().catch((e: unknown) => {
       diag.warn('logfire SDK: error shutting down previous SDK', e)
@@ -97,7 +101,6 @@ export function start() {
       [ATTR_SERVICE_VERSION]: logfireConfig.serviceVersion,
       [ATTR_TELEMETRY_SDK_LANGUAGE]: TELEMETRY_SDK_LANGUAGE_VALUE_NODEJS,
       [ATTR_TELEMETRY_SDK_NAME]: 'logfire',
-      // eslint-disable-next-line no-undef
       [ATTR_TELEMETRY_SDK_VERSION]: PACKAGE_VERSION,
 
       [ATTR_VCS_REPOSITORY_REF_REVISION]: logfireConfig.codeSource?.revision,
@@ -130,14 +133,14 @@ export function start() {
     idGenerator: new ULIDGenerator(),
     instrumentations: [getNodeAutoInstrumentations(logfireConfig.nodeAutoInstrumentations), ...logfireConfig.instrumentations],
     ...(logProcessor ? { logRecordProcessors: [logProcessor] } : {}),
-    metricReader: logfireConfig.metrics === false ? undefined : periodicMetricReader(),
+    ...(logfireConfig.metrics === false ? {} : { metricReader: periodicMetricReader() }),
     resource,
     ...(sampler ? { sampler } : {}),
     spanProcessors: [processor, getEvalsSpanProcessor(), ...logfireConfig.additionalSpanProcessors],
-    textMapPropagator: propagator,
+    ...(propagator !== undefined ? { textMapPropagator: propagator } : {}),
   })
 
-  if (logfireConfig.metrics && 'additionalReaders' in logfireConfig.metrics) {
+  if (logfireConfig.metrics !== undefined && logfireConfig.metrics !== false && 'additionalReaders' in logfireConfig.metrics) {
     const meterProvider = new MeterProvider({ readers: [periodicMetricReader(), ...logfireConfig.metrics.additionalReaders], resource })
     metrics.setGlobalMeterProvider(meterProvider)
   }
@@ -149,7 +152,9 @@ export function start() {
   let _shutdown = false
   const listeners = {
     beforeExit: () => {
-      if (_shutdown) return
+      if (_shutdown) {
+        return
+      }
       _shutdown = true
       shutdown()
         .catch((e: unknown) => {

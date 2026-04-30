@@ -2,8 +2,10 @@
 import type { ReportCase } from '../reporting'
 
 import { registerReportEvaluator } from '../registry'
-import { type PrecisionRecallAnalysis, ReportEvaluator, type ReportEvaluatorContext, type ScalarAnalysis } from '../ReportEvaluator'
-import { buildThresholdInputs, downsample, type PositiveFrom, type ScoreFrom, trapezoidalAuc, uniqueSortedThresholds } from './scoreCommon'
+import { ReportEvaluator } from '../ReportEvaluator'
+import type { PrecisionRecallAnalysis, ReportEvaluatorContext, ScalarAnalysis } from '../ReportEvaluator'
+import { buildThresholdInputs, downsample, trapezoidalAuc, uniqueSortedThresholds } from './scoreCommon'
+import type { PositiveFrom, ScoreFrom } from './scoreCommon'
 
 export interface PrecisionRecallOptions {
   n_thresholds?: number
@@ -20,7 +22,7 @@ export interface PrecisionRecallOptions {
 }
 
 export class PrecisionRecallEvaluator extends ReportEvaluator {
-  static evaluatorName = 'PrecisionRecallEvaluator'
+  static override evaluatorName = 'PrecisionRecallEvaluator'
 
   readonly nThresholds: number
   readonly positiveFrom: PositiveFrom
@@ -34,7 +36,10 @@ export class PrecisionRecallEvaluator extends ReportEvaluator {
     this.scoreKey = opts.scoreKey ?? opts.score_key ?? ''
     this.scoreFrom = opts.scoreFrom ?? opts.score_from ?? 'scores'
     this.positiveFrom = opts.positiveFrom ?? opts.positive_from ?? 'expected_output'
-    this.positiveKey = opts.positiveKey ?? opts.positive_key
+    const positiveKey = opts.positiveKey ?? opts.positive_key
+    if (positiveKey !== undefined) {
+      this.positiveKey = positiveKey
+    }
     this.nThresholds = opts.nThresholds ?? opts.n_thresholds ?? 100
     this.title = opts.title ?? 'Precision-Recall Curve'
   }
@@ -57,12 +62,13 @@ export class PrecisionRecallEvaluator extends ReportEvaluator {
 
   evaluate(ctx: ReportEvaluatorContext): [PrecisionRecallAnalysis, ScalarAnalysis] {
     const cases = ctx.report.cases.filter((c): c is ReportCase => 'output' in c)
-    const inputs = buildThresholdInputs(cases, {
+    const thresholdOptions = {
       positiveFrom: this.positiveFrom,
-      positiveKey: this.positiveKey,
       scoreFrom: this.scoreFrom,
       scoreKey: this.scoreKey,
-    })
+      ...(this.positiveKey !== undefined ? { positiveKey: this.positiveKey } : {}),
+    }
+    const inputs = buildThresholdInputs(cases, thresholdOptions)
 
     const thresholds = uniqueSortedThresholds(inputs.scores)
     const points: { precision: number; recall: number; threshold: number }[] = []
@@ -76,9 +82,13 @@ export class PrecisionRecallEvaluator extends ReportEvaluator {
       for (let i = 0; i < inputs.scores.length; i++) {
         const positive = inputs.positives[i]!
         const aboveThreshold = inputs.scores[i]! >= t
-        if (aboveThreshold && positive) tp++
-        else if (aboveThreshold && !positive) fp++
-        else if (!aboveThreshold && positive) fn++
+        if (aboveThreshold && positive) {
+          tp++
+        } else if (aboveThreshold && !positive) {
+          fp++
+        } else if (!aboveThreshold && positive) {
+          fn++
+        }
       }
       points.push({
         precision: tp + fp === 0 ? 1 : tp / (tp + fp),
@@ -103,15 +113,23 @@ export class PrecisionRecallEvaluator extends ReportEvaluator {
     ]
   }
 
-  toJSON(): Record<string, unknown> {
+  override toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = {
       positive_from: this.positiveFrom,
       score_key: this.scoreKey,
     }
-    if (this.positiveKey !== undefined) out.positive_key = this.positiveKey
-    if (this.scoreFrom !== 'scores') out.score_from = this.scoreFrom
-    if (this.nThresholds !== 100) out.n_thresholds = this.nThresholds
-    if (this.title !== 'Precision-Recall Curve') out.title = this.title
+    if (this.positiveKey !== undefined) {
+      out['positive_key'] = this.positiveKey
+    }
+    if (this.scoreFrom !== 'scores') {
+      out['score_from'] = this.scoreFrom
+    }
+    if (this.nThresholds !== 100) {
+      out['n_thresholds'] = this.nThresholds
+    }
+    if (this.title !== 'Precision-Recall Curve') {
+      out['title'] = this.title
+    }
     return out
   }
 }

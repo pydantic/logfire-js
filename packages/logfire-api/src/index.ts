@@ -1,8 +1,8 @@
-/* eslint-disable perfectionist/sort-objects */
-import { Span, SpanStatusCode, context as TheContextAPI, trace as TheTraceAPI } from '@opentelemetry/api'
+import type { Span } from '@opentelemetry/api'
+import { SpanStatusCode, context as TheContextAPI, trace as TheTraceAPI } from '@opentelemetry/api'
 import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 
-import * as AttributeScrubbingExports from './AttributeScrubber'
+import { LogfireAttributeScrubber, NoopAttributeScrubber, NoopScrubber } from './AttributeScrubber'
 import {
   ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY,
   ATTRIBUTES_LEVEL_KEY,
@@ -11,14 +11,12 @@ import {
   ATTRIBUTES_SPAN_TYPE_KEY,
   ATTRIBUTES_TAGS_KEY,
 } from './constants'
-import * as fingerprintExports from './fingerprint'
-import { computeFingerprint } from './fingerprint'
+import { canonicalizeError, computeFingerprint } from './fingerprint'
 import { logfireFormatWithExtras } from './formatter'
-import { logfireApiConfig, serializeAttributes } from './logfireApiConfig'
-import * as logfireApiConfigExports from './logfireApiConfig'
-import * as samplingExports from './sampling'
+import { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire, serializeAttributes } from './logfireApiConfig'
+import { SpanLevel, checkTraceIdRatio, levelOrDuration } from './sampling'
 import { TailSamplingProcessor } from './TailSamplingProcessor'
-import * as ULIDGeneratorExports from './ULIDGenerator'
+import { ULIDGenerator } from './ULIDGenerator'
 
 export * from './AttributeScrubber'
 export { canonicalizeError, computeFingerprint } from './fingerprint'
@@ -121,13 +119,11 @@ type SpanArgsVariant2<R> = [
  * The span will be ended automatically after the function call.
  */
 export function span<R>(msgTemplate: string, options: SpanArgsVariant2<R>[0]): R
-// eslint-disable-next-line no-redeclare
 export function span<R>(msgTemplate: string, attributes: Record<string, unknown>, options: LogOptions, callback: (span: Span) => R): R
-// eslint-disable-next-line no-redeclare
 export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | SpanArgsVariant2<R>): R {
-  let attributes: Record<string, unknown> = {}
-  let level: LogFireLevel = Level.Info
-  let tags: string[] = []
+  let attributes: Record<string, unknown>
+  let level: LogFireLevel
+  let tags: string[]
   let callback!: SpanCallback<R>
   let parentSpan: Span | undefined
   let spanName: string | undefined
@@ -184,8 +180,8 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
         )
         // we need this clunky detection because of zone.js promises
       } else if (typeof result === 'object' && result !== null && 'finally' in result && typeof result.finally === 'function') {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-        result.finally(() => {
+        const resultWithFinally = result as { finally: (onFinally: () => void) => unknown }
+        resultWithFinally.finally(() => {
           span.end()
         })
       } else {
@@ -196,35 +192,35 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
   )
 }
 
-export function log(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function log(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   startSpan(message, attributes, { ...options, log: true }).end()
 }
 
-export function debug(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function debug(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Debug })
 }
 
-export function info(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function info(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Info })
 }
 
-export function trace(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function trace(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Trace })
 }
 
-export function error(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function error(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Error })
 }
 
-export function fatal(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function fatal(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Fatal })
 }
 
-export function notice(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function notice(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Notice })
 }
 
-export function warning(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}) {
+export function warning(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
   log(message, attributes, { ...options, level: Level.Warning })
 }
 
@@ -247,10 +243,9 @@ function recordSpanException(span: Span, thrown: unknown): void {
  * Captures the error stack trace and message in the respective semantic attributes and sets the correct level and status.
  * Computes a fingerprint for the error to enable issue grouping in the Logfire backend (if errorFingerprinting is enabled).
  */
-export function reportError(message: string, error: Error, extraAttributes: Record<string, unknown> = {}) {
+export function reportError(message: string, error: Error, extraAttributes: Record<string, unknown> = {}): void {
   const attributes: Record<string, unknown> = {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    [ATTR_EXCEPTION_MESSAGE]: error.message ?? 'error',
+    [ATTR_EXCEPTION_MESSAGE]: error.message,
     [ATTR_EXCEPTION_STACKTRACE]: error.stack,
     ...extraAttributes,
   }
@@ -266,27 +261,64 @@ export function reportError(message: string, error: Error, extraAttributes: Reco
   span.end()
 }
 
-const defaultExport = {
-  ...AttributeScrubbingExports,
-  ...fingerprintExports,
-  ...samplingExports,
-  ...ULIDGeneratorExports,
-  ...logfireApiConfigExports,
-
-  serializeAttributes,
+const defaultExport: {
+  LogfireAttributeScrubber: typeof LogfireAttributeScrubber
+  NoopAttributeScrubber: typeof NoopAttributeScrubber
+  NoopScrubber: NoopAttributeScrubber
+  SpanLevel: typeof SpanLevel
+  TailSamplingProcessor: typeof TailSamplingProcessor
+  ULIDGenerator: typeof ULIDGenerator
+  canonicalizeError: typeof canonicalizeError
+  checkTraceIdRatio: typeof checkTraceIdRatio
+  configureLogfireApi: typeof configureLogfireApi
+  computeFingerprint: typeof computeFingerprint
+  debug: typeof debug
+  error: typeof error
+  fatal: typeof fatal
+  info: typeof info
+  levelOrDuration: typeof levelOrDuration
+  log: typeof log
+  logfireApiConfig: typeof logfireApiConfig
+  notice: typeof notice
+  reportError: typeof reportError
+  resolveBaseUrl: typeof resolveBaseUrl
+  resolveSendToLogfire: typeof resolveSendToLogfire
+  serializeAttributes: typeof serializeAttributes
+  span: typeof span
+  startSpan: typeof startSpan
+  trace: typeof trace
+  warning: typeof warning
+  Level: typeof Level
+} = {
+  LogfireAttributeScrubber,
+  NoopAttributeScrubber,
+  NoopScrubber,
+  SpanLevel,
   TailSamplingProcessor,
-  Level,
-  startSpan,
-  span,
-  log,
+  ULIDGenerator,
+  canonicalizeError,
+  checkTraceIdRatio,
+  configureLogfireApi,
+  computeFingerprint,
   debug,
-  info,
-  trace,
   error,
   fatal,
+  info,
+  levelOrDuration,
+  log,
+  get logfireApiConfig() {
+    return logfireApiConfig
+  },
   notice,
-  warning,
   reportError,
+  resolveBaseUrl,
+  resolveSendToLogfire,
+  serializeAttributes,
+  span,
+  startSpan,
+  trace,
+  warning,
+  Level,
 }
 
 export default defaultExport

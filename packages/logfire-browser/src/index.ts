@@ -1,10 +1,12 @@
-import { ContextManager, diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api'
+import type { ContextManager } from '@opentelemetry/api'
+import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
-import { Instrumentation, registerInstrumentations } from '@opentelemetry/instrumentation'
+import type { Instrumentation } from '@opentelemetry/instrumentation'
+import { registerInstrumentations } from '@opentelemetry/instrumentation'
 import { resourceFromAttributes } from '@opentelemetry/resources'
+import type { BufferConfig, SpanProcessor } from '@opentelemetry/sdk-trace-web'
 import {
   BatchSpanProcessor,
-  BufferConfig,
   ParentBasedSampler,
   StackContextManager,
   TraceIdRatioBasedSampler,
@@ -26,6 +28,7 @@ import {
   ATTR_BROWSER_PLATFORM,
   ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
 } from '@opentelemetry/semantic-conventions/incubating'
+import type { SamplingOptions, ScrubbingOptions } from 'logfire'
 import {
   configureLogfireApi,
   debug,
@@ -41,8 +44,6 @@ import {
   reportError,
   resolveBaseUrl,
   resolveSendToLogfire,
-  type SamplingOptions,
-  type ScrubbingOptions,
   serializeAttributes,
   span,
   startSpan,
@@ -147,15 +148,21 @@ async function resolveTraceExporterHeaders(configHeaders: TraceExporterConfig['h
   }
 }
 
-export function configure(options: LogfireConfigOptions) {
+export function configure(options: LogfireConfigOptions): () => Promise<void> {
   if (options.diagLogLevel !== undefined) {
     diag.setLogger(new DiagConsoleLogger(), options.diagLogLevel)
   }
 
-  configureLogfireApi({
+  const apiConfig: {
+    errorFingerprinting: boolean
+    scrubbing?: false | ScrubbingOptions
+  } = {
     errorFingerprinting: options.errorFingerprinting ?? false,
-    scrubbing: options.scrubbing,
-  })
+  }
+  if (options.scrubbing !== undefined) {
+    apiConfig.scrubbing = options.scrubbing
+  }
+  configureLogfireApi(apiConfig)
 
   const resource = resourceFromAttributes({
     [ATTR_BROWSER_LANGUAGE]: navigator.language,
@@ -163,8 +170,7 @@ export function configure(options: LogfireConfigOptions) {
     [ATTR_SERVICE_VERSION]: options.serviceVersion ?? '0.0.1',
     [ATTR_TELEMETRY_SDK_LANGUAGE]: TELEMETRY_SDK_LANGUAGE_VALUE_WEBJS,
     [ATTR_TELEMETRY_SDK_NAME]: 'logfire-browser',
-    ...(options.environment ? { [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: options.environment } : {}),
-    // eslint-disable-next-line no-undef
+    ...(options.environment !== undefined && options.environment !== '' ? { [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: options.environment } : {}),
     [ATTR_TELEMETRY_SDK_VERSION]: PACKAGE_VERSION,
     ...(navigator.userAgentData
       ? {
@@ -183,7 +189,7 @@ export function configure(options: LogfireConfigOptions) {
   const sampler =
     headRate !== undefined && headRate < 1.0 ? new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(headRate) }) : undefined
 
-  let spanProcessor: import('@opentelemetry/sdk-trace-web').SpanProcessor = new LogfireSpanProcessor(
+  let spanProcessor: SpanProcessor = new LogfireSpanProcessor(
     new BatchSpanProcessor(
       new OTLPTraceExporter({
         ...options.traceExporterConfig,
@@ -197,10 +203,7 @@ export function configure(options: LogfireConfigOptions) {
   )
 
   if (options.sampling?.tail) {
-    spanProcessor = new TailSamplingProcessor(
-      spanProcessor,
-      options.sampling.tail
-    ) as unknown as import('@opentelemetry/sdk-trace-web').SpanProcessor
+    spanProcessor = new TailSamplingProcessor(spanProcessor, options.sampling.tail) as unknown as SpanProcessor
   }
 
   const tracerProvider = new WebTracerProvider({
@@ -228,8 +231,30 @@ export function configure(options: LogfireConfigOptions) {
   }
 }
 
-// Create default export by listing all exports explicitly
-export default {
+const defaultExport: {
+  DiagLogLevel: typeof DiagLogLevel
+  Level: typeof Level
+  LogfireAttributeScrubber: typeof LogfireAttributeScrubber
+  NoopAttributeScrubber: typeof NoopAttributeScrubber
+  ULIDGenerator: typeof ULIDGenerator
+  configure: typeof configure
+  configureLogfireApi: typeof configureLogfireApi
+  debug: typeof debug
+  error: typeof error
+  fatal: typeof fatal
+  info: typeof info
+  log: typeof log
+  logfireApiConfig: typeof logfireApiConfig
+  notice: typeof notice
+  reportError: typeof reportError
+  resolveBaseUrl: typeof resolveBaseUrl
+  resolveSendToLogfire: typeof resolveSendToLogfire
+  serializeAttributes: typeof serializeAttributes
+  span: typeof span
+  startSpan: typeof startSpan
+  trace: typeof trace
+  warning: typeof warning
+} = {
   configure,
   configureLogfireApi,
   debug,
@@ -254,3 +279,5 @@ export default {
   ULIDGenerator,
   warning,
 }
+
+export default defaultExport

@@ -19,7 +19,9 @@ const FIREFOX_PATTERN = /^(.+?)@(.+?):\d+:\d+/
  * - Firefox: "functionName@file:line:col"
  */
 function parseStackFrames(stack: string | undefined): StackFrame[] {
-  if (!stack) return []
+  if (stack === undefined || stack === '') {
+    return []
+  }
 
   const frames: StackFrame[] = []
   const lines = stack.split('\n').slice(1)
@@ -31,27 +33,26 @@ function parseStackFrames(stack: string | undefined): StackFrame[] {
     const bareMatch = V8_PATTERN_BARE.exec(line)
     const firefoxMatch = FIREFOX_PATTERN.exec(line)
 
-    if (withParensMatch?.[1] && withParensMatch[2]) {
+    if (withParensMatch?.[1] !== undefined && withParensMatch[2] !== undefined) {
       frames.push({
         fileName: extractModuleName(withParensMatch[2]),
         functionName: withParensMatch[1],
       })
-    } else if (noParensMatch?.[1]) {
+    } else if (noParensMatch?.[1] !== undefined) {
       frames.push({
         fileName: extractModuleName(noParensMatch[1]),
         functionName: '<anonymous>',
       })
-    } else if (evalMatch?.[1] && evalMatch[2]) {
+    } else if (evalMatch?.[1] !== undefined && evalMatch[2] !== undefined) {
       frames.push({
         fileName: extractModuleName(evalMatch[2]),
         functionName: evalMatch[1],
       })
-    } else if (bareMatch?.[1]) {
+    } else if (bareMatch?.[1] !== undefined) {
       frames.push({
-        fileName: undefined,
         functionName: bareMatch[1],
       })
-    } else if (firefoxMatch?.[2]) {
+    } else if (firefoxMatch?.[2] !== undefined) {
       frames.push({
         fileName: extractModuleName(firefoxMatch[2]),
         functionName: firefoxMatch[1] ?? '<anonymous>',
@@ -90,7 +91,7 @@ function extractModuleName(filePath: string): string {
  * when code is edited, but the same logical error should produce the
  * same fingerprint.
  */
-export function canonicalizeError(error: Error, seen = new WeakSet<Error>()): string {
+export function canonicalizeError(error: Error, seen: WeakSet<Error> = new WeakSet<Error>()): string {
   if (seen.has(error)) {
     return '[circular]'
   }
@@ -106,10 +107,12 @@ export function canonicalizeError(error: Error, seen = new WeakSet<Error>()): st
 
   for (const frame of frames) {
     const frameKey = `${frame.functionName}|${frame.fileName ?? ''}`
-    if (seenFrames.has(frameKey)) continue
+    if (seenFrames.has(frameKey)) {
+      continue
+    }
     seenFrames.add(frameKey)
 
-    if (frame.fileName) {
+    if (frame.fileName !== undefined && frame.fileName !== '') {
       lines.push(`${frame.fileName}:${frame.functionName}`)
     } else {
       lines.push(frame.functionName)

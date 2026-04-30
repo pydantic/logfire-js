@@ -14,32 +14,26 @@ jobs:
       - name: Begin CI...
         uses: actions/checkout@v4
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Use Node 24
-        uses: actions/setup-node@v4
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
-          node-version: 24.x
-          cache: 'pnpm'
+          node-version: '24'
+          cache: true
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: vp install --frozen-lockfile
 
       - name: Build
-        run: pnpm run build
+        run: vp run --filter "./packages/*" build
 
-      - name: Type check
-        run: pnpm run typecheck
+      - name: Static checks
+        run: vp check
 
-      - name: Lint
-        run: pnpm run lint
-
-      - name: Format check
-        run: pnpm run format-check
+      - name: TypeScript comparison
+        run: vp run --filter "./packages/*" typecheck
 
       - name: Test
-        run: pnpm run test
+        run: vp run --filter "./packages/*" test
 
   release:
     needs: [build]
@@ -55,17 +49,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node 24
-        uses: actions/setup-node@v4
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
-          node-version: 24.x
-          cache: 'pnpm'
+          node-version: '24'
+          cache: true
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: vp install --frozen-lockfile
+
+      - name: Enable pnpm for publishing
+        run: corepack enable pnpm
 
       - name: Release
         id: changesets

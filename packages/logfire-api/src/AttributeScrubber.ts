@@ -104,14 +104,16 @@ export class LogfireAttributeScrubber implements BaseScrubber {
    * List of keys that are considered safe and don't need scrubbing
    */
   SAFE_KEYS: string[] = Array.from(SAFE_KEYS)
-  private _callback?: ScrubCallback
+  private readonly _callback?: ScrubCallback
 
-  private _pattern: RegExp
+  private readonly _pattern: RegExp
 
   constructor(patterns?: string[], callback?: ScrubCallback) {
     const allPatterns = [...DEFAULT_PATTERNS, ...(patterns ?? [])]
     this._pattern = new RegExp(allPatterns.join('|'), 'i')
-    this._callback = callback
+    if (callback !== undefined) {
+      this._callback = callback
+    }
   }
 
   /**
@@ -163,7 +165,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
       return value
     } else if (Array.isArray(value)) {
       return value.map((v, i) => this.scrub([...path, i], v, notes))
-    } else if (value && typeof value === 'object') {
+    } else if (value !== null && typeof value === 'object') {
       // Object
       const result: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(value)) {
@@ -217,4 +219,4 @@ export class NoopAttributeScrubber implements BaseScrubber {
 /**
  * A singleton instance of NoopAttributeScrubber for convenience
  */
-export const NoopScrubber = new NoopAttributeScrubber()
+export const NoopScrubber: NoopAttributeScrubber = new NoopAttributeScrubber()

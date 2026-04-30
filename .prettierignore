@@ -1,9 +1,0 @@
-node_modules
-dist
-.next
-pnpm-lock.yaml
-*.tgz
-**/.turbo
-CHANGELOG.md
-**/next-env.d.ts
-.changeset/*.md

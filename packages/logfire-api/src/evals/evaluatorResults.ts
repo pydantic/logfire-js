@@ -26,7 +26,9 @@ export function buildEvaluationResultJson(
     source,
     value: scalar,
   }
-  if (evaluatorVersion !== undefined) out.evaluator_version = evaluatorVersion
+  if (evaluatorVersion !== undefined) {
+    out.evaluator_version = evaluatorVersion
+  }
   return out
 }
 
@@ -43,8 +45,12 @@ export function buildEvaluatorFailureRecord(
     name,
     source,
   }
-  if (isErr && err.stack !== undefined) out.error_stacktrace = err.stack
-  if (evaluatorVersion !== undefined) out.evaluator_version = evaluatorVersion
+  if (isErr && err.stack !== undefined) {
+    out.error_stacktrace = err.stack
+  }
+  if (evaluatorVersion !== undefined) {
+    out.evaluator_version = evaluatorVersion
+  }
   return out
 }
 

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vite-plus/test'
 
 import {
   buildDatasetJsonSchema,
@@ -21,6 +21,11 @@ import {
   ReportEvaluator,
   stringifyYaml,
 } from '../../evals'
+
+const sleep = async (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
 
 describe('EvaluatorSpec encoding', () => {
   it('null toJSON → bare string', () => {
@@ -64,7 +69,7 @@ describe('EvaluatorSpec encoding', () => {
 
   it('decodeEvaluator constructs from map/object registries and reports unknown names', () => {
     class PairEvaluator extends Evaluator {
-      static evaluatorName = 'PairEvaluator'
+      static override evaluatorName = 'PairEvaluator'
       readonly left: string
       readonly right: number
 
@@ -79,7 +84,7 @@ describe('EvaluatorSpec encoding', () => {
     }
 
     class ValueEvaluator extends Evaluator {
-      static evaluatorName = 'ValueEvaluator'
+      static override evaluatorName = 'ValueEvaluator'
       readonly value: unknown
       constructor(opts: { value: unknown }) {
         super()
@@ -109,7 +114,7 @@ describe('EvaluatorSpec encoding', () => {
 
   it('decodeReportEvaluator constructs report evaluators and reports unknown names', () => {
     class TableReportEvaluator extends ReportEvaluator {
-      static evaluatorName = 'TableReportEvaluator'
+      static override evaluatorName = 'TableReportEvaluator'
       readonly title: string
       constructor(opts: { title: string }) {
         super()
@@ -132,7 +137,7 @@ describe('EvaluatorSpec encoding', () => {
 
   it('custom json schema providers narrow evaluator argument schemas', () => {
     class SchemaEvaluator extends Evaluator {
-      static evaluatorName = 'SchemaEvaluator'
+      static override evaluatorName = 'SchemaEvaluator'
       static jsonSchema() {
         return { additionalProperties: false, properties: { value: { type: 'string' } }, required: ['value'], type: 'object' }
       }
@@ -142,7 +147,7 @@ describe('EvaluatorSpec encoding', () => {
     }
 
     class NullSchemaEvaluator extends Evaluator {
-      static evaluatorName = 'NullSchemaEvaluator'
+      static override evaluatorName = 'NullSchemaEvaluator'
       static jsonSchema() {
         return null
       }
@@ -180,13 +185,13 @@ describe('Dataset YAML round-trip', () => {
 
     const yaml = dataset.toText('yaml')
     const parsed = parseYaml(yaml) as Record<string, unknown>
-    expect(parsed.name).toBe('sentiment')
-    expect((parsed.evaluators as unknown[])[0]).toBe('EqualsExpected')
-    expect((parsed.evaluators as unknown[])[1]).toEqual({ MaxDuration: 5 })
-    const cases = parsed.cases as Record<string, unknown>[]
-    expect(cases[0]?.name).toBe('a')
-    expect(cases[0]?.expected_output).toBe('POSITIVE')
-    expect(cases[1]?.evaluators).toEqual([{ Contains: 'POSITIVE' }])
+    expect(parsed['name']).toBe('sentiment')
+    expect((parsed['evaluators'] as unknown[])[0]).toBe('EqualsExpected')
+    expect((parsed['evaluators'] as unknown[])[1]).toEqual({ MaxDuration: 5 })
+    const cases = parsed['cases'] as Record<string, unknown>[]
+    expect(cases[0]?.['name']).toBe('a')
+    expect(cases[0]?.['expected_output']).toBe('POSITIVE')
+    expect(cases[1]?.['evaluators']).toEqual([{ Contains: 'POSITIVE' }])
   })
 
   it('round-trips dataset → YAML → dataset preserving evaluators', () => {
@@ -266,7 +271,7 @@ describe('Dataset YAML round-trip', () => {
 
   it('uses defaultName and custom evaluator registries when restoring objects', () => {
     class CustomEvaluator extends Evaluator {
-      static evaluatorName = 'CustomEvaluator'
+      static override evaluatorName = 'CustomEvaluator'
       readonly value: string
       constructor(opts: { value: string }) {
         super()
@@ -298,7 +303,7 @@ describe('Dataset YAML round-trip', () => {
 
   it('falls back to globally registered custom evaluators when no custom registry is provided', () => {
     class GloballyRegisteredEvaluator extends Evaluator {
-      static evaluatorName = 'GloballyRegisteredEvaluator'
+      static override evaluatorName = 'GloballyRegisteredEvaluator'
       readonly value: string
       constructor(opts: { value: string }) {
         super()
@@ -334,7 +339,7 @@ describe('Dataset YAML round-trip', () => {
     expect(text).toContain('case_sensitive')
     expect(text).toContain('predicted_from')
     expect(text).toContain('score_key')
-    expect(schema.title).toBe('PydanticEvalsDataset')
+    expect(schema['title']).toBe('PydanticEvalsDataset')
   })
 
   it('reads and writes Python-compatible flat ConfusionMatrixEvaluator options', () => {
@@ -366,9 +371,9 @@ describe('Dataset YAML round-trip', () => {
       evaluators: [new EqualsExpected()],
       name: 'file-test',
     })
-    const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
-    const os: typeof import('node:os') = await import('node:os')
-    const path: typeof import('node:path') = await import('node:path')
+    const fs = await import('node:fs/promises')
+    const os = await import('node:os')
+    const path = await import('node:path')
     const tmpdir = await fs.mkdtemp(path.join(os.tmpdir(), 'logfire-evals-'))
     const filePath = path.join(tmpdir, 'dataset.yaml')
     try {
@@ -387,9 +392,9 @@ describe('Dataset YAML round-trip', () => {
       evaluators: [new EqualsExpected()],
       name: 'file-test',
     })
-    const fs: typeof import('node:fs/promises') = await import('node:fs/promises')
-    const os: typeof import('node:os') = await import('node:os')
-    const path: typeof import('node:path') = await import('node:path')
+    const fs = await import('node:fs/promises')
+    const os = await import('node:os')
+    const path = await import('node:path')
     const tmpdir = await fs.mkdtemp(path.join(os.tmpdir(), 'logfire-evals-schema-'))
     const filePath = path.join(tmpdir, 'dataset.yaml')
     const schemaPath = path.join(tmpdir, 'dataset.schema.json')
@@ -401,7 +406,7 @@ describe('Dataset YAML round-trip', () => {
       expect(parsedSchema.title).toBe('PydanticEvalsDataset')
       const firstMtime = (await fs.stat(schemaPath)).mtimeMs
 
-      await new Promise((resolve) => setTimeout(resolve, 20))
+      await sleep(20)
       await ds.toFile(filePath, { schemaPath: 'dataset.schema.json' })
 
       expect(await fs.readFile(schemaPath, 'utf8')).toBe(firstSchema)
@@ -416,12 +421,12 @@ describe('Dataset YAML round-trip', () => {
     const files = new Map<string, string>()
     const calls: string[] = []
     ;(globalThis as { Deno?: unknown }).Deno = {
-      readTextFile: (path: string) => {
+      readTextFile: async (path: string) => {
         calls.push(`read:${path}`)
         const text = files.get(path)
         return text === undefined ? Promise.reject(new Error(`missing ${path}`)) : Promise.resolve(text)
       },
-      writeTextFile: (path: string, text: string) => {
+      writeTextFile: async (path: string, text: string) => {
         calls.push(`write:${path}`)
         files.set(path, text)
         return Promise.resolve()
@@ -445,7 +450,7 @@ describe('Dataset YAML round-trip', () => {
   })
 
   it('rejects malformed dataset objects with a helpful zod error', () => {
-    expect(() => Dataset.fromObject({ cases: 'not-an-array', name: 'x' })).toThrow()
+    expect(() => Dataset.fromObject({ cases: 'not-an-array', name: 'x' })).toThrow(/expected array/i)
   })
 })
 
@@ -463,10 +468,10 @@ evaluators:
   - EqualsExpected
 `
     const parsed = parseYaml(yaml) as Record<string, unknown>
-    expect(parsed.name).toBe('example')
-    const cases = parsed.cases as Record<string, unknown>[]
-    expect(cases[0]?.evaluators).toEqual([{ Contains: 'GOOD' }])
-    expect(parsed.evaluators).toEqual(['EqualsExpected'])
+    expect(parsed['name']).toBe('example')
+    const cases = parsed['cases'] as Record<string, unknown>[]
+    expect(cases[0]?.['evaluators']).toEqual([{ Contains: 'GOOD' }])
+    expect(parsed['evaluators']).toEqual(['EqualsExpected'])
   })
 
   it('stringifyYaml emits round-trippable text', () => {

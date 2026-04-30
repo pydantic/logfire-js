@@ -1,7 +1,7 @@
 import { RandomIdGenerator } from '@opentelemetry/sdk-trace-base'
 
 export class ULIDGenerator extends RandomIdGenerator {
-  override generateTraceId = () => {
+  override generateTraceId = (): string => {
     const id = ulid().toString(16).padStart(32, '0')
     return id
   }

@@ -31,4 +31,5 @@ catalog:
   '@vercel/otel': ^2.1.2
   'js-yaml': ^4.1.0
   'p-retry': ^6.2.1
+  typescript: ^6.0.3
   zod: ^3.23.8

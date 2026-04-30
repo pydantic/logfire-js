@@ -3,6 +3,7 @@
  */
 
 import type { Evaluator } from './Evaluator'
+import type { CaseLifecycleClass } from './CaseLifecycle'
 import type { ReportEvaluator } from './ReportEvaluator'
 import type { SpanTree } from './spanTree/SpanTree'
 
@@ -110,7 +111,7 @@ export interface EvaluateOptions<Inputs = unknown, Output = unknown, Metadata = 
   _phantomMetadata?: Metadata
   _phantomOutput?: Output
   /** Per-case lifecycle hooks — pass the class, not an instance. */
-  lifecycle?: import('./CaseLifecycle').CaseLifecycleClass<Inputs, Output, Metadata>
+  lifecycle?: CaseLifecycleClass<Inputs, Output, Metadata>
   /** Bound concurrent case execution with a semaphore. Undefined = unbounded. */
   maxConcurrency?: number
   /** User-provided experiment metadata — surfaces as a top-level `metadata` attribute. */

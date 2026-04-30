@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
 
 import { detectRuntime, hasAsyncLocalStorage, hasNodeFs } from '../../evals'
 
@@ -18,7 +18,7 @@ describe('runtime detection', () => {
     expect(hasNodeFs()).toBe(true)
 
     vi.stubGlobal('Bun', undefined)
-    vi.stubGlobal('Deno', { readTextFile: () => Promise.resolve(''), writeTextFile: () => Promise.resolve() })
+    vi.stubGlobal('Deno', { readTextFile: async () => Promise.resolve(''), writeTextFile: async () => Promise.resolve() })
     expect(detectRuntime()).toBe('deno')
     expect(hasAsyncLocalStorage()).toBe(true)
     expect(hasNodeFs()).toBe(true)

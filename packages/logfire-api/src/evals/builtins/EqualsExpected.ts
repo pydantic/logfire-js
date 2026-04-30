@@ -9,11 +9,14 @@ import { deepEqual } from './Equals'
  * returns an empty mapping (no result emitted) — same as Python pydantic-evals.
  */
 export class EqualsExpected extends Evaluator {
-  static evaluatorName = 'EqualsExpected'
+  static override evaluatorName = 'EqualsExpected'
 
   constructor(opts: { evaluation_name?: string; evaluationName?: string } = {}) {
     super()
-    this.evaluationName = opts.evaluationName ?? opts.evaluation_name
+    const evaluationName = opts.evaluationName ?? opts.evaluation_name
+    if (evaluationName !== undefined) {
+      this.evaluationName = evaluationName
+    }
   }
 
   static jsonSchema(): Record<string, unknown> {
@@ -27,12 +30,16 @@ export class EqualsExpected extends Evaluator {
   }
 
   evaluate(ctx: EvaluatorContext): EvaluatorOutput {
-    if (ctx.expectedOutput === undefined) return {}
+    if (ctx.expectedOutput === undefined) {
+      return {}
+    }
     return deepEqual(ctx.output, ctx.expectedOutput)
   }
 
-  toJSON(): null | Record<string, unknown> {
-    if (this.evaluationName === undefined) return null
+  override toJSON(): null | Record<string, unknown> {
+    if (this.evaluationName === undefined) {
+      return null
+    }
     return { evaluation_name: this.evaluationName }
   }
 }

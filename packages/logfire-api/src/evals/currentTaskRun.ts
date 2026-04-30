@@ -7,6 +7,8 @@
  * Mirrors pydantic-evals' `CURRENT_TASK_RUN` ContextVar.
  */
 
+import type { AsyncLocalStorage } from 'node:async_hooks'
+
 import type { TaskRunState } from './types'
 
 import { hasAsyncLocalStorage } from './runtime'
@@ -22,15 +24,21 @@ let alsProbeComplete = false
 let fallbackStore: null | TaskRunState = null
 
 async function ensureALS(): Promise<void> {
-  if (alsImpl !== null) return
-  if (alsProbeComplete) return
+  if (alsImpl !== null) {
+    return
+  }
+  if (alsProbeComplete) {
+    return
+  }
   alsProbeComplete = true
-  if (!hasAsyncLocalStorage()) return
+  if (!hasAsyncLocalStorage()) {
+    return
+  }
   // Lazy import — `node:async_hooks` is not available on the browser. Vite is
   // configured to externalize `node:*` so this resolves at runtime against the
   // host's module resolver.
   try {
-    const mod: typeof import('node:async_hooks') = await import('node:async_hooks')
+    const mod: { AsyncLocalStorage: typeof AsyncLocalStorage } = await import('node:async_hooks')
     alsImpl = new mod.AsyncLocalStorage<TaskRunState>()
   } catch {
     alsImpl = null
@@ -69,7 +77,9 @@ export function getCurrentTaskRun(): TaskRunState | undefined {
  */
 export function setEvalAttribute(name: string, value: unknown): void {
   const state = getCurrentTaskRun()
-  if (state === undefined) return
+  if (state === undefined) {
+    return
+  }
   state.attributes[name] = value
 }
 
@@ -79,9 +89,13 @@ export function setEvalAttribute(name: string, value: unknown): void {
  */
 export function incrementEvalMetric(name: string, amount: number): void {
   const state = getCurrentTaskRun()
-  if (state === undefined) return
+  if (state === undefined) {
+    return
+  }
   const current = state.metrics[name] ?? 0
   const next = current + amount
-  if (current === 0 && next === 0) return
+  if (current === 0 && next === 0) {
+    return
+  }
   state.metrics[name] = next
 }

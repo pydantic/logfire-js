@@ -12,7 +12,7 @@ import { deepEqual } from './Equals'
  * `evaluators/common.py:64–141`.
  */
 export class Contains extends Evaluator {
-  static evaluatorName = 'Contains'
+  static override evaluatorName = 'Contains'
 
   readonly asStrings: boolean
   readonly caseSensitive: boolean
@@ -31,7 +31,10 @@ export class Contains extends Evaluator {
     this.value = opts.value
     this.caseSensitive = opts.caseSensitive ?? opts.case_sensitive ?? true
     this.asStrings = opts.asStrings ?? opts.as_strings ?? false
-    this.evaluationName = opts.evaluationName ?? opts.evaluation_name
+    const evaluationName = opts.evaluationName ?? opts.evaluation_name
+    if (evaluationName !== undefined) {
+      this.evaluationName = evaluationName
+    }
   }
 
   static jsonSchema(): Record<string, unknown> {
@@ -53,11 +56,17 @@ export class Contains extends Evaluator {
     return result
   }
 
-  toJSON(): Record<string, unknown> {
+  override toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = { value: this.value }
-    if (!this.caseSensitive) out.case_sensitive = false
-    if (this.asStrings) out.as_strings = true
-    if (this.evaluationName !== undefined) out.evaluation_name = this.evaluationName
+    if (!this.caseSensitive) {
+      out['case_sensitive'] = false
+    }
+    if (this.asStrings) {
+      out['as_strings'] = true
+    }
+    if (this.evaluationName !== undefined) {
+      out['evaluation_name'] = this.evaluationName
+    }
     return out
   }
 
@@ -66,7 +75,9 @@ export class Contains extends Evaluator {
       const a = this.caseSensitive ? String(output) : String(output).toLowerCase()
       const b = this.caseSensitive ? String(this.value) : String(this.value).toLowerCase()
       const ok = a.includes(b)
-      if (ok) return { value: true }
+      if (ok) {
+        return { value: true }
+      }
       return { reason: `Output string ${truncatedRepr(a, 100)} does not contain expected string ${truncatedRepr(b, 100)}`, value: false }
     }
     if (Array.isArray(output)) {
@@ -118,6 +129,8 @@ function truncatedRepr(value: unknown, maxLength: number): string {
       repr = String(value)
     }
   }
-  if (repr.length <= maxLength) return repr
+  if (repr.length <= maxLength) {
+    return repr
+  }
   return `${repr.slice(0, Math.floor(maxLength / 2))}...${repr.slice(-Math.floor(maxLength / 2))}`
 }

@@ -1,5 +1,6 @@
-/* eslint-disable import-x/first */
-import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
+/* eslint-disable import/first */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
+import type { MockInstance } from 'vite-plus/test'
 
 const mocks = vi.hoisted(() => {
   const nodeSdkInstances: MockNodeSDK[] = []
@@ -7,21 +8,21 @@ const mocks = vi.hoisted(() => {
   let traceForceFlushCalls = 0
 
   const logProcessor = {
-    forceFlush: () => {
+    forceFlush: async () => {
       logForceFlushCalls++
       return Promise.resolve()
     },
     onEmit: () => undefined,
-    shutdown: () => Promise.resolve(),
+    shutdown: async () => Promise.resolve(),
   }
   const traceProcessor = {
-    forceFlush: () => {
+    forceFlush: async () => {
       traceForceFlushCalls++
       return Promise.resolve()
     },
     onEnd: () => undefined,
     onStart: () => undefined,
-    shutdown: () => Promise.resolve(),
+    shutdown: async () => Promise.resolve(),
   }
 
   class MockNodeSDK {
@@ -33,7 +34,7 @@ const mocks = vi.hoisted(() => {
       nodeSdkInstances.push(this)
     }
 
-    shutdown(): Promise<void> {
+    async shutdown(): Promise<void> {
       this.shutdownCalls++
       return Promise.resolve()
     }
@@ -112,7 +113,9 @@ describe('sdk lifecycle helpers', () => {
     start()
     const instance = mocks.nodeSdkInstances[0]
     expect(instance).toBeDefined()
-    if (instance === undefined) throw new Error('expected NodeSDK mock instance')
+    if (instance === undefined) {
+      throw new Error('expected NodeSDK mock instance')
+    }
 
     await shutdown()
     await shutdown()
@@ -129,7 +132,9 @@ describe('sdk lifecycle helpers', () => {
   it('start shuts down the previous SDK and replaces process listeners', () => {
     start()
     const first = mocks.nodeSdkInstances[0]
-    if (first === undefined) throw new Error('expected first NodeSDK mock instance')
+    if (first === undefined) {
+      throw new Error('expected first NodeSDK mock instance')
+    }
     const firstListenerCalls = processOnSpy.mock.calls.map(([event, listener]) => [event, listener])
 
     start()

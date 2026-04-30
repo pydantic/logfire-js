@@ -1,7 +1,8 @@
-import { Context, HrTime } from '@opentelemetry/api'
-import { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base'
+import type { Context, HrTime } from '@opentelemetry/api'
+import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
-import { checkTraceIdRatio, SpanLevel, type TailSamplingSpanInfo } from './sampling'
+import { checkTraceIdRatio, SpanLevel } from './sampling'
+import type { TailSamplingSpanInfo } from './sampling'
 
 interface BufferedSpan {
   context: Context | null
@@ -24,9 +25,9 @@ function hrTimeToSeconds(hrTime: HrTime): number {
 }
 
 export class TailSamplingProcessor implements SpanProcessor {
-  private buffers = new Map<string, TraceBuffer | typeof FLUSHED>()
-  private tail: TailCallback
-  private wrapped: SpanProcessor
+  private readonly buffers = new Map<string, TraceBuffer | typeof FLUSHED>()
+  private readonly tail: TailCallback
+  private readonly wrapped: SpanProcessor
 
   constructor(wrapped: SpanProcessor, tail: TailCallback) {
     this.wrapped = wrapped

@@ -1,5 +1,6 @@
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-proto'
-import { PeriodicExportingMetricReader, PeriodicExportingMetricReaderOptions, PushMetricExporter } from '@opentelemetry/sdk-metrics'
+import type { PeriodicExportingMetricReaderOptions, PushMetricExporter } from '@opentelemetry/sdk-metrics'
+import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
 
 import { logfireConfig } from './logfireConfig'
 import { VoidMetricExporter } from './VoidMetricExporter'
@@ -12,7 +13,7 @@ export function metricExporter(): PushMetricExporter {
   }
 
   const token = logfireConfig.token
-  if (!token) {
+  if (token === undefined || token === '') {
     throw new Error('Logfire token is required')
   }
   return new OTLPMetricExporter({
@@ -21,7 +22,7 @@ export function metricExporter(): PushMetricExporter {
   })
 }
 
-export function periodicMetricReader(options?: PeriodicMetricReaderOptions) {
+export function periodicMetricReader(options?: PeriodicMetricReaderOptions): PeriodicExportingMetricReader {
   return new PeriodicExportingMetricReader({
     exporter: metricExporter(),
     ...options,

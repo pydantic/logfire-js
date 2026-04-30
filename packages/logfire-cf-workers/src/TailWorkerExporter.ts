@@ -1,15 +1,16 @@
-import { ExportResult, ExportResultCode } from '@opentelemetry/core'
+import type { ExportResult } from '@opentelemetry/core'
+import { ExportResultCode } from '@opentelemetry/core'
 import { JsonTraceSerializer } from '@opentelemetry/otlp-transformer'
-import { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base'
+import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base'
 
-import { IExportTraceServiceRequest, IKeyValue } from './OtlpTransformerTypes'
+import type { IExportTraceServiceRequest, IKeyValue } from './OtlpTransformerTypes'
 
 export class TailWorkerExporter implements SpanExporter {
   export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
     this._sendSpans(spans, resultCallback)
   }
 
-  shutdown(): Promise<void> {
+  async shutdown(): Promise<void> {
     this._sendSpans([])
     return Promise.resolve()
   }

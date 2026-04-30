@@ -20,9 +20,11 @@ import { getCurrentTaskRun } from './currentTaskRun'
 import { buildEvaluatorFailureRecord, evaluationResultsFromOutput } from './evaluatorResults'
 import { extractMetricsFromSpanTree } from './extractMetrics'
 import { evalsSpan } from './internal'
-import { emitEvaluationResult, emitEvaluatorFailure, type SpanReference, spanReferenceFromSpan } from './otelEmit'
+import { emitEvaluationResult, emitEvaluatorFailure, spanReferenceFromSpan } from './otelEmit'
+import type { SpanReference } from './otelEmit'
 import { Semaphore } from './Semaphore'
-import { buildSpanTree, getEvalsSpanProcessor, isProcessorInstalledOnGlobal, SpanTree, SpanTreeRecordingError } from './spanTree'
+import type { SpanTree } from './spanTree'
+import { buildSpanTree, getEvalsSpanProcessor, isProcessorInstalledOnGlobal, SpanTreeRecordingError } from './spanTree'
 
 export type SamplingMode = 'correlated' | 'independent'
 
@@ -62,6 +64,19 @@ export interface OnlineEvalConfig {
   sink?: EvaluationSink
 }
 
+export interface OnlineEvalConfigOptions {
+  emitOtelEvents?: boolean
+  enabled?: boolean
+  includeBaggage?: boolean
+  metadata?: Record<string, unknown> | undefined
+  onError?: OnErrorCallback | undefined
+  onMaxConcurrency?: OnMaxConcurrencyCallback | undefined
+  onSamplingError?: ((e: unknown) => void) | undefined
+  sampleRate?: ((ctx: SamplingContext) => boolean | number) | number
+  samplingMode?: SamplingMode
+  sink?: EvaluationSink | undefined
+}
+
 const DEFAULT_CONFIG: OnlineEvalConfig = {
   emitOtelEvents: true,
   enabled: true,
@@ -71,7 +86,7 @@ const DEFAULT_CONFIG: OnlineEvalConfig = {
 }
 
 /** Mutate the process-wide online-eval defaults. */
-export function configureOnlineEvals(opts: Partial<OnlineEvalConfig>): void {
+export function configureOnlineEvals(opts: OnlineEvalConfigOptions): void {
   Object.assign(DEFAULT_CONFIG, opts)
 }
 
@@ -106,10 +121,18 @@ export class OnlineEvaluator {
   constructor(opts: OnlineEvaluatorOptions) {
     this.inner = opts.evaluator
     this.maxConcurrencySem = new Semaphore(opts.maxConcurrency ?? 10)
-    this.onError = opts.onError
-    this.onMaxConcurrency = opts.onMaxConcurrency
-    this.sampleRate = opts.sampleRate
-    this.sink = opts.sink
+    if (opts.onError !== undefined) {
+      this.onError = opts.onError
+    }
+    if (opts.onMaxConcurrency !== undefined) {
+      this.onMaxConcurrency = opts.onMaxConcurrency
+    }
+    if (opts.sampleRate !== undefined) {
+      this.sampleRate = opts.sampleRate
+    }
+    if (opts.sink !== undefined) {
+      this.sink = opts.sink
+    }
   }
 
   async tryRun(
@@ -130,7 +153,7 @@ export class OnlineEvaluator {
       return { failures: [], results: [] }
     }
     try {
-      const out = await runWithParentSpanContext(parentSpanRef, () =>
+      const out = await runWithParentSpanContext(parentSpanRef, async () =>
         evalsSpan(
           SPAN_MSG_TEMPLATE_EVALUATOR,
           {
@@ -187,7 +210,13 @@ export async function waitForEvaluations(opts: { timeoutMs?: number } = {}): Pro
     if (Date.now() > deadline) {
       throw new Error(`waitForEvaluations: ${pendingEvaluations.size.toString()} dispatches still pending after ${timeoutMs.toString()}ms`)
     }
-    await Promise.race([Promise.allSettled(Array.from(pendingEvaluations)), new Promise((resolve) => setTimeout(resolve, 50))])
+    // eslint-disable-next-line no-await-in-loop -- polling must wait for each pending batch or timeout tick before checking again.
+    await Promise.race([
+      Promise.allSettled(Array.from(pendingEvaluations)),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, 50)
+      }),
+    ])
   }
 }
 
@@ -208,19 +237,25 @@ export function withOnlineEvaluation<F extends (...args: never[]) => Promise<unk
   const onlineEvaluators = opts.evaluators.map((e) => (e instanceof OnlineEvaluator ? e : new OnlineEvaluator({ evaluator: e })))
 
   const wrapped = async function (this: unknown, ...args: unknown[]): Promise<unknown> {
-    const callFn = (): Promise<unknown> => Promise.resolve((fn as unknown as (...a: unknown[]) => Promise<unknown>).apply(this, args))
-    if (suppressDispatch > 0) return callFn()
+    const callFn = async (): Promise<unknown> => Promise.resolve((fn as unknown as (...a: unknown[]) => Promise<unknown>).apply(this, args))
+    if (suppressDispatch > 0) {
+      return callFn()
+    }
     if (getCurrentTaskRun() !== undefined) {
       // We're inside a Dataset.evaluate task. Don't double-dispatch online evals.
       return callFn()
     }
 
     const cfg = DEFAULT_CONFIG
-    if (!cfg.enabled) return callFn()
+    if (!cfg.enabled) {
+      return callFn()
+    }
 
     const samplingCtx: SamplingContext = { args, target }
     const sampledEvaluators = sampleEvaluators(onlineEvaluators, opts, cfg, samplingCtx)
-    if (sampledEvaluators.length === 0) return callFn()
+    if (sampledEvaluators.length === 0) {
+      return callFn()
+    }
 
     const callAttrs: Record<string, unknown> = { target }
     if (opts.extractArgs !== undefined && opts.extractArgs !== false) {
@@ -252,7 +287,7 @@ export function withOnlineEvaluation<F extends (...args: never[]) => Promise<unk
 
     let callSpanRef: { spanId: string; traceId: string }
     try {
-      callSpanRef = await evalsProcessor.runWithBucket(exporterContextId, () =>
+      callSpanRef = await evalsProcessor.runWithBucket(exporterContextId, async () =>
         evalsSpan(msgTemplate, { attributes: callAttrs, spanName }, async (span) => {
           const ref = spanReferenceFromSpan(span)
           try {
@@ -295,7 +330,11 @@ export function withOnlineEvaluation<F extends (...args: never[]) => Promise<unk
       userOptions: opts,
     })
     pendingEvaluations.add(dispatch)
-    dispatch.finally(() => pendingEvaluations.delete(dispatch)).catch(() => undefined)
+    dispatch
+      .finally(() => {
+        pendingEvaluations.delete(dispatch)
+      })
+      .catch(() => undefined)
 
     return output
   }
@@ -328,8 +367,12 @@ function sampleEvaluators(
   const correlatedSeed = mode === 'correlated' ? Math.random() : null
   return evaluators.filter((ev) => {
     const rate = ev.sampleRate ?? baseRateNum
-    if (rate <= 0) return false
-    if (rate >= 1) return true
+    if (rate <= 0) {
+      return false
+    }
+    if (rate >= 1) {
+      return true
+    }
     const draw = correlatedSeed ?? Math.random()
     return draw < rate
   })
@@ -351,30 +394,41 @@ interface DispatchArgs {
 }
 
 async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
-  const ctx: EvaluatorContext = {
+  let ctx: EvaluatorContext = {
     attributes: {},
     duration: args.durationSec,
     inputs: buildEvaluatorInputs(args.args, args.inputNames),
-    metadata: args.cfg.metadata,
     metrics: args.metrics,
-    name: undefined,
     output: args.output,
     spanTree: args.spanTree,
+  }
+  if (args.cfg.metadata !== undefined) {
+    ctx = { ...ctx, metadata: args.cfg.metadata }
   }
 
   const emitOtel = args.userOptions.emitOtelEvents ?? args.cfg.emitOtelEvents
   const globalSink = args.userOptions.sink ?? args.cfg.sink
   const hasPerEvaluatorSink = args.sampledEvaluators.some((ev) => ev.sink !== undefined)
-  if (!emitOtel && globalSink === undefined && !hasPerEvaluatorSink) return
+  if (!emitOtel && globalSink === undefined && !hasPerEvaluatorSink) {
+    return
+  }
 
   const runs = await Promise.all(
-    args.sampledEvaluators.map(async (ev) => ({
-      ev,
-      ...(await ev.tryRun(ctx, args.callSpanRef, {
-        onError: args.userOptions.onError ?? args.cfg.onError,
-        onMaxConcurrency: args.userOptions.onMaxConcurrency ?? args.cfg.onMaxConcurrency,
-      })),
-    }))
+    args.sampledEvaluators.map(async (ev) => {
+      const hooks: { onError?: OnErrorCallback; onMaxConcurrency?: OnMaxConcurrencyCallback } = {}
+      const onError = args.userOptions.onError ?? args.cfg.onError
+      if (onError !== undefined) {
+        hooks.onError = onError
+      }
+      const onMaxConcurrency = args.userOptions.onMaxConcurrency ?? args.cfg.onMaxConcurrency
+      if (onMaxConcurrency !== undefined) {
+        hooks.onMaxConcurrency = onMaxConcurrency
+      }
+      return {
+        ev,
+        ...(await ev.tryRun(ctx, args.callSpanRef, hooks)),
+      }
+    })
   )
 
   const allResults: EvaluationResultJson[] = []
@@ -387,11 +441,17 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
     allResults.push(...results)
     allFailures.push(...failures)
     if (ev.sink !== undefined) {
-      const group = perEvaluatorSinks.get(ev.sink) ?? {
-        evaluators: [],
-        failures: [],
-        onError: ev.onError ?? args.userOptions.onError ?? args.cfg.onError,
-        results: [],
+      let group = perEvaluatorSinks.get(ev.sink)
+      if (group === undefined) {
+        group = {
+          evaluators: [],
+          failures: [],
+          results: [],
+        }
+        const onError = ev.onError ?? args.userOptions.onError ?? args.cfg.onError
+        if (onError !== undefined) {
+          group.onError = onError
+        }
       }
       group.evaluators.push(ev.evaluator)
       group.failures.push(...failures)
@@ -401,10 +461,12 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
   }
 
   if (emitOtel) {
-    for (const r of allResults)
+    for (const r of allResults) {
       emitEvaluationResult(r, { baggageAttrs: args.baggageAttrs, parentSpanRef: args.callSpanRef, target: args.target })
-    for (const f of allFailures)
+    }
+    for (const f of allFailures) {
       emitEvaluatorFailure(f, { baggageAttrs: args.baggageAttrs, parentSpanRef: args.callSpanRef, target: args.target })
+    }
   }
 
   const sinkSubmissions: Promise<void>[] = []
@@ -467,6 +529,7 @@ async function submitSink(
     await sink(payload)
   } catch (err) {
     for (const evaluator of evaluators) {
+      // eslint-disable-next-line no-await-in-loop -- preserve deterministic onError ordering for sink failures.
       await reportPipelineError(onError, err, payload.context, evaluator, 'sink')
     }
   }
@@ -479,7 +542,9 @@ async function reportPipelineError(
   evaluator: Evaluator,
   location: OnErrorLocation
 ): Promise<void> {
-  if (onError === undefined) return
+  if (onError === undefined) {
+    return
+  }
   try {
     await onError(err, ctx, evaluator, location)
   } catch {
@@ -488,7 +553,9 @@ async function reportPipelineError(
 }
 
 function runWithParentSpanContext<R>(parentSpanRef: null | SpanReference, fn: () => R): R {
-  if (parentSpanRef === null) return fn()
+  if (parentSpanRef === null) {
+    return fn()
+  }
   const parentContext = TraceAPI.setSpanContext(ContextAPI.active(), {
     isRemote: false,
     spanId: parentSpanRef.spanId,
@@ -499,13 +566,17 @@ function runWithParentSpanContext<R>(parentSpanRef: null | SpanReference, fn: ()
 }
 
 function getContextArgNames(fn: (...args: unknown[]) => unknown, extractArgs: WithOnlineOptions['extractArgs']): null | readonly string[] {
-  if (extractArgs === false) return null
+  if (extractArgs === false) {
+    return null
+  }
   const names = Array.isArray(extractArgs) ? extractArgs : extractParamNames(fn)
   return names.length === 0 ? null : names
 }
 
 function buildEvaluatorInputs(args: readonly unknown[], argNames: null | readonly string[]): unknown {
-  if (argNames === null) return args.length === 1 ? args[0] : [...args]
+  if (argNames === null) {
+    return args.length === 1 ? args[0] : [...args]
+  }
   const inputs: Record<string, unknown> = {}
   for (let i = 0; i < args.length; i++) {
     inputs[argNames[i] ?? `arg${i.toString()}`] = args[i]
@@ -514,9 +585,15 @@ function buildEvaluatorInputs(args: readonly unknown[], argNames: null | readonl
 }
 
 function encodeReturnAttribute(output: unknown): boolean | number | string {
-  if (typeof output === 'string' || typeof output === 'number' || typeof output === 'boolean') return output
-  if (output === undefined || typeof output === 'function' || typeof output === 'symbol') return String(output)
-  if (output instanceof Error) return `${output.name}: ${output.message}`
+  if (typeof output === 'string' || typeof output === 'number' || typeof output === 'boolean') {
+    return output
+  }
+  if (output === undefined || typeof output === 'function' || typeof output === 'symbol') {
+    return String(output)
+  }
+  if (output instanceof Error) {
+    return `${output.name}: ${output.message}`
+  }
   try {
     return JSON.stringify(output)
   } catch {
@@ -528,9 +605,13 @@ function extractParamNames(fn: (...args: unknown[]) => unknown): string[] {
   const src = fn.toString()
   // Crude — handles `function name(a, b)`, `(a, b) => ...`, and `async (a, b) => ...`.
   const match = /^(?:async\s+)?(?:function[^(]*)?\(([^)]*)\)/.exec(src)
-  if (match === null) return []
+  if (match === null) {
+    return []
+  }
   const inside = match[1]?.trim() ?? ''
-  if (inside === '') return []
+  if (inside === '') {
+    return []
+  }
   return inside.split(',').map((p) => {
     const trimmed = p.trim()
     // strip default values, type annotations, destructuring renames

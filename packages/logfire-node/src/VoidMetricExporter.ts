@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-empty-function */
-import { PushMetricExporter } from '@opentelemetry/sdk-metrics'
+import type { PushMetricExporter } from '@opentelemetry/sdk-metrics'
 
 export class VoidMetricExporter implements PushMetricExporter {
   export(): void {}

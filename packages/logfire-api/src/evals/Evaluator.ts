@@ -26,7 +26,9 @@ export abstract class Evaluator<Inputs = unknown, Output = unknown, Metadata = u
 
   /** Resolved name used as the dictionary key in `case.scores | labels | assertions`. */
   getResultName(): string {
-    if (this.evaluationName !== undefined) return this.evaluationName
+    if (this.evaluationName !== undefined) {
+      return this.evaluationName
+    }
     const cls = this.constructor as { evaluatorName?: string; name: string }
     return evaluatorRegistryKey(cls)
   }

@@ -54,8 +54,12 @@ export function emitEvaluationResult(result: EvaluationResultJson, opts: EmitOpt
     [GEN_AI_EVAL_TARGET]: opts.target,
     [GEN_AI_EVALUATOR_SOURCE]: JSON.stringify(result.source),
   }
-  if (result.evaluator_version !== undefined) attrs[GEN_AI_EVALUATOR_VERSION] = result.evaluator_version
-  if (result.reason !== null) attrs[GEN_AI_EXPLANATION] = result.reason
+  if (result.evaluator_version !== undefined) {
+    attrs[GEN_AI_EVALUATOR_VERSION] = result.evaluator_version
+  }
+  if (result.reason !== null) {
+    attrs[GEN_AI_EXPLANATION] = result.reason
+  }
 
   encodeScoreAttrs(result.value, attrs)
   applyBaggage(attrs, opts.baggageAttrs)
@@ -73,7 +77,9 @@ export function emitEvaluatorFailure(failure: EvaluatorFailureRecord, opts: Emit
     [GEN_AI_EVALUATOR_SOURCE]: JSON.stringify(failure.source),
     [GEN_AI_EXPLANATION]: errorMessage,
   }
-  if (failure.evaluator_version !== undefined) attrs[GEN_AI_EVALUATOR_VERSION] = failure.evaluator_version
+  if (failure.evaluator_version !== undefined) {
+    attrs[GEN_AI_EVALUATOR_VERSION] = failure.evaluator_version
+  }
   applyBaggage(attrs, opts.baggageAttrs)
 
   const body = errorMessage === '' ? `evaluation: ${failure.name} failed` : `evaluation: ${failure.name} failed: ${errorMessage}`
@@ -118,11 +124,21 @@ function emit(body: string, attrs: Record<string, unknown>, parentRef?: SpanRefe
 }
 
 function formatPythonGeneralNumber(value: number): string {
-  if (Number.isNaN(value)) return 'nan'
-  if (value === Infinity) return 'inf'
-  if (value === -Infinity) return '-inf'
-  if (value === 0) return '0'
-  if (Number.isInteger(value) && Math.abs(value) < 1e6) return String(value)
+  if (Number.isNaN(value)) {
+    return 'nan'
+  }
+  if (value === Infinity) {
+    return 'inf'
+  }
+  if (value === -Infinity) {
+    return '-inf'
+  }
+  if (value === 0) {
+    return '0'
+  }
+  if (Number.isInteger(value) && Math.abs(value) < 1e6) {
+    return String(value)
+  }
   return value
     .toPrecision(6)
     .replace(/(\.\d*?)0+(e|$)/, '$1$2')
@@ -135,9 +151,13 @@ function pythonStringRepr(value: string): string {
 }
 
 function applyBaggage(attrs: Record<string, unknown>, baggage: Record<string, unknown> | undefined): void {
-  if (baggage === undefined) return
+  if (baggage === undefined) {
+    return
+  }
   // Standard semconv keys win over baggage on conflict.
   for (const [k, v] of Object.entries(baggage)) {
-    if (!(k in attrs)) attrs[k] = v
+    if (!(k in attrs)) {
+      attrs[k] = v
+    }
   }
 }

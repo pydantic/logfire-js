@@ -2,8 +2,10 @@
 import type { ReportCase } from '../reporting'
 
 import { registerReportEvaluator } from '../registry'
-import { type KSAnalysis, ReportEvaluator, type ReportEvaluatorContext, type ScalarAnalysis } from '../ReportEvaluator'
-import { buildThresholdInputs, downsample, type PositiveFrom, type ScoreFrom } from './scoreCommon'
+import { ReportEvaluator } from '../ReportEvaluator'
+import type { KSAnalysis, ReportEvaluatorContext, ScalarAnalysis } from '../ReportEvaluator'
+import { buildThresholdInputs, downsample } from './scoreCommon'
+import type { PositiveFrom, ScoreFrom } from './scoreCommon'
 
 export interface KSOptions {
   n_thresholds?: number
@@ -20,7 +22,7 @@ export interface KSOptions {
 }
 
 export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
-  static evaluatorName = 'KolmogorovSmirnovEvaluator'
+  static override evaluatorName = 'KolmogorovSmirnovEvaluator'
 
   readonly nThresholds: number
   readonly positiveFrom: PositiveFrom
@@ -34,7 +36,10 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
     this.scoreKey = opts.scoreKey ?? opts.score_key ?? ''
     this.scoreFrom = opts.scoreFrom ?? opts.score_from ?? 'scores'
     this.positiveFrom = opts.positiveFrom ?? opts.positive_from ?? 'expected_output'
-    this.positiveKey = opts.positiveKey ?? opts.positive_key
+    const positiveKey = opts.positiveKey ?? opts.positive_key
+    if (positiveKey !== undefined) {
+      this.positiveKey = positiveKey
+    }
     this.nThresholds = opts.nThresholds ?? opts.n_thresholds ?? 100
     this.title = opts.title ?? 'KS Plot'
   }
@@ -57,12 +62,13 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
 
   evaluate(ctx: ReportEvaluatorContext): [KSAnalysis, ScalarAnalysis] {
     const cases = ctx.report.cases.filter((c): c is ReportCase => 'output' in c)
-    const inputs = buildThresholdInputs(cases, {
+    const thresholdOptions = {
       positiveFrom: this.positiveFrom,
-      positiveKey: this.positiveKey,
       scoreFrom: this.scoreFrom,
       scoreKey: this.scoreKey,
-    })
+      ...(this.positiveKey !== undefined ? { positiveKey: this.positiveKey } : {}),
+    }
+    const inputs = buildThresholdInputs(cases, thresholdOptions)
 
     const positiveScores = inputs.scores.filter((_, i) => inputs.positives[i] === true).sort((a, b) => a - b)
     const negativeScores = inputs.scores.filter((_, i) => inputs.positives[i] === false).sort((a, b) => a - b)
@@ -79,17 +85,24 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
       },
       { title: 'KS Statistic', type: 'scalar', value: Number.NaN },
     ]
-    if (allScores.length === 0 || positiveScores.length === 0 || negativeScores.length === 0) return emptyResult
+    if (allScores.length === 0 || positiveScores.length === 0 || negativeScores.length === 0) {
+      return emptyResult
+    }
 
     const cdf = (sorted: readonly number[], x: number): number => {
-      if (sorted.length === 0) return 0
+      if (sorted.length === 0) {
+        return 0
+      }
       // count of values <= x
       let lo = 0
       let hi = sorted.length
       while (lo < hi) {
         const mid = (lo + hi) >>> 1
-        if (sorted[mid]! <= x) lo = mid + 1
-        else hi = mid
+        if (sorted[mid]! <= x) {
+          lo = mid + 1
+        } else {
+          hi = mid
+        }
       }
       return lo / sorted.length
     }
@@ -100,7 +113,9 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
     let ksStatistic = 0
     for (let i = 1; i < positivePoints.length; i++) {
       const diff = Math.abs((positivePoints[i] as { y: number }).y - (negativePoints[i] as { y: number }).y)
-      if (diff > ksStatistic) ksStatistic = diff
+      if (diff > ksStatistic) {
+        ksStatistic = diff
+      }
     }
     const displayPositivePoints = downsample(positivePoints, this.nThresholds)
     const displayNegativePoints = downsample(negativePoints, this.nThresholds)
@@ -121,15 +136,23 @@ export class KolmogorovSmirnovEvaluator extends ReportEvaluator {
     ]
   }
 
-  toJSON(): Record<string, unknown> {
+  override toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = {
       positive_from: this.positiveFrom,
       score_key: this.scoreKey,
     }
-    if (this.positiveKey !== undefined) out.positive_key = this.positiveKey
-    if (this.scoreFrom !== 'scores') out.score_from = this.scoreFrom
-    if (this.nThresholds !== 100) out.n_thresholds = this.nThresholds
-    if (this.title !== 'KS Plot') out.title = this.title
+    if (this.positiveKey !== undefined) {
+      out['positive_key'] = this.positiveKey
+    }
+    if (this.scoreFrom !== 'scores') {
+      out['score_from'] = this.scoreFrom
+    }
+    if (this.nThresholds !== 100) {
+      out['n_thresholds'] = this.nThresholds
+    }
+    if (this.title !== 'KS Plot') {
+      out['title'] = this.title
+    }
     return out
   }
 }

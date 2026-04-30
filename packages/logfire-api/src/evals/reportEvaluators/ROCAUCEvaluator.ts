@@ -2,8 +2,10 @@
 import type { ReportCase } from '../reporting'
 
 import { registerReportEvaluator } from '../registry'
-import { ReportEvaluator, type ReportEvaluatorContext, type ROCAnalysis, type ScalarAnalysis } from '../ReportEvaluator'
-import { buildThresholdInputs, downsample, type PositiveFrom, type ScoreFrom, trapezoidalAuc, uniqueSortedThresholds } from './scoreCommon'
+import { ReportEvaluator } from '../ReportEvaluator'
+import type { ReportEvaluatorContext, ROCAnalysis, ScalarAnalysis } from '../ReportEvaluator'
+import { buildThresholdInputs, downsample, trapezoidalAuc, uniqueSortedThresholds } from './scoreCommon'
+import type { PositiveFrom, ScoreFrom } from './scoreCommon'
 
 export interface ROCAUCOptions {
   n_thresholds?: number
@@ -20,7 +22,7 @@ export interface ROCAUCOptions {
 }
 
 export class ROCAUCEvaluator extends ReportEvaluator {
-  static evaluatorName = 'ROCAUCEvaluator'
+  static override evaluatorName = 'ROCAUCEvaluator'
 
   readonly nThresholds: number
   readonly positiveFrom: PositiveFrom
@@ -34,7 +36,10 @@ export class ROCAUCEvaluator extends ReportEvaluator {
     this.scoreKey = opts.scoreKey ?? opts.score_key ?? ''
     this.scoreFrom = opts.scoreFrom ?? opts.score_from ?? 'scores'
     this.positiveFrom = opts.positiveFrom ?? opts.positive_from ?? 'expected_output'
-    this.positiveKey = opts.positiveKey ?? opts.positive_key
+    const positiveKey = opts.positiveKey ?? opts.positive_key
+    if (positiveKey !== undefined) {
+      this.positiveKey = positiveKey
+    }
     this.nThresholds = opts.nThresholds ?? opts.n_thresholds ?? 100
     this.title = opts.title ?? 'ROC Curve'
   }
@@ -57,12 +62,13 @@ export class ROCAUCEvaluator extends ReportEvaluator {
 
   evaluate(ctx: ReportEvaluatorContext): [ROCAnalysis, ScalarAnalysis] {
     const cases = ctx.report.cases.filter((c): c is ReportCase => 'output' in c)
-    const inputs = buildThresholdInputs(cases, {
+    const thresholdOptions = {
       positiveFrom: this.positiveFrom,
-      positiveKey: this.positiveKey,
       scoreFrom: this.scoreFrom,
       scoreKey: this.scoreKey,
-    })
+      ...(this.positiveKey !== undefined ? { positiveKey: this.positiveKey } : {}),
+    }
+    const inputs = buildThresholdInputs(cases, thresholdOptions)
 
     const emptyResult: [ROCAnalysis, ScalarAnalysis] = [
       {
@@ -76,11 +82,15 @@ export class ROCAUCEvaluator extends ReportEvaluator {
       },
       { title: `${this.title} AUC`, type: 'scalar', value: Number.NaN },
     ]
-    if (inputs.scores.length === 0) return emptyResult
+    if (inputs.scores.length === 0) {
+      return emptyResult
+    }
 
     const totalPositives = inputs.positives.filter(Boolean).length
     const totalNegatives = inputs.positives.length - totalPositives
-    if (totalPositives === 0 || totalNegatives === 0) return emptyResult
+    if (totalPositives === 0 || totalNegatives === 0) {
+      return emptyResult
+    }
 
     const thresholds = uniqueSortedThresholds(inputs.scores)
     const points: { x: number; y: number }[] = [{ x: 0, y: 0 }]
@@ -90,8 +100,11 @@ export class ROCAUCEvaluator extends ReportEvaluator {
       for (let i = 0; i < inputs.scores.length; i++) {
         const positive = inputs.positives[i]!
         const above = inputs.scores[i]! >= t
-        if (above && positive) tp++
-        else if (above && !positive) fp++
+        if (above && positive) {
+          tp++
+        } else if (above && !positive) {
+          fp++
+        }
       }
       const fpr = fp / totalNegatives
       const tpr = tp / totalPositives
@@ -128,15 +141,23 @@ export class ROCAUCEvaluator extends ReportEvaluator {
     ]
   }
 
-  toJSON(): Record<string, unknown> {
+  override toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = {
       positive_from: this.positiveFrom,
       score_key: this.scoreKey,
     }
-    if (this.positiveKey !== undefined) out.positive_key = this.positiveKey
-    if (this.scoreFrom !== 'scores') out.score_from = this.scoreFrom
-    if (this.nThresholds !== 100) out.n_thresholds = this.nThresholds
-    if (this.title !== 'ROC Curve') out.title = this.title
+    if (this.positiveKey !== undefined) {
+      out['positive_key'] = this.positiveKey
+    }
+    if (this.scoreFrom !== 'scores') {
+      out['score_from'] = this.scoreFrom
+    }
+    if (this.nThresholds !== 100) {
+      out['n_thresholds'] = this.nThresholds
+    }
+    if (this.title !== 'ROC Curve') {
+      out['title'] = this.title
+    }
     return out
   }
 }

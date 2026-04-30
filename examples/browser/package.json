@@ -4,10 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "vp dev",
+    "build": "tsc && vp build",
     "proxy": "tsx --env-file=.env src/proxy.ts",
-    "preview": "vite preview"
+    "preview": "vp preview"
   },
   "dependencies": {
     "@opentelemetry/auto-instrumentations-web": "catalog:",
@@ -22,7 +22,7 @@
     "@types/express": "^4.17.21",
     "logfire": "workspace:*",
     "tsx": "^4.7.0",
-    "typescript": "~5.9.3",
-    "vite": "^6.3.5"
+    "typescript": "catalog:",
+    "vite": "^8.0.10"
   }
 }

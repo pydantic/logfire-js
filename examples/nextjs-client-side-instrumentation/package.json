@@ -5,8 +5,7 @@
   "scripts": {
     "dev": "next dev --turbopack --port 8080",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "start": "next start"
   },
   "dependencies": {
     "@opentelemetry/api": "catalog:",
@@ -27,12 +26,9 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "^16.1.7",
-    "typescript": "^5.9.3"
+    "typescript": "catalog:"
   }
 }

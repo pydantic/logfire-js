@@ -1,7 +1,8 @@
-/* eslint-disable perfectionist/sort-objects */
-import { Context, context as ContextAPI, trace as TraceAPI, Tracer } from '@opentelemetry/api'
+import type { Context, Tracer } from '@opentelemetry/api'
+import { context as ContextAPI, trace as TraceAPI } from '@opentelemetry/api'
 
-import { BaseScrubber, LogfireAttributeScrubber, NoopAttributeScrubber, ScrubCallback } from './AttributeScrubber'
+import type { BaseScrubber, ScrubCallback } from './AttributeScrubber'
+import { LogfireAttributeScrubber, NoopAttributeScrubber } from './AttributeScrubber'
 import { DEFAULT_OTEL_SCOPE } from './constants'
 
 export * from './AttributeScrubber'
@@ -73,7 +74,7 @@ const DEFAULT_LOGFIRE_API_CONFIG: LogfireApiConfig = {
 
 export const logfireApiConfig: LogfireApiConfig = DEFAULT_LOGFIRE_API_CONFIG
 
-export function configureLogfireApi(config: LogfireApiConfigOptions) {
+export function configureLogfireApi(config: LogfireApiConfigOptions): void {
   if (config.errorFingerprinting !== undefined) {
     logfireApiConfig.enableErrorFingerprinting = config.errorFingerprinting
   }
@@ -100,11 +101,11 @@ function resolveScrubber(scrubbing: LogfireApiConfigOptions['scrubbing']) {
   }
 }
 
-export function resolveSendToLogfire(env: Env, option: SendToLogfire, token: string | undefined) {
-  const sendToLogfireConfig = option ?? env.LOGFIRE_SEND_TO_LOGFIRE ?? 'if-token-present'
+export function resolveSendToLogfire(env: Env, option: SendToLogfire, token: string | undefined): boolean {
+  const sendToLogfireConfig = option ?? env['LOGFIRE_SEND_TO_LOGFIRE'] ?? 'if-token-present'
 
   if (sendToLogfireConfig === 'if-token-present') {
-    if (token) {
+    if (token !== undefined && token !== '') {
       return true
     } else {
       return false
@@ -114,8 +115,8 @@ export function resolveSendToLogfire(env: Env, option: SendToLogfire, token: str
   }
 }
 
-export function resolveBaseUrl(env: Env, passedUrl: string | undefined, token: string) {
-  let url = passedUrl ?? env.LOGFIRE_BASE_URL ?? getBaseUrlFromToken(token)
+export function resolveBaseUrl(env: Env, passedUrl: string | undefined, token: string): string {
+  let url = passedUrl ?? env['LOGFIRE_BASE_URL'] ?? getBaseUrlFromToken(token)
   if (url.endsWith('/')) {
     url = url.slice(0, -1)
   }
@@ -137,11 +138,11 @@ const REGIONS: Record<string, RegionData> = {
 
 function getBaseUrlFromToken(token: string | undefined): string {
   let regionKey = 'us'
-  if (token) {
+  if (token !== undefined && token !== '') {
     const match = PYDANTIC_LOGFIRE_TOKEN_PATTERN.exec(token)
     if (match) {
-      const region = match.groups?.region
-      if (region && region in REGIONS) {
+      const region = match.groups?.['region']
+      if (region !== undefined && region in REGIONS) {
         regionKey = region
       }
     }

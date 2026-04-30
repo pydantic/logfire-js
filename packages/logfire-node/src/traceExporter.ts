@@ -1,12 +1,13 @@
-import { Context } from '@opentelemetry/api'
+import type { Context } from '@opentelemetry/api'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
-import { BatchSpanProcessor, ReadableSpan, SimpleSpanProcessor, Span, SpanExporter, SpanProcessor } from '@opentelemetry/sdk-trace-base'
+import type { ReadableSpan, Span, SpanExporter, SpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { BatchSpanProcessor, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 
 import { logfireConfig } from './logfireConfig'
 import { LogfireConsoleSpanExporter } from './LogfireConsoleSpanExporter'
 import { VoidTraceExporter } from './VoidTraceExporter'
 
-export function logfireSpanProcessor(enableConsole: boolean | undefined) {
+export function logfireSpanProcessor(enableConsole: boolean | undefined): SpanProcessor {
   return new LogfireSpanProcessor(new BatchSpanProcessor(traceExporter()), Boolean(enableConsole))
 }
 
@@ -19,7 +20,7 @@ export function traceExporter(): SpanExporter {
   }
 
   const token = logfireConfig.token
-  if (!token) {
+  if (token === undefined || token === '') {
     // TODO: what should be done here? We're forcing sending to logfire, but we don't have a token
     throw new Error('Logfire token is required')
   }
@@ -31,8 +32,8 @@ export function traceExporter(): SpanExporter {
 }
 
 class LogfireSpanProcessor implements SpanProcessor {
-  private console?: SpanProcessor
-  private wrapped: SpanProcessor
+  private readonly console?: SpanProcessor
+  private readonly wrapped: SpanProcessor
 
   constructor(wrapped: SpanProcessor, enableConsole: boolean) {
     if (enableConsole) {
