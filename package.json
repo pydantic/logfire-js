@@ -12,7 +12,7 @@
     "lint": "vp lint",
     "format": "vp fmt . --write",
     "format-check": "vp fmt --check",
-    "check": "vp check && pnpm run typecheck && pnpm run test && pnpm run build",
+    "check": "pnpm run build && vp check && pnpm run typecheck && pnpm run test",
     "release": "pnpm run build && pnpm publish -r --access public",
     "changeset-add": "pnpm changeset add"
   },
