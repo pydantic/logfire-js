@@ -17,7 +17,7 @@ This repository is the Pydantic Logfire JavaScript SDK monorepo. It provides Ope
 
 ## Environment
 
-- Use Node.js 24. The root `package.json` enforces this through `engines`.
+- Use the Node.js version in `.node-version`. The root `package.json` also enforces Node.js 24 through `engines`.
 - Use pnpm 10.28.0. The package manager is pinned in `packageManager`.
 - Run workspace commands from the repository root unless a package-level command is explicitly needed.
 
