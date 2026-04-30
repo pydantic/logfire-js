@@ -24,16 +24,16 @@ jobs:
         run: vp install --frozen-lockfile
 
       - name: Build
-        run: pnpm run build
+        run: vp run --filter "./packages/*" build
 
       - name: Static checks
         run: vp check
 
       - name: TypeScript comparison
-        run: pnpm run typecheck
+        run: vp run --filter "./packages/*" typecheck
 
       - name: Test
-        run: pnpm run test
+        run: vp run --filter "./packages/*" test
 
   release:
     needs: [build]
@@ -57,6 +57,9 @@ jobs:
 
       - name: Install dependencies
         run: vp install --frozen-lockfile
+
+      - name: Enable pnpm for publishing
+        run: corepack enable pnpm
 
       - name: Release
         id: changesets
