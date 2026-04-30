@@ -26,6 +26,6 @@
   "devDependencies": {
     "@opentelemetry/semantic-conventions": "catalog:",
     "@tsconfig/node22": "^22.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "catalog:"
   }
 }

@@ -87,6 +87,9 @@ catalogs:
     p-retry:
       specifier: ^6.2.1
       version: 6.2.1
+    typescript:
+      specifier: ^6.0.3
+      version: 6.0.3
     zod:
       specifier: ^3.23.8
       version: 3.25.76
@@ -106,14 +109,14 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5(vitest@4.1.5)
       typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
+        specifier: 'catalog:'
+        version: 6.0.3
       vite:
         specifier: ^8.0.10
         version: 8.0.10(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2)
       vite-plus:
         specifier: 0.1.20
-        version: 0.1.20(@opentelemetry/api@1.9.0)(@types/node@22.19.5)(@vitest/coverage-v8@4.1.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@5.9.3)(vite@8.0.10(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2))(yaml@2.8.2)
+        version: 0.1.20(@opentelemetry/api@1.9.0)(@types/node@22.19.5)(@vitest/coverage-v8@4.1.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@6.0.3)(vite@8.0.10(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2))(yaml@2.8.2)
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.0)(@types/node@22.19.5)(@vitest/coverage-v8@4.1.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2)
@@ -152,8 +155,8 @@ importers:
         specifier: ^4.7.0
         version: 4.21.0
       typescript:
-        specifier: ~5.9.3
-        version: 5.9.3
+        specifier: 'catalog:'
+        version: 6.0.3
       vite:
         specifier: ^8.0.10
         version: 8.0.10(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2)
@@ -180,8 +183,8 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5
       typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
+        specifier: 'catalog:'
+        version: 6.0.3
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.0)(@types/node@22.19.5)(@vitest/coverage-v8@4.1.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2)
@@ -208,8 +211,8 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5
       typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
+        specifier: 'catalog:'
+        version: 6.0.3
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.0)(@types/node@22.19.5)(@vitest/coverage-v8@4.1.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2)
@@ -239,8 +242,8 @@ importers:
         specifier: ^4.1.5
         version: 4.1.5
       typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
+        specifier: 'catalog:'
+        version: 6.0.3
       vitest:
         specifier: ^4.1.5
         version: 4.1.5(@opentelemetry/api@1.9.0)(@types/node@22.19.5)(@vitest/coverage-v8@4.1.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2)
@@ -299,8 +302,8 @@ importers:
         specifier: ^4.19.0
         version: 4.21.0
       typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
+        specifier: 'catalog:'
+        version: 6.0.3
     devDependencies:
       '@tsconfig/node20':
         specifier: ^20.1.4
@@ -331,8 +334,8 @@ importers:
         specifier: ^19
         version: 19.2.8
       typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
+        specifier: 'catalog:'
+        version: 6.0.3
 
   examples/nextjs-client-side-instrumentation:
     dependencies:
@@ -395,8 +398,8 @@ importers:
         specifier: ^19
         version: 19.2.3(@types/react@19.2.8)
       typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
+        specifier: 'catalog:'
+        version: 6.0.3
 
   examples/node:
     dependencies:
@@ -417,8 +420,8 @@ importers:
         specifier: ^22.0.0
         version: 22.0.5
       typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
+        specifier: 'catalog:'
+        version: 6.0.3
 
   packages/logfire-api:
     dependencies:
@@ -3657,8 +3660,8 @@ packages:
     resolution: {integrity: sha512-TkRKr9sUTxEH8MdfuCSP7VizJyzRNMjj2J2do2Jr3Kym598JVdEksuzPQCnlFPW4ky9Q+iA+ma9BGm06XQBy8g==}
     engines: {node: '>= 0.6'}
 
-  typescript@5.9.3:
-    resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
+  typescript@6.0.3:
+    resolution: {integrity: sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==}
     engines: {node: '>=14.17'}
     hasBin: true
 
@@ -5667,7 +5670,7 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.0
 
-  '@voidzero-dev/vite-plus-core@0.1.20(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)':
+  '@voidzero-dev/vite-plus-core@0.1.20(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@6.0.3)(yaml@2.8.2)':
     dependencies:
       '@oxc-project/runtime': 0.127.0
       '@oxc-project/types': 0.127.0
@@ -5678,7 +5681,7 @@ snapshots:
       esbuild: 0.27.3
       fsevents: 2.3.3
       tsx: 4.21.0
-      typescript: 5.9.3
+      typescript: 6.0.3
       yaml: 2.8.2
 
   '@voidzero-dev/vite-plus-darwin-arm64@0.1.20':
@@ -5699,11 +5702,11 @@ snapshots:
   '@voidzero-dev/vite-plus-linux-x64-musl@0.1.20':
     optional: true
 
-  '@voidzero-dev/vite-plus-test@0.1.20(@opentelemetry/api@1.9.0)(@types/node@22.19.5)(@vitest/coverage-v8@4.1.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@5.9.3)(vite@8.0.10(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2))(yaml@2.8.2)':
+  '@voidzero-dev/vite-plus-test@0.1.20(@opentelemetry/api@1.9.0)(@types/node@22.19.5)(@vitest/coverage-v8@4.1.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@6.0.3)(vite@8.0.10(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2))(yaml@2.8.2)':
     dependencies:
       '@standard-schema/spec': 1.1.0
       '@types/chai': 5.2.3
-      '@voidzero-dev/vite-plus-core': 0.1.20(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
+      '@voidzero-dev/vite-plus-core': 0.1.20(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@6.0.3)(yaml@2.8.2)
       es-module-lexer: 1.7.0
       obug: 2.1.1
       pixelmatch: 7.2.0
@@ -6940,7 +6943,7 @@ snapshots:
       media-typer: 0.3.0
       mime-types: 2.1.35
 
-  typescript@5.9.3: {}
+  typescript@6.0.3: {}
 
   undici-types@6.21.0: {}
 
@@ -6962,11 +6965,11 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vite-plus@0.1.20(@opentelemetry/api@1.9.0)(@types/node@22.19.5)(@vitest/coverage-v8@4.1.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@5.9.3)(vite@8.0.10(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2))(yaml@2.8.2):
+  vite-plus@0.1.20(@opentelemetry/api@1.9.0)(@types/node@22.19.5)(@vitest/coverage-v8@4.1.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@6.0.3)(vite@8.0.10(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2))(yaml@2.8.2):
     dependencies:
       '@oxc-project/types': 0.127.0
-      '@voidzero-dev/vite-plus-core': 0.1.20(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
-      '@voidzero-dev/vite-plus-test': 0.1.20(@opentelemetry/api@1.9.0)(@types/node@22.19.5)(@vitest/coverage-v8@4.1.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@5.9.3)(vite@8.0.10(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2))(yaml@2.8.2)
+      '@voidzero-dev/vite-plus-core': 0.1.20(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@6.0.3)(yaml@2.8.2)
+      '@voidzero-dev/vite-plus-test': 0.1.20(@opentelemetry/api@1.9.0)(@types/node@22.19.5)(@vitest/coverage-v8@4.1.5)(esbuild@0.27.3)(tsx@4.21.0)(typescript@6.0.3)(vite@8.0.10(@types/node@22.19.5)(esbuild@0.27.3)(tsx@4.21.0)(yaml@2.8.2))(yaml@2.8.2)
       oxfmt: 0.46.0
       oxlint: 1.61.0(oxlint-tsgolint@0.22.0)
       oxlint-tsgolint: 0.22.0
