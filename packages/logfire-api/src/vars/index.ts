@@ -622,7 +622,7 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
         signal: controller.signal,
       })
       if (!response.ok) {
-        throw new HttpStatusError(response.status, response.statusText)
+        throw new HttpStatusError(response.status, response.statusText, await response.text())
       }
       if (response.status === 204) {
         return null
@@ -708,8 +708,10 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
 class HttpStatusError extends Error {
   status: number
 
-  constructor(status: number, statusText: string) {
-    super(`HTTP ${status.toString()}: ${statusText}`)
+  constructor(status: number, statusText: string, body?: string) {
+    const statusDescription = statusText === '' ? `HTTP ${status.toString()}` : `HTTP ${status.toString()}: ${statusText}`
+    const detail = body === undefined || body.trim() === '' ? '' : `: ${body.trim()}`
+    super(`${statusDescription}${detail}`)
     this.status = status
   }
 }
@@ -1675,7 +1677,7 @@ function configToApiBody(config: VariableConfig): Record<string, unknown> {
     aliases: config.aliases ?? undefined,
     description: config.description ?? null,
     example: config.example ?? undefined,
-    json_schema: config.json_schema ?? undefined,
+    json_schema: config.json_schema ?? null,
     name: config.name,
     overrides: config.overrides.map((override) => ({
       conditions: override.conditions,

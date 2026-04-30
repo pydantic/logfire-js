@@ -399,6 +399,74 @@ describe('managed variables', () => {
     expect(bodies[0]).not.toHaveProperty('labels')
   })
 
+  it('includes nullable schemas in remote create bodies', async () => {
+    const bodies: unknown[] = []
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      await Promise.resolve()
+      const method = init?.method ?? 'GET'
+      if (method === 'POST') {
+        bodies.push(parseJsonBody(init?.body))
+      }
+      return new Response(JSON.stringify(config({})), { status: method === 'POST' ? 201 : 200 })
+    })
+    configureVariables({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      blockBeforeFirstResolve: true,
+      fetch: fetchImpl,
+      instrument: false,
+      polling: false,
+      sse: false,
+    })
+
+    await variablesPushConfig(
+      config({
+        no_schema_remote: {
+          labels: {},
+          name: 'no_schema_remote',
+          overrides: [],
+          rollout: { labels: {} },
+        },
+      })
+    )
+
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0]).toHaveProperty('json_schema', null)
+  })
+
+  it('includes response bodies in remote write errors', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      await Promise.resolve()
+      const method = init?.method ?? 'GET'
+      if (method === 'POST') {
+        return new Response(JSON.stringify({ detail: 'json_schema field required' }), { status: 422 })
+      }
+      return new Response(JSON.stringify(config({})), { status: 200 })
+    })
+    configureVariables({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      blockBeforeFirstResolve: true,
+      fetch: fetchImpl,
+      instrument: false,
+      polling: false,
+      sse: false,
+    })
+
+    await expect(
+      variablesPushConfig(
+        config({
+          rejected_remote: {
+            labels: {},
+            name: 'rejected_remote',
+            overrides: [],
+            rollout: { labels: {} },
+          },
+        })
+      )
+    ).rejects.toThrow('json_schema field required')
+  })
+
   it('can disable variables explicitly', () => {
     configureVariables(false)
 
