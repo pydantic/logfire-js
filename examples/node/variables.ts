@@ -1,52 +1,70 @@
 import 'dotenv/config'
 import * as logfire from '@pydantic/logfire-node'
-import { defineVar, targetingContext } from '@pydantic/logfire-node/vars'
+import { defineVar, targetingContext, variablesPushConfig } from '@pydantic/logfire-node/vars'
+import type { VariablesConfig } from '@pydantic/logfire-node/vars'
+
+const localVariablesConfig = {
+  variables: {
+    checkout_button_copy: {
+      labels: {
+        control: { serialized_value: '"Start trial"', version: 1 },
+        enterprise: { serialized_value: '"Talk to sales"', version: 2 },
+      },
+      name: 'checkout_button_copy',
+      overrides: [
+        {
+          conditions: [{ attribute: 'plan', kind: 'value-equals', value: 'enterprise' }],
+          rollout: { labels: { enterprise: 1 } },
+        },
+      ],
+      rollout: { labels: { control: 1 } },
+    },
+    request_timeout_ms: {
+      labels: {
+        default: { serialized_value: '2500', version: 1 },
+        patient: { serialized_value: '5000', version: 2 },
+      },
+      name: 'request_timeout_ms',
+      overrides: [
+        {
+          conditions: [{ attribute: 'region', kind: 'value-is-in', values: ['apac', 'sa'] }],
+          rollout: { labels: { patient: 1 } },
+        },
+      ],
+      rollout: { labels: { default: 1 } },
+    },
+  },
+} satisfies VariablesConfig
+
+const apiKey = process.env.LOGFIRE_API_KEY
+const useRemoteVariables = process.env.LOGFIRE_VARIABLES_REMOTE === 'true'
+const baseUrl = process.env.LOGFIRE_BASE_URL ?? 'http://localhost:3000'
 
 logfire.configure({
+  advanced: { baseUrl },
+  apiKey,
   console: false,
   diagLogLevel: logfire.DiagLogLevel.NONE,
   environment: 'local',
   serviceName: 'example-node-variables',
   serviceVersion: '1.0.0',
-  variables: {
-    config: {
-      variables: {
-        checkout_button_copy: {
-          labels: {
-            control: { serialized_value: '"Start trial"', version: 1 },
-            enterprise: { serialized_value: '"Talk to sales"', version: 2 },
-          },
-          name: 'checkout_button_copy',
-          overrides: [
-            {
-              conditions: [{ attribute: 'plan', kind: 'value-equals', value: 'enterprise' }],
-              rollout: { labels: { enterprise: 1 } },
-            },
-          ],
-          rollout: { labels: { control: 1 } },
-        },
-        request_timeout_ms: {
-          labels: {
-            default: { serialized_value: '2500', version: 1 },
-            patient: { serialized_value: '5000', version: 2 },
-          },
-          name: 'request_timeout_ms',
-          overrides: [
-            {
-              conditions: [{ attribute: 'region', kind: 'value-is-in', values: ['apac', 'sa'] }],
-              rollout: { labels: { patient: 1 } },
-            },
-          ],
-          rollout: { labels: { default: 1 } },
-        },
+  variables: useRemoteVariables
+    ? { blockBeforeFirstResolve: true, polling: false, sse: false }
+    : {
+        config: localVariablesConfig,
       },
-    },
-  },
 })
+
+console.log(useRemoteVariables ? `using remote variables from ${baseUrl}` : 'using local variables config')
 
 const checkoutButtonCopy = defineVar('checkout_button_copy', { default: 'Continue' })
 const requestTimeoutMs = defineVar('request_timeout_ms', { default: 1000 })
 const featureConfig = defineVar('feature_config', { default: { maxItems: 10, showBeta: false } })
+
+if (useRemoteVariables && process.env.LOGFIRE_VARIABLES_PUSH === 'true') {
+  const pushResult = await variablesPushConfig(localVariablesConfig)
+  console.log('pushed demo variables:', pushResult.changes)
+}
 
 const enterpriseCopy = await checkoutButtonCopy.get({
   attributes: { plan: 'enterprise' },
