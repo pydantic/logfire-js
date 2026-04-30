@@ -60,6 +60,13 @@ class TinyScore extends Evaluator {
   }
 }
 
+class LargeIntegerScore extends Evaluator {
+  static evaluatorName = 'LargeIntegerScore'
+  evaluate(): number {
+    return 1234567
+  }
+}
+
 class CategoryLabel extends Evaluator {
   static evaluatorName = 'CategoryLabel'
   evaluate(): string {
@@ -173,12 +180,12 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
   })
 
   it('formats numeric result bodies like Python general format', async () => {
-    const fn = withOnlineEvaluation(async () => 'x', { evaluators: [new TinyScore()], target: 't' })
+    const fn = withOnlineEvaluation(async () => 'x', { evaluators: [new TinyScore(), new LargeIntegerScore()], target: 't' })
     const { logs } = await withMemoryLogExporter(async () => {
       await fn()
       await waitForEvaluations()
     })
-    expect(logs[0]!.body).toBe('evaluation: TinyScore=1.23e-07')
+    expect(logs.map((log) => log.body)).toEqual(['evaluation: TinyScore=1.23e-07', 'evaluation: LargeIntegerScore=1.23457e+06'])
   })
 
   it('string output → score.label only (no value)', async () => {

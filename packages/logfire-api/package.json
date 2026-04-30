@@ -84,6 +84,11 @@
     "@opentelemetry/sdk-trace-base": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:"
   },
+  "peerDependenciesMeta": {
+    "@opentelemetry/api-logs": {
+      "optional": true
+    }
+  },
   "files": [
     "dist",
     "LICENSE"

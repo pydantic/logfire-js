@@ -121,7 +121,8 @@ function formatPythonGeneralNumber(value: number): string {
   if (Number.isNaN(value)) return 'nan'
   if (value === Infinity) return 'inf'
   if (value === -Infinity) return '-inf'
-  if (Number.isInteger(value)) return String(value)
+  if (value === 0) return '0'
+  if (Number.isInteger(value) && Math.abs(value) < 1e6) return String(value)
   return value
     .toPrecision(6)
     .replace(/(\.\d*?)0+(e|$)/, '$1$2')
