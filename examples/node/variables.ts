@@ -3,7 +3,7 @@ import * as logfire from '@pydantic/logfire-node'
 import { defineVar, targetingContext } from '@pydantic/logfire-node/vars'
 
 logfire.configure({
-  console: true,
+  console: false,
   diagLogLevel: logfire.DiagLogLevel.NONE,
   environment: 'local',
   serviceName: 'example-node-variables',
