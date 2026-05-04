@@ -1,5 +1,16 @@
 # @pydantic/logfire-browser
 
+## 0.15.0
+
+### Minor Changes
+
+- 08c513d: Add a typed `resourceAttributes` configure option for setting stable OpenTelemetry resource attributes without using `OTEL_RESOURCE_ATTRIBUTES`.
+
+### Patch Changes
+
+- Updated dependencies [08ecf7f]
+  - logfire@0.15.0
+
 ## 0.14.3
 
 ### Patch Changes
@@ -30,6 +41,7 @@
 - 1b4d704: Add trace sampling support (head + tail)
 
   Implements a two-layer sampling system matching the Python SDK:
+
   - Head sampling: probabilistic sampling at trace creation via `ParentBasedSampler`
   - Tail sampling: callback-based sampling with span buffering via `TailSamplingProcessor`
   - `SamplingOptions` type, `SpanLevel` class, `checkTraceIdRatio`, and `levelOrDuration` factory in `logfire-api`
@@ -47,6 +59,7 @@
 - 56f5bbb: Add `errorFingerprinting` configuration option to control error fingerprint computation
 
   Error fingerprinting enables grouping similar errors in the Logfire backend. However, minified browser code produces unstable fingerprints because function names are mangled, causing the same logical error to generate different fingerprints across deployments.
+
   - Added `errorFingerprinting` option to `LogfireApiConfigOptions`
   - Browser SDK now defaults to `errorFingerprinting: false`
   - Node SDK keeps the default `errorFingerprinting: true`

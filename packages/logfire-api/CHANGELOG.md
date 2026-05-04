@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.15.0
+
+### Minor Changes
+
+- 08ecf7f: Add managed variables support through the `logfire/vars` subpath, including local and remote providers, async variable resolution, targeting contexts, overrides, config validation, and push/pull helpers. Node configuration now supports `apiKey`, `LOGFIRE_API_KEY`, and managed variable provider configuration.
+
 ## 0.14.0
 
 ### Minor Changes
@@ -34,6 +40,7 @@
 - 1b4d704: Add trace sampling support (head + tail)
 
   Implements a two-layer sampling system matching the Python SDK:
+
   - Head sampling: probabilistic sampling at trace creation via `ParentBasedSampler`
   - Tail sampling: callback-based sampling with span buffering via `TailSamplingProcessor`
   - `SamplingOptions` type, `SpanLevel` class, `checkTraceIdRatio`, and `levelOrDuration` factory in `logfire-api`
@@ -46,6 +53,7 @@
 - 56f5bbb: Add `errorFingerprinting` configuration option to control error fingerprint computation
 
   Error fingerprinting enables grouping similar errors in the Logfire backend. However, minified browser code produces unstable fingerprints because function names are mangled, causing the same logical error to generate different fingerprints across deployments.
+
   - Added `errorFingerprinting` option to `LogfireApiConfigOptions`
   - Browser SDK now defaults to `errorFingerprinting: false`
   - Node SDK keeps the default `errorFingerprinting: true`
@@ -66,6 +74,7 @@
   This change makes the core API package easier to use with a simpler, unscoped name.
 
   **Migration Guide**:
+
   - Update package.json: Change `"@pydantic/logfire-api"` to `"logfire"`
   - Update imports: Change `from '@pydantic/logfire-api'` to `from 'logfire'`
   - Run `npm install` to update lockfiles
