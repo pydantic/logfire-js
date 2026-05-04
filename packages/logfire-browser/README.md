@@ -27,6 +27,28 @@ Browser applications can use local managed variables from `logfire/vars` when
 the app already depends on the core `logfire` package. Do not configure the
 remote provider in browser bundles because it requires a Logfire API key.
 
+## Resource attributes
+
+Use `resourceAttributes` for stable browser application or session metadata that
+should be attached to all telemetry from the configured provider:
+
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+logfire.configure({
+  traceUrl: '/client-traces',
+  serviceName: 'browser-app',
+  resourceAttributes: {
+    'service.namespace': 'my-company',
+    'app.installation.id': installationId,
+  },
+})
+```
+
+Do not use resource attributes for per-request values or sensitive user data.
+First-class options such as `serviceName`, `serviceVersion`, and `environment`
+take precedence over conflicting `resourceAttributes` keys.
+
 ## Contributing
 
 See [CONTRIBUTING.md](https://github.com/pydantic/logfire-js/blob/main/CONTRIBUTING.md) for development instructions.

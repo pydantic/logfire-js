@@ -56,6 +56,28 @@ logfire.info(
 Run the script with `node hello.js`, and you should see the span being logged in
 the live view of your Logfire project.
 
+## Resource attributes
+
+Use `resourceAttributes` to attach stable OpenTelemetry resource metadata to all
+telemetry emitted by this SDK:
+
+```js
+import * as logfire from '@pydantic/logfire-node'
+
+logfire.configure({
+  token: 'my-write-token',
+  serviceName: 'example-node-script',
+  resourceAttributes: {
+    'service.namespace': 'my-company',
+    'service.instance.id': crypto.randomUUID(),
+  },
+})
+```
+
+First-class options such as `serviceName`, `serviceVersion`, and `environment`
+take precedence over conflicting `resourceAttributes` keys. Values from
+`OTEL_RESOURCE_ATTRIBUTES` still take precedence over code configuration.
+
 ## Evaluations
 
 `logfire/evals` provides offline + online evaluation primitives that emit OTel

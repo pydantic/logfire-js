@@ -8,7 +8,7 @@ vi.mock('../sdk', () => ({
   start: vi.fn<() => void>(),
 }))
 
-describe('managed variables config', () => {
+describe('logfire config', () => {
   const originalApiKey = process.env['LOGFIRE_API_KEY']
 
   beforeEach(async () => {
@@ -22,6 +22,7 @@ describe('managed variables config', () => {
     } else {
       process.env['LOGFIRE_API_KEY'] = originalApiKey
     }
+    logfireConfig.resourceAttributes = {}
     await shutdownVariables()
   })
 
@@ -69,6 +70,17 @@ describe('managed variables config', () => {
 
     configure({ variables: false })
     expect(logfireConfig.variables).toBe(false)
+  })
+
+  it('stores configured resource attributes', () => {
+    const resourceAttributes = {
+      'app.installation.id': 'install-123',
+      'service.namespace': 'my-company',
+    }
+
+    configure({ resourceAttributes })
+
+    expect(logfireConfig.resourceAttributes).toBe(resourceAttributes)
   })
 
   it('throws when explicit remote variables have no api key', () => {
