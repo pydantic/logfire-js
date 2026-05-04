@@ -1,5 +1,17 @@
 # logfire
 
+## 0.15.0
+
+### Minor Changes
+
+- 08ecf7f: Add managed variables support through the `logfire/vars` subpath, including local and remote providers, async variable resolution, targeting contexts, overrides, config validation, and push/pull helpers. Node configuration now supports `apiKey`, `LOGFIRE_API_KEY`, and managed variable provider configuration.
+- 08c513d: Add a typed `resourceAttributes` configure option for setting stable OpenTelemetry resource attributes without using `OTEL_RESOURCE_ATTRIBUTES`.
+
+### Patch Changes
+
+- Updated dependencies [08ecf7f]
+  - logfire@0.15.0
+
 ## 0.14.0
 
 ### Minor Changes
@@ -40,6 +52,7 @@
 - 1b4d704: Add trace sampling support (head + tail)
 
   Implements a two-layer sampling system matching the Python SDK:
+
   - Head sampling: probabilistic sampling at trace creation via `ParentBasedSampler`
   - Tail sampling: callback-based sampling with span buffering via `TailSamplingProcessor`
   - `SamplingOptions` type, `SpanLevel` class, `checkTraceIdRatio`, and `levelOrDuration` factory in `logfire-api`
@@ -57,6 +70,7 @@
 - 56f5bbb: Add `errorFingerprinting` configuration option to control error fingerprint computation
 
   Error fingerprinting enables grouping similar errors in the Logfire backend. However, minified browser code produces unstable fingerprints because function names are mangled, causing the same logical error to generate different fingerprints across deployments.
+
   - Added `errorFingerprinting` option to `LogfireApiConfigOptions`
   - Browser SDK now defaults to `errorFingerprinting: false`
   - Node SDK keeps the default `errorFingerprinting: true`
@@ -116,6 +130,7 @@
   This change clarifies that this package is the Node.js-specific SDK with OpenTelemetry auto-instrumentation.
 
   **Migration Guide**:
+
   - Update package.json: Change `"logfire"` to `"@pydantic/logfire-node"`
   - Update imports: Change `from 'logfire'` to `from '@pydantic/logfire-node'`
   - Run `npm install` to update lockfiles
