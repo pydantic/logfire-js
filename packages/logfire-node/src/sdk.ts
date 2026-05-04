@@ -95,20 +95,24 @@ export function start(): void {
     diag.setLogger(new DiagConsoleLogger(), logfireConfig.diagLogLevel)
   }
 
-  const resource = resourceFromAttributes(
-    removeEmptyKeys({
-      [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: logfireConfig.deploymentEnvironment,
-      [ATTR_SERVICE_NAME]: logfireConfig.serviceName,
-      [ATTR_SERVICE_VERSION]: logfireConfig.serviceVersion,
-      [ATTR_TELEMETRY_SDK_LANGUAGE]: TELEMETRY_SDK_LANGUAGE_VALUE_NODEJS,
-      [ATTR_TELEMETRY_SDK_NAME]: 'logfire',
-      [ATTR_TELEMETRY_SDK_VERSION]: PACKAGE_VERSION,
+  const resource = resourceFromAttributes(logfireConfig.resourceAttributes)
+    .merge(
+      resourceFromAttributes(
+        removeEmptyKeys({
+          [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: logfireConfig.deploymentEnvironment,
+          [ATTR_SERVICE_NAME]: logfireConfig.serviceName,
+          [ATTR_SERVICE_VERSION]: logfireConfig.serviceVersion,
+          [ATTR_TELEMETRY_SDK_LANGUAGE]: TELEMETRY_SDK_LANGUAGE_VALUE_NODEJS,
+          [ATTR_TELEMETRY_SDK_NAME]: 'logfire',
+          [ATTR_TELEMETRY_SDK_VERSION]: PACKAGE_VERSION,
 
-      [ATTR_VCS_REPOSITORY_REF_REVISION]: logfireConfig.codeSource?.revision,
-      [ATTR_VCS_REPOSITORY_URL_FULL]: logfireConfig.codeSource?.repository,
-      [RESOURCE_ATTRIBUTES_CODE_ROOT_PATH]: logfireConfig.codeSource?.rootPath,
-    })
-  ).merge(detectResources({ detectors: [envDetector] }))
+          [ATTR_VCS_REPOSITORY_REF_REVISION]: logfireConfig.codeSource?.revision,
+          [ATTR_VCS_REPOSITORY_URL_FULL]: logfireConfig.codeSource?.repository,
+          [RESOURCE_ATTRIBUTES_CODE_ROOT_PATH]: logfireConfig.codeSource?.rootPath,
+        })
+      )
+    )
+    .merge(detectResources({ detectors: [envDetector] }))
   configureVariables(logfireConfig.variables, {
     ...(logfireConfig.apiKey !== undefined && logfireConfig.apiKey !== '' ? { apiKey: logfireConfig.apiKey } : {}),
     ...(logfireConfig.variablesBaseUrl !== undefined ? { baseUrl: logfireConfig.variablesBaseUrl } : {}),

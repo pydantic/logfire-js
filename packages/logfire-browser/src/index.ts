@@ -1,4 +1,4 @@
-import type { ContextManager } from '@opentelemetry/api'
+import type { Attributes, ContextManager } from '@opentelemetry/api'
 import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import type { Instrumentation } from '@opentelemetry/instrumentation'
@@ -107,6 +107,12 @@ export interface LogfireConfigOptions {
    * Options for scrubbing sensitive data. Set to False to disable.
    */
   scrubbing?: false | ScrubbingOptions
+  /**
+   * Additional OpenTelemetry resource attributes for the entity producing telemetry.
+   *
+   * Use this for stable application or browser-session metadata, not per-request or sensitive user data.
+   */
+  resourceAttributes?: Attributes
 
   /**
    * Name of this service.
@@ -164,24 +170,28 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   }
   configureLogfireApi(apiConfig)
 
-  const resource = resourceFromAttributes({
-    [ATTR_BROWSER_LANGUAGE]: navigator.language,
-    [ATTR_SERVICE_NAME]: options.serviceName ?? 'logfire-browser',
-    [ATTR_SERVICE_VERSION]: options.serviceVersion ?? '0.0.1',
-    [ATTR_TELEMETRY_SDK_LANGUAGE]: TELEMETRY_SDK_LANGUAGE_VALUE_WEBJS,
-    [ATTR_TELEMETRY_SDK_NAME]: 'logfire-browser',
-    ...(options.environment !== undefined && options.environment !== '' ? { [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: options.environment } : {}),
-    [ATTR_TELEMETRY_SDK_VERSION]: PACKAGE_VERSION,
-    ...(navigator.userAgentData
-      ? {
-          [ATTR_BROWSER_BRANDS]: navigator.userAgentData.brands.map((brand) => `${brand.brand} ${brand.version}`),
-          [ATTR_BROWSER_MOBILE]: navigator.userAgentData.mobile,
-          [ATTR_BROWSER_PLATFORM]: navigator.userAgentData.platform,
-        }
-      : {
-          [ATTR_USER_AGENT_ORIGINAL]: navigator.userAgent,
-        }),
-  })
+  const resource = resourceFromAttributes(options.resourceAttributes ?? {}).merge(
+    resourceFromAttributes({
+      [ATTR_BROWSER_LANGUAGE]: navigator.language,
+      [ATTR_SERVICE_NAME]: options.serviceName ?? 'logfire-browser',
+      [ATTR_SERVICE_VERSION]: options.serviceVersion ?? '0.0.1',
+      [ATTR_TELEMETRY_SDK_LANGUAGE]: TELEMETRY_SDK_LANGUAGE_VALUE_WEBJS,
+      [ATTR_TELEMETRY_SDK_NAME]: 'logfire-browser',
+      ...(options.environment !== undefined && options.environment !== ''
+        ? { [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: options.environment }
+        : {}),
+      [ATTR_TELEMETRY_SDK_VERSION]: PACKAGE_VERSION,
+      ...(navigator.userAgentData
+        ? {
+            [ATTR_BROWSER_BRANDS]: navigator.userAgentData.brands.map((brand) => `${brand.brand} ${brand.version}`),
+            [ATTR_BROWSER_MOBILE]: navigator.userAgentData.mobile,
+            [ATTR_BROWSER_PLATFORM]: navigator.userAgentData.platform,
+          }
+        : {
+            [ATTR_USER_AGENT_ORIGINAL]: navigator.userAgent,
+          }),
+    })
+  )
 
   diag.info('logfire-browser: starting')
 

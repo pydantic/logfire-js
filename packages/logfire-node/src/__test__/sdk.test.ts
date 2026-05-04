@@ -4,7 +4,9 @@ import type { MockInstance } from 'vite-plus/test'
 
 const mocks = vi.hoisted(() => {
   const nodeSdkInstances: MockNodeSDK[] = []
+  const configureVariablesCalls: unknown[][] = []
   let logForceFlushCalls = 0
+  let shutdownVariablesCalls = 0
   let traceForceFlushCalls = 0
 
   const logProcessor = {
@@ -45,6 +47,7 @@ const mocks = vi.hoisted(() => {
   }
 
   return {
+    configureVariablesCalls,
     get logForceFlushCalls() {
       return logForceFlushCalls
     },
@@ -52,9 +55,18 @@ const mocks = vi.hoisted(() => {
     MockNodeSDK,
     nodeSdkInstances,
     reset() {
+      configureVariablesCalls.length = 0
       logForceFlushCalls = 0
+      shutdownVariablesCalls = 0
       traceForceFlushCalls = 0
       nodeSdkInstances.length = 0
+    },
+    get shutdownVariablesCalls() {
+      return shutdownVariablesCalls
+    },
+    shutdownVariables: async () => {
+      shutdownVariablesCalls++
+      return Promise.resolve()
     },
     get traceForceFlushCalls() {
       return traceForceFlushCalls
@@ -71,6 +83,13 @@ vi.mock('@opentelemetry/sdk-node', () => ({
   NodeSDK: mocks.MockNodeSDK,
 }))
 
+vi.mock('logfire/vars', () => ({
+  configureVariables: (...args: unknown[]) => {
+    mocks.configureVariablesCalls.push(args)
+  },
+  shutdownVariables: async () => mocks.shutdownVariables(),
+}))
+
 vi.mock('../logsExporter', () => ({
   logfireLogRecordProcessor: () => mocks.logProcessor,
 }))
@@ -84,19 +103,55 @@ vi.mock('../traceExporter', () => ({
 }))
 
 import { forceFlush, shutdown, start } from '../sdk'
+import { logfireConfig } from '../logfireConfig'
 
 let processOnSpy: MockInstance<typeof process.on>
 let processRemoveListenerSpy: MockInstance<typeof process.removeListener>
+const originalOtelResourceAttributes = process.env['OTEL_RESOURCE_ATTRIBUTES']
+
+function getLatestResourceAttributes(): Record<string, unknown> {
+  const instance = mocks.nodeSdkInstances[mocks.nodeSdkInstances.length - 1]
+  expect(instance).toBeDefined()
+  if (instance === undefined) {
+    throw new Error('expected NodeSDK mock instance')
+  }
+  return (instance.options as { resource: { attributes: Record<string, unknown> } }).resource.attributes
+}
+
+function getLatestVariablesRuntimeOptions(): { resourceAttributes: Record<string, unknown> } {
+  const call = mocks.configureVariablesCalls[mocks.configureVariablesCalls.length - 1]
+  expect(call).toBeDefined()
+  if (call === undefined) {
+    throw new Error('expected configureVariables call')
+  }
+  return call[1] as { resourceAttributes: Record<string, unknown> }
+}
 
 describe('sdk lifecycle helpers', () => {
   beforeEach(() => {
     mocks.reset()
+    delete process.env['OTEL_RESOURCE_ATTRIBUTES']
+    Object.assign(logfireConfig, {
+      apiKey: undefined,
+      codeSource: undefined,
+      deploymentEnvironment: undefined,
+      resourceAttributes: {},
+      serviceName: undefined,
+      serviceVersion: undefined,
+      variables: undefined,
+      variablesBaseUrl: undefined,
+    })
     processOnSpy = vi.spyOn(process, 'on').mockImplementation(() => process)
     processRemoveListenerSpy = vi.spyOn(process, 'removeListener').mockImplementation(() => process)
   })
 
   afterEach(async () => {
     await shutdown()
+    if (originalOtelResourceAttributes === undefined) {
+      delete process.env['OTEL_RESOURCE_ATTRIBUTES']
+    } else {
+      process.env['OTEL_RESOURCE_ATTRIBUTES'] = originalOtelResourceAttributes
+    }
     vi.restoreAllMocks()
   })
 
@@ -152,5 +207,66 @@ describe('sdk lifecycle helpers', () => {
       'uncaughtExceptionMonitor',
       'unhandledRejection',
     ])
+  })
+
+  it('adds configured resource attributes to the NodeSDK resource', () => {
+    Object.assign(logfireConfig, {
+      resourceAttributes: {
+        'app.installation.id': 'install-123',
+        'service.namespace': 'my-company',
+      },
+      serviceName: 'node-service',
+    })
+
+    start()
+
+    expect(getLatestResourceAttributes()).toMatchObject({
+      'app.installation.id': 'install-123',
+      'service.name': 'node-service',
+      'service.namespace': 'my-company',
+    })
+    expect(getLatestVariablesRuntimeOptions().resourceAttributes).toMatchObject({
+      'app.installation.id': 'install-123',
+      'service.name': 'node-service',
+      'service.namespace': 'my-company',
+    })
+  })
+
+  it('keeps first-class resource options ahead of generic resource attributes', () => {
+    Object.assign(logfireConfig, {
+      deploymentEnvironment: 'production',
+      resourceAttributes: {
+        'deployment.environment.name': 'staging',
+        'service.name': 'generic-service',
+        'service.version': '0.0.1',
+      },
+      serviceName: 'configured-service',
+      serviceVersion: '1.2.3',
+    })
+
+    start()
+
+    expect(getLatestResourceAttributes()).toMatchObject({
+      'deployment.environment.name': 'production',
+      'service.name': 'configured-service',
+      'service.version': '1.2.3',
+    })
+  })
+
+  it('keeps OTEL_RESOURCE_ATTRIBUTES ahead of configured resource attributes', () => {
+    process.env['OTEL_RESOURCE_ATTRIBUTES'] = 'service.namespace=env-company,app.installation.id=env-install'
+    Object.assign(logfireConfig, {
+      resourceAttributes: {
+        'app.installation.id': 'configured-install',
+        'service.namespace': 'configured-company',
+      },
+    })
+
+    start()
+
+    expect(getLatestResourceAttributes()).toMatchObject({
+      'app.installation.id': 'env-install',
+      'service.namespace': 'env-company',
+    })
   })
 })

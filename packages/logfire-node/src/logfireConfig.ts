@@ -1,7 +1,7 @@
 import type { SamplingOptions } from 'logfire'
 import type { VariablesConfigOptions } from 'logfire/vars'
 
-import type { DiagLogLevel } from '@opentelemetry/api'
+import type { Attributes, DiagLogLevel } from '@opentelemetry/api'
 import type { InstrumentationConfigMap } from '@opentelemetry/auto-instrumentations-node'
 import type { Instrumentation } from '@opentelemetry/instrumentation'
 import type { MetricReader } from '@opentelemetry/sdk-metrics'
@@ -100,6 +100,10 @@ export interface LogfireConfigOptions {
    */
   otelScope?: string
   /**
+   * Additional OpenTelemetry resource attributes for the entity producing telemetry.
+   */
+  resourceAttributes?: Attributes
+  /**
    * Sampling options for controlling which traces are exported.
    * `head` sets a probabilistic sample rate (0.0-1.0) at trace creation time.
    * `tail` provides a callback evaluated on every span to decide whether to keep the trace.
@@ -167,6 +171,7 @@ export interface LogfireConfig {
   metrics: false | MetricsOptions | undefined
   nodeAutoInstrumentations: InstrumentationConfigMap
   otelScope: string
+  resourceAttributes: Attributes
   sampling: SamplingOptions | undefined
   sendToLogfire: boolean
   serviceName: string | undefined
@@ -193,6 +198,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   metrics: undefined,
   nodeAutoInstrumentations: DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
   otelScope: DEFAULT_OTEL_SCOPE,
+  resourceAttributes: {},
   sampling: undefined,
   sendToLogfire: false,
   serviceName: process.env['LOGFIRE_SERVICE_NAME'],
@@ -257,6 +263,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
     metricExporterUrl: `${baseUrl}/${METRIC_ENDPOINT_PATH}`,
     metrics: cnf.metrics,
     nodeAutoInstrumentations: cnf.nodeAutoInstrumentations ?? DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
+    resourceAttributes: cnf.resourceAttributes ?? {},
     sampling: resolveSampling(sampling),
     sendToLogfire,
     serviceName,
