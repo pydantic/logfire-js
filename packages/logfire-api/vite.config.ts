@@ -28,11 +28,12 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
     entry: {
       evals: 'src/evals/index.ts',
       index: 'src/index.ts',
+      vars: 'src/vars/index.ts',
     },
     format: ['esm', 'cjs'],
     hooks: {
       'build:done': () => {
-        copyCjsDeclarations(['evals', 'index'])
+        copyCjsDeclarations(['evals', 'index', 'vars'])
       },
     },
     minify: true,

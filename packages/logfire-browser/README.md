@@ -21,6 +21,12 @@ If you're instrumenting Cloudflare, see the [Logfire CF workers package](https:/
 
 See the [Logfire Browser docs for a primer](https://logfire.pydantic.dev/docs/integrations/javascript/browser/). Ready to run examples are available in the repository [in vanilla browser](https://github.com/pydantic/logfire-js/tree/main/examples/browser) and [Next.js variants](https://github.com/pydantic/logfire-js/tree/main/examples/nextjs-client-side-instrumentation).
 
+## Managed Variables
+
+Browser applications can use local managed variables from `logfire/vars` when
+the app already depends on the core `logfire` package. Do not configure the
+remote provider in browser bundles because it requires a Logfire API key.
+
 ## Contributing
 
 See [CONTRIBUTING.md](https://github.com/pydantic/logfire-js/blob/main/CONTRIBUTING.md) for development instructions.

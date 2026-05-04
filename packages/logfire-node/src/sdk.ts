@@ -24,6 +24,7 @@ import {
 } from '@opentelemetry/semantic-conventions/incubating'
 import { reportError, TailSamplingProcessor, ULIDGenerator } from 'logfire'
 import { getEvalsSpanProcessor } from 'logfire/evals'
+import { configureVariables, shutdownVariables } from 'logfire/vars'
 
 import { logfireConfig } from './logfireConfig'
 import { logfireLogRecordProcessor } from './logsExporter'
@@ -77,7 +78,7 @@ export async function shutdown(): Promise<void> {
   activeSdk = undefined
   activeLogProcessor = undefined
   activeProcessor = undefined
-  await sdk.shutdown()
+  await Promise.all([sdk.shutdown(), shutdownVariables()])
 }
 
 const LOGFIRE_ATTRIBUTES_NAMESPACE = 'logfire'
@@ -108,6 +109,11 @@ export function start(): void {
       [RESOURCE_ATTRIBUTES_CODE_ROOT_PATH]: logfireConfig.codeSource?.rootPath,
     })
   ).merge(detectResources({ detectors: [envDetector] }))
+  configureVariables(logfireConfig.variables, {
+    ...(logfireConfig.apiKey !== undefined && logfireConfig.apiKey !== '' ? { apiKey: logfireConfig.apiKey } : {}),
+    ...(logfireConfig.variablesBaseUrl !== undefined ? { baseUrl: logfireConfig.variablesBaseUrl } : {}),
+    resourceAttributes: { ...resource.attributes },
+  })
 
   // use AsyncLocalStorageContextManager to manage parent <> child relationshps in async functions
   const contextManager = new AsyncLocalStorageContextManager()

@@ -51,6 +51,16 @@
         "types": "./dist/evals.d.cts",
         "default": "./dist/evals.cjs"
       }
+    },
+    "./vars": {
+      "import": {
+        "types": "./dist/vars.d.ts",
+        "default": "./dist/vars.js"
+      },
+      "require": {
+        "types": "./dist/vars.d.cts",
+        "default": "./dist/vars.cjs"
+      }
     }
   },
   "scripts": {

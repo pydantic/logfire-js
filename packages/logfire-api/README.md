@@ -32,3 +32,32 @@ span queries. For online evaluation, JavaScript parameter-name extraction is
 best effort; use `extractArgs: ['argName']` when evaluator code needs stable
 `context.inputs` keys in bundled or minified builds, or `extractArgs: false`
 to keep positional input values.
+
+## Managed Variables
+
+`logfire/vars` exports managed variables for runtime configuration controlled
+by local config or the Logfire Variables API. Use `defineVar`, or import the
+Python-parity `var` export with an alias because `var` is a JavaScript keyword.
+
+```ts
+import { configureVariables, defineVar } from 'logfire/vars'
+
+configureVariables({
+  config: {
+    variables: {
+      feature_enabled: {
+        labels: { on: { serialized_value: 'true', version: 1 } },
+        name: 'feature_enabled',
+        overrides: [],
+        rollout: { labels: { on: 1 } },
+      },
+    },
+  },
+})
+
+const featureEnabled = defineVar('feature_enabled', { default: false })
+const resolved = await featureEnabled.get({ targetingKey: 'user-123' })
+```
+
+Remote variables require a Logfire API key and should be used from trusted
+server-side runtimes. Do not expose API keys in browser bundles.

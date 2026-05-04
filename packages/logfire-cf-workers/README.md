@@ -21,6 +21,13 @@ If you need to instrument your browser application, see the [Logfire Browser pac
 
 See the [cf-worker example](https://github.com/pydantic/logfire-js/tree/main/examples/cf-worker) for a primer.
 
+## Managed Variables
+
+Cloudflare Workers can use local managed variables from `logfire/vars` when the
+worker already depends on the core `logfire` package. Remote managed variables
+need a Logfire API key, so only configure them when the key is stored as a
+Worker secret and never sent to a browser client.
+
 ## Contributing
 
 See [CONTRIBUTING.md](https://github.com/pydantic/logfire-js/blob/main/CONTRIBUTING.md) for development instructions.
