@@ -1,0 +1,99 @@
+[
+  {
+    "label": "TypeScript SDK",
+    "items": [
+      {
+        "label": "Overview",
+        "slug": "index"
+      },
+      {
+        "label": "Getting Started",
+        "slug": "get-started"
+      },
+      {
+        "label": "Packages",
+        "items": [
+          {
+            "label": "logfire",
+            "slug": "packages/logfire"
+          },
+          {
+            "label": "Node.js",
+            "slug": "packages/node"
+          },
+          {
+            "label": "Browser",
+            "slug": "packages/browser"
+          },
+          {
+            "label": "Cloudflare Workers",
+            "slug": "packages/cloudflare"
+          }
+        ]
+      },
+      {
+        "label": "Frameworks & Runtimes",
+        "items": [
+          {
+            "label": "Express",
+            "slug": "frameworks/express"
+          },
+          {
+            "label": "Next.js",
+            "slug": "frameworks/nextjs"
+          },
+          {
+            "label": "Deno",
+            "slug": "frameworks/deno"
+          },
+          {
+            "label": "Vercel AI SDK",
+            "slug": "frameworks/vercel-ai"
+          }
+        ]
+      },
+      {
+        "label": "Guides",
+        "items": [
+          {
+            "label": "Configuration",
+            "slug": "guides/configuration"
+          },
+          {
+            "label": "Resource Attributes",
+            "slug": "guides/resource-attributes"
+          },
+          {
+            "label": "Sampling",
+            "slug": "guides/sampling"
+          },
+          {
+            "label": "Scrubbing",
+            "slug": "guides/scrubbing"
+          },
+          {
+            "label": "Evaluations",
+            "slug": "guides/evals"
+          },
+          {
+            "label": "Managed Variables",
+            "slug": "guides/managed-variables"
+          }
+        ]
+      },
+      {
+        "label": "Reference",
+        "items": [
+          {
+            "label": "Environment Variables",
+            "slug": "reference/environment-variables"
+          },
+          {
+            "label": "API Overview",
+            "slug": "reference/api"
+          }
+        ]
+      }
+    ]
+  }
+]
