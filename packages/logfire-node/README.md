@@ -80,15 +80,28 @@ take precedence over conflicting `resourceAttributes` keys. Values from
 
 ## Evaluations
 
-`logfire/evals` provides offline + online evaluation primitives that emit OTel
-spans / log events compatible with the Logfire Evaluations UI. The wire format
-matches the Python `pydantic-evals` package, so dataset YAML / JSON files
-round-trip across the two languages. Add `logfire` as a direct dependency in
-projects that import this subpath.
+`logfire/evals` provides offline and online evaluation primitives that emit
+OpenTelemetry spans and log events compatible with the Logfire Evaluations UI.
+The API mirrors the Python `pydantic-evals` model: define `Case` objects, group
+them in a `Dataset`, run a task, and attach evaluators that return assertions,
+scores, labels, or multiple named results. Dataset YAML/JSON files round-trip
+across Python and JavaScript. Add `logfire` as a direct dependency in projects
+that import this subpath.
 
 ```ts
 import * as logfire from '@pydantic/logfire-node'
-import { Case, Dataset, Equals, EqualsExpected, withOnlineEvaluation } from 'logfire/evals'
+import {
+  Case,
+  Contains,
+  Dataset,
+  EqualsExpected,
+  Evaluator,
+  OnlineEvaluator,
+  renderReport,
+  waitForEvaluations,
+  withOnlineEvaluation,
+  type EvaluatorContext,
+} from 'logfire/evals'
 
 logfire.configure({ serviceName: 'sentiment-classifier' })
 
@@ -96,21 +109,48 @@ async function classify({ text }: { text: string }): Promise<string> {
   return text.toLowerCase().includes('love') ? 'POSITIVE' : 'NEUTRAL'
 }
 
+class NonEmpty extends Evaluator {
+  static evaluatorName = 'NonEmpty'
+
+  evaluate(ctx: EvaluatorContext): boolean {
+    return String(ctx.output ?? '').length > 0
+  }
+}
+
 // Offline — runs your task against a labeled dataset and emits an experiment span.
 const dataset = new Dataset<{ text: string }, string>({
   cases: [new Case({ inputs: { text: 'I love this!' }, expectedOutput: 'POSITIVE', name: 'a' })],
-  evaluators: [new EqualsExpected()],
+  evaluators: [new EqualsExpected(), new NonEmpty()],
   name: 'sentiment-classifier',
 })
 const report = await dataset.evaluate(classify)
+console.log(renderReport(report, { includeInput: true, includeOutput: true }))
+
+await dataset.toFile('sentiment.yaml', { schemaPath: 'sentiment.schema.json' })
 
 // Online — wraps a function so each call also dispatches evaluators in the background.
 const monitored = withOnlineEvaluation(classify, {
-  evaluators: [new Equals({ value: 'POSITIVE' })],
+  evaluators: [
+    new NonEmpty(),
+    new OnlineEvaluator({
+      evaluator: new Contains({ value: 'POSITIVE' }),
+      maxConcurrency: 5,
+      sampleRate: 0.1,
+    }),
+  ],
+  extractArgs: ['input'],
   target: 'sentiment-classifier',
 })
 await monitored({ text: 'I love this!' })
+await waitForEvaluations()
 ```
+
+Built-in case evaluators include `EqualsExpected`, `Equals`, `Contains`,
+`IsInstance`, `MaxDuration`, `HasMatchingSpan`, and `LLMJudge`. Built-in report
+evaluators include `ConfusionMatrixEvaluator`, `PrecisionRecallEvaluator`,
+`ROCAUCEvaluator`, and `KolmogorovSmirnovEvaluator`. Code under evaluation can
+also use `setEvalAttribute()` and `incrementEvalMetric()` to add per-case data
+to reports.
 
 Runtime notes:
 
@@ -127,6 +167,15 @@ pnpm build
 deno run --config scripts/runtime-smoke/deno.json --allow-read --allow-write scripts/runtime-smoke/evals-deno.ts
 bun run scripts/runtime-smoke/evals-bun.ts
 ```
+
+References:
+
+- [Pydantic Evals overview](https://pydantic.dev/docs/ai/evals/evals/)
+- [Evaluator overview](https://pydantic.dev/docs/ai/evals/evaluators/overview/)
+- [Dataset management](https://pydantic.dev/docs/ai/evals/how-to/dataset-management/)
+- [Online evaluation](https://pydantic.dev/docs/ai/evals/online-evaluation/)
+- [`examples/node/evals.ts`](https://github.com/pydantic/logfire-js/blob/main/examples/node/evals.ts)
+- [`examples/node/demo_online_evals.ts`](https://github.com/pydantic/logfire-js/blob/main/examples/node/demo_online_evals.ts)
 
 ## Managed Variables
 

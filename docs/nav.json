@@ -53,33 +53,28 @@
         ]
       },
       {
-        "label": "Guides",
-        "items": [
-          {
-            "label": "Configuration",
-            "slug": "guides/configuration"
-          },
-          {
-            "label": "Resource Attributes",
-            "slug": "guides/resource-attributes"
-          },
-          {
-            "label": "Sampling",
-            "slug": "guides/sampling"
-          },
-          {
-            "label": "Scrubbing",
-            "slug": "guides/scrubbing"
-          },
-          {
-            "label": "Evaluations",
-            "slug": "guides/evals"
-          },
-          {
-            "label": "Managed Variables",
-            "slug": "guides/managed-variables"
-          }
-        ]
+        "label": "Configuration",
+        "slug": "configuration"
+      },
+      {
+        "label": "Resource Attributes",
+        "slug": "resource-attributes"
+      },
+      {
+        "label": "Sampling",
+        "slug": "sampling"
+      },
+      {
+        "label": "Scrubbing",
+        "slug": "scrubbing"
+      },
+      {
+        "label": "Evaluations",
+        "slug": "evals"
+      },
+      {
+        "label": "Managed Variables",
+        "slug": "managed-variables"
       },
       {
         "label": "Reference",

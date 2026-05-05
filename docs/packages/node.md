@@ -109,7 +109,7 @@ await logfire.shutdown()
 
 ## Related Guides
 
-- [Configuration](../guides/configuration.md)
-- [Sampling](../guides/sampling.md)
-- [Scrubbing](../guides/scrubbing.md)
-- [Resource Attributes](../guides/resource-attributes.md)
+- [Configuration](../configuration.md)
+- [Sampling](../sampling.md)
+- [Scrubbing](../scrubbing.md)
+- [Resource Attributes](../resource-attributes.md)
