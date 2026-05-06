@@ -70,9 +70,9 @@ Runtime packages can enable error fingerprinting so related errors group togethe
 
 ## Subpath APIs
 
-`logfire/evals` exports the JavaScript evaluation API. See [Evaluations](../guides/evals.md).
+`logfire/evals` exports the JavaScript evaluation API. See [Evaluations](../evals.md).
 
-`logfire/vars` exports managed variables. See [Managed Variables](../guides/managed-variables.md).
+`logfire/vars` exports managed variables. See [Managed Variables](../managed-variables.md).
 
 ## Runtime Setup
 
