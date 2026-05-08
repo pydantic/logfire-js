@@ -71,7 +71,7 @@ describe('managed variables', () => {
     const count = defineVar('count', { default: 3 })
     const missing = defineVar('missing', { default: 'fallback' })
 
-    await expect(count.get()).resolves.toMatchObject({ reason: 'validation_error', value: 3 })
+    await expect(count.get()).resolves.toMatchObject({ label: 'bad', reason: 'validation_error', value: 3, version: 1 })
     await expect(missing.get()).resolves.toMatchObject({ reason: 'unrecognized_variable', value: 'fallback' })
   })
 
@@ -238,6 +238,7 @@ describe('managed variables', () => {
           name: 'feature',
           overrides: [],
           rollout: { labels: {} },
+          template_inputs_schema: null,
           type_name: null,
         },
       },

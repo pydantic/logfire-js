@@ -1,0 +1,366 @@
+import { VariableCompositionCycleError, VariableCompositionDepthError, VariableCompositionError } from './errors'
+import { BLOCK_REF, HAS_REFERENCE, REFERENCE_TAG, SIMPLE_REF, renderOnce } from './referenceSyntax'
+import type { VariableResolutionReason } from './index'
+
+export const MAX_COMPOSITION_DEPTH = 20
+export const HBS_KEYWORDS: ReadonlySet<string> = new Set(['else', 'this'])
+const BLOCK_WITH_BODY_REF = /(?<!\\)@\{#(\w+)\s+([a-zA-Z_][a-zA-Z0-9_]*)(.*?)\}@[\s\S]*?(?<!\\)@\{\/\1\}@/g
+
+export interface ComposedReference {
+  composedFrom?: ComposedReference[]
+  error?: string
+  label?: string
+  name: string
+  reason: VariableResolutionReason
+  value?: string
+  version?: number
+}
+
+export interface ResolvedReference {
+  label?: string
+  name?: string
+  reason: VariableResolutionReason
+  value: string | undefined
+  version?: number
+}
+
+export type ResolveReference = (name: string) => Promise<ResolvedReference> | ResolvedReference
+
+export interface ExpandReferencesOptions {
+  rootName?: string
+}
+
+export interface ExpandReferencesResult {
+  composedFrom: ComposedReference[]
+  serializedValue: string
+}
+
+interface ExpandedValue {
+  composedFrom: ComposedReference[]
+  value: unknown
+}
+
+interface Range {
+  end: number
+  start: number
+}
+
+export function hasReferences(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return HAS_REFERENCE.test(value)
+  }
+  if (Array.isArray(value)) {
+    return value.some(hasReferences)
+  }
+  if (isRecord(value)) {
+    return Object.values(value).some(hasReferences)
+  }
+  return false
+}
+
+export function findReferences(value: unknown): string[] {
+  const references: string[] = []
+  const seen = new Set<string>()
+  collectReferences(value, references, seen)
+  return references
+}
+
+export async function expandReferences(
+  serializedValue: string,
+  resolveReference: ResolveReference,
+  options: ExpandReferencesOptions = {}
+): Promise<ExpandReferencesResult> {
+  let value: unknown
+  try {
+    value = JSON.parse(serializedValue)
+  } catch {
+    return { composedFrom: [], serializedValue }
+  }
+
+  const expanded = await expandValue(value, resolveReference, options.rootName === undefined ? [] : [options.rootName], 0)
+  return {
+    composedFrom: dedupeComposedReferences(expanded.composedFrom),
+    serializedValue: JSON.stringify(expanded.value),
+  }
+}
+
+export function hasFatalCompositionError(composedFrom: ComposedReference[]): boolean {
+  return composedFrom.some(
+    (item) =>
+      item.error?.includes('VariableCompositionCycleError') === true ||
+      item.error?.includes('VariableCompositionDepthError') === true ||
+      (item.composedFrom !== undefined && hasFatalCompositionError(item.composedFrom))
+  )
+}
+
+function collectReferences(value: unknown, references: string[], seen: Set<string>): void {
+  if (typeof value === 'string') {
+    for (const reference of findReferencesInString(value)) {
+      if (!seen.has(reference)) {
+        seen.add(reference)
+        references.push(reference)
+      }
+    }
+    return
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectReferences(item, references, seen)
+    }
+    return
+  }
+  if (isRecord(value)) {
+    for (const item of Object.values(value)) {
+      collectReferences(item, references, seen)
+    }
+  }
+}
+
+function findReferencesInString(value: string): string[] {
+  const references: string[] = []
+  const seen = new Set<string>()
+  collectRegexReferences(value, SIMPLE_REF, references, seen)
+  collectRegexReferences(value, BLOCK_REF, references, seen)
+  return references
+}
+
+function collectRegexReferences(value: string, regex: RegExp, references: string[], seen: Set<string>): void {
+  regex.lastIndex = 0
+  for (const match of value.matchAll(regex)) {
+    const path = match[1]
+    if (path === undefined) {
+      continue
+    }
+    const name = path.split('.')[0]
+    if (name === undefined || HBS_KEYWORDS.has(name) || seen.has(name)) {
+      continue
+    }
+    seen.add(name)
+    references.push(name)
+  }
+}
+
+async function expandValue(value: unknown, resolveReference: ResolveReference, stack: string[], depth: number): Promise<ExpandedValue> {
+  if (typeof value === 'string') {
+    return expandString(value, resolveReference, stack, depth)
+  }
+  if (Array.isArray(value)) {
+    const expandedItems = await Promise.all(
+      value.map(async (item) => {
+        const expanded = await expandValue(item, resolveReference, stack, depth)
+        return expanded
+      })
+    )
+    return {
+      composedFrom: expandedItems.flatMap((expanded) => expanded.composedFrom),
+      value: expandedItems.map((expanded) => expanded.value),
+    }
+  }
+  if (isRecord(value)) {
+    const expandedEntries = await Promise.all(
+      Object.entries(value).map(async ([key, item]) => [key, await expandValue(item, resolveReference, stack, depth)] as const)
+    )
+    const entries = expandedEntries.map(([key, expanded]) => [key, expanded.value] as const)
+    const composedFrom = expandedEntries.flatMap(([, expanded]) => expanded.composedFrom)
+    return { composedFrom, value: Object.fromEntries(entries) }
+  }
+  return { composedFrom: [], value }
+}
+
+async function expandString(value: string, resolveReference: ResolveReference, stack: string[], depth: number): Promise<ExpandedValue> {
+  const referenceNames = findReferencesInString(value)
+  if (referenceNames.length === 0) {
+    return { composedFrom: [], value: value.includes('\\@{') ? renderOnce(value, {}) : value }
+  }
+
+  const context: Record<string, unknown> = {}
+  const resolvedReferences = await Promise.all(
+    referenceNames.map(async (name) => {
+      const expanded = await expandNamedReference(name, resolveReference, stack, depth)
+      return expanded
+    })
+  )
+  const composedFrom: ComposedReference[] = []
+  for (const resolved of resolvedReferences) {
+    composedFrom.push(resolved.reference)
+    if (resolved.value !== undefined) {
+      context[resolved.reference.name] = resolved.value
+    }
+  }
+
+  const protectedValue = protectUnresolvedReferences(value, context)
+  try {
+    return {
+      composedFrom,
+      value: restoreProtected(renderOnce(protectedValue.template, context), protectedValue.sentinel),
+    }
+  } catch (error) {
+    throw new VariableCompositionError(`Failed to render composed variable: ${formatError(error)}`)
+  }
+}
+
+async function expandNamedReference(
+  name: string,
+  resolveReference: ResolveReference,
+  stack: string[],
+  depth: number
+): Promise<{ reference: ComposedReference; value?: unknown }> {
+  if (stack.includes(name)) {
+    const error = new VariableCompositionCycleError(`Circular variable reference: ${[...stack, name].join(' -> ')}`)
+    return {
+      reference: { error: formatCompositionError(error), name, reason: 'other_error' },
+      value: undefined,
+    }
+  }
+  if (depth >= MAX_COMPOSITION_DEPTH) {
+    const error = new VariableCompositionDepthError(`Variable composition exceeded maximum depth of ${String(MAX_COMPOSITION_DEPTH)}`)
+    return {
+      reference: { error: formatCompositionError(error), name, reason: 'other_error' },
+      value: undefined,
+    }
+  }
+
+  const resolved = await resolveReference(name)
+  const reference: ComposedReference = {
+    name,
+    reason: resolved.reason,
+  }
+  if (resolved.label !== undefined) {
+    reference.label = resolved.label
+  }
+  if (resolved.version !== undefined) {
+    reference.version = resolved.version
+  }
+
+  if (resolved.value === undefined) {
+    return { reference, value: undefined }
+  }
+
+  const nested = await expandReferenceSerializedValue(name, resolved.value, resolveReference, stack, depth)
+  if (nested.error !== undefined) {
+    reference.error = nested.error
+    return { reference, value: undefined }
+  }
+  reference.value = nested.serializedValue
+  if (nested.composedFrom.length > 0) {
+    reference.composedFrom = nested.composedFrom
+  }
+  return { reference, value: nested.value }
+}
+
+async function expandReferenceSerializedValue(
+  name: string,
+  serializedValue: string,
+  resolveReference: ResolveReference,
+  stack: string[],
+  depth: number
+): Promise<{ composedFrom: ComposedReference[]; error?: string; serializedValue: string; value?: unknown }> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(serializedValue)
+  } catch (error) {
+    return {
+      composedFrom: [],
+      error: `Referenced variable '${name}' resolved to non-JSON value: ${formatError(error)}`,
+      serializedValue,
+    }
+  }
+
+  if (!HAS_REFERENCE.test(serializedValue)) {
+    return { composedFrom: [], serializedValue, value: parsed }
+  }
+
+  const expanded = await expandValue(parsed, resolveReference, [...stack, name], depth + 1)
+  const expandedSerializedValue = JSON.stringify(expanded.value)
+  return { composedFrom: dedupeComposedReferences(expanded.composedFrom), serializedValue: expandedSerializedValue, value: expanded.value }
+}
+
+function protectUnresolvedReferences(value: string, context: Record<string, unknown>): { sentinel: string; template: string } {
+  const sentinel = `LOGFIRE_UNRESOLVED_REFERENCE_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}_LOGFIRE`
+  const protectedBlocks = value.replace(BLOCK_WITH_BODY_REF, (match: string, _helper: string, name: string) => {
+    return Object.hasOwn(context, name) && !HBS_KEYWORDS.has(name) ? match : encodeProtected(match, sentinel)
+  })
+  const resolvedBlockRanges = collectResolvedBlockRanges(protectedBlocks, context)
+  return {
+    sentinel,
+    template: protectedBlocks.replace(REFERENCE_TAG, (match, expression, offset) => {
+      const baseName = getExpressionBaseName(String(expression))
+      if (baseName === undefined) {
+        return match
+      }
+      if (HBS_KEYWORDS.has(baseName)) {
+        return isOffsetInRanges(Number(offset), resolvedBlockRanges) ? match : encodeProtected(match, sentinel)
+      }
+      return !Object.hasOwn(context, baseName) ? encodeProtected(match, sentinel) : match
+    }),
+  }
+}
+
+function collectResolvedBlockRanges(value: string, context: Record<string, unknown>): Range[] {
+  const ranges: Range[] = []
+  BLOCK_WITH_BODY_REF.lastIndex = 0
+  for (const match of value.matchAll(BLOCK_WITH_BODY_REF)) {
+    const name = match[2]
+    if (name !== undefined && Object.hasOwn(context, name) && !HBS_KEYWORDS.has(name)) {
+      ranges.push({ end: match.index + match[0].length, start: match.index })
+    }
+  }
+  return ranges
+}
+
+function isOffsetInRanges(offset: number, ranges: Range[]): boolean {
+  return ranges.some((range) => offset >= range.start && offset < range.end)
+}
+
+function encodeProtected(value: string, sentinel: string): string {
+  return sentinel + Array.from(value, (char) => (char.codePointAt(0) ?? 0).toString(16).padStart(6, '0')).join('') + sentinel
+}
+
+function restoreProtected(value: string, sentinel: string): string {
+  return value.replaceAll(new RegExp(`${escapeRegExp(sentinel)}([0-9a-f]+)${escapeRegExp(sentinel)}`, 'g'), (_match, hex) => {
+    const chunks = String(hex).match(/.{1,6}/g) ?? []
+    return chunks.map((chunk) => String.fromCodePoint(Number.parseInt(chunk, 16))).join('')
+  })
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function getExpressionBaseName(expression: string): string | undefined {
+  const trimmed = expression.trim()
+  if (trimmed === '' || trimmed === 'else' || trimmed.startsWith('/')) {
+    return undefined
+  }
+  const blockMatch = /^#\w+\s+([a-zA-Z_][a-zA-Z0-9_]*)/.exec(trimmed)
+  if (blockMatch?.[1] !== undefined) {
+    return blockMatch[1]
+  }
+  const simpleMatch = /^([a-zA-Z_][a-zA-Z0-9_]*)(?:\.|$)/.exec(trimmed)
+  return simpleMatch?.[1]
+}
+
+function dedupeComposedReferences(references: ComposedReference[]): ComposedReference[] {
+  const deduped: ComposedReference[] = []
+  const seen = new Set<string>()
+  for (const reference of references) {
+    const key = JSON.stringify(reference)
+    if (!seen.has(key)) {
+      seen.add(key)
+      deduped.push(reference)
+    }
+  }
+  return deduped
+}
+
+function formatCompositionError(error: Error): string {
+  return `${error.name}: ${error.message}`
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}

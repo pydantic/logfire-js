@@ -48,6 +48,7 @@ catalog:
   '@opentelemetry/semantic-conventions': ^1.41.1
   '@types/js-yaml': ^4.0.9
   '@vercel/otel': ^2.1.2
+  handlebars: ^4.7.9
   'js-yaml': ^4.1.0
   'p-retry': ^6.2.1
   typescript: ^6.0.3

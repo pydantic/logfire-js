@@ -377,5 +377,22 @@ const featureEnabled = defineVar('feature_enabled', { default: false })
 const resolved = await featureEnabled.get({ targetingKey: 'user-123' })
 ```
 
+Variables can compose other variables with `@{name}@` and render runtime
+Handlebars placeholders with `defineTemplateVar`:
+
+```ts
+import { defineTemplateVar } from 'logfire/vars'
+
+const prompt = defineTemplateVar<string, { name: string }>('prompt', {
+  default: 'Hello {{name}}',
+  templateInputsSchema: {
+    properties: { name: { type: 'string' } },
+    type: 'object',
+  },
+})
+
+const resolvedPrompt = await prompt.get({ name: 'Ada' })
+```
+
 Remote variables require a Logfire API key and should be used from trusted
 server-side runtimes. Do not expose API keys in browser bundles.
