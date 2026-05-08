@@ -12,9 +12,7 @@
   "dependencies": {
     "@opentelemetry/auto-instrumentations-web": "catalog:",
     "cors": "^2.8.5",
-    "express": "^4.21.2",
-    "express-http-proxy": "^2.1.1",
-    "http-proxy-middleware": "^2.0.6"
+    "express": "^4.21.2"
   },
   "devDependencies": {
     "@pydantic/logfire-browser": "workspace:*",
