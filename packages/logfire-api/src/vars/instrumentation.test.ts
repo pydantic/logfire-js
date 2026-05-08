@@ -61,6 +61,43 @@ describe('variable composition instrumentation', () => {
       name: 'prompt',
       targeting_key: undefined,
     })
-    expect(spanMock.setAttribute).toHaveBeenCalledWith('composed_from', JSON.stringify(resolved.composedFrom))
+    expect(spanMock.setAttribute).toHaveBeenCalledWith(
+      'composed_from',
+      JSON.stringify([{ name: 'greeting', version: 1, label: 'prod', reason: 'resolved', error: null }])
+    )
+  })
+
+  it('flattens nested composition chains for the composed_from span attribute', async () => {
+    configureVariables({
+      config: config({
+        outer: {
+          labels: { prod: { serialized_value: JSON.stringify('@{inner}@'), version: 2 } },
+          name: 'outer',
+          overrides: [],
+          rollout: { labels: { prod: 1 } },
+        },
+        inner: {
+          labels: { prod: { serialized_value: JSON.stringify('inside'), version: 1 } },
+          name: 'inner',
+          overrides: [],
+          rollout: { labels: { prod: 1 } },
+        },
+        prompt: {
+          labels: { prod: { serialized_value: JSON.stringify('@{outer}@'), version: 3 } },
+          name: 'prompt',
+          overrides: [],
+          rollout: { labels: { prod: 1 } },
+        },
+      }),
+    })
+    const prompt = defineVar('prompt', { default: '' })
+
+    const resolved = await prompt.get()
+
+    expect(resolved.value).toBe('inside')
+    expect(spanMock.setAttribute).toHaveBeenCalledWith(
+      'composed_from',
+      JSON.stringify([{ name: 'outer', version: 2, label: 'prod', reason: 'resolved', error: null }])
+    )
   })
 })

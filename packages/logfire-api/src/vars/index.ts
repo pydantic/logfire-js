@@ -792,7 +792,7 @@ export class Variable<T> {
         span.setAttribute('version', result.version)
       }
       if (result.composedFrom.length > 0) {
-        span.setAttribute('composed_from', JSON.stringify(result.composedFrom))
+        span.setAttribute('composed_from', JSON.stringify(result.composedFrom.map(toComposedFromAttribute)))
       }
       try {
         span.setAttribute('value', serializeWithCodec(this.codec, result.value))
@@ -1362,6 +1362,16 @@ async function getSerializedValueForLabel(
     return new SerializedResolvedVariable({ name: variableName, reason: 'unrecognized_variable', value: undefined })
   }
   return resolveVariableConfigForLabel(config, label)
+}
+
+function toComposedFromAttribute(reference: ComposedReference): Record<string, unknown> {
+  return {
+    name: reference.name,
+    version: reference.version ?? null,
+    label: reference.label ?? null,
+    reason: reference.reason,
+    error: reference.error ?? null,
+  }
 }
 
 function serializedResolvedToReference(serialized: SerializedResolvedVariable): ResolvedReference {
