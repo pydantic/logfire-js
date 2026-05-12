@@ -58,8 +58,8 @@ jobs:
       - name: Install dependencies
         run: vp install --frozen-lockfile
 
-      - name: Enable pnpm for publishing
-        run: corepack enable pnpm
+      - name: Install pnpm for publishing
+        uses: pnpm/action-setup@v4
 
       - name: Release
         id: changesets
