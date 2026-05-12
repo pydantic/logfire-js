@@ -10,9 +10,15 @@ vi.mock('../sdk', () => ({
 
 describe('logfire config', () => {
   const originalApiKey = process.env['LOGFIRE_API_KEY']
+  const originalBaseUrl = process.env['LOGFIRE_BASE_URL']
+  const originalSendToLogfire = process.env['LOGFIRE_SEND_TO_LOGFIRE']
+  const originalToken = process.env['LOGFIRE_TOKEN']
 
   beforeEach(async () => {
     process.env['LOGFIRE_API_KEY'] = ''
+    delete process.env['LOGFIRE_BASE_URL']
+    delete process.env['LOGFIRE_SEND_TO_LOGFIRE']
+    delete process.env['LOGFIRE_TOKEN']
     await shutdownVariables()
   })
 
@@ -22,7 +28,31 @@ describe('logfire config', () => {
     } else {
       process.env['LOGFIRE_API_KEY'] = originalApiKey
     }
-    logfireConfig.resourceAttributes = {}
+    if (originalBaseUrl === undefined) {
+      delete process.env['LOGFIRE_BASE_URL']
+    } else {
+      process.env['LOGFIRE_BASE_URL'] = originalBaseUrl
+    }
+    if (originalSendToLogfire === undefined) {
+      delete process.env['LOGFIRE_SEND_TO_LOGFIRE']
+    } else {
+      process.env['LOGFIRE_SEND_TO_LOGFIRE'] = originalSendToLogfire
+    }
+    if (originalToken === undefined) {
+      delete process.env['LOGFIRE_TOKEN']
+    } else {
+      process.env['LOGFIRE_TOKEN'] = originalToken
+    }
+    Object.assign(logfireConfig, {
+      authorizationHeaders: {},
+      baseUrl: '',
+      logsExporterUrl: '',
+      metricExporterUrl: '',
+      resourceAttributes: {},
+      sendToLogfire: false,
+      token: '',
+      traceExporterUrl: '',
+    })
     await shutdownVariables()
   })
 
@@ -81,6 +111,57 @@ describe('logfire config', () => {
     configure({ resourceAttributes })
 
     expect(logfireConfig.resourceAttributes).toBe(resourceAttributes)
+  })
+
+  it('supports a token provider without resolving it during configure', async () => {
+    const tokenProvider = vi.fn<() => Promise<string>>().mockResolvedValue('Bearer user-token')
+
+    configure({
+      advanced: { baseUrl: 'https://proxy.example.com/' },
+      token: tokenProvider,
+    })
+
+    expect(logfireConfig.sendToLogfire).toBe(true)
+    expect(logfireConfig.baseUrl).toBe('https://proxy.example.com')
+    expect(logfireConfig.traceExporterUrl).toBe('https://proxy.example.com/v1/traces')
+    expect(logfireConfig.logsExporterUrl).toBe('https://proxy.example.com/v1/logs')
+    expect(logfireConfig.metricExporterUrl).toBe('https://proxy.example.com/v1/metrics')
+    expect(tokenProvider).not.toHaveBeenCalled()
+
+    expect(typeof logfireConfig.authorizationHeaders).toBe('function')
+    if (typeof logfireConfig.authorizationHeaders !== 'function') {
+      throw new Error('expected authorization headers provider')
+    }
+    await expect(logfireConfig.authorizationHeaders()).resolves.toEqual({ Authorization: 'Bearer user-token' })
+    expect(tokenProvider).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses LOGFIRE_BASE_URL for a token provider', () => {
+    process.env['LOGFIRE_BASE_URL'] = 'https://proxy.example.com/'
+
+    configure({
+      token: () => 'Bearer user-token',
+    })
+
+    expect(logfireConfig.baseUrl).toBe('https://proxy.example.com')
+  })
+
+  it('throws when a token provider has no explicit base URL', () => {
+    expect(() => {
+      configure({
+        token: () => 'Bearer user-token',
+      })
+    }).toThrow('advanced.baseUrl or LOGFIRE_BASE_URL is required when token is a function.')
+  })
+
+  it('does not require a base URL for a token provider when sending is disabled', () => {
+    configure({
+      sendToLogfire: false,
+      token: () => 'Bearer user-token',
+    })
+
+    expect(logfireConfig.sendToLogfire).toBe(false)
+    expect(logfireConfig.baseUrl).toBe('')
   })
 
   it('throws when explicit remote variables have no api key', () => {

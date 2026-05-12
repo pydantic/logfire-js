@@ -20,7 +20,7 @@ export function traceExporter(): SpanExporter {
   }
 
   const token = logfireConfig.token
-  if (token === undefined || token === '') {
+  if (!(typeof token === 'function' || (token !== undefined && token !== ''))) {
     // TODO: what should be done here? We're forcing sending to logfire, but we don't have a token
     throw new Error('Logfire token is required')
   }

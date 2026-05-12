@@ -13,7 +13,7 @@ export function metricExporter(): PushMetricExporter {
   }
 
   const token = logfireConfig.token
-  if (token === undefined || token === '') {
+  if (!(typeof token === 'function' || (token !== undefined && token !== ''))) {
     throw new Error('Logfire token is required')
   }
   return new OTLPMetricExporter({

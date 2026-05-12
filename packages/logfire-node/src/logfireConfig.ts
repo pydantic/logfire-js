@@ -42,6 +42,9 @@ export interface MetricsOptions {
   additionalReaders: MetricReader[]
 }
 
+export type LogfireToken = string | (() => string | Promise<string>)
+export type AuthorizationHeaders = Record<string, string> | (() => Promise<Record<string, string>>)
+
 export interface LogfireConfigOptions {
   /**
    * Additional span processors to be added to the OpenTelemetry SDK
@@ -130,10 +133,12 @@ export interface LogfireConfigOptions {
    */
   serviceVersion?: string
   /**
-   * The project token.
+   * The project token, or a function returning the Authorization header value for rotating auth.
+   * Token functions are resolved by the OpenTelemetry exporter when telemetry is exported.
+   * When using a token function, set `advanced.baseUrl` or `LOGFIRE_BASE_URL` because Logfire cannot infer the base URL from the token.
    * Defaults to the `LOGFIRE_TOKEN` environment variable.
    */
-  token?: string
+  token?: LogfireToken
   /**
    * Managed variables configuration. Omit this to lazily use the remote provider
    * when `apiKey` / `LOGFIRE_API_KEY` is available, pass `false` to disable
@@ -157,7 +162,7 @@ const DEFAULT_AUTO_INSTRUMENTATION_CONFIG: InstrumentationConfigMap = {
 export interface LogfireConfig {
   additionalSpanProcessors: SpanProcessor[]
   apiKey: string | undefined
-  authorizationHeaders: Record<string, string>
+  authorizationHeaders: AuthorizationHeaders
   baseUrl: string
   codeSource: CodeSource | undefined
   console: boolean | undefined
@@ -176,7 +181,7 @@ export interface LogfireConfig {
   sendToLogfire: boolean
   serviceName: string | undefined
   serviceVersion: string | undefined
-  token: string | undefined
+  token: LogfireToken | undefined
   traceExporterUrl: string
   variables: VariablesConfigOptions
   variablesBaseUrl: string | undefined
@@ -232,9 +237,8 @@ export function configure(config: LogfireConfigOptions = {}): void {
 
   const token = cnf.token ?? env['LOGFIRE_TOKEN']
   const apiKey = cnf.apiKey ?? env['LOGFIRE_API_KEY']
-  const sendToLogfire = logfireApi.resolveSendToLogfire(process.env, cnf.sendToLogfire, token)
-  const baseUrl =
-    !sendToLogfire || token === undefined || token === '' ? '' : logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, token)
+  const sendToLogfire = resolveSendToLogfire(cnf.sendToLogfire, token)
+  const baseUrl = resolveBaseUrl(env, cnf.advanced?.baseUrl, token, sendToLogfire)
   const console = 'console' in cnf ? cnf.console : env['LOGFIRE_CONSOLE'] === 'true'
   const deploymentEnvironment = cnf.environment ?? env['LOGFIRE_ENVIRONMENT']
   const serviceName = cnf.serviceName ?? env['LOGFIRE_SERVICE_NAME']
@@ -248,9 +252,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
   Object.assign(logfireConfig, {
     additionalSpanProcessors: cnf.additionalSpanProcessors ?? [],
     apiKey,
-    authorizationHeaders: {
-      Authorization: token ?? '',
-    },
+    authorizationHeaders: resolveAuthorizationHeaders(token),
     baseUrl,
     codeSource: cnf.codeSource,
     console,
@@ -289,6 +291,50 @@ function resolveSampling(option: SamplingOptions | undefined): SamplingOptions |
     }
   }
   return undefined
+}
+
+function resolveSendToLogfire(option: LogfireConfigOptions['sendToLogfire'], token: LogfireToken | undefined): boolean {
+  if (typeof token === 'function') {
+    return logfireApi.resolveSendToLogfire(process.env, option, '__logfire_token_provider__')
+  }
+  return logfireApi.resolveSendToLogfire(process.env, option, token)
+}
+
+function resolveBaseUrl(
+  env: NodeJS.ProcessEnv,
+  passedUrl: string | undefined,
+  token: LogfireToken | undefined,
+  sendToLogfire: boolean
+): string {
+  if (!sendToLogfire) {
+    return ''
+  }
+  if (typeof token === 'function') {
+    const baseUrl = passedUrl ?? env['LOGFIRE_BASE_URL']
+    if (baseUrl === undefined || baseUrl === '') {
+      throw new Error('advanced.baseUrl or LOGFIRE_BASE_URL is required when token is a function.')
+    }
+    return removeTrailingSlash(baseUrl)
+  }
+  if (token === undefined || token === '') {
+    return ''
+  }
+  return logfireApi.resolveBaseUrl(env, passedUrl, token)
+}
+
+function removeTrailingSlash(url: string): string {
+  return url.endsWith('/') ? url.slice(0, -1) : url
+}
+
+function resolveAuthorizationHeaders(token: LogfireToken | undefined): AuthorizationHeaders {
+  if (typeof token === 'function') {
+    return async () => ({
+      Authorization: await token(),
+    })
+  }
+  return {
+    Authorization: token ?? '',
+  }
 }
 
 function resolveDistributedTracing(option: LogfireConfigOptions['distributedTracing']) {

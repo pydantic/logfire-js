@@ -12,7 +12,8 @@ import { logfireConfig } from './logfireConfig'
  * become no-ops.
  */
 export function logfireLogRecordProcessor(): LogRecordProcessor | null {
-  if (!logfireConfig.sendToLogfire || logfireConfig.token === undefined || logfireConfig.token === '') {
+  const token = logfireConfig.token
+  if (!logfireConfig.sendToLogfire || !(typeof token === 'function' || (token !== undefined && token !== ''))) {
     return null
   }
   return new BatchLogRecordProcessor(

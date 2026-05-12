@@ -33,6 +33,23 @@ logfire.configure({
 
 The write token is read from `LOGFIRE_TOKEN` unless you pass `token`.
 
+For rotating proxy or OAuth credentials, pass a token provider. The provider is
+resolved by the OpenTelemetry exporters when telemetry is exported, so
+`configure()` remains synchronous:
+
+```ts
+logfire.configure({
+  advanced: {
+    baseUrl: 'https://logfire-proxy.example.com',
+  },
+  token: async () => `Bearer ${await getCurrentAccessToken()}`,
+  serviceName: 'payments-api',
+})
+```
+
+When `token` is a function, set `advanced.baseUrl` or `LOGFIRE_BASE_URL`.
+Logfire cannot infer the API base URL from a token provider.
+
 ## Automatic Instrumentation
 
 Call `configure()` before importing instrumented libraries:

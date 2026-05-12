@@ -37,6 +37,23 @@ LOGFIRE_ENVIRONMENT=production
 
 Node.js and Cloudflare read `LOGFIRE_TOKEN` by default. Browser code must not receive the token; use a backend proxy and configure `traceUrl` instead.
 
+In Node.js, `token` can also be a function when credentials rotate:
+
+```ts
+logfire.configure({
+  advanced: {
+    baseUrl: 'https://logfire-proxy.example.com',
+  },
+  token: async () => `Bearer ${await getCurrentAccessToken()}`,
+  serviceName: 'desktop-app',
+})
+```
+
+Token providers are resolved by the OpenTelemetry exporters when telemetry is
+exported, not during `configure()`. When using a token provider, set
+`advanced.baseUrl` or `LOGFIRE_BASE_URL` because Logfire cannot infer the API
+base URL from a function token.
+
 ## Console Output
 
 Enable console output while developing:
