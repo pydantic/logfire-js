@@ -1,5 +1,11 @@
 # logfire
 
+## 0.15.1
+
+### Patch Changes
+
+- b5300a9: Support async token providers for rotating authorization headers in Node.js.
+
 ## 0.15.0
 
 ### Minor Changes
