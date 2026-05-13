@@ -54,7 +54,7 @@
     "test": "vp test --passWithNoTests"
   },
   "dependencies": {
-    "@pydantic/otel-cf-workers": "^1.0.0-rc.55",
+    "@pydantic/otel-cf-workers": "^1.0.0-rc.56",
     "logfire": "workspace:*"
   },
   "devDependencies": {
