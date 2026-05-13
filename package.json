@@ -40,6 +40,11 @@
   "packageManager": "pnpm@10.28.0",
   "pnpm": {
     "overrides": {
+      "@opentelemetry/core@<2.7.1": "2.7.1",
+      "@opentelemetry/resources@<2.7.1": "2.7.1",
+      "@opentelemetry/sdk-trace-base@<2.7.1": "2.7.1",
+      "@opentelemetry/sdk-trace-web@<2.7.1": "2.7.1",
+      "@opentelemetry/semantic-conventions@<1.41.1": "1.41.1",
       "path-to-regexp@<0.1.13": "0.1.13",
       "picomatch@<2.3.2": "2.3.2",
       "postcss@<8.5.10": "8.5.12",
