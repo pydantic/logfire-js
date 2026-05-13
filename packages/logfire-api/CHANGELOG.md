@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.15.1
+
+### Patch Changes
+
+- 0a41b45: Update OpenTelemetry peer dependency ranges to the latest JS releases, including the patched Node SDK and auto-instrumentation versions for GHSA-q7rr-3cgh-j5r3.
+
 ## 0.15.0
 
 ### Minor Changes
