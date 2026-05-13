@@ -1,5 +1,13 @@
 # @pydantic/logfire-cf-workers
 
+## 0.11.9
+
+### Patch Changes
+
+- 0a41b45: Update OpenTelemetry peer dependency ranges to the latest JS releases, including the patched Node SDK and auto-instrumentation versions for GHSA-q7rr-3cgh-j5r3.
+- Updated dependencies [0a41b45]
+  - logfire@0.15.1
+
 ## 0.11.8
 
 ### Patch Changes
