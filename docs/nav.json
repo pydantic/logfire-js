@@ -14,7 +14,7 @@
         "label": "Packages",
         "items": [
           {
-            "label": "logfire",
+            "label": "Core API",
             "slug": "packages/logfire"
           },
           {

@@ -1,9 +1,9 @@
 ---
-title: logfire Package
+title: Core API Package
 description: Manual tracing, structured logs, error reporting, evaluations, and managed variables with the runtime-agnostic logfire package.
 ---
 
-# `logfire`
+# Core API
 
 The `logfire` package is the runtime-agnostic manual API. It does not configure a runtime SDK by itself; use it with a configured OpenTelemetry provider, or import it through a runtime package such as `@pydantic/logfire-node`, `@pydantic/logfire-browser`, or `@pydantic/logfire-cf-workers`.
 
