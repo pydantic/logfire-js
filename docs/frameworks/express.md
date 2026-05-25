@@ -7,6 +7,8 @@ description: Instrument an Express application with @pydantic/logfire-node.
 
 Express applications should configure Logfire before Express is imported, so OpenTelemetry can patch the framework and HTTP modules.
 
+The underlying `@opentelemetry/instrumentation-express` package supports Express `>=4.0.0 <5`.
+
 ## Install
 
 ```bash
