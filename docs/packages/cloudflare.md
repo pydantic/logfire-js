@@ -21,6 +21,12 @@ Enable Node.js compatibility in Wrangler:
 }
 ```
 
+For `wrangler.toml`, use:
+
+```toml title="wrangler.toml"
+compatibility_flags = ["nodejs_compat"]
+```
+
 For local development, set a write token in `.dev.vars`:
 
 ```bash title=".dev.vars"
@@ -28,7 +34,11 @@ LOGFIRE_TOKEN=your-write-token
 LOGFIRE_ENVIRONMENT=development
 ```
 
-For production, store `LOGFIRE_TOKEN` as a Worker secret.
+`LOGFIRE_ENVIRONMENT` is optional and names the environment on emitted telemetry. For production, store `LOGFIRE_TOKEN` as a Worker secret:
+
+```bash
+npx wrangler secret put LOGFIRE_TOKEN
+```
 
 ## In-Process Instrumentation
 
@@ -62,6 +72,32 @@ The package also supports Cloudflare Tail Worker flows:
 - use `exportTailEventsToLogfire()` in the Tail Worker
 
 See `examples/cf-producer-worker` and `examples/cf-tail-worker` in this repository for the full wiring.
+
+## Vitest
+
+If you test Workers with Vitest, ensure the Workers test pool can optimize the package for module loading:
+
+```ts title="vitest.config.mts"
+import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config'
+
+export default defineWorkersConfig({
+  test: {
+    deps: {
+      optimizer: {
+        ssr: {
+          enabled: true,
+          include: ['@pydantic/logfire-cf-workers'],
+        },
+      },
+    },
+    poolOptions: {
+      workers: {
+        // Your Workers test configuration.
+      },
+    },
+  },
+})
+```
 
 ## Scrubbing
 

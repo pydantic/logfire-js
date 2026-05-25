@@ -5,7 +5,7 @@ description: Configure Deno OpenTelemetry export to Logfire and use the logfire 
 
 # Deno
 
-Deno has built-in OpenTelemetry support. Configure Deno's OTLP exporter to point at Logfire, then optionally use the `logfire` package for manual spans and logs.
+Since v2.2, Deno has built-in [OpenTelemetry support](https://docs.deno.com/runtime/fundamentals/open_telemetry/). Configure Deno's OTLP exporter to point at Logfire, then optionally use the `logfire` package for manual spans and logs.
 
 ## Runtime Export
 
