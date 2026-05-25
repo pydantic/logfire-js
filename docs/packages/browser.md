@@ -21,8 +21,7 @@ npm install @pydantic/logfire-browser @opentelemetry/auto-instrumentations-web
 import { getWebAutoInstrumentations } from '@opentelemetry/auto-instrumentations-web'
 import * as logfire from '@pydantic/logfire-browser'
 
-const url = new URL(window.location.href)
-url.pathname = '/logfire-proxy/v1/traces'
+const url = new URL('/logfire-proxy/v1/traces', window.location.origin)
 
 logfire.configure({
   traceUrl: url.toString(),

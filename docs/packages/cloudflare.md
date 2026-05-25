@@ -78,6 +78,8 @@ See `examples/cf-producer-worker` and `examples/cf-tail-worker` in this reposito
 If you test Workers with Vitest, ensure the Workers test pool can optimize the package for module loading:
 
 ```ts title="vitest.config.mts"
+import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config'
+
 export default defineWorkersConfig({
   test: {
     deps: {

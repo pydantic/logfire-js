@@ -61,6 +61,8 @@ npm install @pydantic/logfire-browser @opentelemetry/auto-instrumentations-web
 
 Create a proxy route or middleware that forwards browser OTLP requests to Logfire with the `Authorization` header. Browser requests should go to this same-origin proxy, not directly to the Logfire API.
 
+For Next.js 16 and later, place this code in `proxy.ts` in the project root, or in `src/proxy.ts` if your app uses `src`.
+
 Store the write token in a server-only environment variable such as `LOGFIRE_TOKEN`. Do not use a `NEXT_PUBLIC_` variable for the token.
 
 ```ts title="proxy.ts"
