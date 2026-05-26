@@ -1,0 +1,14 @@
+docs/packages/browser.md
+  h_d9dd17644dded9 84,86,105,107,109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "60480eced460d7d790de47b89c7e202a4f7d0c4a",
+  "prompts": {},
+  "humans": {
+    "h_d9dd17644dded9": {
+      "author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
