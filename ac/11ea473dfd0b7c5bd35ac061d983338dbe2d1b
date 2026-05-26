@@ -1,0 +1,24 @@
+docs/packages/browser.md
+  s_c3ade7fd8c8ef9::t_e801b45ec7cdb3 105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ac11ea473dfd0b7c5bd35ac061d983338dbe2d1b",
+  "prompts": {},
+  "humans": {
+    "h_d9dd17644dded9": {
+      "author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_c3ade7fd8c8ef9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6540-c9d3-7981-9afa-6d916f7a8b52",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
