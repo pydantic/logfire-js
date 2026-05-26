@@ -81,9 +81,9 @@ For Next.js, see [Next.js](../frameworks/nextjs.md). For a standalone browser ex
 
 Python backends can use the `logfire.forward_export_request_starlette` and `logfire.forward_export_request` helpers to create a telemetry ingress endpoint without exposing the write token.
 
-For FastAPI, mount `logfire.forward_export_request_starlette` on a path that captures the OTLP suffix:
+For FastAPI/Starlette, use `logfire.forward_export_request_starlette` in an endpoint, for example:
 
-```py title="main.py" skip-run="true" skip-reason="server-start"
+```py title="main.py"
 from fastapi import Depends, FastAPI, Request
 
 import logfire
@@ -102,11 +102,11 @@ async def proxy_browser_telemetry(request: Request):
     return await logfire.forward_export_request_starlette(request)
 ```
 
-The `{path:path}` route parameter is required. The helper rejects paths other than `/v1/traces`, `/v1/logs`, and `/v1/metrics` so that it can forward to the appropriate Logfire backend endpoint. Starlette apps can use the same helper on an equivalent `POST` route, with authentication, session, CORS, and rate-limiting controls applied through middleware or the route wrapper before the handler runs.
+The `{path:path}` route parameter is required. `forward_export_request_starlette` rejects paths other than `/v1/traces`, `/v1/logs`, and `/v1/metrics` so that it can forward to the appropriate Logfire backend endpoint.
 
-For Django, Flask, Litestar, or a custom HTTP server, use `forward_export_request` directly:
+For Django, Flask, Litestar, or a custom HTTP server, use `forward_export_request` directly, e.g:
 
-```py title="main.py" skip-run="true" skip-reason="server-start"
+```py title="main.py"
 import logfire
 
 logfire.configure()
