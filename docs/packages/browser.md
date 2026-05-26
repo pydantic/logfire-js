@@ -79,11 +79,7 @@ For Next.js, see [Next.js](../frameworks/nextjs.md). For a standalone browser ex
 
 ## Python Backend Proxy
 
-Python backends can use the public `logfire.forward_export_request_starlette` and `logfire.forward_export_request` helpers to create a telemetry ingress endpoint without exposing the write token.
-
-These helpers validate incoming OTLP export requests, admit accepted payloads to the configured Logfire forwarding pipeline, and return an OTLP export response to the browser. An HTTP 200 OTLP success response means the Python process accepted the payload for local forwarding; it does not mean Logfire has already received, processed, or stored that telemetry.
-
-Forwarded OTLP request bodies are treated as opaque payloads. The Python helper does not parse, split, merge, rewrite, or apply Python-side scrubbing to browser telemetry before forwarding it, so scrub or filter sensitive browser/client attributes before they reach this endpoint.
+Python backends can use the `logfire.forward_export_request_starlette` and `logfire.forward_export_request` helpers to create a telemetry ingress endpoint without exposing the write token.
 
 For FastAPI, mount `logfire.forward_export_request_starlette` on a path that captures the OTLP suffix:
 
@@ -106,24 +102,7 @@ async def proxy_browser_telemetry(request: Request):
     return await logfire.forward_export_request_starlette(request)
 ```
 
-The `{path:path}` route parameter is required so `/logfire-proxy/v1/traces` forwards the `/v1/traces` OTLP path. The helper rejects paths other than `/v1/traces`, `/v1/logs`, and `/v1/metrics`, strips incoming credentials, adds the configured Logfire token, and limits request bodies to 50 MB by default.
-
-For Starlette, mount the same handler as a route:
-
-```py title="main.py" skip-run="true" skip-reason="server-start"
-from starlette.applications import Starlette
-from starlette.routing import Route
-
-import logfire
-
-logfire.configure()
-
-app = Starlette(
-    routes=[
-        Route('/logfire-proxy/{path:path}', logfire.forward_export_request_starlette, methods=['POST']),
-    ],
-)
-```
+The `{path:path}` route parameter is required. The helper rejects paths other than `/v1/traces`, `/v1/logs`, and `/v1/metrics` so that it can forward to the appropriate Logfire backend endpoint. Starlette apps can use the same helper on an equivalent `POST` route, with authentication, session, CORS, and rate-limiting controls applied through middleware or the route wrapper before the handler runs.
 
 For Django, Flask, Litestar, or a custom HTTP server, use `forward_export_request` directly:
 
