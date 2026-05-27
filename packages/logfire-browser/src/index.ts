@@ -46,6 +46,7 @@ import {
   resolveSendToLogfire,
   serializeAttributes,
   span,
+  startPendingSpan,
   startSpan,
   TailSamplingProcessor,
   trace,
@@ -199,6 +200,8 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   const sampler =
     headRate !== undefined && headRate < 1.0 ? new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(headRate) }) : undefined
 
+  // Browser configure intentionally does not install PendingSpanProcessor.
+  // Use startPendingSpan() for explicit, per-span pending placeholders.
   let spanProcessor: SpanProcessor = new LogfireSpanProcessor(
     new BatchSpanProcessor(
       new OTLPTraceExporter({
@@ -234,7 +237,9 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
 
   let cleanupPromise: Promise<void> | undefined
 
-  return async () => {
+  // Return the stored promise directly so repeated cleanup calls preserve identity.
+  // eslint-disable-next-line @typescript-eslint/promise-function-async
+  return () => {
     cleanupPromise ??= (async () => {
       let firstCleanupError: Error | undefined
       const captureCleanupError = (step: string, error: unknown) => {
@@ -287,6 +292,7 @@ const defaultExport: {
   resolveSendToLogfire: typeof resolveSendToLogfire
   serializeAttributes: typeof serializeAttributes
   span: typeof span
+  startPendingSpan: typeof startPendingSpan
   startSpan: typeof startSpan
   trace: typeof trace
   warning: typeof warning
@@ -310,6 +316,7 @@ const defaultExport: {
   resolveSendToLogfire,
   serializeAttributes,
   span,
+  startPendingSpan,
   startSpan,
   trace,
   ULIDGenerator,

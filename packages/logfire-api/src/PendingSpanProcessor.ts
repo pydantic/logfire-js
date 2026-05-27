@@ -2,11 +2,10 @@ import type { Context, HrTime, SpanContext } from '@opentelemetry/api'
 import { TraceFlags } from '@opentelemetry/api'
 import type { IdGenerator, ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
-import { ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY, ATTRIBUTES_SAMPLE_RATE_KEY, ATTRIBUTES_SPAN_TYPE_KEY } from './constants'
+import { ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY, ATTRIBUTES_SAMPLE_RATE_KEY, ATTRIBUTES_SPAN_TYPE_KEY, INVALID_SPAN_ID } from './constants'
+import { isPendingSpanSuppressed } from './pendingSpanSuppression'
 import { checkTraceIdRatio } from './sampling'
 import { ULIDGenerator } from './ULIDGenerator'
-
-const INVALID_SPAN_ID = '0000000000000000'
 
 export interface PendingSpanProcessorOptions {
   idGenerator?: IdGenerator
@@ -29,7 +28,11 @@ export class PendingSpanProcessor implements SpanProcessor {
     return undefined
   }
 
-  onStart(span: Span, _parentContext: Context): void {
+  onStart(span: Span, parentContext: Context): void {
+    if (isPendingSpanSuppressed(parentContext)) {
+      return
+    }
+
     if (!span.isRecording()) {
       return
     }

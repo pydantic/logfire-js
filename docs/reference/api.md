@@ -13,6 +13,7 @@ Manual tracing and logging:
 
 - `span(message, options)` and `span(message, attributes, options, callback)`
 - `startSpan(message, attributes?, options?)`
+- `startPendingSpan(message, attributes?, options?)`
 - `log()`, `trace()`, `debug()`, `info()`, `notice()`, `warning()`, `error()`, `fatal()`
 - `reportError(message, error, extraAttributes?)`
 - `Level`
@@ -26,6 +27,7 @@ Configuration helpers and utilities:
 - `serializeAttributes()`
 - `LogfireAttributeScrubber`
 - `NoopAttributeScrubber`
+- `PendingSpanProcessor`
 - `TailSamplingProcessor`
 - `ULIDGenerator`
 - sampling helpers such as `levelOrDuration()`
@@ -41,8 +43,10 @@ Node.js runtime setup:
 
 - `configure(options?)`
 - `logfireConfig`
-- `forceFlush()`
-- `shutdown()`
+- `forceFlush(options?)`
+- `shutdown(options?)`
+- `LogfireFlushOptions`
+- `LogfireShutdownOptions`
 - `DiagLogLevel`
 
 The package also re-exports the public API from `logfire`.

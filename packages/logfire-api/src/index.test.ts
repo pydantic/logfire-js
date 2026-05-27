@@ -1,3 +1,4 @@
+import type { Context, Span } from '@opentelemetry/api'
 import { SpanStatusCode, trace } from '@opentelemetry/api'
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test'
 
@@ -6,42 +7,117 @@ import {
   ATTRIBUTES_LEVEL_KEY,
   ATTRIBUTES_MESSAGE_KEY,
   ATTRIBUTES_MESSAGE_TEMPLATE_KEY,
+  ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY,
   ATTRIBUTES_SPAN_TYPE_KEY,
   ATTRIBUTES_TAGS_KEY,
 } from './constants'
-import { info, span } from './index'
+import defaultExport, { info, span, startPendingSpan } from './index'
+import { isPendingSpanSuppressed } from './pendingSpanSuppression'
 
 const sleep = async (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
 
-const { spanMock } = vi.hoisted(() => {
-  const spanMock = {
-    end: vi.fn<() => void>(),
-    recordException: vi.fn<() => void>(),
-    setAttribute: vi.fn<() => void>(),
-    setStatus: vi.fn<() => void>(),
+const mocks = vi.hoisted(() => {
+  interface MockContext {
+    getValue(key: symbol): unknown
+    id: string
+    setValue(key: symbol, value: unknown): MockContext
+    values: Map<symbol, unknown>
   }
-  return { spanMock }
-})
 
-vi.mock('@opentelemetry/api', () => {
+  interface MockSpan {
+    attributes: Record<string, unknown>
+    end: ReturnType<typeof vi.fn<(endTime?: unknown) => void>>
+    isRecording: ReturnType<typeof vi.fn<() => boolean>>
+    parentSpanContext?: { spanId: string }
+    recordException: ReturnType<typeof vi.fn<(exception: unknown) => void>>
+    setAttribute: ReturnType<typeof vi.fn<(key: string, value: unknown) => void>>
+    setStatus: ReturnType<typeof vi.fn<(status: unknown) => void>>
+    spanContext: ReturnType<typeof vi.fn<() => { spanId: string; traceId: string }>>
+    startTime?: [number, number]
+  }
+
+  let contextId = 0
+
+  function makeContext(values = new Map<symbol, unknown>()): MockContext {
+    contextId++
+    return {
+      getValue: (key: symbol) => values.get(key),
+      id: `context-${contextId.toString()}`,
+      setValue: (key: symbol, value: unknown) => {
+        const nextValues = new Map(values)
+        nextValues.set(key, value)
+        return makeContext(nextValues)
+      },
+      values,
+    }
+  }
+
+  function makeSpan(options: { parentSpanId?: string; recording?: boolean; startTime?: [number, number] } = {}): MockSpan {
+    return {
+      attributes: {},
+      end: vi.fn<(endTime?: unknown) => void>(),
+      isRecording: vi.fn<() => boolean>(() => options.recording ?? true),
+      ...(options.parentSpanId !== undefined ? { parentSpanContext: { spanId: options.parentSpanId } } : {}),
+      recordException: vi.fn<(exception: unknown) => void>(),
+      setAttribute: vi.fn<(key: string, value: unknown) => void>(),
+      setStatus: vi.fn<(status: unknown) => void>(),
+      spanContext: vi.fn<() => { spanId: string; traceId: string }>(() => ({
+        spanId: 'real-span-id',
+        traceId: '11111111111111111111111111111111',
+      })),
+      ...(options.startTime !== undefined ? { startTime: options.startTime } : {}),
+    }
+  }
+
+  const activeContext = makeContext()
+  const spanMock = makeSpan({ startTime: [1000, 0] })
+  const startSpanResults: MockSpan[] = []
+
   const tracerMock = {
-    startActiveSpan: vi.fn<(_name: string, _options: unknown, _context: unknown, fn: (s: typeof spanMock) => unknown) => unknown>(
+    startActiveSpan: vi.fn<(_name: string, _options: unknown, _context: unknown, fn: (s: MockSpan) => unknown) => unknown>(
       (_name, _options, _context, fn) => fn(spanMock)
     ),
-    startSpan: vi.fn<() => typeof spanMock>(() => spanMock),
+    startSpan: vi.fn<(_name: string, _options?: unknown, _context?: MockContext) => MockSpan>(() => startSpanResults.shift() ?? spanMock),
   }
 
   return {
-    context: {
-      active: vi.fn<() => unknown>(),
+    activeContext,
+    contextWith: vi.fn<() => unknown>(),
+    makeSpan,
+    reset() {
+      startSpanResults.length = 0
+      tracerMock.startActiveSpan.mockClear()
+      tracerMock.startSpan.mockClear()
+      spanMock.end.mockClear()
+      spanMock.isRecording.mockClear()
+      spanMock.recordException.mockClear()
+      spanMock.setAttribute.mockClear()
+      spanMock.setStatus.mockClear()
+      spanMock.spanContext.mockClear()
     },
+    setSpan: vi.fn<(ctx: MockContext, span: MockSpan) => MockContext>((ctx, span) => ctx.setValue(Symbol.for('otel-test-span'), span)),
+    spanMock,
+    startSpanResults,
+    tracerMock,
+  }
+})
+
+const { spanMock } = mocks
+
+vi.mock('@opentelemetry/api', () => {
+  return {
+    context: {
+      active: vi.fn<() => unknown>(() => mocks.activeContext),
+      with: mocks.contextWith,
+    },
+    createContextKey: (description: string) => Symbol(description),
     SpanStatusCode: { ERROR: 2 },
     trace: {
-      getTracer: vi.fn<() => typeof tracerMock>(() => tracerMock),
-      setSpan: vi.fn<() => void>(),
+      getTracer: vi.fn<() => typeof mocks.tracerMock>(() => mocks.tracerMock),
+      setSpan: mocks.setSpan,
     },
   }
 })
@@ -49,6 +125,7 @@ vi.mock('@opentelemetry/api', () => {
 describe('info', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.reset()
   })
   test('formats the message with the passed attributes', () => {
     info('aha {i}', { i: 1 })
@@ -67,7 +144,7 @@ describe('info', () => {
           i: 1,
         },
       },
-      undefined
+      mocks.activeContext
     )
   })
 
@@ -91,7 +168,7 @@ describe('info', () => {
           password: "[Scrubbed due to 'password']",
         },
       },
-      undefined
+      mocks.activeContext
     )
   })
 })
@@ -99,6 +176,7 @@ describe('info', () => {
 describe('span', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.reset()
   })
 
   test('sync callback succeeds - span ends normally', () => {
@@ -195,5 +273,103 @@ describe('span', () => {
     expect(result).toBe(lazyThenable)
     expect(then).not.toHaveBeenCalled()
     expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+})
+
+describe('startPendingSpan', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.reset()
+  })
+
+  test('starts a real span and emits one zero-duration pending placeholder', () => {
+    const startTime: [number, number] = [123, 456]
+    const realSpan = mocks.makeSpan({ parentSpanId: 'parent-span-id', startTime })
+    const pendingSpan = mocks.makeSpan({ startTime })
+    mocks.startSpanResults.push(realSpan, pendingSpan)
+
+    const result = startPendingSpan('load {route}', { route: '/dashboard' }, { tags: ['ui'] })
+
+    expect(result).toBe(realSpan)
+    expect(mocks.tracerMock.startSpan).toHaveBeenCalledTimes(2)
+    expect(mocks.contextWith).not.toHaveBeenCalled()
+
+    const realStartCall = mocks.tracerMock.startSpan.mock.calls[0]
+    expect(realStartCall?.[0]).toBe('load {route}')
+    expect(realStartCall?.[1]).toEqual({
+      attributes: {
+        [ATTRIBUTES_LEVEL_KEY]: 9,
+        [ATTRIBUTES_MESSAGE_KEY]: 'load /dashboard',
+        [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: 'load {route}',
+        [ATTRIBUTES_SPAN_TYPE_KEY]: 'span',
+        [ATTRIBUTES_TAGS_KEY]: ['ui'],
+        route: '/dashboard',
+      },
+    })
+    const realStartContext = realStartCall?.[2] as unknown as Context
+    expect(realStartContext).not.toBe(mocks.activeContext)
+    expect(isPendingSpanSuppressed(realStartContext)).toBe(true)
+
+    const pendingStartCall = mocks.tracerMock.startSpan.mock.calls[1]
+    expect(pendingStartCall?.[0]).toBe('load {route}')
+    expect(pendingStartCall?.[1]).toEqual({
+      attributes: {
+        [ATTRIBUTES_LEVEL_KEY]: 9,
+        [ATTRIBUTES_MESSAGE_KEY]: 'load /dashboard',
+        [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: 'load {route}',
+        [ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY]: 'parent-span-id',
+        [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span',
+        [ATTRIBUTES_TAGS_KEY]: ['ui'],
+        route: '/dashboard',
+      },
+      startTime,
+    })
+    expect(isPendingSpanSuppressed(pendingStartCall?.[2] as unknown as Context)).toBe(false)
+    expect(mocks.setSpan).toHaveBeenCalledWith(mocks.activeContext, realSpan)
+    expect(pendingSpan.end).toHaveBeenCalledWith(startTime)
+  })
+
+  test('skips placeholder emission when the real span is not recording', () => {
+    const realSpan = mocks.makeSpan({ recording: false, startTime: [123, 456] })
+    mocks.startSpanResults.push(realSpan)
+
+    const result = startPendingSpan('load')
+
+    expect(result).toBe(realSpan)
+    expect(mocks.tracerMock.startSpan).toHaveBeenCalledTimes(1)
+  })
+
+  test('skips placeholder emission when SDK timing data is unavailable', () => {
+    const realSpan = mocks.makeSpan()
+    delete realSpan.startTime
+    mocks.startSpanResults.push(realSpan)
+
+    const result = startPendingSpan('load')
+
+    expect(result).toBe(realSpan)
+    expect(mocks.tracerMock.startSpan).toHaveBeenCalledTimes(1)
+  })
+
+  test('supports parentSpan and _spanName options', () => {
+    const startTime: [number, number] = [123, 456]
+    const parentSpan = mocks.makeSpan({ startTime: [100, 0] })
+    const realSpan = mocks.makeSpan({ startTime })
+    const pendingSpan = mocks.makeSpan({ startTime })
+    mocks.startSpanResults.push(realSpan, pendingSpan)
+
+    startPendingSpan(
+      'friendly {name}',
+      { name: 'label' },
+      { _spanName: 'stable-name', level: 13, parentSpan: parentSpan as unknown as Span }
+    )
+
+    expect(mocks.setSpan).toHaveBeenCalledWith(mocks.activeContext, parentSpan)
+    expect(mocks.tracerMock.startSpan.mock.calls[0]?.[0]).toBe('stable-name')
+    expect(mocks.tracerMock.startSpan.mock.calls[1]?.[0]).toBe('stable-name')
+    expect(pendingSpan.end).toHaveBeenCalledWith(startTime)
+  })
+
+  test('does not export a callback-style pendingSpan helper', () => {
+    expect('pendingSpan' in defaultExport).toBe(false)
   })
 })

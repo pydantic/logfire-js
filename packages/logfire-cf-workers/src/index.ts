@@ -20,6 +20,7 @@ import {
   resolveSendToLogfire,
   serializeAttributes,
   span,
+  startPendingSpan,
   startSpan,
   trace,
   ULIDGenerator,
@@ -147,6 +148,7 @@ const defaultExport: {
   resolveSendToLogfire: typeof resolveSendToLogfire
   serializeAttributes: typeof serializeAttributes
   span: typeof span
+  startPendingSpan: typeof startPendingSpan
   startSpan: typeof startSpan
   trace: typeof trace
   warning: typeof warning
@@ -173,6 +175,7 @@ const defaultExport: {
   resolveSendToLogfire,
   serializeAttributes,
   span,
+  startPendingSpan,
   startSpan,
   trace,
   ULIDGenerator,

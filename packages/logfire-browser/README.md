@@ -72,8 +72,30 @@ navigation away from the page. You can disable that OpenTelemetry behavior with
 `batchSpanProcessorConfig.disableAutoFlushOnDocumentHide`, but doing so means
 only explicit cleanup or normal batch timing will flush spans.
 
-This cleanup lifecycle does not change pending-span behavior. Browser
-pending-span parity is tracked separately from this cleanup work.
+## Pending spans
+
+Browser `configure()` does not install automatic pending-span processing.
+Browser apps often produce many short-lived fetch and interaction spans, so
+automatic pending spans can significantly increase span volume, network
+pressure, and ingestion cost in a user-facing environment.
+
+For long-running browser operations where an immediate placeholder is useful,
+call `startPendingSpan()` explicitly:
+
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+const span = logfire.startPendingSpan('Load dashboard', { route: '/dashboard' })
+try {
+  await loadDashboard()
+} finally {
+  span.end()
+}
+```
+
+Manual pending spans still add one placeholder span for each call. Node.js
+applications get automatic pending spans from `@pydantic/logfire-node`; Browser
+keeps this behavior explicit.
 
 ## Contributing
 

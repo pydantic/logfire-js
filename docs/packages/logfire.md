@@ -40,6 +40,24 @@ try {
 }
 ```
 
+Use `startPendingSpan()` when you want a long-running operation to appear in
+Logfire immediately while you still control when the real span ends:
+
+```ts
+const span = logfire.startPendingSpan('load dashboard', { route: '/dashboard' })
+
+try {
+  await loadDashboard()
+} finally {
+  span.end()
+}
+```
+
+The helper emits one `logfire.span_type = "pending_span"` placeholder at start
+time and returns the real span. Runtimes with automatic pending-span processing,
+such as `@pydantic/logfire-node`, suppress their automatic placeholder for this
+one real span so the manual placeholder is not duplicated.
+
 ## Logs
 
 Log helpers create point-in-time Logfire events:

@@ -6,7 +6,9 @@ import { describe, expect, test, vi } from 'vite-plus/test'
 
 import { ATTRIBUTES_LEVEL_KEY, ATTRIBUTES_SPAN_TYPE_KEY } from './constants'
 import { PendingSpanProcessor } from './PendingSpanProcessor'
+import { setPendingSpanSuppressed } from './pendingSpanSuppression'
 import { checkTraceIdRatio, levelOrDuration, SpanLevel } from './sampling'
+import type { TailSamplingSpanInfo } from './sampling'
 import { TailSamplingProcessor } from './TailSamplingProcessor'
 
 describe('SpanLevel', () => {
@@ -383,6 +385,120 @@ describe('TailSamplingProcessor', () => {
     processor.onStart(lateChild, ROOT_CONTEXT)
     expect(downstream.calls).toEqual([{ event: 'start', span: lateChild }])
     expect(getPendingSpanNames(downstream.calls)).toEqual([])
+  })
+
+  test('does not call the tail callback for manual pending placeholders', () => {
+    const downstream = makeProcessor()
+    const tail = vi.fn<() => number>(() => 0.0)
+    const processor = new TailSamplingProcessor(downstream, tail)
+    const pendingRoot = makeSpan({
+      attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span' },
+      name: 'manual pending',
+      startTime: [1000, 0],
+    })
+
+    processor.onStart(pendingRoot, ROOT_CONTEXT)
+    processor.onEnd(pendingRoot)
+
+    expect(tail).not.toHaveBeenCalled()
+    expect(downstream.calls).toHaveLength(0)
+  })
+
+  test('exports manual pending placeholders when the real trace is accepted', () => {
+    const downstream = makeProcessor()
+    const processor = new TailSamplingProcessor(downstream, (info) =>
+      info.event === 'end' && info.span.name === 'manual root' ? 1.0 : 0.0
+    )
+    const root = makeSpan({ attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'span' }, name: 'manual root', startTime: [1000, 0] })
+    const pendingRoot = makeSpan({
+      attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span' },
+      name: 'manual root',
+      parentSpanContext: root.spanContext(),
+      spanId: 'pending000000000',
+      startTime: [1000, 0],
+    })
+
+    processor.onStart(root, ROOT_CONTEXT)
+    processor.onStart(pendingRoot, ROOT_CONTEXT)
+    processor.onEnd(pendingRoot)
+    processor.onEnd(root)
+
+    expect(getPendingSpanNames(downstream.calls)).toEqual(['manual root'])
+  })
+
+  test('accepts a tail-buffered trace from a real manual child but not its pending placeholder', () => {
+    const downstream = makeProcessor()
+    const tail = vi.fn<(info: TailSamplingSpanInfo) => number>((info) =>
+      info.event === 'start' && info.span.name === 'manual child' ? 1.0 : 0.0
+    )
+    const processor = new TailSamplingProcessor(downstream, tail)
+    const root = makeSpan({ attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'span' }, name: 'root', startTime: [1000, 0] })
+    const child = makeSpan({
+      attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'span' },
+      name: 'manual child',
+      parentSpanContext: root.spanContext(),
+      spanId: 'child00000000000',
+      startTime: [1001, 0],
+    })
+    const pendingChild = makeSpan({
+      attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span' },
+      name: 'manual child',
+      parentSpanContext: child.spanContext(),
+      spanId: 'pending000000000',
+      startTime: [1001, 0],
+    })
+
+    processor.onStart(root, ROOT_CONTEXT)
+    processor.onStart(child, setPendingSpanSuppressed(ROOT_CONTEXT))
+    processor.onStart(pendingChild, ROOT_CONTEXT)
+    processor.onEnd(pendingChild)
+
+    expect(tail.mock.calls.map(([info]) => info.span.name)).toEqual(['root', 'manual child'])
+    expect(getPendingSpanNames(downstream.calls)).toEqual(['manual child'])
+  })
+
+  test('drops manual pending placeholders when the real trace is dropped', () => {
+    const downstream = makeProcessor()
+    const processor = new TailSamplingProcessor(downstream, () => 0.0)
+    const root = makeSpan({ attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'span' }, name: 'manual root', startTime: [1000, 0] })
+    const pendingRoot = makeSpan({
+      attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span' },
+      name: 'manual root',
+      parentSpanContext: root.spanContext(),
+      spanId: 'pending000000000',
+      startTime: [1000, 0],
+    })
+
+    processor.onStart(root, ROOT_CONTEXT)
+    processor.onStart(pendingRoot, ROOT_CONTEXT)
+    processor.onEnd(pendingRoot)
+    processor.onEnd(root)
+
+    expect(downstream.calls).toHaveLength(0)
+  })
+
+  test('does not duplicate manual pending placeholders when deferred pending processing replays buffered starts', () => {
+    const downstream = makeProcessor()
+    const processor = new TailSamplingProcessor(
+      downstream,
+      (info) => (info.event === 'end' && info.span.name === 'manual root' ? 1.0 : 0.0),
+      { deferredProcessor: new PendingSpanProcessor(downstream, { idGenerator: makeIdGenerator() }) }
+    )
+    const root = makeSpan({ attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'span' }, name: 'manual root', startTime: [1000, 0] })
+    const pendingRoot = makeSpan({
+      attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span' },
+      name: 'manual root',
+      parentSpanContext: root.spanContext(),
+      spanId: 'pending000000000',
+      startTime: [1000, 0],
+    })
+
+    processor.onStart(root, setPendingSpanSuppressed(ROOT_CONTEXT))
+    processor.onStart(pendingRoot, ROOT_CONTEXT)
+    processor.onEnd(pendingRoot)
+    processor.onEnd(root)
+
+    expect(getPendingSpanNames(downstream.calls)).toEqual(['manual root'])
   })
 
   test('does not emit pending spans for children that start after accepted root end', () => {

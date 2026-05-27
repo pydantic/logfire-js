@@ -113,7 +113,9 @@ vi.mock('@opentelemetry/sdk-trace-web', () => ({
   WebTracerProvider: mocks.MockWebTracerProvider,
 }))
 
-import { configure } from './index'
+import { PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
+
+import logfireBrowser, { configure, startPendingSpan } from './index'
 
 const originalNavigator = globalThis.navigator
 let cleanup: (() => Promise<void>) | undefined
@@ -135,6 +137,11 @@ function getLatestWebTracerProvider() {
     throw new Error('expected WebTracerProvider mock instance')
   }
   return instance
+}
+
+function getLatestSpanProcessors(): unknown[] {
+  const provider = getLatestWebTracerProvider()
+  return (provider.options as { spanProcessors: unknown[] }).spanProcessors
 }
 
 async function expectCleanupFailureIsMemoized(failingStep: CleanupStep) {
@@ -220,6 +227,66 @@ describe('browser configure resource attributes', () => {
       'service.version': '1.2.3',
       'telemetry.sdk.name': 'logfire-browser',
     })
+  })
+})
+
+describe('browser pending spans', () => {
+  beforeEach(() => {
+    mocks.reset()
+    cleanup = undefined
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        language: 'en-US',
+        userAgent: 'test-browser',
+        userAgentData: undefined,
+      },
+    })
+  })
+
+  afterEach(async () => {
+    await cleanup?.()
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('does not install automatic pending spans in the default processor pipeline', () => {
+    cleanup = configure({
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    const spanProcessors = getLatestSpanProcessors()
+    expect(spanProcessors.some((processor) => processor instanceof PendingSpanProcessor)).toBe(false)
+  })
+
+  it('does not install automatic pending spans in the head-sampled processor pipeline', () => {
+    cleanup = configure({
+      sampling: { head: 0.5 },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    const spanProcessors = getLatestSpanProcessors()
+    expect(spanProcessors.some((processor) => processor instanceof PendingSpanProcessor)).toBe(false)
+  })
+
+  it('does not install automatic or deferred pending spans in the tail-sampled processor pipeline', () => {
+    cleanup = configure({
+      sampling: { tail: () => 0.0 },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    const spanProcessors = getLatestSpanProcessors()
+    expect(spanProcessors.some((processor) => processor instanceof PendingSpanProcessor)).toBe(false)
+    expect(spanProcessors[0]).toBeInstanceOf(TailSamplingProcessor)
+    expect((spanProcessors[0] as { deferredProcessor?: unknown }).deferredProcessor).toBeUndefined()
+  })
+
+  it('re-exports startPendingSpan from the shared API', () => {
+    expect(typeof startPendingSpan).toBe('function')
+    expect(logfireBrowser.startPendingSpan).toBe(startPendingSpan)
   })
 })
 

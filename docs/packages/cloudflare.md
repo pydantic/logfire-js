@@ -73,6 +73,29 @@ The package also supports Cloudflare Tail Worker flows:
 
 See `examples/cf-producer-worker` and `examples/cf-tail-worker` in this repository for the full wiring.
 
+## Runtime Lifecycle
+
+Cloudflare Workers do not have a process-style shutdown hook. Logfire relies on
+the Worker request lifetime instead: each instrumented handler schedules span
+export with `ctx.waitUntil()` after the handler finishes.
+
+This applies to both Logfire entrypoints:
+
+- `instrumentInProcess()` and its `instrument()` alias configure in-process OTLP
+  export.
+- `instrumentTail()` configures tail Worker export.
+
+Both entrypoints delegate to the underlying `@pydantic/otel-cf-workers`
+`instrument()` helper. That helper proxies the Worker execution context, tracks
+promises passed to `ctx.waitUntil()` inside the user handler, then schedules span
+export on the original context with `ctx.waitUntil()`. Export waits for a
+scheduler tick and the tracked promises before force-flushing the configured
+span processors.
+
+Because export is tied to each Worker event, there is no long-lived Logfire
+runtime to shut down after deployment. Use `ctx.waitUntil()` for any asynchronous
+work that should be included in request-lifetime telemetry.
+
 ## Vitest
 
 If you test Workers with Vitest, ensure the Workers test pool can optimize the package for module loading:

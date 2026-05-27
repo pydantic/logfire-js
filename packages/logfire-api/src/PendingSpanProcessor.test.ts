@@ -5,8 +5,9 @@ import type { IdGenerator, ReadableSpan, Span, SpanProcessor } from '@openteleme
 import { ROOT_CONTEXT, SpanKind, SpanStatusCode, TraceFlags } from '@opentelemetry/api'
 import { describe, expect, test, vi } from 'vite-plus/test'
 
-import { ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY, ATTRIBUTES_SAMPLE_RATE_KEY, ATTRIBUTES_SPAN_TYPE_KEY } from './constants'
+import { ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY, ATTRIBUTES_SAMPLE_RATE_KEY, ATTRIBUTES_SPAN_TYPE_KEY, INVALID_SPAN_ID } from './constants'
 import { PendingSpanProcessor } from './PendingSpanProcessor'
+import { setPendingSpanSuppressed } from './pendingSpanSuppression'
 
 const TRACE_ID = '11111111111111111111111111111111'
 const SPAN_ID = '2222222222222222'
@@ -149,8 +150,33 @@ describe('PendingSpanProcessor', () => {
     processor.onStart(makeSpan({ attributes: { custom: 'value' } }), ROOT_CONTEXT)
 
     const pendingSpan = getExportedSpan(wrapped)
-    expect(pendingSpan.attributes[ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY]).toBe('0000000000000000')
+    expect(pendingSpan.attributes[ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY]).toBe(INVALID_SPAN_ID)
     expect(pendingSpan.attributes[ATTRIBUTES_SPAN_TYPE_KEY]).toBe('pending_span')
+  })
+
+  test('skips automatic pending emission when the start context is suppressed', () => {
+    const wrapped = makeWrappedProcessor()
+    const processor = new PendingSpanProcessor(wrapped, { idGenerator: makeIdGenerator() })
+
+    processor.onStart(makeSpan(), setPendingSpanSuppressed(ROOT_CONTEXT))
+
+    expect(wrapped.onEnd).not.toHaveBeenCalled()
+  })
+
+  test('does not suppress descendants when their own start context is unmarked', () => {
+    const wrapped = makeWrappedProcessor()
+    const processor = new PendingSpanProcessor(wrapped, { idGenerator: makeIdGenerator() })
+    const realSpan = makeSpan()
+    const childSpan = makeSpan({
+      parentSpanContext: realSpan.spanContext(),
+      spanId: 'child00000000000',
+    })
+
+    processor.onStart(realSpan, setPendingSpanSuppressed(ROOT_CONTEXT))
+    processor.onStart(childSpan, ROOT_CONTEXT)
+
+    expect(wrapped.onEnd).toHaveBeenCalledTimes(1)
+    expect(getExportedSpan(wrapped).attributes[ATTRIBUTES_SPAN_TYPE_KEY]).toBe('pending_span')
   })
 
   test('skips log spans and already-pending spans', () => {

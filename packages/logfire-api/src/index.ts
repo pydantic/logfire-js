@@ -1,5 +1,6 @@
-import type { Span } from '@opentelemetry/api'
+import type { Attributes, Context, HrTime, Span } from '@opentelemetry/api'
 import { SpanStatusCode, context as TheContextAPI, trace as TheTraceAPI } from '@opentelemetry/api'
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 
 import { LogfireAttributeScrubber, NoopAttributeScrubber, NoopScrubber } from './AttributeScrubber'
@@ -8,13 +9,16 @@ import {
   ATTRIBUTES_LEVEL_KEY,
   ATTRIBUTES_MESSAGE_KEY,
   ATTRIBUTES_MESSAGE_TEMPLATE_KEY,
+  ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY,
   ATTRIBUTES_SPAN_TYPE_KEY,
   ATTRIBUTES_TAGS_KEY,
+  INVALID_SPAN_ID,
 } from './constants'
 import { canonicalizeError, computeFingerprint } from './fingerprint'
 import { logfireFormatWithExtras } from './formatter'
 import { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire, serializeAttributes } from './logfireApiConfig'
 import { PendingSpanProcessor } from './PendingSpanProcessor'
+import { setPendingSpanSuppressed } from './pendingSpanSuppression'
 import { SpanLevel, checkTraceIdRatio, levelOrDuration } from './sampling'
 import { TailSamplingProcessor } from './TailSamplingProcessor'
 import { ULIDGenerator } from './ULIDGenerator'
@@ -71,35 +75,107 @@ export interface LogOptions {
   tags?: string[]
 }
 
+export type StartPendingSpanOptions = Omit<LogOptions, 'log'>
+
+interface LogfireSpanStart {
+  attributes: Attributes
+  name: string
+}
+
+type ReadableSpanFields = Pick<ReadableSpan, 'parentSpanContext' | 'startTime'>
+
+function buildLogfireSpanStart(
+  msgTemplate: string,
+  attributes: Record<string, unknown>,
+  { log, tags = [], level = Level.Info, _spanName }: Pick<LogOptions, '_spanName' | 'level' | 'log' | 'tags'>
+): LogfireSpanStart {
+  const { formattedMessage, extraAttributes, newTemplate } = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
+
+  return {
+    attributes: {
+      ...serializeAttributes({ ...attributes, ...extraAttributes }),
+      [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
+      [ATTRIBUTES_MESSAGE_KEY]: formattedMessage,
+      [ATTRIBUTES_LEVEL_KEY]: level,
+      [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
+      [ATTRIBUTES_SPAN_TYPE_KEY]: log ? 'log' : 'span',
+    },
+    name: _spanName ?? msgTemplate,
+  }
+}
+
+function getSpanStartContext(parentSpan: Span | undefined): Context {
+  const activeContext = TheContextAPI.active()
+  return parentSpan ? TheTraceAPI.setSpan(activeContext, parentSpan) : activeContext
+}
+
+function getReadableSpanFields(span: Span): Partial<ReadableSpanFields> {
+  return span as unknown as Partial<ReadableSpanFields>
+}
+
+function isHrTime(value: unknown): value is HrTime {
+  return Array.isArray(value) && value.length === 2 && typeof value[0] === 'number' && typeof value[1] === 'number'
+}
+
 /**
  * Starts a new Span without setting it on context.
  * This method does NOT modify the current Context.
  * You need to manually call `span.end()` to finish the span.
  */
-export function startSpan(
-  msgTemplate: string,
-  attributes: Record<string, unknown> = {},
-  { log, tags = [], level = Level.Info, parentSpan, _spanName }: LogOptions = {}
-): Span {
-  const { formattedMessage, extraAttributes, newTemplate } = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
+export function startSpan(msgTemplate: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): Span {
+  const spanStart = buildLogfireSpanStart(msgTemplate, attributes, options)
 
-  const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : TheContextAPI.active()
   const span = logfireApiConfig.tracer.startSpan(
-    _spanName ?? msgTemplate,
-    {
-      attributes: {
-        ...serializeAttributes({ ...attributes, ...extraAttributes }),
-        [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
-        [ATTRIBUTES_MESSAGE_KEY]: formattedMessage,
-        [ATTRIBUTES_LEVEL_KEY]: level,
-        [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
-        [ATTRIBUTES_SPAN_TYPE_KEY]: log ? 'log' : 'span',
-      },
-    },
-    context
+    spanStart.name,
+    { attributes: spanStart.attributes },
+    getSpanStartContext(options.parentSpan)
   )
 
   return span
+}
+
+/**
+ * Starts a real span and immediately emits a manual pending-span placeholder
+ * for it. The returned real span must still be ended by the caller.
+ */
+export function startPendingSpan(
+  msgTemplate: string,
+  attributes: Record<string, unknown> = {},
+  options: StartPendingSpanOptions = {}
+): Span {
+  const spanStart = buildLogfireSpanStart(msgTemplate, attributes, options)
+  const parentContext = getSpanStartContext(options.parentSpan)
+  const realSpan = logfireApiConfig.tracer.startSpan(
+    spanStart.name,
+    { attributes: spanStart.attributes },
+    setPendingSpanSuppressed(parentContext)
+  )
+
+  if (!realSpan.isRecording()) {
+    return realSpan
+  }
+
+  const readableSpan = getReadableSpanFields(realSpan)
+  const startTime = readableSpan.startTime
+  if (!isHrTime(startTime)) {
+    return realSpan
+  }
+
+  const placeholder = logfireApiConfig.tracer.startSpan(
+    spanStart.name,
+    {
+      attributes: {
+        ...spanStart.attributes,
+        [ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY]: readableSpan.parentSpanContext?.spanId ?? INVALID_SPAN_ID,
+        [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span',
+      },
+      startTime,
+    },
+    TheTraceAPI.setSpan(parentContext, realSpan)
+  )
+  placeholder.end(startTime)
+
+  return realSpan
 }
 
 type SpanCallback<R> = (activeSpan: Span) => R
@@ -289,6 +365,7 @@ const defaultExport: {
   resolveSendToLogfire: typeof resolveSendToLogfire
   serializeAttributes: typeof serializeAttributes
   span: typeof span
+  startPendingSpan: typeof startPendingSpan
   startSpan: typeof startSpan
   trace: typeof trace
   warning: typeof warning
@@ -320,6 +397,7 @@ const defaultExport: {
   resolveSendToLogfire,
   serializeAttributes,
   span,
+  startPendingSpan,
   startSpan,
   trace,
   warning,

@@ -1,6 +1,7 @@
 import type { Context, HrTime } from '@opentelemetry/api'
 import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
+import { ATTRIBUTES_SPAN_TYPE_KEY } from './constants'
 import { checkTraceIdRatio, SpanLevel } from './sampling'
 import type { TailSamplingSpanInfo } from './sampling'
 
@@ -128,6 +129,10 @@ export class TailSamplingProcessor implements SpanProcessor {
   }
 
   private checkSpan(span: ReadableSpan, context: Context | null, event: 'end' | 'start', buffer: TraceBuffer): boolean {
+    if (span.attributes[ATTRIBUTES_SPAN_TYPE_KEY] === 'pending_span') {
+      return false
+    }
+
     const duration = hrTimeToSeconds(span.startTime) - hrTimeToSeconds(buffer.startTime)
     const level = SpanLevel.fromSpan(span)
 

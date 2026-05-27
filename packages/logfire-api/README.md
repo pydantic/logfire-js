@@ -4,6 +4,30 @@ From the team behind [Pydantic Validation](https://pydantic.dev/), **Pydantic Lo
 
 Check the [Github Repository README](https://github.com/pydantic/logfire-js) for more information on how to use the SDK.
 
+## Manual pending spans
+
+Use `startPendingSpan()` when you want to show a long-running operation as
+pending immediately, without enabling automatic pending spans for every span in
+the runtime:
+
+```ts
+import { startPendingSpan } from 'logfire'
+
+const span = startPendingSpan('Load dashboard', { route: '/dashboard' })
+try {
+  await loadDashboard()
+} finally {
+  span.end()
+}
+```
+
+The helper returns the real span for you to end and emits one
+`logfire.span_type = "pending_span"` placeholder at start time. Runtimes that
+also install automatic pending-span processing, such as Node.js, suppress the
+automatic placeholder for this one real span so the manual placeholder is not
+duplicated. That suppression expects `startPendingSpan()` and
+`PendingSpanProcessor` to come from the same installed `logfire` package copy.
+
 ## Evaluations
 
 `logfire/evals` exports the JavaScript evaluation API. It mirrors the

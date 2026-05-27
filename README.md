@@ -54,6 +54,8 @@ logfire.info(
     tags: ['example', 'example2'],
   }
 )
+
+await logfire.shutdown()
 ```
 
 Run the script with `node hello.js`, and you should see the span being logged in
