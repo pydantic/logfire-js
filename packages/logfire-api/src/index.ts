@@ -14,6 +14,7 @@ import {
 import { canonicalizeError, computeFingerprint } from './fingerprint'
 import { logfireFormatWithExtras } from './formatter'
 import { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire, serializeAttributes } from './logfireApiConfig'
+import { PendingSpanProcessor } from './PendingSpanProcessor'
 import { SpanLevel, checkTraceIdRatio, levelOrDuration } from './sampling'
 import { TailSamplingProcessor } from './TailSamplingProcessor'
 import { ULIDGenerator } from './ULIDGenerator'
@@ -22,6 +23,8 @@ export * from './AttributeScrubber'
 export { canonicalizeError, computeFingerprint } from './fingerprint'
 export { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire } from './logfireApiConfig'
 export type { LogfireApiConfig, LogfireApiConfigOptions, ScrubbingOptions } from './logfireApiConfig'
+export { ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY } from './constants'
+export { PendingSpanProcessor } from './PendingSpanProcessor'
 export * from './sampling'
 export { serializeAttributes } from './serializeAttributes'
 export { TailSamplingProcessor } from './TailSamplingProcessor'
@@ -265,6 +268,7 @@ const defaultExport: {
   LogfireAttributeScrubber: typeof LogfireAttributeScrubber
   NoopAttributeScrubber: typeof NoopAttributeScrubber
   NoopScrubber: NoopAttributeScrubber
+  PendingSpanProcessor: typeof PendingSpanProcessor
   SpanLevel: typeof SpanLevel
   TailSamplingProcessor: typeof TailSamplingProcessor
   ULIDGenerator: typeof ULIDGenerator
@@ -293,6 +297,7 @@ const defaultExport: {
   LogfireAttributeScrubber,
   NoopAttributeScrubber,
   NoopScrubber,
+  PendingSpanProcessor,
   SpanLevel,
   TailSamplingProcessor,
   ULIDGenerator,

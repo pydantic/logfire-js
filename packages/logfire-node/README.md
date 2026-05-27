@@ -78,6 +78,38 @@ First-class options such as `serviceName`, `serviceVersion`, and `environment`
 take precedence over conflicting `resourceAttributes` keys. Values from
 `OTEL_RESOURCE_ATTRIBUTES` still take precedence over code configuration.
 
+## Flush and shutdown
+
+Logfire batches telemetry through OpenTelemetry processors. For short-lived
+scripts, tests, CLIs, and graceful process shutdown, explicitly shut down the
+SDK before exiting:
+
+```js
+import * as logfire from '@pydantic/logfire-node'
+
+logfire.configure({ token: 'my-write-token' })
+
+try {
+  logfire.info('work finished')
+} finally {
+  await logfire.shutdown({ timeoutMillis: 5000 })
+}
+```
+
+`shutdown()` defaults to flushing first and then closes the underlying
+OpenTelemetry SDK. Use `shutdown({ flush: false })` only when you have already
+flushed or need to skip the explicit pre-shutdown flush.
+
+Use `forceFlush()` when the process should keep running but queued telemetry
+needs to be sent immediately:
+
+```js
+await logfire.forceFlush({ timeoutMillis: 5000 })
+```
+
+`forceFlush()` drains the Logfire-managed span, log, evaluation, metric-reader,
+and additional span processor paths without shutting down the SDK.
+
 ## Evaluations
 
 `logfire/evals` provides offline and online evaluation primitives that emit
