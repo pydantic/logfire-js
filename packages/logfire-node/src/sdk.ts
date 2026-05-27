@@ -246,7 +246,11 @@ export function start(): void {
   const primarySpanProcessor = logfireSpanProcessor(logfireConfig.console)
   const spanProcessors: SpanProcessor[] = []
   if (logfireConfig.sampling?.tail) {
-    spanProcessors.push(new TailSamplingProcessor(primarySpanProcessor, logfireConfig.sampling.tail))
+    spanProcessors.push(
+      new TailSamplingProcessor(primarySpanProcessor, logfireConfig.sampling.tail, {
+        deferredProcessor: new PendingSpanProcessor(primarySpanProcessor),
+      })
+    )
   } else {
     spanProcessors.push(primarySpanProcessor, new PendingSpanProcessor(primarySpanProcessor))
   }

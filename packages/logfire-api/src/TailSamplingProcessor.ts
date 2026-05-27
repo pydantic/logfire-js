@@ -4,14 +4,25 @@ import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace
 import { checkTraceIdRatio, SpanLevel } from './sampling'
 import type { TailSamplingSpanInfo } from './sampling'
 
-interface BufferedSpan {
-  context: Context | null
-  event: 'end' | 'start'
-  span: ReadableSpan | Span
+interface BufferedEndEvent {
+  index: number
+  kind: 'end'
+}
+
+interface BufferedStart {
+  context: Context
+  span: Span
+}
+
+interface BufferedStartEvent {
+  index: number
+  kind: 'start'
 }
 
 interface TraceBuffer {
-  spans: BufferedSpan[]
+  ended: ReadableSpan[]
+  events: (BufferedEndEvent | BufferedStartEvent)[]
+  started: BufferedStart[]
   startTime: HrTime
 }
 
@@ -20,18 +31,24 @@ const FLUSHED = Symbol('flushed')
 
 type TailCallback = (spanInfo: TailSamplingSpanInfo) => number
 
+export interface TailSamplingProcessorOptions {
+  deferredProcessor?: SpanProcessor
+}
+
 function hrTimeToSeconds(hrTime: HrTime): number {
   return hrTime[0] + hrTime[1] / 1e9
 }
 
 export class TailSamplingProcessor implements SpanProcessor {
   private readonly buffers = new Map<string, TraceBuffer | typeof FLUSHED>()
+  private readonly deferredProcessor: SpanProcessor | undefined
   private readonly tail: TailCallback
   private readonly wrapped: SpanProcessor
 
-  constructor(wrapped: SpanProcessor, tail: TailCallback) {
+  constructor(wrapped: SpanProcessor, tail: TailCallback, options: TailSamplingProcessorOptions = {}) {
     this.wrapped = wrapped
     this.tail = tail
+    this.deferredProcessor = options.deferredProcessor
   }
 
   async forceFlush(): Promise<void> {
@@ -44,6 +61,10 @@ export class TailSamplingProcessor implements SpanProcessor {
 
     if (entry === FLUSHED) {
       this.wrapped.onEnd(span)
+      this.deferredProcessor?.onEnd(span)
+      if (!span.parentSpanContext) {
+        this.buffers.delete(traceId)
+      }
       return
     }
 
@@ -52,14 +73,14 @@ export class TailSamplingProcessor implements SpanProcessor {
       return
     }
 
-    entry.spans.push({ context: null, event: 'end', span })
+    const endIndex = entry.ended.push(span) - 1
+    entry.events.push({ index: endIndex, kind: 'end' })
 
     const isRoot = !span.parentSpanContext
     if (isRoot) {
-      // Root span ended — check one last time, then discard if still buffered
-      if (!this.checkSpan(span, null, 'end', entry)) {
-        this.buffers.delete(traceId)
-      }
+      // Root span ended — check one last time, then discard the trace state.
+      this.checkSpan(span, null, 'end', entry)
+      this.buffers.delete(traceId)
       return
     }
 
@@ -72,21 +93,22 @@ export class TailSamplingProcessor implements SpanProcessor {
 
     if (entry === FLUSHED) {
       this.wrapped.onStart(span, parentContext)
+      this.deferredProcessor?.onStart(span, parentContext)
       return
     }
 
     const readable = span as unknown as ReadableSpan
     const isRoot = !readable.parentSpanContext
     if (isRoot && !entry) {
-      const buffer: TraceBuffer = { spans: [], startTime: readable.startTime }
+      const buffer: TraceBuffer = { ended: [], events: [], started: [], startTime: readable.startTime }
       this.buffers.set(traceId, buffer)
-      buffer.spans.push({ context: parentContext, event: 'start', span })
+      this.addStart(buffer, span, parentContext)
       this.checkSpan(span as unknown as ReadableSpan, parentContext, 'start', buffer)
       return
     }
 
     if (entry) {
-      entry.spans.push({ context: parentContext, event: 'start', span })
+      this.addStart(entry, span, parentContext)
       this.checkSpan(span as unknown as ReadableSpan, parentContext, 'start', entry)
       return
     }
@@ -98,6 +120,11 @@ export class TailSamplingProcessor implements SpanProcessor {
   async shutdown(): Promise<void> {
     this.buffers.clear()
     return this.wrapped.shutdown()
+  }
+
+  private addStart(buffer: TraceBuffer, span: Span, context: Context): void {
+    const startIndex = buffer.started.push({ context, span }) - 1
+    buffer.events.push({ index: startIndex, kind: 'start' })
   }
 
   private checkSpan(span: ReadableSpan, context: Context | null, event: 'end' | 'start', buffer: TraceBuffer): boolean {
@@ -118,13 +145,22 @@ export class TailSamplingProcessor implements SpanProcessor {
   private flushBuffer(traceId: string, buffer: TraceBuffer): void {
     this.buffers.set(traceId, FLUSHED)
 
-    for (const { context, event, span } of buffer.spans) {
-      if (event === 'start') {
-        // context is always set for 'start' events
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        this.wrapped.onStart(span as Span, context!)
+    for (const event of buffer.events) {
+      if (event.kind === 'start') {
+        const started = buffer.started[event.index]
+        if (started === undefined) {
+          throw new Error('missing buffered span start event')
+        }
+        const { context, span } = started
+        this.wrapped.onStart(span, context)
+        this.deferredProcessor?.onStart(span, context)
       } else {
-        this.wrapped.onEnd(span as ReadableSpan)
+        const span = buffer.ended[event.index]
+        if (span === undefined) {
+          throw new Error('missing buffered span end event')
+        }
+        this.wrapped.onEnd(span)
+        this.deferredProcessor?.onEnd(span)
       }
     }
   }

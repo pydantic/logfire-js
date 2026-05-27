@@ -322,7 +322,7 @@ describe('sdk lifecycle helpers', () => {
     expect(spanProcessors[2]).toBe(mocks.evalProcessor)
   })
 
-  it('does not install pending-span support while tail sampling handles the primary processor', () => {
+  it('installs deferred pending-span support when tail sampling is enabled', () => {
     Object.assign(logfireConfig, {
       sampling: { tail: () => 1 },
     })
@@ -331,7 +331,18 @@ describe('sdk lifecycle helpers', () => {
 
     const spanProcessors = getLatestSpanProcessors()
     expect(spanProcessors[0]).toBeInstanceOf(TailSamplingProcessor)
-    expect(spanProcessors.some((processor) => processor instanceof PendingSpanProcessor)).toBe(false)
+    expect(spanProcessors.slice(1).some((processor) => processor instanceof PendingSpanProcessor)).toBe(false)
+
+    const tailProcessor = spanProcessors[0]
+    if (tailProcessor === undefined) {
+      throw new Error('expected tail sampling processor')
+    }
+    const span = makeReadableSpan()
+    tailProcessor.onStart(span, ROOT_CONTEXT)
+
+    expect(mocks.traceOnStartSpans).toEqual([span])
+    expect(mocks.traceOnEndSpans).toHaveLength(1)
+    expect((mocks.traceOnEndSpans[0] as ReadableSpan).attributes['logfire.span_type']).toBe('pending_span')
   })
 
   it('does not duplicate final span export through the pending-span processor', () => {

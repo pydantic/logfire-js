@@ -27,7 +27,7 @@ export { ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY } from './constants'
 export { PendingSpanProcessor } from './PendingSpanProcessor'
 export * from './sampling'
 export { serializeAttributes } from './serializeAttributes'
-export { TailSamplingProcessor } from './TailSamplingProcessor'
+export { TailSamplingProcessor, type TailSamplingProcessorOptions } from './TailSamplingProcessor'
 export * from './ULIDGenerator'
 
 export const Level = {
