@@ -50,6 +50,8 @@ interface ProcessListeners {
   unhandledRejection: (reason: unknown) => void
 }
 
+type LogfireSignalListenerState = 'logfire-only' | 'user-listeners-present' | 'logfire-missing-no-others' | 'logfire-missing-with-others'
+
 interface ActiveRuntime {
   logRecordProcessors: LogRecordProcessor[]
   metricReaders: MetricReader[]
@@ -125,6 +127,56 @@ async function forceFlushBestEffort(runtime: ActiveRuntime, reason: string): Pro
     await flushRuntime(runtime, createDeadline(PROCESS_HOOK_LIFECYCLE_TIMEOUT_MILLIS))
   } catch (e: unknown) {
     diag.warn(`logfire SDK: error flushing during ${reason}`, e)
+  }
+}
+
+function runProcessHookBestEffort(operation: () => Promise<void>, errorMessage: string): void {
+  try {
+    operation().catch((e: unknown) => {
+      diag.warn(errorMessage, e)
+    })
+  } catch (e: unknown) {
+    diag.warn(errorMessage, e)
+  }
+}
+
+async function shutdownBestEffort(runtime: ActiveRuntime, reason: string): Promise<void> {
+  try {
+    await shutdownRuntime(runtime, { timeoutMillis: PROCESS_HOOK_LIFECYCLE_TIMEOUT_MILLIS })
+  } catch (e: unknown) {
+    diag.warn(`logfire SDK: error shutting down during ${reason}`, e)
+  }
+}
+
+function getLogfireSignalListenerState(signal: NodeJS.Signals, logfireListener: () => void): LogfireSignalListenerState {
+  const listeners = process.listeners(signal)
+  const hasLogfireListener = listeners.some((listener) => listener === logfireListener)
+
+  if (hasLogfireListener) {
+    return listeners.length === 1 ? 'logfire-only' : 'user-listeners-present'
+  }
+
+  return listeners.length === 0 ? 'logfire-missing-no-others' : 'logfire-missing-with-others'
+}
+
+function shouldReemitSignal(listenerState: LogfireSignalListenerState): boolean {
+  return listenerState === 'logfire-only' || listenerState === 'logfire-missing-no-others'
+}
+
+async function handleSIGTERM(runtime: ActiveRuntime, listener: () => void): Promise<void> {
+  const listenerState = getLogfireSignalListenerState('SIGTERM', listener)
+
+  await shutdownBestEffort(runtime, 'SIGTERM')
+
+  if (!shouldReemitSignal(listenerState)) {
+    diag.debug('logfire SDK: leaving SIGTERM termination to application handlers', listenerState)
+    return
+  }
+
+  try {
+    process.kill(process.pid, 'SIGTERM')
+  } catch (e: unknown) {
+    diag.warn('logfire SDK: error re-emitting SIGTERM', e)
   }
 }
 
@@ -298,53 +350,52 @@ export function start(): void {
   sdk.start()
   diag.info('logfire: starting')
 
-  let _shutdown = false
-  const listeners = {
+  const listeners: ProcessListeners = {
     beforeExit: () => {
-      if (_shutdown) {
-        return
-      }
-      _shutdown = true
-      shutdownRuntime(runtime, { timeoutMillis: PROCESS_HOOK_LIFECYCLE_TIMEOUT_MILLIS })
-        .catch((e: unknown) => {
-          diag.warn('logfire SDK: error shutting down', e)
-        })
-        .finally(() => {
-          diag.info('logfire SDK: shutting down')
-        })
+      runProcessHookBestEffort(async () => {
+        await shutdownBestEffort(runtime, 'beforeExit')
+        diag.info('logfire SDK: shutting down')
+      }, 'logfire SDK: error handling beforeExit')
     },
     SIGTERM: () => {
-      shutdownRuntime(runtime, { timeoutMillis: PROCESS_HOOK_LIFECYCLE_TIMEOUT_MILLIS })
-        .catch((e: unknown) => {
-          diag.warn('logfire SDK: error shutting down', e)
-        })
-        .finally(() => {
-          diag.info('logfire SDK: shutting down')
-        })
+      runProcessHookBestEffort(async () => {
+        await handleSIGTERM(runtime, listeners.SIGTERM)
+        diag.info('logfire SDK: shutting down')
+      }, 'logfire SDK: error handling SIGTERM')
     },
     uncaughtExceptionMonitor: (error: Error) => {
-      diag.info('logfire: caught uncaught exception', error.message)
       try {
-        reportError(error.message, error, {})
-      } catch (err: unknown) {
-        diag.warn('logfire: failed to report error', err)
-      }
-      // eslint-disable-next-line no-void
-      void forceFlushBestEffort(runtime, 'uncaughtExceptionMonitor')
-    },
-    unhandledRejection: (reason: unknown) => {
-      diag.error('unhandled rejection', reason)
-
-      if (reason instanceof Error) {
+        diag.info('logfire: caught uncaught exception', error.message)
         try {
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-          reportError(reason.message ?? 'error', reason, {})
+          reportError(error.message, error, {})
         } catch (err: unknown) {
           diag.warn('logfire: failed to report error', err)
         }
+        // `uncaughtExceptionMonitor` preserves Node's default crash behavior, so
+        // async flush completion here is best-effort only.
+        // eslint-disable-next-line no-void
+        void forceFlushBestEffort(runtime, 'uncaughtExceptionMonitor')
+      } catch (e: unknown) {
+        diag.warn('logfire SDK: error handling uncaughtExceptionMonitor', e)
       }
-      // eslint-disable-next-line no-void
-      void forceFlushBestEffort(runtime, 'unhandledRejection')
+    },
+    unhandledRejection: (reason: unknown) => {
+      try {
+        diag.error('unhandled rejection', reason)
+
+        if (reason instanceof Error) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            reportError(reason.message ?? 'error', reason, {})
+          } catch (err: unknown) {
+            diag.warn('logfire: failed to report error', err)
+          }
+        }
+        // eslint-disable-next-line no-void
+        void forceFlushBestEffort(runtime, 'unhandledRejection')
+      } catch (e: unknown) {
+        diag.warn('logfire SDK: error handling unhandledRejection', e)
+      }
     },
   }
   runtime.processListeners = listeners

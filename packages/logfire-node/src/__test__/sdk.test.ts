@@ -1,10 +1,11 @@
 /* eslint-disable import/first */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 import type { MockInstance } from 'vite-plus/test'
+import type * as LogfireModule from 'logfire'
 import type { HrTime } from '@opentelemetry/api'
 import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
-import { ROOT_CONTEXT, SpanKind, SpanStatusCode, TraceFlags } from '@opentelemetry/api'
+import { diag, ROOT_CONTEXT, SpanKind, SpanStatusCode, TraceFlags } from '@opentelemetry/api'
 
 const mocks = vi.hoisted(() => {
   const nodeSdkInstances: MockNodeSDK[] = []
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => {
   let metricReaderId = 0
   let metricReaderForceFlushCalls = 0
   let metricReaderShutdownCalls = 0
+  const reportErrorCalls: unknown[][] = []
   let shutdownVariablesCalls = 0
   let traceForceFlushCalls = 0
   const traceOnEndSpans: unknown[] = []
@@ -143,6 +145,7 @@ const mocks = vi.hoisted(() => {
       metricReaderForceFlushCalls = 0
       metricReaderId = 0
       metricReaderShutdownCalls = 0
+      reportErrorCalls.length = 0
       shutdownVariablesCalls = 0
       shutdownPromises.length = 0
       traceForceFlushCalls = 0
@@ -154,6 +157,7 @@ const mocks = vi.hoisted(() => {
     queueShutdownPromise(promise: Promise<void>) {
       shutdownPromises.push(promise)
     },
+    reportErrorCalls,
     get shutdownVariablesCalls() {
       return shutdownVariablesCalls
     },
@@ -180,6 +184,16 @@ vi.mock('@opentelemetry/auto-instrumentations-node', () => ({
 vi.mock('@opentelemetry/sdk-node', () => ({
   NodeSDK: mocks.MockNodeSDK,
 }))
+
+vi.mock('logfire', async (importOriginal) => {
+  const actual = await importOriginal<typeof LogfireModule>()
+  return {
+    ...actual,
+    reportError: (...args: unknown[]) => {
+      mocks.reportErrorCalls.push(args)
+    },
+  }
+})
 
 vi.mock('logfire/evals', () => ({
   getEvalsSpanProcessor: () => mocks.evalProcessor,
@@ -208,9 +222,29 @@ import { forceFlush, shutdown, start } from '../sdk'
 import { logfireConfig } from '../logfireConfig'
 import { PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
 
+type AnyProcessListener = (...args: unknown[]) => void
+
 let processOnSpy: MockInstance<typeof process.on>
+let processEmitSpy: MockInstance<typeof process.emit>
+let processKillSpy: MockInstance<typeof process.kill>
+let processListenersSpy: MockInstance<typeof process.listeners>
 let processRemoveListenerSpy: MockInstance<typeof process.removeListener>
+const processListenerRegistry = new Map<string | symbol, AnyProcessListener[]>()
 const originalOtelResourceAttributes = process.env['OTEL_RESOURCE_ATTRIBUTES']
+
+function getProcessListeners(event: string | symbol): AnyProcessListener[] {
+  return processListenerRegistry.get(event) ?? []
+}
+
+function getLatestProcessListener(event: string | symbol): AnyProcessListener {
+  const listeners = getProcessListeners(event)
+  const listener = listeners[listeners.length - 1]
+  expect(listener).toBeDefined()
+  if (listener === undefined) {
+    throw new Error(`expected ${String(event)} listener`)
+  }
+  return listener
+}
 
 function getLatestResourceAttributes(): Record<string, unknown> {
   const instance = mocks.nodeSdkInstances[mocks.nodeSdkInstances.length - 1]
@@ -273,6 +307,7 @@ function makeReadableSpan(): Span {
 describe('sdk lifecycle helpers', () => {
   beforeEach(() => {
     mocks.reset()
+    processListenerRegistry.clear()
     delete process.env['OTEL_RESOURCE_ATTRIBUTES']
     Object.assign(logfireConfig, {
       additionalSpanProcessors: [],
@@ -287,8 +322,24 @@ describe('sdk lifecycle helpers', () => {
       variables: undefined,
       variablesBaseUrl: undefined,
     })
-    processOnSpy = vi.spyOn(process, 'on').mockImplementation(() => process)
-    processRemoveListenerSpy = vi.spyOn(process, 'removeListener').mockImplementation(() => process)
+    processEmitSpy = vi.spyOn(process, 'emit')
+    processOnSpy = vi.spyOn(process, 'on').mockImplementation((event, listener) => {
+      const listeners = getProcessListeners(event)
+      listeners.push(listener as AnyProcessListener)
+      processListenerRegistry.set(event, listeners)
+      return process
+    })
+    processKillSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    processListenersSpy = vi.spyOn(process, 'listeners').mockImplementation((event) => {
+      return [...getProcessListeners(event)] as ReturnType<typeof process.listeners>
+    })
+    processRemoveListenerSpy = vi.spyOn(process, 'removeListener').mockImplementation((event, listener) => {
+      processListenerRegistry.set(
+        event,
+        getProcessListeners(event).filter((currentListener) => currentListener !== listener)
+      )
+      return process
+    })
   })
 
   afterEach(async () => {
@@ -583,6 +634,139 @@ describe('sdk lifecycle helpers', () => {
     expect(newRuntimeAdditionalForceFlushCalls).toBe(1)
   })
 
+  it('does not install a SIGINT listener', () => {
+    start()
+
+    expect(processOnSpy.mock.calls.map(([event]) => event)).not.toContain('SIGINT')
+    expect(getProcessListeners('SIGINT')).toEqual([])
+  })
+
+  it('beforeExit uses the shared shutdown promise when invoked repeatedly', async () => {
+    let resolveShutdown!: () => void
+    mocks.queueShutdownPromise(
+      new Promise<void>((resolve) => {
+        resolveShutdown = resolve
+      })
+    )
+    start()
+    const instance = mocks.nodeSdkInstances[0]
+    if (instance === undefined) {
+      throw new Error('expected NodeSDK mock instance')
+    }
+
+    const listener = getLatestProcessListener('beforeExit')
+    listener()
+    listener()
+    await waitForBackgroundLifecycle()
+
+    expect(instance.shutdownCalls).toBe(1)
+    expect(mocks.shutdownVariablesCalls).toBe(1)
+
+    resolveShutdown()
+    await waitForBackgroundLifecycle()
+  })
+
+  it('SIGTERM snapshots listeners before shutdown and re-emits with process.kill when Logfire is the only listener', async () => {
+    let resolveShutdown!: () => void
+    mocks.queueShutdownPromise(
+      new Promise<void>((resolve) => {
+        resolveShutdown = resolve
+      })
+    )
+    start()
+
+    const listener = getLatestProcessListener('SIGTERM')
+    listener()
+    await waitForBackgroundLifecycle()
+
+    expect(processKillSpy).not.toHaveBeenCalled()
+    expect(processListenersSpy.mock.invocationCallOrder[0]).toBeLessThan(processRemoveListenerSpy.mock.invocationCallOrder[0] ?? Infinity)
+
+    resolveShutdown()
+    await waitForBackgroundLifecycle()
+
+    expect(processKillSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM')
+    expect(processEmitSpy.mock.calls.some(([event]) => (event as unknown) === 'SIGTERM')).toBe(false)
+  })
+
+  it('SIGTERM shuts down but does not re-emit when user SIGTERM listeners are present', async () => {
+    start()
+    const instance = mocks.nodeSdkInstances[0]
+    if (instance === undefined) {
+      throw new Error('expected NodeSDK mock instance')
+    }
+    const logfireListener = getLatestProcessListener('SIGTERM')
+    process.on('SIGTERM', () => undefined)
+
+    logfireListener()
+    await waitForBackgroundLifecycle()
+
+    expect(instance.shutdownCalls).toBe(1)
+    expect(processKillSpy).not.toHaveBeenCalled()
+  })
+
+  it('SIGTERM re-emits when Logfire was already removed and no user SIGTERM listener remains', async () => {
+    start()
+    const listener = getLatestProcessListener('SIGTERM')
+    process.removeListener('SIGTERM', listener)
+
+    listener()
+    await waitForBackgroundLifecycle()
+
+    expect(processKillSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM')
+  })
+
+  it('SIGTERM does not re-emit when Logfire was already removed but user SIGTERM listeners remain', async () => {
+    start()
+    const listener = getLatestProcessListener('SIGTERM')
+    process.removeListener('SIGTERM', listener)
+    process.on('SIGTERM', () => undefined)
+
+    listener()
+    await waitForBackgroundLifecycle()
+
+    expect(processKillSpy).not.toHaveBeenCalled()
+  })
+
+  it('SIGTERM handler swallows process.kill failures and logs them', async () => {
+    const killError = new Error('kill failed')
+    const warnSpy = vi.spyOn(diag, 'warn')
+    processKillSpy.mockImplementation(() => {
+      throw killError
+    })
+    start()
+
+    const listener = getLatestProcessListener('SIGTERM')
+    expect(() => {
+      listener()
+    }).not.toThrow()
+    await waitForBackgroundLifecycle()
+
+    expect(warnSpy).toHaveBeenCalledWith('logfire SDK: error re-emitting SIGTERM', killError)
+  })
+
+  it('SIGTERM uses the latest runtime listener after start is called twice', async () => {
+    start()
+    const first = mocks.nodeSdkInstances[0]
+    if (first === undefined) {
+      throw new Error('expected first NodeSDK mock instance')
+    }
+    start()
+    await waitForBackgroundLifecycle()
+    const second = mocks.nodeSdkInstances[1]
+    if (second === undefined) {
+      throw new Error('expected second NodeSDK mock instance')
+    }
+
+    const listener = getLatestProcessListener('SIGTERM')
+    listener()
+    await waitForBackgroundLifecycle()
+
+    expect(first.shutdownCalls).toBe(1)
+    expect(second.shutdownCalls).toBe(1)
+    expect(processKillSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM')
+  })
+
   it('unhandled rejection handler uses the complete best-effort flush path', async () => {
     let additionalForceFlushCalls = 0
     const additionalProcessor: SpanProcessor = {
@@ -598,12 +782,11 @@ describe('sdk lifecycle helpers', () => {
       additionalSpanProcessors: [additionalProcessor],
     })
     start()
-    const listener = processOnSpy.mock.calls.find(([event]) => event === 'unhandledRejection')?.[1]
-    if (typeof listener !== 'function') {
-      throw new Error('expected unhandledRejection listener')
-    }
+    const listener = getLatestProcessListener('unhandledRejection')
 
-    listener(new Error('boom'), Promise.resolve())
+    expect(() => {
+      listener(new Error('boom'), Promise.resolve())
+    }).not.toThrow()
     await waitForBackgroundLifecycle()
 
     expect(additionalForceFlushCalls).toBe(1)
@@ -611,6 +794,71 @@ describe('sdk lifecycle helpers', () => {
     expect(mocks.evalForceFlushCalls).toBe(1)
     expect(mocks.logForceFlushCalls).toBe(1)
     expect(mocks.metricReaderForceFlushCalls).toBe(1)
+    expect(mocks.reportErrorCalls).toHaveLength(1)
+    expect(mocks.reportErrorCalls[0]?.[0]).toBe('boom')
+    expect(mocks.reportErrorCalls[0]?.[1]).toBeInstanceOf(Error)
+  })
+
+  it('unhandled rejection handler swallows best-effort flush failures and logs them', async () => {
+    const flushError = new Error('flush failed')
+    const warnSpy = vi.spyOn(diag, 'warn')
+    let rejectFlush = true
+    const additionalProcessor: SpanProcessor = {
+      forceFlush: async () => {
+        if (rejectFlush) {
+          return Promise.reject(flushError)
+        }
+        return Promise.resolve()
+      },
+      onEnd: () => undefined,
+      onStart: () => undefined,
+      shutdown: async () => Promise.resolve(),
+    }
+    Object.assign(logfireConfig, {
+      additionalSpanProcessors: [additionalProcessor],
+    })
+    start()
+
+    const listener = getLatestProcessListener('unhandledRejection')
+    expect(() => {
+      listener(new Error('boom'), Promise.resolve())
+    }).not.toThrow()
+    await waitForBackgroundLifecycle()
+
+    expect(warnSpy).toHaveBeenCalledWith('logfire SDK: error flushing during unhandledRejection', flushError)
+    rejectFlush = false
+  })
+
+  it('uncaughtExceptionMonitor schedules the complete best-effort flush path without throwing', async () => {
+    let additionalForceFlushCalls = 0
+    const additionalProcessor: SpanProcessor = {
+      forceFlush: async () => {
+        additionalForceFlushCalls++
+        return Promise.resolve()
+      },
+      onEnd: () => undefined,
+      onStart: () => undefined,
+      shutdown: async () => Promise.resolve(),
+    }
+    Object.assign(logfireConfig, {
+      additionalSpanProcessors: [additionalProcessor],
+    })
+    start()
+
+    const listener = getLatestProcessListener('uncaughtExceptionMonitor')
+    expect(() => {
+      listener(new Error('boom'))
+    }).not.toThrow()
+    await waitForBackgroundLifecycle()
+
+    expect(additionalForceFlushCalls).toBe(1)
+    expect(mocks.traceForceFlushCalls).toBe(1)
+    expect(mocks.evalForceFlushCalls).toBe(1)
+    expect(mocks.logForceFlushCalls).toBe(1)
+    expect(mocks.metricReaderForceFlushCalls).toBe(1)
+    expect(mocks.reportErrorCalls).toHaveLength(1)
+    expect(mocks.reportErrorCalls[0]?.[0]).toBe('boom')
+    expect(mocks.reportErrorCalls[0]?.[1]).toBeInstanceOf(Error)
   })
 
   it('adds configured resource attributes to the NodeSDK resource', () => {
