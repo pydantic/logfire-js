@@ -128,6 +128,12 @@ def my_custom_proxy_route(request):
 
 Protect this endpoint in production. Treat browser telemetry ingress like any other externally reachable write endpoint: clients can be numerous, retry requests, duplicate payloads, or send malicious data. Use your normal authentication, session, CORS, and rate-limiting controls. Configure CORS for the app origin that should send telemetry; avoid `*` unless you intentionally operate a public telemetry ingestion endpoint.
 
+Caveats:
+
+- These functions only forward requests directly to Logfire. If you have alternative backends configured, you will need to proxy to them manually.
+- These functions merely forward the data as is. They do not perform any validation, sanitization, or transformation.
+- Requests are placed in a queue and forwarded in a background thread. The queue is limited to 1000 requests and 64MB of memory. If the queue is full, new requests will be dropped. This is to prevent overwhelming your backend with large volumes of telemetry data, which could be used in a DoS attack.
+
 ## Shutdown
 
 `configure()` returns an async shutdown function:
