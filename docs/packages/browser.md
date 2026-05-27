@@ -132,7 +132,7 @@ Caveats:
 
 - These functions only forward requests directly to Logfire. If you have alternative backends configured, you will need to proxy to them manually.
 - These functions merely forward the data as is. They do not perform any validation, sanitization, or transformation.
-- Requests are placed in a queue and forwarded in a background thread. The queue is limited to 1000 requests and 64MB of memory. If the queue is full, new requests will dropped. This is to prevent overwhelming your backend with large volumes of telemetry data, which could be used in a DoS attack.
+- Requests are placed in a queue and forwarded in a background thread. The queue is limited to 1000 requests and 64MB of memory. If the queue is full, new requests will be dropped. This is to prevent overwhelming your backend with large volumes of telemetry data, which could be used in a DoS attack.
 
 ## Shutdown
 
