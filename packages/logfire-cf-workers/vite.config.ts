@@ -20,7 +20,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
       resolver: 'tsc',
     },
     deps: {
-      neverBundle: [/^@opentelemetry/, /^node:/, '@pydantic/otel-cf-workers', 'logfire'],
+      neverBundle: [/^@opentelemetry/u, /^node:/u, '@pydantic/otel-cf-workers', 'logfire'],
     },
     entry: 'src/index.ts',
     format: ['esm', 'cjs'],

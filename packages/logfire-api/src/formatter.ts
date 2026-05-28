@@ -21,9 +21,6 @@ class KnownFormattingError extends Error {
 }
 
 class ChunksFormatter {
-  // Internal regex to parse format strings (similar to Python's Formatter.parse)
-  private readonly parseRegex = /(\{\{)|(\}\})|(\{([^{}]*)(?::([^{}]*))?\})/g
-
   chunks(
     formatString: string,
     record: Record<string, unknown>,
@@ -91,12 +88,15 @@ class ChunksFormatter {
   }
 
   parse(formatString: string): [string, null | string, null | string, null | string][] {
+    // Internal regex to parse format strings (similar to Python's Formatter.parse).
+    // Keep it local so the global flag's `lastIndex` state cannot leak between parses.
+    const parseRegex = /(\{\{)|(\}\})|(\{([^{}]*)(?::([^{}]*))?\})/gu
     const result: [string, null | string, null | string, null | string][] = []
     let lastIndex = 0
     let literalText = ''
 
     let match: null | RegExpExecArray
-    while ((match = this.parseRegex.exec(formatString)) !== null) {
+    while ((match = parseRegex.exec(formatString)) !== null) {
       const [fullMatch, doubleLBrace, doubleRBrace, curlyContent, fieldName, formatSpec] = match
 
       // Get literal text before the match

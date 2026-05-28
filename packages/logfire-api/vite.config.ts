@@ -23,7 +23,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
       resolver: 'tsc',
     },
     deps: {
-      neverBundle: [/^@opentelemetry/, /^node:/, 'js-yaml', 'p-retry', 'zod'],
+      neverBundle: [/^@opentelemetry/u, /^node:/u, 'js-yaml', 'p-retry', 'zod'],
     },
     entry: {
       evals: 'src/evals/index.ts',

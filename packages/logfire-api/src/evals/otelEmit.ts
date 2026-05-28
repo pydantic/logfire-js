@@ -141,13 +141,13 @@ function formatPythonGeneralNumber(value: number): string {
   }
   return value
     .toPrecision(6)
-    .replace(/(\.\d*?)0+(e|$)/, '$1$2')
-    .replace(/\.e/, 'e')
-    .replace(/e([+-])(\d)$/, 'e$10$2')
+    .replace(/(\.\d*?)0+(e|$)/u, '$1$2')
+    .replace(/\.e/u, 'e')
+    .replace(/e([+-])(\d)$/u, 'e$10$2')
 }
 
 function pythonStringRepr(value: string): string {
-  return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+  return `'${value.replace(/\\/gu, '\\\\').replace(/'/gu, "\\'")}'`
 }
 
 function applyBaggage(attrs: Record<string, unknown>, baggage: Record<string, unknown> | undefined): void {

@@ -148,7 +148,7 @@ function matchesQuery(node: SpanNode, q: SpanQuery): boolean {
     return false
   }
   if (nameMatchesRegex !== undefined) {
-    const match = new RegExp(nameMatchesRegex).exec(node.name)
+    const match = new RegExp(nameMatchesRegex, 'u').exec(node.name)
     if (match?.index !== 0) {
       return false
     }

@@ -681,7 +681,7 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
           break
         }
         buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split(/\r?\n/)
+        const lines = buffer.split(/\r?\n/u)
         buffer = lines.pop() ?? ''
         for (const line of lines) {
           const trimmed = line.trim()
@@ -1459,7 +1459,7 @@ function matchesCondition(condition: Condition, attributes: Record<string, unkno
       return attributes[condition.attribute] !== condition.value
     case 'value-does-not-match-regex': {
       const value = attributes[condition.attribute]
-      return typeof value !== 'string' || !new RegExp(condition.pattern).test(value)
+      return typeof value !== 'string' || !new RegExp(condition.pattern, 'u').test(value)
     }
     case 'value-equals':
       return attributes[condition.attribute] === condition.value
@@ -1469,7 +1469,7 @@ function matchesCondition(condition: Condition, attributes: Record<string, unkno
       return condition.values.every((value) => value !== attributes[condition.attribute])
     case 'value-matches-regex': {
       const value = attributes[condition.attribute]
-      return typeof value === 'string' && new RegExp(condition.pattern).test(value)
+      return typeof value === 'string' && new RegExp(condition.pattern, 'u').test(value)
     }
     default:
       return assertNever(condition)
@@ -1783,7 +1783,7 @@ async function withOverrideContext<R>(data: Record<string, unknown>, callback: (
 function getActiveTraceTargetingKey(): string | undefined {
   const span = TraceAPI.getSpan(ContextAPI.active())
   const traceId = span?.spanContext().traceId
-  if (traceId === undefined || /^0+$/.test(traceId)) {
+  if (traceId === undefined || /^0+$/u.test(traceId)) {
     return undefined
   }
   return `trace_id:${traceId}`
@@ -1794,7 +1794,7 @@ function isTargetingContextData(value: unknown): value is TargetingContextData {
 }
 
 function validateVariableName(name: string): void {
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
     throw new Error(`Invalid variable name '${name}'. Variable names must start with a letter or underscore.`)
   }
 }

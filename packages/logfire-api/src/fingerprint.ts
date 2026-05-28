@@ -5,11 +5,11 @@ interface StackFrame {
   functionName: string
 }
 
-const V8_PATTERN_WITH_PARENS = /^\s*at\s+(.+?)\s+\((.+?):\d+:\d+\)/
-const V8_PATTERN_NO_PARENS = /^\s*at\s+(.+?):\d+:\d+/
-const V8_PATTERN_EVAL = /^\s*at\s+(.+?)\s+\((.+?)\)/
-const V8_PATTERN_BARE = /^\s*at\s+(.+)/
-const FIREFOX_PATTERN = /^(.+?)@(.+?):\d+:\d+/
+const V8_PATTERN_WITH_PARENS = /^\s*at\s+(.+?)\s+\((.+?):\d+:\d+\)/u
+const V8_PATTERN_NO_PARENS = /^\s*at\s+(.+?):\d+:\d+/u
+const V8_PATTERN_EVAL = /^\s*at\s+(.+?)\s+\((.+?)\)/u
+const V8_PATTERN_BARE = /^\s*at\s+(.+)/u
+const FIREFOX_PATTERN = /^(.+?)@(.+?):\d+:\d+/u
 
 /**
  * Parses a JavaScript stack trace string into structured frames.
@@ -70,11 +70,11 @@ function parseStackFrames(stack: string | undefined): StackFrame[] {
  */
 function extractModuleName(filePath: string): string {
   return filePath
-    .replace(/^file:\/\//, '')
-    .replace(/^.*?\/node_modules\//, '')
-    .replace(/^.*?\/(src\/)/, '$1')
-    .replace(/\.[jt]sx?$/, '')
-    .replace(/\?.*$/, '')
+    .replace(/^file:\/\//u, '')
+    .replace(/^.*?\/node_modules\//u, '')
+    .replace(/^.*?\/(src\/)/u, '$1')
+    .replace(/\.[jt]sx?$/u, '')
+    .replace(/\?.*$/u, '')
 }
 
 /**

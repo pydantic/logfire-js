@@ -156,6 +156,7 @@ export default defineConfig({
       'no-inline-comments': 'off',
       'no-negated-condition': 'off',
       'no-shadow': 'off',
+      'no-underscore-dangle': ['error', { allow: ['_resetRegistry', '_spanName'] }],
       'no-unsafe-optional-chaining': 'off',
       'no-warning-comments': 'off',
       'require-await': 'off',
@@ -163,6 +164,7 @@ export default defineConfig({
       'typescript/no-unsafe-type-assertion': 'off',
       'typescript/prefer-readonly-parameter-types': 'off',
       'typescript/require-array-sort-compare': 'off',
+      'vitest/no-conditional-in-test': 'off',
     },
   },
   run: {

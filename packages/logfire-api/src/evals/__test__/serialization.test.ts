@@ -450,7 +450,7 @@ describe('Dataset YAML round-trip', () => {
   })
 
   it('rejects malformed dataset objects with a helpful zod error', () => {
-    expect(() => Dataset.fromObject({ cases: 'not-an-array', name: 'x' })).toThrow(/expected array/i)
+    expect(() => Dataset.fromObject({ cases: 'not-an-array', name: 'x' })).toThrow(/expected array/iu)
   })
 })
 

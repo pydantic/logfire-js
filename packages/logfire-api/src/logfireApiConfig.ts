@@ -123,7 +123,7 @@ export function resolveBaseUrl(env: Env, passedUrl: string | undefined, token: s
   return url
 }
 
-const PYDANTIC_LOGFIRE_TOKEN_PATTERN = /^(?<safe_part>pylf_v(?<version>[0-9]+)_(?<region>[a-z]+)_)(?<token>[a-zA-Z0-9]+)$/
+const PYDANTIC_LOGFIRE_TOKEN_PATTERN = /^(?<safe_part>pylf_v(?<version>[0-9]+)_(?<region>[a-z]+)_)(?<token>[a-zA-Z0-9]+)$/u
 
 const REGIONS: Record<string, RegionData> = {
   eu: {
