@@ -10,13 +10,13 @@ catalogs:
       specifier: ^1.9.1
       version: 1.9.1
     '@opentelemetry/api-logs':
-      specifier: ^0.217.0
+      specifier: '>=0.217.0 <0.300.0'
       version: 0.217.0
     '@opentelemetry/auto-instrumentations-node':
-      specifier: ^0.75.0
+      specifier: '>=0.75.0 <0.100.0'
       version: 0.75.0
     '@opentelemetry/auto-instrumentations-web':
-      specifier: ^0.62.0
+      specifier: '>=0.62.0 <0.100.0'
       version: 0.62.0
     '@opentelemetry/context-async-hooks':
       specifier: ^2.7.1
@@ -28,40 +28,40 @@ catalogs:
       specifier: ^2.7.1
       version: 2.7.1
     '@opentelemetry/exporter-logs-otlp-proto':
-      specifier: ^0.217.0
+      specifier: '>=0.217.0 <0.300.0'
       version: 0.217.0
     '@opentelemetry/exporter-metrics-otlp-proto':
-      specifier: ^0.217.0
+      specifier: '>=0.217.0 <0.300.0'
       version: 0.217.0
     '@opentelemetry/exporter-trace-otlp-http':
-      specifier: ^0.217.0
+      specifier: '>=0.217.0 <0.300.0'
       version: 0.217.0
     '@opentelemetry/exporter-trace-otlp-proto':
-      specifier: ^0.217.0
+      specifier: '>=0.217.0 <0.300.0'
       version: 0.217.0
     '@opentelemetry/instrumentation':
-      specifier: ^0.217.0
+      specifier: '>=0.217.0 <0.300.0'
       version: 0.217.0
     '@opentelemetry/instrumentation-fetch':
-      specifier: ^0.217.0
+      specifier: '>=0.217.0 <0.300.0'
       version: 0.217.0
     '@opentelemetry/instrumentation-user-interaction':
-      specifier: ^0.61.0
+      specifier: '>=0.61.0 <0.100.0'
       version: 0.61.0
     '@opentelemetry/otlp-transformer':
-      specifier: ^0.217.0
+      specifier: '>=0.217.0 <0.300.0'
       version: 0.217.0
     '@opentelemetry/resources':
       specifier: ^2.7.1
       version: 2.7.1
     '@opentelemetry/sdk-logs':
-      specifier: ^0.217.0
+      specifier: '>=0.217.0 <0.300.0'
       version: 0.217.0
     '@opentelemetry/sdk-metrics':
       specifier: ^2.7.1
       version: 2.7.1
     '@opentelemetry/sdk-node':
-      specifier: ^0.217.0
+      specifier: '>=0.217.0 <0.300.0'
       version: 0.217.0
     '@opentelemetry/sdk-trace-base':
       specifier: ^2.7.1
