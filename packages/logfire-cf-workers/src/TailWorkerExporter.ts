@@ -7,15 +7,15 @@ import type { IExportTraceServiceRequest, IKeyValue } from './OtlpTransformerTyp
 
 export class TailWorkerExporter implements SpanExporter {
   export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
-    this._sendSpans(spans, resultCallback)
+    this.sendSpans(spans, resultCallback)
   }
 
   async shutdown(): Promise<void> {
-    this._sendSpans([])
+    this.sendSpans([])
     return Promise.resolve()
   }
 
-  private _cleanNullValues(message: IExportTraceServiceRequest) {
+  private cleanNullValues(message: IExportTraceServiceRequest) {
     if (!message.resourceSpans) {
       return message
     }
@@ -34,12 +34,12 @@ export class TailWorkerExporter implements SpanExporter {
     return message
   }
 
-  private _sendSpans(spans: ReadableSpan[], done?: (result: ExportResult) => void): void {
+  private sendSpans(spans: ReadableSpan[], done?: (result: ExportResult) => void): void {
     const bytes = JsonTraceSerializer.serializeRequest(spans)
     const jsonString = new TextDecoder().decode(bytes)
     const response = JSON.parse(jsonString) as IExportTraceServiceRequest
 
-    const exportMessage = this._cleanNullValues(response)
+    const exportMessage = this.cleanNullValues(response)
 
     console.log(exportMessage)
 

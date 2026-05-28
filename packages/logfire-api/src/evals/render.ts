@@ -84,7 +84,7 @@ function formatValue(v: unknown): string {
     return v ? '✓' : '✗'
   }
   if (typeof v === 'number') {
-    return v.toFixed(3).replace(/\.?0+$/, '')
+    return v.toFixed(3).replace(/\.?0+$/u, '')
   }
   return String(v)
 }

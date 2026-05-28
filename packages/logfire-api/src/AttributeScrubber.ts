@@ -104,15 +104,15 @@ export class LogfireAttributeScrubber implements BaseScrubber {
    * List of keys that are considered safe and don't need scrubbing
    */
   SAFE_KEYS: string[] = Array.from(SAFE_KEYS)
-  private readonly _callback?: ScrubCallback
+  private readonly callback?: ScrubCallback
 
-  private readonly _pattern: RegExp
+  private readonly pattern: RegExp
 
   constructor(patterns?: string[], callback?: ScrubCallback) {
     const allPatterns = [...DEFAULT_PATTERNS, ...(patterns ?? [])]
-    this._pattern = new RegExp(allPatterns.join('|'), 'i')
+    this.pattern = new RegExp(allPatterns.join('|'), 'iu')
     if (callback !== undefined) {
-      this._callback = callback
+      this.callback = callback
     }
   }
 
@@ -130,8 +130,8 @@ export class LogfireAttributeScrubber implements BaseScrubber {
 
   private redact(path: JsonPath, value: unknown, match: RegExpMatchArray, notes: ScrubbedNote[]): unknown {
     // If callback is provided and returns a non-null value, use that
-    if (this._callback) {
-      const callbackResult = this._callback({ path, patternMatch: match, value })
+    if (this.callback) {
+      const callbackResult = this.callback({ path, patternMatch: match, value })
       if (callbackResult !== null && callbackResult !== undefined) {
         return callbackResult
       }
@@ -145,7 +145,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
   private scrub(path: JsonPath, value: unknown, notes: ScrubbedNote[]): unknown {
     if (typeof value === 'string') {
       // Check if the string matches the pattern
-      const match = value.match(this._pattern)
+      const match = value.match(this.pattern)
       if (match) {
         // If the entire string is just the matched pattern, consider it safe.
         // e.g., if value == 'password', just leave it.
@@ -175,7 +175,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
           result[k] = v
         } else {
           // Check key against the pattern
-          const keyMatch = k.match(this._pattern)
+          const keyMatch = k.match(this.pattern)
           if (keyMatch) {
             // Key contains sensitive substring
             const redacted = this.redact([...path, k], v, keyMatch, notes)

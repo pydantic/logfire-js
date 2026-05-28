@@ -20,7 +20,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
       resolver: 'tsc',
     },
     deps: {
-      neverBundle: [/^@opentelemetry/, /^node:/, 'logfire'],
+      neverBundle: [/^@opentelemetry/u, /^node:/u, 'logfire'],
     },
     entry: 'src/index.ts',
     format: ['esm', 'cjs'],

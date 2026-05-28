@@ -22,7 +22,7 @@ class KnownFormattingError extends Error {
 
 class ChunksFormatter {
   // Internal regex to parse format strings (similar to Python's Formatter.parse)
-  private readonly parseRegex = /(\{\{)|(\}\})|(\{([^{}]*)(?::([^{}]*))?\})/g
+  private readonly parseRegex = /(\{\{)|(\}\})|(\{([^{}]*)(?::([^{}]*))?\})/gu
 
   chunks(
     formatString: string,

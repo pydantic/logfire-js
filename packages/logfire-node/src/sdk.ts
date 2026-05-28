@@ -159,13 +159,13 @@ export function start(): void {
   sdk.start()
   diag.info('logfire: starting')
 
-  let _shutdown = false
+  let shutdownStarted = false
   const listeners = {
     beforeExit: () => {
-      if (_shutdown) {
+      if (shutdownStarted) {
         return
       }
-      _shutdown = true
+      shutdownStarted = true
       shutdown()
         .catch((e: unknown) => {
           diag.warn('logfire SDK: error shutting down', e)

@@ -604,7 +604,7 @@ function encodeReturnAttribute(output: unknown): boolean | number | string {
 function extractParamNames(fn: (...args: unknown[]) => unknown): string[] {
   const src = fn.toString()
   // Crude — handles `function name(a, b)`, `(a, b) => ...`, and `async (a, b) => ...`.
-  const match = /^(?:async\s+)?(?:function[^(]*)?\(([^)]*)\)/.exec(src)
+  const match = /^(?:async\s+)?(?:function[^(]*)?\(([^)]*)\)/u.exec(src)
   if (match === null) {
     return []
   }
@@ -615,6 +615,6 @@ function extractParamNames(fn: (...args: unknown[]) => unknown): string[] {
   return inside.split(',').map((p) => {
     const trimmed = p.trim()
     // strip default values, type annotations, destructuring renames
-    return trimmed.replace(/[=:].*$/, '').trim()
+    return trimmed.replace(/[=:].*$/u, '').trim()
   })
 }

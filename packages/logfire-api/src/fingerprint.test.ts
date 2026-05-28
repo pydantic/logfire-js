@@ -122,7 +122,7 @@ file2:fn2
       canonical = canonicalizeError(e as Error)
     }
 
-    const matches = canonical.match(/recursiveFunction/g)
+    const matches = canonical.match(/recursiveFunction/gu)
     expect(matches?.length).toBe(1)
   })
 
@@ -144,7 +144,7 @@ describe('computeFingerprint', () => {
     const error = new Error('test')
     const fingerprint = computeFingerprint(error)
 
-    expect(fingerprint).toMatch(/^[a-f0-9]{32}$/)
+    expect(fingerprint).toMatch(/^[a-f0-9]{32}$/u)
   })
 
   test('same canonical form produces same fingerprint', () => {
