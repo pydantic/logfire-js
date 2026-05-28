@@ -1,5 +1,13 @@
 # @pydantic/logfire-cf-workers
 
+## 0.11.10
+
+### Patch Changes
+
+- 585db46: Broaden OpenTelemetry 0.x catalog ranges so consumers can resolve patched OTel minors between Logfire releases.
+- Updated dependencies [585db46]
+  - logfire@0.15.2
+
 ## 0.11.9
 
 ### Patch Changes

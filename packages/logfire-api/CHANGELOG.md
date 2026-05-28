@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.15.2
+
+### Patch Changes
+
+- 585db46: Broaden OpenTelemetry 0.x catalog ranges so consumers can resolve patched OTel minors between Logfire releases.
+
 ## 0.15.1
 
 ### Patch Changes
