@@ -12,8 +12,10 @@ import {
   ATTRIBUTES_SPAN_TYPE_KEY,
   ATTRIBUTES_TAGS_KEY,
   INVALID_SPAN_ID,
+  JSON_NULL_FIELDS_KEY,
+  JSON_SCHEMA_KEY,
 } from './constants'
-import defaultExport, { info, Level, reportError, span, startPendingSpan, withSettings, withTags } from './index'
+import defaultExport, { info, instrument, Level, reportError, span, startPendingSpan, withSettings, withTags } from './index'
 import { isPendingSpanSuppressed } from './pendingSpanSuppression'
 
 const sleep = async (ms: number): Promise<void> =>
@@ -351,6 +353,288 @@ describe('reportError', () => {
     expect(() => {
       defaultReportError('Default export error', 'oops')
     }).not.toThrow()
+  })
+})
+
+describe('instrument', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.reset()
+  })
+
+  test('sync wrapper returns the original value and emits a span', () => {
+    function fetchUser(id: string) {
+      return { id }
+    }
+
+    const wrapped = instrument(fetchUser, { extractArgs: ['id'], message: 'fetch user {id}' })
+    const result = wrapped('user-123')
+
+    expect(result).toEqual({ id: 'user-123' })
+    expect(mocks.tracerMock.startActiveSpan.mock.calls[0]?.[0]).toBe('fetch user {id}')
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_MESSAGE_TEMPLATE_KEY]).toBe('fetch user {id}')
+    expect(attributes[ATTRIBUTES_MESSAGE_KEY]).toBe('fetch user user-123')
+    expect(attributes['id']).toBe('user-123')
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
+  test('async wrapper resolves the original value and ends the span after settlement', async () => {
+    async function fetchUser(id: string) {
+      await sleep(0)
+      return { id }
+    }
+
+    const wrapped = instrument(fetchUser, { extractArgs: ['id'], message: 'fetch user {id}' })
+    await expect(wrapped('user-123')).resolves.toEqual({ id: 'user-123' })
+
+    expect(spanMock.end).toHaveBeenCalledOnce()
+    expect(spanMock.recordException).not.toHaveBeenCalled()
+  })
+
+  test('sync thrown errors are recorded and rethrown', () => {
+    const error = new Error('boom')
+    const wrapped = instrument(() => {
+      throw error
+    })
+
+    expect(() => wrapped()).toThrow(error)
+    expect(spanMock.recordException).toHaveBeenCalledWith(error)
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: boom' })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
+  test('async rejected errors are recorded and rejected', async () => {
+    const error = new Error('async-boom')
+    const wrapped = instrument(async () => Promise.reject(error))
+
+    await expect(wrapped()).rejects.toThrow(error)
+    await sleep(0)
+
+    expect(spanMock.recordException).toHaveBeenCalledWith(error)
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: async-boom' })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
+  test('wrapper preserves this', () => {
+    const service = {
+      multiplier: 3,
+      calculate: instrument(function (this: { multiplier: number }, value: number) {
+        return this.multiplier * value
+      }),
+    }
+
+    expect(service.calculate(4)).toBe(12)
+  })
+
+  test('default message uses the function name', () => {
+    function namedFunction() {
+      return 'ok'
+    }
+
+    instrument(namedFunction)()
+
+    expect(mocks.tracerMock.startActiveSpan.mock.calls[0]?.[0]).toBe('Calling namedFunction')
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_MESSAGE_TEMPLATE_KEY]).toBe('Calling namedFunction')
+    expect(attributes[ATTRIBUTES_MESSAGE_KEY]).toBe('Calling namedFunction')
+  })
+
+  test('custom message and spanName are used independently', () => {
+    const wrapped = instrument(() => 'ok', {
+      message: 'friendly {id}',
+      spanName: 'stable-operation',
+      attributes: { id: 1 },
+    })
+
+    wrapped()
+
+    expect(mocks.tracerMock.startActiveSpan.mock.calls[0]?.[0]).toBe('stable-operation')
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_MESSAGE_TEMPLATE_KEY]).toBe('friendly {id}')
+    expect(attributes[ATTRIBUTES_MESSAGE_KEY]).toBe('friendly 1')
+  })
+
+  test('extractArgs defaults to no argument attributes', () => {
+    function fetchUser(id: string) {
+      return id
+    }
+
+    instrument(fetchUser, { message: 'fetch user' })('user-123')
+
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes).not.toHaveProperty('id')
+    expect(attributes).not.toHaveProperty('arg0')
+  })
+
+  test('extractArgs with names records positional arguments', () => {
+    function fetchUser(id: string, includeDetails: boolean) {
+      return { id, includeDetails }
+    }
+
+    instrument(fetchUser, {
+      extractArgs: ['id', 'include_details'],
+      message: 'fetch user {id}',
+    })('user-123', true)
+
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes['id']).toBe('user-123')
+    expect(attributes['include_details']).toBe(true)
+  })
+
+  test('extractArgs true records best-effort parameter names', () => {
+    function fetchUser(id: string, includeDetails: boolean) {
+      return { id, includeDetails }
+    }
+
+    instrument(fetchUser, {
+      extractArgs: true,
+      message: 'fetch user {id}',
+    })('user-123', true)
+
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes['id']).toBe('user-123')
+    expect(attributes['includeDetails']).toBe(true)
+  })
+
+  test('extracted args override static attributes', () => {
+    function fetchUser(id: string) {
+      return id
+    }
+
+    instrument(fetchUser, {
+      attributes: { id: 'static' },
+      extractArgs: ['id'],
+      message: 'fetch user {id}',
+    })('actual')
+
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes['id']).toBe('actual')
+    expect(attributes[ATTRIBUTES_MESSAGE_KEY]).toBe('fetch user actual')
+  })
+
+  test('recordReturn true records sync return values', () => {
+    const wrapped = instrument(
+      () => ({
+        ok: true,
+      }),
+      { recordReturn: true }
+    )
+
+    expect(wrapped()).toEqual({ ok: true })
+    expect(spanMock.setAttribute).toHaveBeenCalledWith('return', '{"ok":true}')
+    expect(spanMock.setAttribute).toHaveBeenCalledWith('logfire.json_schema', '{"properties":{"return":{"type":"object"}},"type":"object"}')
+  })
+
+  test('recordReturn true preserves complex input schema when recording complex return values', () => {
+    function processPayload(_payload: { value: string }) {
+      return { status: 'ok' }
+    }
+
+    const wrapped = instrument(processPayload, {
+      extractArgs: ['payload'],
+      recordReturn: true,
+    })
+
+    expect(wrapped({ value: 'input' })).toEqual({ status: 'ok' })
+
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[JSON_SCHEMA_KEY]).toBe('{"properties":{"payload":{"type":"object"}},"type":"object"}')
+    expect(spanMock.setAttribute).toHaveBeenCalledWith('return', '{"status":"ok"}')
+    expect(spanMock.setAttribute).toHaveBeenCalledWith(
+      JSON_SCHEMA_KEY,
+      '{"properties":{"payload":{"type":"object"},"return":{"type":"object"}},"type":"object"}'
+    )
+  })
+
+  test('recordReturn true preserves null input metadata when recording null return values', () => {
+    function processPayload(payload: null) {
+      return payload
+    }
+
+    const wrapped = instrument(processPayload, {
+      extractArgs: ['payload'],
+      recordReturn: true,
+    })
+
+    expect(wrapped(null)).toBeNull()
+
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[JSON_NULL_FIELDS_KEY]).toEqual(['payload'])
+    expect(spanMock.setAttribute).toHaveBeenCalledWith(JSON_NULL_FIELDS_KEY, ['payload', 'return'])
+  })
+
+  test('recordReturn true records async resolved values', async () => {
+    const wrapped = instrument(
+      async () => {
+        await sleep(0)
+        return ['ok']
+      },
+      { recordReturn: true }
+    )
+
+    await expect(wrapped()).resolves.toEqual(['ok'])
+
+    expect(spanMock.setAttribute).toHaveBeenCalledWith('return', '["ok"]')
+    expect(spanMock.setAttribute).toHaveBeenCalledWith('logfire.json_schema', '{"properties":{"return":{"type":"array"}},"type":"object"}')
+  })
+
+  test('recordReturn true falls back when serialization fails', () => {
+    const circular: Record<string, unknown> = {}
+    circular['self'] = circular
+    const wrapped = instrument(() => circular, { recordReturn: true })
+
+    expect(wrapped()).toBe(circular)
+    expect(spanMock.setAttribute).toHaveBeenCalledWith('return', '[unserializable]')
+  })
+
+  test('recordReturn true does not record thrown or rejected values', async () => {
+    const syncWrapped = instrument(
+      () => {
+        throw new Error('sync')
+      },
+      { recordReturn: true }
+    )
+    const asyncWrapped = instrument(async () => Promise.reject(new Error('async')), { recordReturn: true })
+
+    expect(() => syncWrapped()).toThrow('sync')
+    await expect(asyncWrapped()).rejects.toThrow('async')
+    await sleep(0)
+
+    expect(spanMock.setAttribute).not.toHaveBeenCalledWith('return', expect.anything())
+  })
+
+  test('tags, parentSpan, and level are passed to the span', () => {
+    const parentSpan = mocks.makeSpan({ startTime: [100, 0] })
+
+    instrument(() => 'ok', {
+      level: Level.Warning,
+      parentSpan: parentSpan as unknown as Span,
+      tags: ['instrumented'],
+    })()
+
+    expect(mocks.setSpan).toHaveBeenCalledWith(mocks.activeContext, parentSpan)
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Warning)
+    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual(['instrumented'])
+  })
+
+  test('scoped client instrument merges scoped settings', () => {
+    const wrapped = withSettings({ level: Level.Warning, tags: ['scope', 'shared'] }).instrument(() => 'ok', {
+      tags: ['shared', 'call'],
+    })
+
+    expect(wrapped()).toBe('ok')
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Warning)
+    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual(['scope', 'shared', 'call'])
+  })
+
+  test('default export exposes instrument', () => {
+    const defaultInstrument = Object.getOwnPropertyDescriptor(defaultExport, 'instrument')?.value as typeof instrument
+
+    expect(defaultInstrument).toBe(instrument)
+    expect(defaultInstrument(() => 'ok')()).toBe('ok')
   })
 })
 

@@ -35,6 +35,7 @@ import {
   error,
   fatal,
   info,
+  instrument,
   Level,
   log,
   logfireApiConfig,
@@ -286,6 +287,7 @@ const defaultExport: {
   error: typeof error
   fatal: typeof fatal
   info: typeof info
+  instrument: typeof instrument
   log: typeof log
   logfireApiConfig: typeof logfireApiConfig
   notice: typeof notice
@@ -308,6 +310,7 @@ const defaultExport: {
   error,
   fatal,
   info,
+  instrument,
   // Re-export all from logfire
   Level,
   log,

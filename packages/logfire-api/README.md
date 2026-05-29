@@ -29,6 +29,47 @@ scoped tags and duplicates are removed while preserving order. `withSettings()`
 currently supports reusable `tags` and a default `level` for calls such as
 `log()` and spans whose options do not set a level.
 
+## Function instrumentation
+
+Use `instrument()` to wrap a sync or async function in a Logfire span without
+changing the function body:
+
+```ts
+import * as logfire from 'logfire'
+
+const fetchCustomer = logfire.instrument(
+  async (customerId: string) => {
+    return loadCustomer(customerId)
+  },
+  {
+    message: 'Fetch customer {customer_id}',
+    extractArgs: ['customer_id'],
+    tags: ['customers'],
+  }
+)
+
+await fetchCustomer('cus_123')
+```
+
+Argument extraction is off by default. Prefer explicit names such as
+`extractArgs: ['customer_id']`; `extractArgs: true` is best effort and can be
+unreliable after bundling or minification. `recordReturn: true` records
+successful return values as telemetry on a best-effort basis, but never makes a
+successful function call fail because return serialization failed.
+
+Scoped clients expose the same wrapper:
+
+```ts
+const customers = logfire.withTags('customers')
+
+const syncCustomer = customers.instrument(syncCustomerImpl, {
+  message: 'Sync customer {customer_id}',
+  extractArgs: ['customer_id'],
+})
+```
+
+TypeScript decorators are intentionally not part of this first pass.
+
 ## Error reporting
 
 Use `reportError()` from explicit catch blocks. The caught value can be

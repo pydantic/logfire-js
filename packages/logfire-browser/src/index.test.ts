@@ -115,7 +115,7 @@ vi.mock('@opentelemetry/sdk-trace-web', () => ({
 
 import { PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
 
-import logfireBrowser, { configure, startPendingSpan, withSettings, withTags } from './index'
+import logfireBrowser, { configure, instrument, startPendingSpan, withSettings, withTags } from './index'
 
 const originalNavigator = globalThis.navigator
 let cleanup: (() => Promise<void>) | undefined
@@ -287,6 +287,10 @@ describe('browser pending spans', () => {
   it('re-exports startPendingSpan from the shared API', () => {
     expect(typeof startPendingSpan).toBe('function')
     expect(logfireBrowser.startPendingSpan).toBe(startPendingSpan)
+  })
+
+  it('re-exports instrument from the shared API', () => {
+    expect(logfireBrowser.instrument).toBe(instrument)
   })
 
   it('re-exports scoped client helpers from the shared API', () => {

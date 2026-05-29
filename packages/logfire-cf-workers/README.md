@@ -21,6 +21,15 @@ If you need to instrument your browser application, see the [Logfire Browser pac
 
 See the [cf-worker example](https://github.com/pydantic/logfire-js/tree/main/examples/cf-worker) for a primer.
 
+The Cloudflare package's `instrument(handler, config)` function configures the
+Worker runtime. To wrap an individual function in a manual Logfire span, import
+the core wrapper from `logfire`:
+
+```ts
+import { instrument as instrumentFunction } from 'logfire'
+import { instrument as instrumentWorker } from '@pydantic/logfire-cf-workers'
+```
+
 ## Runtime lifecycle
 
 Cloudflare Workers do not have a process-style shutdown hook. Logfire relies on

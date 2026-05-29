@@ -11,6 +11,7 @@ This page is a package-level map of the public TypeScript SDK APIs. It is not a 
 
 Manual tracing and logging:
 
+- `instrument(fn, options?)`
 - `span(message, options)` and `span(message, attributes, options, callback)`
 - `startSpan(message, attributes?, options?)`
 - `startPendingSpan(message, attributes?, options?)`
@@ -76,4 +77,13 @@ Unlike the Node and browser packages, this package does not re-export the manual
 ```ts
 import * as logfire from 'logfire'
 import { instrument } from '@pydantic/logfire-cf-workers'
+```
+
+The Cloudflare package's `instrument(handler, config)` configures Worker
+runtime tracing. To wrap an individual function in a manual span, import the
+core wrapper from `logfire`:
+
+```ts
+import { instrument as instrumentFunction } from 'logfire'
+import { instrument as instrumentWorker } from '@pydantic/logfire-cf-workers'
 ```

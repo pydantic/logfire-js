@@ -10,9 +10,12 @@ import {
   ATTRIBUTES_MESSAGE_KEY,
   ATTRIBUTES_MESSAGE_TEMPLATE_KEY,
   ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY,
+  ATTRIBUTES_SCRUBBED_KEY,
   ATTRIBUTES_SPAN_TYPE_KEY,
   ATTRIBUTES_TAGS_KEY,
   INVALID_SPAN_ID,
+  JSON_NULL_FIELDS_KEY,
+  JSON_SCHEMA_KEY,
 } from './constants'
 import { canonicalizeError, computeFingerprint } from './fingerprint'
 import { logfireFormatWithExtras } from './formatter'
@@ -93,6 +96,44 @@ export interface ReportErrorOptions {
   tags?: string[]
 }
 
+export interface InstrumentOptions {
+  /**
+   * Static attributes to add to each instrumented call span.
+   */
+  attributes?: Record<string, unknown>
+  /**
+   * Extract positional arguments into span attributes.
+   *
+   * Defaults to false. Pass a string array for stable names, or true for
+   * best-effort parameter-name extraction from function source.
+   */
+  extractArgs?: boolean | readonly string[]
+  /**
+   * The log level for the instrumented call span.
+   */
+  level?: LogFireLevel
+  /**
+   * The message template for the instrumented call span.
+   */
+  message?: string
+  /**
+   * Set a span started with `startSpan` as parentSpan to create a child span.
+   */
+  parentSpan?: Span
+  /**
+   * Record successful return values as span attributes.
+   */
+  recordReturn?: boolean
+  /**
+   * Override the OTel span name without changing the message template.
+   */
+  spanName?: string
+  /**
+   * Tags to add to the instrumented call span.
+   */
+  tags?: string[]
+}
+
 interface LogfireSpanStart {
   attributes: Attributes
   name: string
@@ -104,6 +145,8 @@ interface ResolvedLogfireClientSettings {
 }
 
 type ReadableSpanFields = Pick<ReadableSpan, 'parentSpanContext' | 'startTime'>
+type InstrumentableFunction = (...args: never[]) => unknown
+type SerializedAttributeValue = ReturnType<typeof serializeAttributes>[string]
 
 const ROOT_CLIENT_SETTINGS: ResolvedLogfireClientSettings = { tags: [] }
 
@@ -165,6 +208,72 @@ function getReadableSpanFields(span: Span): Partial<ReadableSpanFields> {
 
 function isHrTime(value: unknown): value is HrTime {
   return Array.isArray(value) && value.length === 2 && typeof value[0] === 'number' && typeof value[1] === 'number'
+}
+
+function getFunctionName(fn: InstrumentableFunction): string {
+  return fn.name || 'function'
+}
+
+function extractParamNames(fn: InstrumentableFunction): string[] {
+  const src = fn.toString()
+  // Crude by design: this is opt-in and exists for readable development builds.
+  const match = /^(?:async\s+)?(?:function[^(]*)?\(([^)]*)\)/u.exec(src)
+  if (match === null) {
+    return []
+  }
+  const inside = match[1]?.trim() ?? ''
+  if (inside === '') {
+    return []
+  }
+  return inside.split(',').map((param) => {
+    const trimmed = param.trim()
+    return trimmed.replace(/[=:].*$/u, '').trim()
+  })
+}
+
+function buildInstrumentedCallAttributes(
+  fn: InstrumentableFunction,
+  args: readonly unknown[],
+  options: InstrumentOptions
+): Record<string, unknown> {
+  const attributes: Record<string, unknown> = { ...(options.attributes ?? {}) }
+  if (options.extractArgs === undefined || options.extractArgs === false) {
+    return attributes
+  }
+
+  const argNames: readonly string[] = Array.isArray(options.extractArgs) ? options.extractArgs : extractParamNames(fn)
+  for (let i = 0; i < args.length; i++) {
+    const argName = argNames[i] ?? `arg${i.toString()}`
+    attributes[argName] = args[i]
+  }
+  return attributes
+}
+
+function buildInstrumentedCallSerializationAttributes(msgTemplate: string, attributes: Record<string, unknown>): Record<string, unknown> {
+  const { extraAttributes } = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
+  return { ...attributes, ...extraAttributes }
+}
+
+function safeSetSpanAttribute(span: Span, key: string, value: SerializedAttributeValue): void {
+  try {
+    span.setAttribute(key, value)
+  } catch {
+    // Return recording is best-effort and must never change function outcome.
+  }
+}
+
+function recordReturnAttributes(span: Span, spanSerializationAttributes: Record<string, unknown>, value: unknown): void {
+  try {
+    const serializedAttributes = serializeAttributes({ ...spanSerializationAttributes, return: value })
+    for (const key of ['return', JSON_SCHEMA_KEY, JSON_NULL_FIELDS_KEY, ATTRIBUTES_SCRUBBED_KEY]) {
+      const serializedValue = serializedAttributes[key]
+      if (serializedValue !== undefined) {
+        safeSetSpanAttribute(span, key, serializedValue)
+      }
+    }
+  } catch {
+    safeSetSpanAttribute(span, 'return', '[unserializable]')
+  }
 }
 
 /**
@@ -392,6 +501,55 @@ export function warning(message: string, attributes: Record<string, unknown> = {
   logWithSettings(ROOT_CLIENT_SETTINGS, message, attributes, { ...options, level: Level.Warning })
 }
 
+function instrumentWithSettings<F extends InstrumentableFunction>(
+  settings: ResolvedLogfireClientSettings,
+  fn: F,
+  options: InstrumentOptions = {}
+): F {
+  const wrapped = function (this: ThisParameterType<F>, ...args: Parameters<F>): ReturnType<F> {
+    const message = options.message ?? `Calling ${getFunctionName(fn)}`
+    const attributes = buildInstrumentedCallAttributes(fn, args, options)
+    const spanSerializationAttributes =
+      options.recordReturn === true ? buildInstrumentedCallSerializationAttributes(message, attributes) : undefined
+    const spanOptions: SpanArgsVariant2<ReturnType<F>>[0] = {
+      attributes,
+      callback: (activeSpan) => {
+        const result = fn.apply(this, args) as ReturnType<F>
+        if (options.recordReturn !== true) {
+          return result
+        }
+        if (result instanceof Promise) {
+          return result.then((value: Awaited<ReturnType<F>>) => {
+            recordReturnAttributes(activeSpan, spanSerializationAttributes ?? {}, value)
+            return value
+          }) as ReturnType<F>
+        }
+        recordReturnAttributes(activeSpan, spanSerializationAttributes ?? {}, result)
+        return result
+      },
+    }
+    if (options.level !== undefined) {
+      spanOptions.level = options.level
+    }
+    if (options.parentSpan !== undefined) {
+      spanOptions.parentSpan = options.parentSpan
+    }
+    if (options.spanName !== undefined) {
+      spanOptions._spanName = options.spanName
+    }
+    if (options.tags !== undefined) {
+      spanOptions.tags = options.tags
+    }
+    return spanWithSettings(settings, message, spanOptions)
+  }
+
+  return wrapped as F
+}
+
+export function instrument<F extends InstrumentableFunction>(fn: F, options: InstrumentOptions = {}): F {
+  return instrumentWithSettings(ROOT_CLIENT_SETTINGS, fn, options)
+}
+
 function recordSpanException(span: Span, thrown: unknown): void {
   const isError = thrown instanceof Error
   const errorMessage = isError ? thrown.message : String(thrown)
@@ -498,6 +656,7 @@ export interface LogfireClient {
   error(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
   fatal(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
   info(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
+  instrument<F extends InstrumentableFunction>(fn: F, options?: InstrumentOptions): F
   log(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
   notice(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
   reportError(message: string, error: unknown, extraAttributes?: Record<string, unknown>, options?: ReportErrorOptions): void
@@ -527,6 +686,7 @@ function createLogfireClient(settings: ResolvedLogfireClientSettings): LogfireCl
     info: (message, attributes, options) => {
       logWithSettings(settings, message, attributes, { ...options, level: Level.Info })
     },
+    instrument: (fn, options) => instrumentWithSettings(settings, fn, options),
     log: (message, attributes, options) => {
       logWithSettings(settings, message, attributes, options)
     },
@@ -576,6 +736,7 @@ const defaultExport: {
   error: typeof error
   fatal: typeof fatal
   info: typeof info
+  instrument: typeof instrument
   levelOrDuration: typeof levelOrDuration
   log: typeof log
   logfireApiConfig: typeof logfireApiConfig
@@ -608,6 +769,7 @@ const defaultExport: {
   error,
   fatal,
   info,
+  instrument,
   levelOrDuration,
   log,
   get logfireApiConfig() {

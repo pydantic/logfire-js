@@ -34,8 +34,8 @@ await payments.span('capture payment', {
 ```
 
 Scoped clients expose the same manual methods as the default API, including
-`span()`, `startSpan()`, `startPendingSpan()`, log helpers, `reportError()`,
-`withTags()`, and `withSettings()`.
+`instrument()`, `span()`, `startSpan()`, `startPendingSpan()`, log helpers,
+`reportError()`, `withTags()`, and `withSettings()`.
 
 `withSettings()` currently supports reusable `tags` and a default `level`:
 
@@ -53,6 +53,67 @@ state. Per-call tags are appended after scoped tags, then duplicates are
 removed while preserving first occurrence order. Per-call scalar options such
 as `level` override scoped defaults, while level-specific helpers such as
 `info()` and `error()` keep their explicit levels.
+
+## Function Instrumentation
+
+Use `instrument(fn, options?)` to wrap a sync or async function in a span while
+preserving the original call signature, `this` value, return value, and thrown
+or rejected errors:
+
+```ts
+import * as logfire from 'logfire'
+
+const fetchProfile = logfire.instrument(
+  async (userId: string) => {
+    return getProfile(userId)
+  },
+  {
+    message: 'fetch profile {user_id}',
+    extractArgs: ['user_id'],
+    tags: ['users'],
+  }
+)
+
+await fetchProfile('user_123')
+```
+
+Supported options include:
+
+- `message`: span message template. Defaults to `Calling ${fn.name || 'function'}`.
+- `spanName`: stable OpenTelemetry span name when it should differ from the message template.
+- `attributes`: static attributes added to every call span.
+- `extractArgs`: `false` by default. Pass an explicit name array for stable positional argument attributes, or `true` for best-effort parameter-name extraction.
+- `recordReturn`: records successful sync or async return values as span attributes on a best-effort basis.
+- `tags`, `level`, and `parentSpan`: forwarded to the underlying span.
+
+Prefer `extractArgs: ['user_id']` in production code. `extractArgs: true`
+parses function source text and may produce unstable names after bundling,
+minification, default parameters, or destructuring. Extracted arguments override
+static `attributes` when they use the same key.
+
+`recordReturn: true` records only successful return values. Serialization is
+best effort; Logfire falls back instead of making a successful function call
+fail because telemetry could not serialize the return value. For async
+functions, the wrapper may return an equivalent chained promise so the resolved
+or rejected value is preserved while the return value is recorded before the
+span closes.
+
+Scoped clients merge their settings with per-wrapper options:
+
+```ts
+const users = logfire.withSettings({
+  tags: ['users'],
+  level: logfire.Level.Debug,
+})
+
+const fetchProfileWithSpan = users.instrument(fetchProfileImpl, {
+  message: 'fetch profile {user_id}',
+  extractArgs: ['user_id'],
+})
+```
+
+TypeScript decorators are intentionally not part of the JavaScript API in this
+first pass.
 
 ## Spans
 

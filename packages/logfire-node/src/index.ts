@@ -5,6 +5,7 @@ import {
   error,
   fatal,
   info,
+  instrument,
   Level,
   log,
   logfireApiConfig,
@@ -48,6 +49,7 @@ const defaultExport: {
   fatal: typeof fatal
   forceFlush: typeof forceFlush
   info: typeof info
+  instrument: typeof instrument
   log: typeof log
   logfireApiConfig: typeof logfireApiConfig
   notice: typeof notice
@@ -72,6 +74,7 @@ const defaultExport: {
   fatal,
   forceFlush,
   info,
+  instrument,
   // Re-export all from logfire
   Level,
   log,
