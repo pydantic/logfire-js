@@ -16,6 +16,7 @@ import {
   resolveSendToLogfire,
   serializeAttributes,
   span,
+  startPendingSpan,
   startSpan,
   trace,
   ULIDGenerator,
@@ -26,6 +27,7 @@ import { configure, logfireConfig } from './logfireConfig'
 import { forceFlush, shutdown } from './sdk'
 
 export * from './logfireConfig'
+export type { LogfireFlushOptions, LogfireShutdownOptions } from './sdk'
 export { forceFlush, shutdown } from './sdk'
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from 'logfire'
@@ -53,6 +55,7 @@ const defaultExport: {
   serializeAttributes: typeof serializeAttributes
   shutdown: typeof shutdown
   span: typeof span
+  startPendingSpan: typeof startPendingSpan
   startSpan: typeof startSpan
   trace: typeof trace
   warning: typeof warning
@@ -79,6 +82,7 @@ const defaultExport: {
   serializeAttributes,
   shutdown,
   span,
+  startPendingSpan,
   startSpan,
   trace,
   ULIDGenerator,

@@ -78,6 +78,60 @@ First-class options such as `serviceName`, `serviceVersion`, and `environment`
 take precedence over conflicting `resourceAttributes` keys. Values from
 `OTEL_RESOURCE_ATTRIBUTES` still take precedence over code configuration.
 
+## Flush and shutdown
+
+Logfire batches telemetry through OpenTelemetry processors. For short-lived
+scripts, tests, CLIs, and graceful process shutdown, explicitly shut down the
+SDK before exiting:
+
+```js
+import * as logfire from '@pydantic/logfire-node'
+
+logfire.configure({ token: 'my-write-token' })
+
+try {
+  logfire.info('work finished')
+} finally {
+  await logfire.shutdown({ timeoutMillis: 5000 })
+}
+```
+
+`shutdown()` defaults to flushing first and then closes the underlying
+OpenTelemetry SDK. Use `shutdown({ flush: false })` only when you have already
+flushed or need to skip the explicit pre-shutdown flush.
+
+Use `forceFlush()` when the process should keep running but queued telemetry
+needs to be sent immediately:
+
+```js
+await logfire.forceFlush({ timeoutMillis: 5000 })
+```
+
+`forceFlush()` drains the Logfire-managed span, log, evaluation, metric-reader,
+and additional span processor paths without shutting down the SDK.
+
+### Process hooks
+
+Logfire installs process hooks for `beforeExit`, `SIGTERM`,
+`uncaughtExceptionMonitor`, and `unhandledRejection`.
+
+On `beforeExit`, Logfire runs a bounded best-effort shutdown. On `SIGTERM`,
+Logfire also runs bounded best-effort shutdown. If Logfire's listener is the
+only `SIGTERM` listener, it then re-emits the signal with
+`process.kill(process.pid, 'SIGTERM')` so Node keeps signal-style termination.
+If your application installs its own `SIGTERM` handler, Logfire leaves process
+termination to that application-level lifecycle code.
+
+Logfire does not install a `SIGINT` handler and does not hook `process.on('exit',
+...)`, because async telemetry flush cannot complete from the synchronous
+`exit` event.
+
+`uncaughtExceptionMonitor` observes and reports uncaught exceptions without
+changing Node's default crash behavior. Any telemetry flush scheduled from that
+hook is best-effort only. `unhandledRejection` observes, reports, and flushes on
+the current Logfire path; this SDK does not restore Node's default fatal
+unhandled-rejection behavior.
+
 ## Evaluations
 
 `logfire/evals` provides offline and online evaluation primitives that emit

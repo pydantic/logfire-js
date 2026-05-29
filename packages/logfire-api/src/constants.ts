@@ -14,6 +14,8 @@ export const ATTRIBUTES_SCRUBBED_KEY: 'logfire.scrubbed' = `${LOGFIRE_ATTRIBUTES
 /** Key for exception fingerprint used for issue grouping */
 export const ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY: 'logfire.exception.fingerprint' = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.exception.fingerprint`
 export const ATTRIBUTES_SAMPLE_RATE_KEY: 'logfire.sample_rate' = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.sample_rate`
+export const ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY: 'logfire.pending_parent_id' = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.pending_parent_id`
+export const INVALID_SPAN_ID = '0000000000000000' as const
 export const DEFAULT_OTEL_SCOPE = 'logfire' as const
 export const JSON_SCHEMA_KEY = 'logfire.json_schema' as const
 export const JSON_NULL_FIELDS_KEY = 'logfire.null_args' as const

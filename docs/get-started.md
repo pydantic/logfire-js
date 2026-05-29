@@ -41,7 +41,6 @@ await logfire.span('calculate checkout total', {
   },
 })
 
-await logfire.forceFlush()
 await logfire.shutdown()
 ```
 

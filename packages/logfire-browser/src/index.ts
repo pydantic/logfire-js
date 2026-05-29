@@ -46,6 +46,7 @@ import {
   resolveSendToLogfire,
   serializeAttributes,
   span,
+  startPendingSpan,
   startSpan,
   TailSamplingProcessor,
   trace,
@@ -199,6 +200,8 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   const sampler =
     headRate !== undefined && headRate < 1.0 ? new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(headRate) }) : undefined
 
+  // Browser configure intentionally does not install PendingSpanProcessor.
+  // Use startPendingSpan() for explicit, per-span pending placeholders.
   let spanProcessor: SpanProcessor = new LogfireSpanProcessor(
     new BatchSpanProcessor(
       new OTLPTraceExporter({
@@ -232,12 +235,40 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
     tracerProvider,
   })
 
-  return async () => {
-    diag.info('logfire-browser: shutting down')
-    unregister()
-    await tracerProvider.forceFlush()
-    await tracerProvider.shutdown()
-    diag.info('logfire-browser: shut down complete')
+  let cleanupPromise: Promise<void> | undefined
+
+  // Return the stored promise directly so repeated cleanup calls preserve identity.
+  // eslint-disable-next-line @typescript-eslint/promise-function-async
+  return () => {
+    cleanupPromise ??= (async () => {
+      let firstCleanupError: Error | undefined
+      const captureCleanupError = (step: string, error: unknown) => {
+        const cleanupError = error instanceof Error ? error : new Error(String(error))
+        firstCleanupError ??= cleanupError
+        diag.error(`logfire-browser: ${step} failed during shutdown`, cleanupError)
+      }
+
+      const runCleanupStep = async (step: string, cleanupStep: () => void | Promise<void>) => {
+        try {
+          await cleanupStep()
+        } catch (error) {
+          captureCleanupError(step, error)
+        }
+      }
+
+      diag.info('logfire-browser: shutting down')
+      await runCleanupStep('instrumentation unregister', unregister)
+      await runCleanupStep('force flush', async () => tracerProvider.forceFlush())
+      await runCleanupStep('tracer provider shutdown', async () => tracerProvider.shutdown())
+
+      if (firstCleanupError !== undefined) {
+        throw new Error(firstCleanupError.message, { cause: firstCleanupError })
+      }
+
+      diag.info('logfire-browser: shut down complete')
+    })()
+
+    return cleanupPromise
   }
 }
 
@@ -261,6 +292,7 @@ const defaultExport: {
   resolveSendToLogfire: typeof resolveSendToLogfire
   serializeAttributes: typeof serializeAttributes
   span: typeof span
+  startPendingSpan: typeof startPendingSpan
   startSpan: typeof startSpan
   trace: typeof trace
   warning: typeof warning
@@ -284,6 +316,7 @@ const defaultExport: {
   resolveSendToLogfire,
   serializeAttributes,
   span,
+  startPendingSpan,
   startSpan,
   trace,
   ULIDGenerator,

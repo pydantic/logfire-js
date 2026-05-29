@@ -49,6 +49,54 @@ Do not use resource attributes for per-request values or sensitive user data.
 First-class options such as `serviceName`, `serviceVersion`, and `environment`
 take precedence over conflicting `resourceAttributes` keys.
 
+## Runtime lifecycle
+
+`configure()` returns an async cleanup function. Call it when your application is
+tearing down the configured browser provider, such as in tests, previews, or
+single-page app shells that replace the whole telemetry setup. Cleanup is
+idempotent: repeated or concurrent calls share one promise and run the lifecycle
+once in this order:
+
+1. unregister configured instrumentations
+2. force-flush spans
+3. shut down the tracer provider
+
+If any cleanup step fails, Logfire still attempts the later steps before
+returning the first failure. Later calls return the same settled cleanup promise
+rather than starting another cleanup cycle.
+
+Browser pages also get OpenTelemetry's built-in batch-processor auto-flush on
+document hide. The underlying batch span processor calls `forceFlush()` when the
+document becomes hidden or emits `pagehide`, which helps export spans during
+navigation away from the page. You can disable that OpenTelemetry behavior with
+`batchSpanProcessorConfig.disableAutoFlushOnDocumentHide`, but doing so means
+only explicit cleanup or normal batch timing will flush spans.
+
+## Pending spans
+
+Browser `configure()` does not install automatic pending-span processing.
+Browser apps often produce many short-lived fetch and interaction spans, so
+automatic pending spans can significantly increase span volume, network
+pressure, and ingestion cost in a user-facing environment.
+
+For long-running browser operations where an immediate placeholder is useful,
+call `startPendingSpan()` explicitly:
+
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+const span = logfire.startPendingSpan('Load dashboard', { route: '/dashboard' })
+try {
+  await loadDashboard()
+} finally {
+  span.end()
+}
+```
+
+Manual pending spans still add one placeholder span for each call. Node.js
+applications get automatic pending spans from `@pydantic/logfire-node`; Browser
+keeps this behavior explicit.
+
 ## Contributing
 
 See [CONTRIBUTING.md](https://github.com/pydantic/logfire-js/blob/main/CONTRIBUTING.md) for development instructions.
