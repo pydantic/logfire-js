@@ -1,5 +1,19 @@
 # logfire
 
+## 0.15.4
+
+### Patch Changes
+
+- db97858: Enable pending spans for tail-sampled Node traces without exporting pending placeholders for dropped traces.
+- db97858: Make Node SDK process handlers safe and bounded under signal/error termination.
+- db97858: Improve Node lifecycle flushing so `forceFlush()` and `shutdown()` cover all Logfire-managed span, log, evaluation, metric-reader, and additional span processor paths.
+- db97858: Add a shared `startPendingSpan()` helper for explicit pending placeholders without enabling automatic Browser pending spans.
+- db97858: Add a shared `PendingSpanProcessor` and enable Node to emit pending spans for non-tail-sampled Logfire spans.
+- Updated dependencies [db97858]
+- Updated dependencies [db97858]
+- Updated dependencies [db97858]
+  - logfire@0.16.0
+
 ## 0.15.3
 
 ### Patch Changes

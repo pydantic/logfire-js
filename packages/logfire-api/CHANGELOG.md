@@ -1,5 +1,16 @@
 # @pydantic/logfire-api
 
+## 0.16.0
+
+### Minor Changes
+
+- db97858: Add a shared `PendingSpanProcessor` and enable Node to emit pending spans for non-tail-sampled Logfire spans.
+
+### Patch Changes
+
+- db97858: Enable pending spans for tail-sampled Node traces without exporting pending placeholders for dropped traces.
+- db97858: Add a shared `startPendingSpan()` helper for explicit pending placeholders without enabling automatic Browser pending spans.
+
 ## 0.15.2
 
 ### Patch Changes

@@ -1,5 +1,15 @@
 # @pydantic/logfire-cf-workers
 
+## 0.11.11
+
+### Patch Changes
+
+- db97858: Add a shared `startPendingSpan()` helper for explicit pending placeholders without enabling automatic Browser pending spans.
+- Updated dependencies [db97858]
+- Updated dependencies [db97858]
+- Updated dependencies [db97858]
+  - logfire@0.16.0
+
 ## 0.11.10
 
 ### Patch Changes
