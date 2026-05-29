@@ -95,6 +95,30 @@ await logfire.span('charge card', {
 })
 ```
 
+## Baggage Span Attributes
+
+Use `baggage.spanAttributes` to copy selected active OpenTelemetry baggage
+values onto Logfire manual spans and logs:
+
+```ts
+logfire.configure({
+  serviceName: 'payments-api',
+  baggage: {
+    spanAttributes: ['tenant', 'region'],
+  },
+})
+```
+
+Projection is disabled by default and allowlisted. Configured key `tenant` is
+emitted as `baggage.tenant` on manual spans/logs, including `span()`,
+`startSpan()`, `startPendingSpan()`, log helpers, `reportError()`, scoped
+clients, and `instrument()` spans. Explicit attributes win on conflict, missing
+keys are ignored, and values are truncated to 1000 characters.
+
+Baggage propagates across service boundaries. Do not store secrets,
+credentials, session cookies, raw emails, or other sensitive user data in
+baggage.
+
 ## Logs and Metrics
 
 Logs and metrics are sent to Logfire by default when a token is present. Disable metrics when you only want traces and logs:

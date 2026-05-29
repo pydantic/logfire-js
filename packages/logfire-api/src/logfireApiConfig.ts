@@ -13,7 +13,18 @@ export interface ScrubbingOptions {
   extraPatterns?: string[]
 }
 
+export interface BaggageOptions {
+  /**
+   * Active OpenTelemetry baggage keys to copy to Logfire spans/logs.
+   *
+   * Keys are emitted as attributes prefixed with `baggage.`.
+   * Defaults to [].
+   */
+  spanAttributes?: readonly string[]
+}
+
 export interface LogfireApiConfigOptions {
+  baggage?: BaggageOptions
   /**
    * Whether to compute fingerprints for errors reported via reportError().
    * Fingerprints enable error grouping in the Logfire backend.
@@ -25,6 +36,10 @@ export interface LogfireApiConfigOptions {
    * Options for scrubbing sensitive data. Set to False to disable.
    */
   scrubbing?: false | ScrubbingOptions
+}
+
+export interface ResolvedBaggageOptions {
+  spanAttributes: readonly string[]
 }
 
 export type SendToLogfire = 'if-token-present' | boolean | undefined
@@ -50,6 +65,7 @@ export interface LogOptions {
 }
 
 export interface LogfireApiConfig {
+  baggage: ResolvedBaggageOptions
   context: Context
   enableErrorFingerprinting: boolean
   otelScope: string
@@ -63,6 +79,9 @@ export interface RegionData {
 }
 
 const DEFAULT_LOGFIRE_API_CONFIG: LogfireApiConfig = {
+  baggage: {
+    spanAttributes: [],
+  },
   get context() {
     return ContextAPI.active()
   },
@@ -75,6 +94,12 @@ const DEFAULT_LOGFIRE_API_CONFIG: LogfireApiConfig = {
 export const logfireApiConfig: LogfireApiConfig = DEFAULT_LOGFIRE_API_CONFIG
 
 export function configureLogfireApi(config: LogfireApiConfigOptions): void {
+  if (config.baggage !== undefined) {
+    logfireApiConfig.baggage = {
+      spanAttributes: [...(config.baggage.spanAttributes ?? [])],
+    }
+  }
+
   if (config.errorFingerprinting !== undefined) {
     logfireApiConfig.enableErrorFingerprinting = config.errorFingerprinting
   }

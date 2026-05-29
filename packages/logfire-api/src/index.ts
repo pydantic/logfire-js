@@ -1,5 +1,5 @@
 import type { Attributes, Context, HrTime, Span } from '@opentelemetry/api'
-import { SpanStatusCode, context as TheContextAPI, trace as TheTraceAPI } from '@opentelemetry/api'
+import { SpanStatusCode, context as TheContextAPI, propagation as ThePropagationAPI, trace as TheTraceAPI } from '@opentelemetry/api'
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 
@@ -18,7 +18,7 @@ import {
   JSON_SCHEMA_KEY,
 } from './constants'
 import { canonicalizeError, computeFingerprint } from './fingerprint'
-import { logfireFormatWithExtras } from './formatter'
+import { logfireFormatWithExtras, truncateString } from './formatter'
 import { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire, serializeAttributes } from './logfireApiConfig'
 import { PendingSpanProcessor } from './PendingSpanProcessor'
 import { setPendingSpanSuppressed } from './pendingSpanSuppression'
@@ -29,7 +29,7 @@ import { ULIDGenerator } from './ULIDGenerator'
 export * from './AttributeScrubber'
 export { canonicalizeError, computeFingerprint } from './fingerprint'
 export { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire } from './logfireApiConfig'
-export type { LogfireApiConfig, LogfireApiConfigOptions, ScrubbingOptions } from './logfireApiConfig'
+export type { BaggageOptions, LogfireApiConfig, LogfireApiConfigOptions, ScrubbingOptions } from './logfireApiConfig'
 export { ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY } from './constants'
 export { PendingSpanProcessor } from './PendingSpanProcessor'
 export * from './sampling'
@@ -149,6 +149,8 @@ type InstrumentableFunction = (...args: never[]) => unknown
 type SerializedAttributeValue = ReturnType<typeof serializeAttributes>[string]
 
 const ROOT_CLIENT_SETTINGS: ResolvedLogfireClientSettings = { tags: [] }
+const BAGGAGE_ATTRIBUTE_PREFIX = 'baggage.' as const
+const MAX_BAGGAGE_VALUE_LENGTH = 1000 as const
 
 function mergeTags(...tagGroups: (readonly string[] | undefined)[]): string[] {
   return Array.from(new Set(tagGroups.flatMap((tags) => tags ?? [])).values())
@@ -177,20 +179,69 @@ function mergeLogOptions(settings: ResolvedLogfireClientSettings, options: LogOp
   return merged
 }
 
+function getBaggageSpanAttributes(existingAttributes: Record<string, unknown>): Record<string, string> {
+  const allowedKeys = logfireApiConfig.baggage.spanAttributes
+  if (allowedKeys.length === 0) {
+    return {}
+  }
+
+  const baggage = ThePropagationAPI.getActiveBaggage()
+  if (baggage === undefined) {
+    return {}
+  }
+
+  const attributes: Record<string, string> = {}
+  for (const key of allowedKeys) {
+    const attributeKey = `${BAGGAGE_ATTRIBUTE_PREFIX}${key}`
+    if (attributeKey in existingAttributes) {
+      continue
+    }
+
+    const entry = baggage.getEntry(key)
+    if (entry === undefined) {
+      continue
+    }
+
+    attributes[attributeKey] = truncateString(entry.value, MAX_BAGGAGE_VALUE_LENGTH)
+  }
+  return attributes
+}
+
+function buildSerializedLogfireAttributes(
+  msgTemplate: string,
+  attributes: Record<string, unknown>,
+  { tags = [], level = Level.Info }: Pick<LogOptions, 'level' | 'tags'>
+): {
+  formattedMessage: string
+  newTemplate: string
+  serializedAttributes: Attributes
+} {
+  const { formattedMessage, extraAttributes, newTemplate } = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
+  const userAttributes = { ...attributes, ...extraAttributes }
+
+  return {
+    formattedMessage,
+    newTemplate,
+    serializedAttributes: {
+      ...serializeAttributes({ ...getBaggageSpanAttributes(userAttributes), ...userAttributes }),
+      [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
+      [ATTRIBUTES_MESSAGE_KEY]: formattedMessage,
+      [ATTRIBUTES_LEVEL_KEY]: level,
+      [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
+    },
+  }
+}
+
 function buildLogfireSpanStart(
   msgTemplate: string,
   attributes: Record<string, unknown>,
   { log, tags = [], level = Level.Info, _spanName }: Pick<LogOptions, '_spanName' | 'level' | 'log' | 'tags'>
 ): LogfireSpanStart {
-  const { formattedMessage, extraAttributes, newTemplate } = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
+  const { serializedAttributes } = buildSerializedLogfireAttributes(msgTemplate, attributes, { tags, level })
 
   return {
     attributes: {
-      ...serializeAttributes({ ...attributes, ...extraAttributes }),
-      [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
-      [ATTRIBUTES_MESSAGE_KEY]: formattedMessage,
-      [ATTRIBUTES_LEVEL_KEY]: level,
-      [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
+      ...serializedAttributes,
       [ATTRIBUTES_SPAN_TYPE_KEY]: log ? 'log' : 'span',
     },
     name: _spanName ?? msgTemplate,
@@ -251,7 +302,8 @@ function buildInstrumentedCallAttributes(
 
 function buildInstrumentedCallSerializationAttributes(msgTemplate: string, attributes: Record<string, unknown>): Record<string, unknown> {
   const { extraAttributes } = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
-  return { ...attributes, ...extraAttributes }
+  const userAttributes = { ...attributes, ...extraAttributes }
+  return { ...getBaggageSpanAttributes(userAttributes), ...userAttributes }
 }
 
 function safeSetSpanAttribute(span: Span, key: string, value: SerializedAttributeValue): void {
@@ -411,19 +463,13 @@ function spanWithSettings<R>(
     callback = args[2]
   }
 
-  const { formattedMessage, extraAttributes, newTemplate } = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
+  const { serializedAttributes } = buildSerializedLogfireAttributes(msgTemplate, attributes, { tags, level })
 
   const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : TheContextAPI.active()
   return logfireApiConfig.tracer.startActiveSpan(
     spanName ?? msgTemplate,
     {
-      attributes: {
-        ...serializeAttributes({ ...attributes, ...extraAttributes }),
-        [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
-        [ATTRIBUTES_MESSAGE_KEY]: formattedMessage,
-        [ATTRIBUTES_LEVEL_KEY]: level,
-        [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
-      },
+      attributes: serializedAttributes,
     },
     context,
     (span: Span) => {

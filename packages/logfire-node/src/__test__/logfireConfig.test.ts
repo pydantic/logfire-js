@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
+import { configureLogfireApi, logfireApiConfig } from 'logfire'
 import { shutdownVariables } from 'logfire/vars'
 
 import { configure, logfireConfig } from '../logfireConfig'
@@ -19,6 +20,7 @@ describe('logfire config', () => {
     delete process.env['LOGFIRE_BASE_URL']
     delete process.env['LOGFIRE_SEND_TO_LOGFIRE']
     delete process.env['LOGFIRE_TOKEN']
+    configureLogfireApi({ baggage: { spanAttributes: [] } })
     await shutdownVariables()
   })
 
@@ -45,6 +47,9 @@ describe('logfire config', () => {
     }
     Object.assign(logfireConfig, {
       authorizationHeaders: {},
+      baggage: {
+        spanAttributes: [],
+      },
       baseUrl: '',
       logsExporterUrl: '',
       metricExporterUrl: '',
@@ -53,6 +58,7 @@ describe('logfire config', () => {
       token: '',
       traceExporterUrl: '',
     })
+    configureLogfireApi({ baggage: { spanAttributes: [] } })
     await shutdownVariables()
   })
 
@@ -111,6 +117,17 @@ describe('logfire config', () => {
     configure({ resourceAttributes })
 
     expect(logfireConfig.resourceAttributes).toBe(resourceAttributes)
+  })
+
+  it('passes baggage span attributes config to the shared API', () => {
+    configure({
+      baggage: {
+        spanAttributes: ['tenant'],
+      },
+    })
+
+    expect(logfireConfig.baggage).toEqual({ spanAttributes: ['tenant'] })
+    expect(logfireApiConfig.baggage).toEqual({ spanAttributes: ['tenant'] })
   })
 
   it('supports a token provider without resolving it during configure', async () => {

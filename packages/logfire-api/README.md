@@ -87,6 +87,58 @@ The third argument is always structured attributes. Use the optional fourth
 argument for report options such as `tags` or `parentSpan`. The JavaScript API
 does not include a Python-style `exception()` helper in this first pass.
 
+## Baggage span attributes
+
+Configure an explicit baggage allowlist when stable OpenTelemetry baggage values
+should be copied onto Logfire manual spans and logs:
+
+```ts
+import { configureLogfireApi } from 'logfire'
+
+configureLogfireApi({
+  baggage: {
+    spanAttributes: ['tenant', 'region'],
+  },
+})
+```
+
+The Node and browser runtime packages expose the same shape through
+`logfire.configure()`. Projection is disabled by default and affects Logfire
+manual spans/logs, including `span()`, `startSpan()`, `startPendingSpan()`, log
+helpers, `reportError()`, and `instrument()`.
+
+Configured keys are emitted with a `baggage.` prefix, such as
+`baggage.tenant`. User-provided attributes win if they already set the same
+attribute key. Missing baggage keys are ignored, baggage metadata is ignored,
+and values are kept as strings truncated to 1000 characters.
+
+Baggage propagates across service boundaries. Do not store secrets,
+credentials, session cookies, raw emails, or other sensitive user data in
+baggage.
+
+Use OpenTelemetry propagation APIs directly when you need to move context
+through queues or background-job metadata:
+
+```ts
+import { context, propagation } from '@opentelemetry/api'
+import * as logfire from 'logfire'
+
+const carrier: Record<string, string> = {}
+propagation.inject(context.active(), carrier)
+
+const extractedContext = propagation.extract(context.active(), carrier)
+await context.with(extractedContext, async () => {
+  await logfire.span('process job', {
+    callback: async () => processJob(),
+  })
+})
+```
+
+The carrier is a serializable object such as headers or queue metadata.
+OpenTelemetry `Context` is runtime-local and is not serializable. Logfire JS
+does not add generic `getContext()` / `attachContext()` wrappers in this first
+pass; use the OpenTelemetry APIs directly for those cases.
+
 ## Manual pending spans
 
 Use `startPendingSpan()` when you want to show a long-running operation as

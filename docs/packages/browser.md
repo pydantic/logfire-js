@@ -64,6 +64,31 @@ window.addEventListener('error', (event) => {
 })
 ```
 
+## Baggage Span Attributes
+
+Use `baggage.spanAttributes` to copy selected active OpenTelemetry baggage
+values onto Logfire manual spans and logs:
+
+```ts
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'web-app',
+  baggage: {
+    spanAttributes: ['tenant', 'region'],
+  },
+})
+```
+
+Projection is disabled by default and allowlisted. Configured key `tenant` is
+emitted as `baggage.tenant` on manual spans/logs, including `span()`,
+`startSpan()`, `startPendingSpan()`, log helpers, `reportError()`, scoped
+clients, and `instrument()` spans. Explicit attributes win on conflict, missing
+keys are ignored, and values are truncated to 1000 characters.
+
+Baggage propagates across service boundaries. Do not store secrets,
+credentials, session cookies, raw emails, or other sensitive user data in
+baggage.
+
 ## Proxy Requirement
 
 A browser proxy should:

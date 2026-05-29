@@ -113,7 +113,7 @@ vi.mock('@opentelemetry/sdk-trace-web', () => ({
   WebTracerProvider: mocks.MockWebTracerProvider,
 }))
 
-import { PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
+import { configureLogfireApi, logfireApiConfig, PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
 
 import logfireBrowser, { configure, instrument, startPendingSpan, withSettings, withTags } from './index'
 
@@ -184,6 +184,7 @@ describe('browser configure resource attributes', () => {
 
   afterEach(async () => {
     await cleanup?.()
+    configureLogfireApi({ baggage: { spanAttributes: [] } })
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,
       value: originalNavigator,
@@ -228,6 +229,17 @@ describe('browser configure resource attributes', () => {
       'telemetry.sdk.name': 'logfire-browser',
     })
   })
+
+  it('passes baggage span attributes config to the shared API', () => {
+    cleanup = configure({
+      baggage: {
+        spanAttributes: ['tenant'],
+      },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(logfireApiConfig.baggage).toEqual({ spanAttributes: ['tenant'] })
+  })
 })
 
 describe('browser pending spans', () => {
@@ -246,6 +258,7 @@ describe('browser pending spans', () => {
 
   afterEach(async () => {
     await cleanup?.()
+    configureLogfireApi({ baggage: { spanAttributes: [] } })
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,
       value: originalNavigator,
@@ -315,6 +328,7 @@ describe('browser cleanup', () => {
 
   afterEach(async () => {
     await cleanup?.()
+    configureLogfireApi({ baggage: { spanAttributes: [] } })
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,
       value: originalNavigator,

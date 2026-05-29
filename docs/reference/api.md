@@ -34,6 +34,23 @@ Configuration helpers and utilities:
 - `ULIDGenerator`
 - sampling helpers such as `levelOrDuration()`
 
+`configureLogfireApi()` accepts `baggage.spanAttributes` to copy allowlisted
+active OpenTelemetry baggage keys onto Logfire manual spans/logs as
+`baggage.<key>` attributes:
+
+```ts
+configureLogfireApi({
+  baggage: {
+    spanAttributes: ['tenant', 'region'],
+  },
+})
+```
+
+Projection is disabled by default. Explicit user attributes win on conflict,
+missing keys are ignored, baggage metadata is ignored, and values are truncated
+to 1000 characters. The Node and browser runtime packages expose the same shape
+through `configure()`.
+
 Subpaths:
 
 - `logfire/evals`
@@ -52,6 +69,7 @@ Node.js runtime setup:
 - `DiagLogLevel`
 
 The package also re-exports the public API from `logfire`.
+Node `configure()` accepts `baggage.spanAttributes` for the shared manual API.
 
 ## `@pydantic/logfire-browser`
 
@@ -61,6 +79,7 @@ Browser runtime setup:
 - `DiagLogLevel`
 
 The package also re-exports the public API from `logfire`.
+Browser `configure()` accepts `baggage.spanAttributes` for the shared manual API.
 
 ## `@pydantic/logfire-cf-workers`
 

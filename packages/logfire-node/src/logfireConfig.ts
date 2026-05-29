@@ -1,4 +1,4 @@
-import type { SamplingOptions } from 'logfire'
+import type { BaggageOptions, SamplingOptions } from 'logfire'
 import type { VariablesConfigOptions } from 'logfire/vars'
 
 import type { Attributes, DiagLogLevel } from '@opentelemetry/api'
@@ -59,6 +59,10 @@ export interface LogfireConfigOptions {
    * Advanced configuration options
    */
   advanced?: AdvancedLogfireConfigOptions
+  /**
+   * Active OpenTelemetry baggage keys to copy to Logfire manual spans/logs as span attributes.
+   */
+  baggage?: BaggageOptions
   /**
    * Settings for the source code of the project.
    */
@@ -163,6 +167,7 @@ export interface LogfireConfig {
   additionalSpanProcessors: SpanProcessor[]
   apiKey: string | undefined
   authorizationHeaders: AuthorizationHeaders
+  baggage: BaggageOptions
   baseUrl: string
   codeSource: CodeSource | undefined
   console: boolean | undefined
@@ -191,6 +196,9 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   additionalSpanProcessors: [],
   apiKey: undefined,
   authorizationHeaders: {},
+  baggage: {
+    spanAttributes: [],
+  },
   baseUrl: '',
   codeSource: undefined,
   console: false,
@@ -217,12 +225,15 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
 export const logfireConfig: LogfireConfig = DEFAULT_LOGFIRE_CONFIG
 
 export function configure(config: LogfireConfigOptions = {}): void {
-  const { errorFingerprinting, otelScope, sampling, scrubbing, ...cnf } = config
+  const { baggage, errorFingerprinting, otelScope, sampling, scrubbing, ...cnf } = config
 
   const env = process.env
 
-  if (errorFingerprinting !== undefined || otelScope !== undefined || scrubbing !== undefined) {
+  if (baggage !== undefined || errorFingerprinting !== undefined || otelScope !== undefined || scrubbing !== undefined) {
     const apiConfig: logfireApi.LogfireApiConfigOptions = {}
+    if (baggage !== undefined) {
+      apiConfig.baggage = baggage
+    }
     if (errorFingerprinting !== undefined) {
       apiConfig.errorFingerprinting = errorFingerprinting
     }
@@ -253,6 +264,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
     additionalSpanProcessors: cnf.additionalSpanProcessors ?? [],
     apiKey,
     authorizationHeaders: resolveAuthorizationHeaders(token),
+    baggage: baggage !== undefined ? { spanAttributes: [...(baggage.spanAttributes ?? [])] } : logfireConfig.baggage,
     baseUrl,
     codeSource: cnf.codeSource,
     console,

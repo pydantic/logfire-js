@@ -205,6 +205,64 @@ Runtime packages can enable error fingerprinting so related errors group
 together in Logfire. The JavaScript API does not include a Python-style
 `exception()` helper in this first pass; use explicit catch blocks.
 
+## Baggage Projection And Propagation
+
+Use `baggage.spanAttributes` when stable OpenTelemetry baggage values should be
+copied onto Logfire manual spans and logs:
+
+```ts
+import { configureLogfireApi } from 'logfire'
+
+configureLogfireApi({
+  baggage: {
+    spanAttributes: ['tenant', 'region'],
+  },
+})
+```
+
+The Node and browser runtime packages expose the same config shape through
+`logfire.configure()`. Projection is disabled by default and uses an explicit
+allowlist. It affects manual `span()`, `startSpan()`, `startPendingSpan()`, log
+helpers, `reportError()`, scoped clients, and `instrument()` spans. Automatic
+instrumentation spans are not changed by this option.
+
+Allowlisted baggage key `tenant` is emitted as `baggage.tenant`. If a call
+already sets `baggage.tenant` in its explicit attributes, the explicit
+attribute wins. Missing baggage keys are ignored, baggage metadata is ignored,
+and baggage values remain strings truncated to 1000 characters.
+
+Baggage is propagated across service boundaries. Do not store secrets,
+credentials, session cookies, raw emails, or other sensitive user data in
+baggage. Treat incoming trace context and baggage from untrusted callers as
+untrusted input.
+
+For non-HTTP carriers such as queue messages or background-job metadata, use
+OpenTelemetry propagation APIs directly:
+
+```ts
+import { context, propagation } from '@opentelemetry/api'
+import * as logfire from 'logfire'
+
+const carrier: Record<string, string> = {}
+propagation.inject(context.active(), carrier)
+
+// Later, in a worker or queue consumer:
+const extractedContext = propagation.extract(context.active(), carrier)
+await context.with(extractedContext, async () => {
+  await logfire.span('process job', {
+    callback: async () => processJob(),
+  })
+})
+```
+
+A carrier is a serializable object such as HTTP headers, queue metadata, or job
+attributes. OpenTelemetry `Context` is runtime-local execution state and is not
+serializable. Baggage is propagated key/value metadata inside that context.
+Logfire JS intentionally does not add generic `getContext()` /
+`attachContext()` / `injectContext()` / `extractContext()` wrappers in this
+first pass; use OpenTelemetry APIs directly when moving context between
+processes or async execution boundaries.
+
 ## Subpath APIs
 
 `logfire/evals` exports the JavaScript evaluation API. See [Evaluations](../evals.md).

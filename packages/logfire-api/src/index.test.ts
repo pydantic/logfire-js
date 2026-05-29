@@ -15,7 +15,18 @@ import {
   JSON_NULL_FIELDS_KEY,
   JSON_SCHEMA_KEY,
 } from './constants'
-import defaultExport, { info, instrument, Level, reportError, span, startPendingSpan, withSettings, withTags } from './index'
+import defaultExport, {
+  configureLogfireApi,
+  info,
+  instrument,
+  Level,
+  reportError,
+  span,
+  startPendingSpan,
+  startSpan,
+  withSettings,
+  withTags,
+} from './index'
 import { isPendingSpanSuppressed } from './pendingSpanSuppression'
 
 const sleep = async (ms: number): Promise<void> =>
@@ -43,7 +54,17 @@ const mocks = vi.hoisted(() => {
     startTime?: [number, number]
   }
 
+  interface MockBaggageEntry {
+    value: string
+  }
+
+  interface MockBaggage {
+    getAllEntries(): [string, MockBaggageEntry][]
+    getEntry(key: string): MockBaggageEntry | undefined
+  }
+
   let contextId = 0
+  let activeBaggage: MockBaggage | undefined
 
   function makeContext(values = new Map<symbol, unknown>()): MockContext {
     contextId++
@@ -76,9 +97,20 @@ const mocks = vi.hoisted(() => {
     }
   }
 
+  function makeBaggage(entries: Record<string, string>): MockBaggage {
+    return {
+      getAllEntries: () => Object.entries(entries).map(([key, value]) => [key, { value }] as [string, MockBaggageEntry]),
+      getEntry: (key: string) => {
+        const value = entries[key]
+        return value === undefined ? undefined : { value }
+      },
+    }
+  }
+
   const activeContext = makeContext()
   const spanMock = makeSpan({ startTime: [1000, 0] })
   const startSpanResults: MockSpan[] = []
+  const getActiveBaggage = vi.fn<() => MockBaggage | undefined>(() => activeBaggage)
 
   const tracerMock = {
     startActiveSpan: vi.fn<(_name: string, _options: unknown, _context: unknown, fn: (s: MockSpan) => unknown) => unknown>(
@@ -90,8 +122,11 @@ const mocks = vi.hoisted(() => {
   return {
     activeContext,
     contextWith: vi.fn<() => unknown>(),
+    getActiveBaggage,
     makeSpan,
     reset() {
+      activeBaggage = undefined
+      getActiveBaggage.mockClear()
       startSpanResults.length = 0
       tracerMock.startActiveSpan.mockClear()
       tracerMock.startSpan.mockClear()
@@ -101,6 +136,9 @@ const mocks = vi.hoisted(() => {
       spanMock.setAttribute.mockClear()
       spanMock.setStatus.mockClear()
       spanMock.spanContext.mockClear()
+    },
+    setActiveBaggage(entries: Record<string, string> | undefined) {
+      activeBaggage = entries === undefined ? undefined : makeBaggage(entries)
     },
     setSpan: vi.fn<(ctx: MockContext, span: MockSpan) => MockContext>((ctx, span) => ctx.setValue(Symbol.for('otel-test-span'), span)),
     spanMock,
@@ -119,12 +157,28 @@ vi.mock('@opentelemetry/api', () => {
     },
     createContextKey: (description: string) => Symbol.for(description),
     SpanStatusCode: { ERROR: 2 },
+    propagation: {
+      getActiveBaggage: mocks.getActiveBaggage,
+    },
     trace: {
       getTracer: vi.fn<() => typeof mocks.tracerMock>(() => mocks.tracerMock),
       setSpan: mocks.setSpan,
     },
   }
 })
+
+beforeEach(() => {
+  configureLogfireApi({ baggage: { spanAttributes: [] }, errorFingerprinting: true })
+  mocks.setActiveBaggage(undefined)
+})
+
+function getStartSpanAttributes(callIndex = 0): Record<string, unknown> {
+  return (mocks.tracerMock.startSpan.mock.calls[callIndex]?.[1] as { attributes: Record<string, unknown> }).attributes
+}
+
+function getStartActiveSpanAttributes(callIndex = 0): Record<string, unknown> {
+  return (mocks.tracerMock.startActiveSpan.mock.calls[callIndex]?.[1] as { attributes: Record<string, unknown> }).attributes
+}
 
 describe('info', () => {
   beforeEach(() => {
@@ -174,6 +228,121 @@ describe('info', () => {
       },
       mocks.activeContext
     )
+  })
+})
+
+describe('baggage span attributes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.reset()
+  })
+
+  test('is disabled by default', () => {
+    mocks.setActiveBaggage({ tenant: 'acme' })
+
+    info('event')
+
+    expect(getStartSpanAttributes()).not.toHaveProperty('baggage.tenant')
+    expect(mocks.getActiveBaggage).not.toHaveBeenCalled()
+  })
+
+  test('copies only configured active baggage keys and skips missing keys', () => {
+    configureLogfireApi({ baggage: { spanAttributes: ['tenant', 'missing'] } })
+    mocks.setActiveBaggage({ region: 'eu', tenant: 'acme' })
+
+    info('event')
+
+    const attributes = getStartSpanAttributes()
+    expect(attributes['baggage.tenant']).toBe('acme')
+    expect(attributes).not.toHaveProperty('baggage.region')
+    expect(attributes).not.toHaveProperty('baggage.missing')
+  })
+
+  test('lets explicit user attributes win over baggage projection', () => {
+    configureLogfireApi({ baggage: { spanAttributes: ['tenant'] } })
+    mocks.setActiveBaggage({ tenant: 'from-baggage' })
+
+    info('event', { 'baggage.tenant': 'from-user' })
+
+    expect(getStartSpanAttributes()['baggage.tenant']).toBe('from-user')
+  })
+
+  test('truncates projected baggage values to 1000 characters', () => {
+    configureLogfireApi({ baggage: { spanAttributes: ['tenant'] } })
+    mocks.setActiveBaggage({ tenant: 'x'.repeat(1005) })
+
+    info('event')
+
+    expect(getStartSpanAttributes()['baggage.tenant']).toBe(`${'x'.repeat(997)}...`)
+  })
+
+  test('copies baggage for startSpan', () => {
+    configureLogfireApi({ baggage: { spanAttributes: ['tenant'] } })
+    mocks.setActiveBaggage({ tenant: 'acme' })
+
+    startSpan('manual span')
+
+    expect(getStartSpanAttributes()['baggage.tenant']).toBe('acme')
+  })
+
+  test('copies baggage for object-style active span', () => {
+    configureLogfireApi({ baggage: { spanAttributes: ['tenant'] } })
+    mocks.setActiveBaggage({ tenant: 'acme' })
+
+    span('active span', { callback: () => 'ok' })
+
+    expect(getStartActiveSpanAttributes()['baggage.tenant']).toBe('acme')
+  })
+
+  test('copies baggage for positional active span', () => {
+    configureLogfireApi({ baggage: { spanAttributes: ['tenant'] } })
+    mocks.setActiveBaggage({ tenant: 'acme' })
+
+    span('active span', {}, {}, () => 'ok')
+
+    expect(getStartActiveSpanAttributes()['baggage.tenant']).toBe('acme')
+  })
+
+  test('copies baggage for real and pending placeholder spans', () => {
+    configureLogfireApi({ baggage: { spanAttributes: ['tenant'] } })
+    mocks.setActiveBaggage({ tenant: 'acme' })
+    const startTime: [number, number] = [123, 456]
+    const realSpan = mocks.makeSpan({ startTime })
+    const pendingSpan = mocks.makeSpan({ startTime })
+    mocks.startSpanResults.push(realSpan, pendingSpan)
+
+    startPendingSpan('pending span')
+
+    expect(getStartSpanAttributes(0)['baggage.tenant']).toBe('acme')
+    expect(getStartSpanAttributes(1)['baggage.tenant']).toBe('acme')
+  })
+
+  test('copies baggage for reportError', () => {
+    configureLogfireApi({ baggage: { spanAttributes: ['tenant'] } })
+    mocks.setActiveBaggage({ tenant: 'acme' })
+
+    reportError('caught error', new Error('boom'))
+
+    expect(getStartSpanAttributes()['baggage.tenant']).toBe('acme')
+  })
+
+  test('copies baggage for instrumented functions', () => {
+    configureLogfireApi({ baggage: { spanAttributes: ['tenant'] } })
+    mocks.setActiveBaggage({ tenant: 'acme' })
+
+    instrument(() => 'ok')()
+
+    expect(getStartActiveSpanAttributes()['baggage.tenant']).toBe('acme')
+  })
+
+  test('scoped clients inherit baggage projection', () => {
+    configureLogfireApi({ baggage: { spanAttributes: ['tenant'] } })
+    mocks.setActiveBaggage({ tenant: 'acme' })
+
+    withTags('scope').info('scoped event')
+
+    expect(getStartSpanAttributes()['baggage.tenant']).toBe('acme')
+    expect(getStartSpanAttributes()[ATTRIBUTES_TAGS_KEY]).toEqual(['scope'])
   })
 })
 

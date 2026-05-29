@@ -28,7 +28,7 @@ import {
   ATTR_BROWSER_PLATFORM,
   ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
 } from '@opentelemetry/semantic-conventions/incubating'
-import type { SamplingOptions, ScrubbingOptions } from 'logfire'
+import type { BaggageOptions, LogfireApiConfigOptions, SamplingOptions, ScrubbingOptions } from 'logfire'
 import {
   configureLogfireApi,
   debug,
@@ -68,6 +68,10 @@ export interface LogfireConfigOptions {
    * The configuration of the batch span processor.
    */
   batchSpanProcessorConfig?: BufferConfig
+  /**
+   * Active OpenTelemetry baggage keys to copy to Logfire manual spans/logs as span attributes.
+   */
+  baggage?: BaggageOptions
   /**
    * Whether to log the spans to the console in addition to sending them to the Logfire API.
    */
@@ -163,11 +167,11 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
     diag.setLogger(new DiagConsoleLogger(), options.diagLogLevel)
   }
 
-  const apiConfig: {
-    errorFingerprinting: boolean
-    scrubbing?: false | ScrubbingOptions
-  } = {
+  const apiConfig: LogfireApiConfigOptions = {
     errorFingerprinting: options.errorFingerprinting ?? false,
+  }
+  if (options.baggage !== undefined) {
+    apiConfig.baggage = options.baggage
   }
   if (options.scrubbing !== undefined) {
     apiConfig.scrubbing = options.scrubbing

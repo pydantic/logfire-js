@@ -49,6 +49,30 @@ Do not use resource attributes for per-request values or sensitive user data.
 First-class options such as `serviceName`, `serviceVersion`, and `environment`
 take precedence over conflicting `resourceAttributes` keys.
 
+## Baggage span attributes
+
+Use `baggage.spanAttributes` to copy selected active OpenTelemetry baggage
+values onto Logfire manual spans and logs:
+
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+logfire.configure({
+  traceUrl: '/client-traces',
+  serviceName: 'browser-app',
+  baggage: {
+    spanAttributes: ['tenant', 'region'],
+  },
+})
+```
+
+Projection is disabled by default and allowlisted. Configured baggage key
+`tenant` is emitted as `baggage.tenant`. Explicit span attributes win on
+conflict, missing keys are ignored, and values are truncated to 1000
+characters. Do not store secrets, credentials, session cookies, raw emails, or
+other sensitive user data in baggage because baggage propagates across service
+boundaries.
+
 ## Runtime lifecycle
 
 `configure()` returns an async cleanup function. Call it when your application is
