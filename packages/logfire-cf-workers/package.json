@@ -26,7 +26,7 @@
     "stats",
     "monitoring"
   ],
-  "version": "0.11.9",
+  "version": "0.11.10",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -58,7 +58,7 @@
     "logfire": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "4.20250311.0",
+    "@cloudflare/workers-types": "4.20260528.1",
     "@opentelemetry/core": "catalog:",
     "@opentelemetry/otlp-transformer": "catalog:",
     "@opentelemetry/sdk-trace-base": "catalog:"

@@ -17,12 +17,10 @@
     "changeset-add": "pnpm changeset add"
   },
   "devDependencies": {
+    "@voidzero-dev/vite-plus-core": "0.1.22",
     "@changesets/cli": "^2.27.12",
-    "@vitest/coverage-v8": "^4.1.5",
     "typescript": "catalog:",
-    "vite": "^8.0.10",
-    "vite-plus": "0.1.20",
-    "vitest": "^4.1.5"
+    "vite-plus": "0.1.22"
   },
   "engines": {
     "node": "24"
@@ -50,7 +48,9 @@
       "postcss@<8.5.10": "8.5.12",
       "protobufjs@^7.5.3": "7.5.5",
       "qs@>=6.7.0 <=6.14.1": "6.14.2",
-      "undici@>=7.0.0 <7.24.0": ">=7.24.0"
+      "undici@>=7.0.0 <7.24.0": ">=7.24.0",
+      "vite": "npm:@voidzero-dev/vite-plus-core@0.1.22",
+      "vitest": "npm:@voidzero-dev/vite-plus-test@0.1.22"
     }
   }
 }

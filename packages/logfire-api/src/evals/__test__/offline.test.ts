@@ -233,7 +233,7 @@ describe('offline evals — span attribute parity', () => {
     expect(cases).toHaveLength(3)
     for (const c of cases) {
       expect(c.attributes[EXPERIMENT_SOURCE_CASE_NAME_KEY]).toBe('x')
-      expect(c.attributes[ATTR_CASE_NAME]).toMatch(/^x \[\d+\/3\]$/)
+      expect(c.attributes[ATTR_CASE_NAME]).toMatch(/^x \[\d+\/3\]$/u)
     }
   })
 
@@ -337,8 +337,8 @@ describe('offline evals — span attribute parity', () => {
       }
     })()
     expect(messages).toHaveLength(2)
-    expect(messages.every((message) => /^\[\d\/2\] (?:one|two)$/.test(message))).toBe(true)
-    expect(messages.map((message) => message.replace(/^\[\d\/2\] /, '')).sort()).toEqual(['one', 'two'])
+    expect(messages.every((message) => /^\[\d\/2\] (?:one|two)$/u.test(message))).toBe(true)
+    expect(messages.map((message) => message.replace(/^\[\d\/2\] /u, '')).sort()).toEqual(['one', 'two'])
   })
 
   it('records non-Error task failures without rejecting the experiment', async () => {

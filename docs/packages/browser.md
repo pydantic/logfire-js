@@ -31,7 +31,7 @@ logfire.configure({
 })
 ```
 
-`traceUrl` should point to a server-side endpoint that forwards OTLP trace requests to Logfire and adds the `Authorization` header on the server.
+`traceUrl` should point to a server-side endpoint that accepts OTLP trace requests from your browser instrumentation, forwards them to Logfire, and adds the `Authorization` header on the server.
 
 Use `diagLogLevel` while troubleshooting local browser instrumentation:
 
@@ -79,61 +79,41 @@ For Next.js, see [Next.js](../frameworks/nextjs.md). For a standalone browser ex
 
 ## Python Backend Proxy
 
-Python backends can use the experimental `logfire.experimental.forwarding` helpers to forward browser OTLP requests without exposing the write token.
+Python backends can use the `logfire.forward_export_request_starlette` and `logfire.forward_export_request` helpers to create a telemetry ingress endpoint without exposing the write token.
 
-For FastAPI, mount `logfire_proxy` on a path that captures the OTLP suffix:
+For FastAPI/Starlette, use `logfire.forward_export_request_starlette` in an endpoint, for example:
 
-```py title="main.py" skip-run="true" skip-reason="server-start"
+```py title="main.py"
 from fastapi import Depends, FastAPI, Request
 
 import logfire
-from logfire.experimental.forwarding import logfire_proxy
 
 logfire.configure()
 app = FastAPI()
 
 
 async def verify_user_session():
-    # Add authentication, rate limiting, or origin checks here.
+    # Add authentication, session, rate limiting, or origin checks here.
     pass
 
 
 @app.post('/logfire-proxy/{path:path}', dependencies=[Depends(verify_user_session)])
 async def proxy_browser_telemetry(request: Request):
-    return await logfire_proxy(request)
+    return await logfire.forward_export_request_starlette(request)
 ```
 
-The `{path:path}` route parameter is required so `/logfire-proxy/v1/traces` forwards the `/v1/traces` OTLP path. The helper rejects paths other than `/v1/traces`, `/v1/logs`, and `/v1/metrics`, strips incoming credentials, adds the configured Logfire token, and limits request bodies to 50 MB by default.
+The `{path:path}` route parameter is required. `forward_export_request_starlette` rejects paths other than `/v1/traces`, `/v1/logs`, and `/v1/metrics` so that it can forward to the appropriate Logfire backend endpoint.
 
-For Starlette, mount the same handler as a route:
+For Django, Flask, Litestar, or a custom HTTP server, use `forward_export_request` directly, e.g:
 
-```py title="main.py" skip-run="true" skip-reason="server-start"
-from starlette.applications import Starlette
-from starlette.routing import Route
-
+```py title="main.py"
 import logfire
-from logfire.experimental.forwarding import logfire_proxy
-
-logfire.configure()
-
-app = Starlette(
-    routes=[
-        Route('/logfire-proxy/{path:path}', logfire_proxy, methods=['POST']),
-    ],
-)
-```
-
-For Django, Flask, Litestar, or a custom HTTP server, use `forward_export_request` directly:
-
-```py title="main.py" skip-run="true" skip-reason="server-start"
-import logfire
-from logfire.experimental.forwarding import forward_export_request
 
 logfire.configure()
 
 
 def my_custom_proxy_route(request):
-    response = forward_export_request(
+    response = logfire.forward_export_request(
         path=request.path.removeprefix('/logfire-proxy'),
         headers=request.headers,
         body=request.read(),
@@ -146,7 +126,13 @@ def my_custom_proxy_route(request):
     )
 ```
 
-Protect this endpoint in production. Any client that can reach it can send telemetry to your Logfire project.
+Protect this endpoint in production. Treat browser telemetry ingress like any other externally reachable write endpoint: clients can be numerous, retry requests, duplicate payloads, or send malicious data. Use your normal authentication, session, CORS, and rate-limiting controls. Configure CORS for the app origin that should send telemetry; avoid `*` unless you intentionally operate a public telemetry ingestion endpoint.
+
+Caveats:
+
+- These functions only forward requests directly to Logfire. If you have alternative backends configured, you will need to proxy to them manually.
+- These functions merely forward the data as is. They do not perform any validation, sanitization, or transformation.
+- Requests are placed in a queue and forwarded in a background thread. The queue is limited to 1000 requests and 64MB of memory. If the queue is full, new requests will be dropped. This is to prevent overwhelming your backend with large volumes of telemetry data, which could be used in a DoS attack.
 
 ## Runtime Lifecycle
 

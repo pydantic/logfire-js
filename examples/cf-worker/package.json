@@ -1,6 +1,6 @@
 {
 	"name": "@pydantic/cf-worker",
-	"version": "0.0.8",
+	"version": "0.0.9",
 	"private": true,
 	"scripts": {
 		"deploy": "wrangler deploy",
@@ -9,13 +9,9 @@
 		"cf-typegen": "wrangler types"
 	},
 	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.15.1",
-		"@cloudflare/workers-types": "^4.20260430.1",
-		"@vitest/runner": "^4.1.5",
-		"@vitest/snapshot": "^4.1.5",
+		"@cloudflare/workers-types": "^4.20260528.1",
 		"typescript": "catalog:",
-		"vitest": "^4.1.5",
-		"wrangler": "^4.75.0"
+		"wrangler": "^4.95.0"
 	},
 	"dependencies": {
 		"@pydantic/logfire-cf-workers": "workspace:*",

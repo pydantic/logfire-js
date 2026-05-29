@@ -625,18 +625,18 @@ async function writeTextFileIfChanged(filePath: string, text: string): Promise<v
 function fileStem(filePath: string): string {
   const base =
     filePath
-      .replace(/[\\/]+$/, '')
-      .split(/[\\/]/)
+      .replace(/[\\/]+$/u, '')
+      .split(/[\\/]/u)
       .pop() ?? filePath
   const dot = base.lastIndexOf('.')
   return dot <= 0 ? base : base.slice(0, dot)
 }
 
 function resolveSiblingPath(filePath: string, siblingPath: string): string {
-  if (/^(?:[a-zA-Z]:[\\/]|[\\/]|[a-zA-Z][a-zA-Z\d+.-]*:)/.test(siblingPath)) {
+  if (/^(?:[a-zA-Z]:[\\/]|[\\/]|[a-zA-Z][a-zA-Z\d+.-]*:)/u.test(siblingPath)) {
     return siblingPath
   }
-  const trimmed = filePath.replace(/[\\/]+$/, '')
+  const trimmed = filePath.replace(/[\\/]+$/u, '')
   const sep = trimmed.includes('\\') ? '\\' : '/'
   const lastSep = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
   const dir = lastSep === -1 ? '.' : trimmed.slice(0, lastSep)
