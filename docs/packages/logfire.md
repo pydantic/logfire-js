@@ -13,6 +13,47 @@ Install it directly when a package or framework already configures OpenTelemetry
 npm install logfire
 ```
 
+## Scoped Clients
+
+Use `withTags()` or `withSettings()` to create a bound manual API client with
+stable defaults:
+
+```ts
+import * as logfire from 'logfire'
+
+const payments = logfire.withTags('payments')
+
+payments.info('payment authorized', { payment_id: 'pay_123' })
+
+await payments.span('capture payment', {
+  attributes: { payment_id: 'pay_123' },
+  callback: async () => {
+    return capturePayment('pay_123')
+  },
+})
+```
+
+Scoped clients expose the same manual methods as the default API, including
+`span()`, `startSpan()`, `startPendingSpan()`, log helpers, `reportError()`,
+`withTags()`, and `withSettings()`.
+
+`withSettings()` currently supports reusable `tags` and a default `level`:
+
+```ts
+const debugTools = logfire.withSettings({
+  tags: ['debug-tools'],
+  level: logfire.Level.Debug,
+})
+
+debugTools.log('raw payload', { payload })
+```
+
+Scoped clients do not mutate global defaults and do not use callback-local
+state. Per-call tags are appended after scoped tags, then duplicates are
+removed while preserving first occurrence order. Per-call scalar options such
+as `level` override scoped defaults, while level-specific helpers such as
+`info()` and `error()` keep their explicit levels.
+
 ## Spans
 
 `span()` starts an active span, runs your callback, records thrown errors, and ends the span automatically.

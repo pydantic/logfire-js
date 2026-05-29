@@ -25,6 +25,8 @@ import {
   trace,
   ULIDGenerator,
   warning,
+  withSettings,
+  withTags,
 } from 'logfire'
 
 import { exportTailEventsToLogfire } from './exportTailEventsToLogfire'
@@ -152,6 +154,8 @@ const defaultExport: {
   startSpan: typeof startSpan
   trace: typeof trace
   warning: typeof warning
+  withSettings: typeof withSettings
+  withTags: typeof withTags
 } = {
   exportTailEventsToLogfire,
   configureLogfireApi,
@@ -180,6 +184,8 @@ const defaultExport: {
   trace,
   ULIDGenerator,
   warning,
+  withSettings,
+  withTags,
 }
 
 export default defaultExport

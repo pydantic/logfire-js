@@ -77,12 +77,51 @@ export interface LogOptions {
 
 export type StartPendingSpanOptions = Omit<LogOptions, 'log'>
 
+export interface LogfireClientSettings {
+  level?: LogFireLevel
+  tags?: string[]
+}
+
 interface LogfireSpanStart {
   attributes: Attributes
   name: string
 }
 
+interface ResolvedLogfireClientSettings {
+  level?: LogFireLevel
+  tags: string[]
+}
+
 type ReadableSpanFields = Pick<ReadableSpan, 'parentSpanContext' | 'startTime'>
+
+const ROOT_CLIENT_SETTINGS: ResolvedLogfireClientSettings = { tags: [] }
+
+function mergeTags(...tagGroups: (readonly string[] | undefined)[]): string[] {
+  return Array.from(new Set(tagGroups.flatMap((tags) => tags ?? [])).values())
+}
+
+function mergeClientSettings(parent: ResolvedLogfireClientSettings, child: LogfireClientSettings): ResolvedLogfireClientSettings {
+  const merged: ResolvedLogfireClientSettings = {
+    tags: mergeTags(parent.tags, child.tags),
+  }
+  const level = child.level ?? parent.level
+  if (level !== undefined) {
+    merged.level = level
+  }
+  return merged
+}
+
+function mergeLogOptions(settings: ResolvedLogfireClientSettings, options: LogOptions | undefined, forcedLevel?: LogFireLevel): LogOptions {
+  const merged: LogOptions = {
+    ...options,
+    tags: mergeTags(settings.tags, options?.tags),
+  }
+  const level = forcedLevel ?? options?.level ?? settings.level
+  if (level !== undefined) {
+    merged.level = level
+  }
+  return merged
+}
 
 function buildLogfireSpanStart(
   msgTemplate: string,
@@ -122,7 +161,13 @@ function isHrTime(value: unknown): value is HrTime {
  * This method does NOT modify the current Context.
  * You need to manually call `span.end()` to finish the span.
  */
-export function startSpan(msgTemplate: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): Span {
+function startSpanWithSettings(
+  settings: ResolvedLogfireClientSettings,
+  msgTemplate: string,
+  attributes: Record<string, unknown> = {},
+  options: LogOptions = {}
+): Span {
+  options = mergeLogOptions(settings, options)
   const spanStart = buildLogfireSpanStart(msgTemplate, attributes, options)
 
   const span = logfireApiConfig.tracer.startSpan(
@@ -134,15 +179,21 @@ export function startSpan(msgTemplate: string, attributes: Record<string, unknow
   return span
 }
 
+export function startSpan(msgTemplate: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): Span {
+  return startSpanWithSettings(ROOT_CLIENT_SETTINGS, msgTemplate, attributes, options)
+}
+
 /**
  * Starts a real span and immediately emits a manual pending-span placeholder
  * for it. The returned real span must still be ended by the caller.
  */
-export function startPendingSpan(
+function startPendingSpanWithSettings(
+  settings: ResolvedLogfireClientSettings,
   msgTemplate: string,
   attributes: Record<string, unknown> = {},
   options: StartPendingSpanOptions = {}
 ): Span {
+  options = mergeLogOptions(settings, options)
   const spanStart = buildLogfireSpanStart(msgTemplate, attributes, options)
   const parentContext = getSpanStartContext(options.parentSpan)
   const realSpan = logfireApiConfig.tracer.startSpan(
@@ -178,6 +229,14 @@ export function startPendingSpan(
   return realSpan
 }
 
+export function startPendingSpan(
+  msgTemplate: string,
+  attributes: Record<string, unknown> = {},
+  options: StartPendingSpanOptions = {}
+): Span {
+  return startPendingSpanWithSettings(ROOT_CLIENT_SETTINGS, msgTemplate, attributes, options)
+}
+
 type SpanCallback<R> = (activeSpan: Span) => R
 type SpanArgsVariant1<R> = [Record<string, unknown>, LogOptions, SpanCallback<R>]
 type SpanArgsVariant2<R> = [
@@ -200,6 +259,14 @@ type SpanArgsVariant2<R> = [
 export function span<R>(msgTemplate: string, options: SpanArgsVariant2<R>[0]): R
 export function span<R>(msgTemplate: string, attributes: Record<string, unknown>, options: LogOptions, callback: (span: Span) => R): R
 export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | SpanArgsVariant2<R>): R {
+  return spanWithSettings(ROOT_CLIENT_SETTINGS, msgTemplate, ...args)
+}
+
+function spanWithSettings<R>(
+  settings: ResolvedLogfireClientSettings,
+  msgTemplate: string,
+  ...args: SpanArgsVariant1<R> | SpanArgsVariant2<R>
+): R {
   let attributes: Record<string, unknown>
   let level: LogFireLevel
   let tags: string[]
@@ -207,18 +274,20 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
   let parentSpan: Span | undefined
   let spanName: string | undefined
   if (args.length === 1) {
+    const options = args[0]
     attributes = args[0].attributes ?? {}
-    level = args[0].level ?? Level.Info
-    tags = args[0].tags ?? []
-    callback = args[0].callback
-    parentSpan = args[0].parentSpan
-    spanName = args[0]._spanName
+    level = options.level ?? settings.level ?? Level.Info
+    tags = mergeTags(settings.tags, options.tags)
+    callback = options.callback
+    parentSpan = options.parentSpan
+    spanName = options._spanName
   } else {
+    const options = mergeLogOptions(settings, args[1])
     attributes = args[0]
-    level = args[1].level ?? Level.Info
-    tags = args[1].tags ?? []
-    parentSpan = args[1].parentSpan
-    spanName = args[1]._spanName
+    level = options.level ?? Level.Info
+    tags = options.tags ?? []
+    parentSpan = options.parentSpan
+    spanName = options._spanName
     callback = args[2]
   }
 
@@ -271,36 +340,45 @@ export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | Span
   )
 }
 
+function logWithSettings(
+  settings: ResolvedLogfireClientSettings,
+  message: string,
+  attributes: Record<string, unknown> = {},
+  options: LogOptions = {}
+): void {
+  startSpanWithSettings(settings, message, attributes, { ...options, log: true }).end()
+}
+
 export function log(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
-  startSpan(message, attributes, { ...options, log: true }).end()
+  logWithSettings(ROOT_CLIENT_SETTINGS, message, attributes, options)
 }
 
 export function debug(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
-  log(message, attributes, { ...options, level: Level.Debug })
+  logWithSettings(ROOT_CLIENT_SETTINGS, message, attributes, { ...options, level: Level.Debug })
 }
 
 export function info(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
-  log(message, attributes, { ...options, level: Level.Info })
+  logWithSettings(ROOT_CLIENT_SETTINGS, message, attributes, { ...options, level: Level.Info })
 }
 
 export function trace(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
-  log(message, attributes, { ...options, level: Level.Trace })
+  logWithSettings(ROOT_CLIENT_SETTINGS, message, attributes, { ...options, level: Level.Trace })
 }
 
 export function error(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
-  log(message, attributes, { ...options, level: Level.Error })
+  logWithSettings(ROOT_CLIENT_SETTINGS, message, attributes, { ...options, level: Level.Error })
 }
 
 export function fatal(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
-  log(message, attributes, { ...options, level: Level.Fatal })
+  logWithSettings(ROOT_CLIENT_SETTINGS, message, attributes, { ...options, level: Level.Fatal })
 }
 
 export function notice(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
-  log(message, attributes, { ...options, level: Level.Notice })
+  logWithSettings(ROOT_CLIENT_SETTINGS, message, attributes, { ...options, level: Level.Notice })
 }
 
 export function warning(message: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): void {
-  log(message, attributes, { ...options, level: Level.Warning })
+  logWithSettings(ROOT_CLIENT_SETTINGS, message, attributes, { ...options, level: Level.Warning })
 }
 
 function recordSpanException(span: Span, thrown: unknown): void {
@@ -322,7 +400,12 @@ function recordSpanException(span: Span, thrown: unknown): void {
  * Captures the error stack trace and message in the respective semantic attributes and sets the correct level and status.
  * Computes a fingerprint for the error to enable issue grouping in the Logfire backend (if errorFingerprinting is enabled).
  */
-export function reportError(message: string, error: Error, extraAttributes: Record<string, unknown> = {}): void {
+function reportErrorWithSettings(
+  settings: ResolvedLogfireClientSettings,
+  message: string,
+  error: Error,
+  extraAttributes: Record<string, unknown> = {}
+): void {
   const attributes: Record<string, unknown> = {
     [ATTR_EXCEPTION_MESSAGE]: error.message,
     [ATTR_EXCEPTION_STACKTRACE]: error.stack,
@@ -333,11 +416,82 @@ export function reportError(message: string, error: Error, extraAttributes: Reco
     attributes[ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY] = computeFingerprint(error)
   }
 
-  const span = startSpan(message, attributes, { level: Level.Error })
+  const span = startSpanWithSettings(settings, message, attributes, { level: Level.Error })
 
   span.recordException(error)
   span.setStatus({ code: SpanStatusCode.ERROR, message: `${error.name}: ${error.message}` })
   span.end()
+}
+
+export function reportError(message: string, error: Error, extraAttributes: Record<string, unknown> = {}): void {
+  reportErrorWithSettings(ROOT_CLIENT_SETTINGS, message, error, extraAttributes)
+}
+
+export interface LogfireClient {
+  debug(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
+  error(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
+  fatal(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
+  info(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
+  log(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
+  notice(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
+  reportError(message: string, error: Error, extraAttributes?: Record<string, unknown>): void
+  span: typeof span
+  startPendingSpan(message: string, attributes?: Record<string, unknown>, options?: StartPendingSpanOptions): Span
+  startSpan(message: string, attributes?: Record<string, unknown>, options?: LogOptions): Span
+  trace(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
+  warning(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
+  withSettings(settings: LogfireClientSettings): LogfireClient
+  withTags(...tags: string[]): LogfireClient
+}
+
+function createLogfireClient(settings: ResolvedLogfireClientSettings): LogfireClient {
+  const scopedSpan = (<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | SpanArgsVariant2<R>) =>
+    spanWithSettings(settings, msgTemplate, ...args)) as typeof span
+
+  return {
+    debug: (message, attributes, options) => {
+      logWithSettings(settings, message, attributes, { ...options, level: Level.Debug })
+    },
+    error: (message, attributes, options) => {
+      logWithSettings(settings, message, attributes, { ...options, level: Level.Error })
+    },
+    fatal: (message, attributes, options) => {
+      logWithSettings(settings, message, attributes, { ...options, level: Level.Fatal })
+    },
+    info: (message, attributes, options) => {
+      logWithSettings(settings, message, attributes, { ...options, level: Level.Info })
+    },
+    log: (message, attributes, options) => {
+      logWithSettings(settings, message, attributes, options)
+    },
+    notice: (message, attributes, options) => {
+      logWithSettings(settings, message, attributes, { ...options, level: Level.Notice })
+    },
+    reportError: (message, error, extraAttributes) => {
+      reportErrorWithSettings(settings, message, error, extraAttributes)
+    },
+    span: scopedSpan,
+    startPendingSpan: (message, attributes, options) => startPendingSpanWithSettings(settings, message, attributes, options),
+    startSpan: (message, attributes, options) => startSpanWithSettings(settings, message, attributes, options),
+    trace: (message, attributes, options) => {
+      logWithSettings(settings, message, attributes, { ...options, level: Level.Trace })
+    },
+    warning: (message, attributes, options) => {
+      logWithSettings(settings, message, attributes, { ...options, level: Level.Warning })
+    },
+    withSettings: (childSettings) => createLogfireClient(mergeClientSettings(settings, childSettings)),
+    withTags: (...tags) => createLogfireClient(mergeClientSettings(settings, { tags })),
+  }
+}
+
+const defaultClient = createLogfireClient(ROOT_CLIENT_SETTINGS)
+
+export function withSettings(settings: LogfireClientSettings): LogfireClient {
+  return defaultClient.withSettings(settings)
+}
+
+export function withTags(...tags: string[]): LogfireClient {
+  return defaultClient.withTags(...tags)
 }
 
 const defaultExport: {
@@ -369,6 +523,8 @@ const defaultExport: {
   startSpan: typeof startSpan
   trace: typeof trace
   warning: typeof warning
+  withSettings: typeof withSettings
+  withTags: typeof withTags
   Level: typeof Level
 } = {
   LogfireAttributeScrubber,
@@ -401,6 +557,8 @@ const defaultExport: {
   startSpan,
   trace,
   warning,
+  withSettings,
+  withTags,
   Level,
 }
 

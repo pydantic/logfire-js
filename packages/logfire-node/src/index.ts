@@ -21,6 +21,8 @@ import {
   trace,
   ULIDGenerator,
   warning,
+  withSettings,
+  withTags,
 } from 'logfire'
 
 import { configure, logfireConfig } from './logfireConfig'
@@ -59,6 +61,8 @@ const defaultExport: {
   startSpan: typeof startSpan
   trace: typeof trace
   warning: typeof warning
+  withSettings: typeof withSettings
+  withTags: typeof withTags
 } = {
   configure,
   configureLogfireApi,
@@ -87,6 +91,8 @@ const defaultExport: {
   trace,
   ULIDGenerator,
   warning,
+  withSettings,
+  withTags,
 }
 
 export default defaultExport

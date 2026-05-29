@@ -4,6 +4,31 @@ From the team behind [Pydantic Validation](https://pydantic.dev/), **Pydantic Lo
 
 Check the [Github Repository README](https://github.com/pydantic/logfire-js) for more information on how to use the SDK.
 
+## Scoped manual clients
+
+Use `withTags()` or `withSettings()` when several manual spans or logs share
+stable defaults:
+
+```ts
+import * as logfire from 'logfire'
+
+const payments = logfire.withTags('payments')
+
+payments.info('Payment authorized {payment_id}', {
+  payment_id: 'pay_123',
+})
+
+await payments.span('Capture payment {payment_id}', {
+  attributes: { payment_id: 'pay_123' },
+  callback: async () => capturePayment('pay_123'),
+})
+```
+
+Scoped clients do not mutate global defaults. Per-call tags are appended after
+scoped tags and duplicates are removed while preserving order. `withSettings()`
+currently supports reusable `tags` and a default `level` for calls such as
+`log()` and spans whose options do not set a level.
+
 ## Manual pending spans
 
 Use `startPendingSpan()` when you want to show a long-running operation as

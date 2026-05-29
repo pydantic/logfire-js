@@ -52,6 +52,8 @@ import {
   trace,
   ULIDGenerator,
   warning,
+  withSettings,
+  withTags,
 } from 'logfire'
 
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
@@ -296,6 +298,8 @@ const defaultExport: {
   startSpan: typeof startSpan
   trace: typeof trace
   warning: typeof warning
+  withSettings: typeof withSettings
+  withTags: typeof withTags
 } = {
   configure,
   configureLogfireApi,
@@ -321,6 +325,8 @@ const defaultExport: {
   trace,
   ULIDGenerator,
   warning,
+  withSettings,
+  withTags,
 }
 
 export default defaultExport

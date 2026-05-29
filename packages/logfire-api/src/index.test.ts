@@ -1,5 +1,6 @@
 import type { Context, Span } from '@opentelemetry/api'
 import { SpanStatusCode, trace } from '@opentelemetry/api'
+import { ATTR_EXCEPTION_MESSAGE } from '@opentelemetry/semantic-conventions'
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test'
 
 import {
@@ -12,7 +13,7 @@ import {
   ATTRIBUTES_TAGS_KEY,
   INVALID_SPAN_ID,
 } from './constants'
-import defaultExport, { info, span, startPendingSpan } from './index'
+import defaultExport, { info, Level, reportError, span, startPendingSpan, withSettings, withTags } from './index'
 import { isPendingSpanSuppressed } from './pendingSpanSuppression'
 
 const sleep = async (ms: number): Promise<void> =>
@@ -274,6 +275,134 @@ describe('span', () => {
     expect(result).toBe(lazyThenable)
     expect(then).not.toHaveBeenCalled()
     expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+})
+
+describe('scoped clients', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.reset()
+  })
+
+  test('withTags applies tags to log helpers', () => {
+    withTags('user', 'db').info('Loaded user {id}', { id: 1 })
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual(['user', 'db'])
+    expect(attributes[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Info)
+    expect(attributes[ATTRIBUTES_SPAN_TYPE_KEY]).toBe('log')
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
+  test('scoped and per-call tags merge with stable deduplication', () => {
+    withTags('a', 'b').info('Tagged event', {}, { tags: ['b', 'c', 'a'] })
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual(['a', 'b', 'c'])
+  })
+
+  test('nested clients accumulate tags and scoped level applies to log()', () => {
+    const scoped = withTags('a', 'b')
+      .withSettings({ level: Level.Warning, tags: ['b', 'c'] })
+      .withTags('c', 'd')
+
+    scoped.log('Nested event', {}, { tags: ['a', 'e'] })
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual(['a', 'b', 'c', 'd', 'e'])
+    expect(attributes[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Warning)
+  })
+
+  test('level-specific helpers override scoped level', () => {
+    withSettings({ level: Level.Warning }).info('Info event')
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Info)
+  })
+
+  test('per-call level overrides scoped level for startSpan()', () => {
+    withSettings({ level: Level.Warning, tags: ['scope'] }).startSpan('Manual span', {}, { level: Level.Error, tags: ['call'] })
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual(['scope', 'call'])
+    expect(attributes[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Error)
+    expect(attributes[ATTRIBUTES_SPAN_TYPE_KEY]).toBe('span')
+  })
+
+  test('scoped settings apply to startPendingSpan() real and pending spans', () => {
+    const startTime: [number, number] = [123, 456]
+    const realSpan = mocks.makeSpan({ startTime })
+    const pendingSpan = mocks.makeSpan({ startTime })
+    mocks.startSpanResults.push(realSpan, pendingSpan)
+
+    withSettings({ level: Level.Warning, tags: ['scope'] }).startPendingSpan('Pending span', {}, { tags: ['call'] })
+
+    const realAttributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    const pendingAttributes = (mocks.tracerMock.startSpan.mock.calls[1]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(realAttributes[ATTRIBUTES_TAGS_KEY]).toEqual(['scope', 'call'])
+    expect(realAttributes[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Warning)
+    expect(pendingAttributes[ATTRIBUTES_TAGS_KEY]).toEqual(['scope', 'call'])
+    expect(pendingAttributes[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Warning)
+    expect(pendingAttributes[ATTRIBUTES_SPAN_TYPE_KEY]).toBe('pending_span')
+    expect(pendingSpan.end).toHaveBeenCalledWith(startTime)
+  })
+
+  test('scoped settings apply to object-style span()', () => {
+    const result = withSettings({ level: Level.Warning, tags: ['scope'] }).span('Scoped active span {id}', {
+      attributes: { id: 1 },
+      callback: () => 'ok',
+      tags: ['call'],
+    })
+
+    expect(result).toBe('ok')
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual(['scope', 'call'])
+    expect(attributes[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Warning)
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
+  test('scoped settings apply to positional span()', () => {
+    const result = withTags('scope').span('Positional active span {id}', { id: 1 }, { tags: ['call'] }, () => 'ok')
+
+    expect(result).toBe('ok')
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual(['scope', 'call'])
+    expect(attributes[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Info)
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
+  test('scoped tags apply to reportError without changing its public arguments', () => {
+    const error = new Error('boom')
+
+    withTags('scope').reportError('Caught error', error, { job: 'sync' })
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual(['scope'])
+    expect(attributes[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Error)
+    expect(attributes[ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY]).toEqual(expect.any(String))
+    expect(attributes[ATTR_EXCEPTION_MESSAGE]).toBe('boom')
+    expect(attributes['job']).toBe('sync')
+    expect(spanMock.recordException).toHaveBeenCalledWith(error)
+  })
+
+  test('top-level and default exports expose scoped client helpers', () => {
+    const defaultWithTags = Object.getOwnPropertyDescriptor(defaultExport, 'withTags')?.value as typeof withTags
+    const defaultWithSettings = Object.getOwnPropertyDescriptor(defaultExport, 'withSettings')?.value as typeof withSettings
+
+    expect(defaultWithTags).toBe(withTags)
+    expect(defaultWithSettings).toBe(withSettings)
+    expect(typeof defaultWithTags('default').info).toBe('function')
+  })
+
+  test('existing reportError export remains source-compatible', () => {
+    const error = new Error('legacy')
+
+    reportError('Legacy error', error, { path: '/users' })
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual([])
+    expect(attributes['path']).toBe('/users')
+    expect(spanMock.recordException).toHaveBeenCalledWith(error)
   })
 })
 
