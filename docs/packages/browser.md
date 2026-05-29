@@ -60,9 +60,7 @@ Report caught errors with `reportError()`:
 
 ```ts
 window.addEventListener('error', (event) => {
-  if (event.error instanceof Error) {
-    logfire.reportError('uncaught browser error', event.error)
-  }
+  logfire.reportError('uncaught browser error', event.error, { filename: event.filename }, { tags: ['browser'] })
 })
 ```
 

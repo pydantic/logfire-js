@@ -29,6 +29,23 @@ scoped tags and duplicates are removed while preserving order. `withSettings()`
 currently supports reusable `tags` and a default `level` for calls such as
 `log()` and spans whose options do not set a level.
 
+## Error reporting
+
+Use `reportError()` from explicit catch blocks. The caught value can be
+`unknown`, matching modern TypeScript catch behavior:
+
+```ts
+try {
+  await syncCustomer()
+} catch (error) {
+  logfire.reportError('Customer sync failed', error, { customer_id: 'cus_123' }, { tags: ['customers'] })
+}
+```
+
+The third argument is always structured attributes. Use the optional fourth
+argument for report options such as `tags` or `parentSpan`. The JavaScript API
+does not include a Python-style `exception()` helper in this first pass.
+
 ## Manual pending spans
 
 Use `startPendingSpan()` when you want to show a long-running operation as

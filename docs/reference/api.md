@@ -16,7 +16,7 @@ Manual tracing and logging:
 - `startPendingSpan(message, attributes?, options?)`
 - `withTags(...tags)` and `withSettings(settings)` for scoped manual API clients
 - `log()`, `trace()`, `debug()`, `info()`, `notice()`, `warning()`, `error()`, `fatal()`
-- `reportError(message, error, extraAttributes?)`
+- `reportError(message, error, extraAttributes?, options?)`
 - `Level`
 
 Configuration helpers and utilities:

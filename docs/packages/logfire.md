@@ -119,13 +119,30 @@ Use `reportError()` when you catch an exception and want it to appear as an erro
 try {
   await syncCustomer()
 } catch (error) {
-  logfire.reportError('customer sync failed', error as Error, {
-    customer_id: 'cus_123',
-  })
+  logfire.reportError('customer sync failed', error, { customer_id: 'cus_123' }, { tags: ['customers'] })
 }
 ```
 
-Runtime packages can enable error fingerprinting so related errors group together in Logfire.
+The caught value can be `unknown`; real `Error` values keep their stack traces
+and can be fingerprinted for grouping. The third argument is always structured
+attributes. Use the optional fourth argument for report options such as `tags`
+or `parentSpan`.
+
+Scoped clients merge their tags with per-call `reportError()` tags:
+
+```ts
+const customers = logfire.withTags('customers')
+
+try {
+  await syncCustomer()
+} catch (error) {
+  customers.reportError('customer sync failed', error, { customer_id: 'cus_123' }, { tags: ['sync'] })
+}
+```
+
+Runtime packages can enable error fingerprinting so related errors group
+together in Logfire. The JavaScript API does not include a Python-style
+`exception()` helper in this first pass; use explicit catch blocks.
 
 ## Subpath APIs
 

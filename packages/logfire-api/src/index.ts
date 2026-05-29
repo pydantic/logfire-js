@@ -82,6 +82,17 @@ export interface LogfireClientSettings {
   tags?: string[]
 }
 
+export interface ReportErrorOptions {
+  /**
+   * Set a span started with `startSpan` as parentSpan to create a child error span.
+   */
+  parentSpan?: Span
+  /**
+   * Tags to add to the error span.
+   */
+  tags?: string[]
+}
+
 interface LogfireSpanStart {
   attributes: Attributes
   name: string
@@ -395,6 +406,55 @@ function recordSpanException(span: Span, thrown: unknown): void {
   }
 }
 
+interface NormalizedReportError {
+  attributes: Record<string, unknown>
+  fingerprintSource?: Error
+  recordExceptionValue: Error | string
+  statusMessage: string
+}
+
+function stringifyThrownValue(thrown: unknown): string {
+  try {
+    return String(thrown)
+  } catch {
+    return 'Unknown error'
+  }
+}
+
+function normalizeReportError(error: unknown): NormalizedReportError {
+  if (error instanceof Error) {
+    return {
+      attributes: {
+        [ATTR_EXCEPTION_MESSAGE]: error.message,
+        [ATTR_EXCEPTION_STACKTRACE]: error.stack,
+      },
+      fingerprintSource: error,
+      recordExceptionValue: error,
+      statusMessage: `${error.name}: ${error.message}`,
+    }
+  }
+
+  const errorMessage = stringifyThrownValue(error)
+  return {
+    attributes: {
+      [ATTR_EXCEPTION_MESSAGE]: errorMessage,
+    },
+    recordExceptionValue: errorMessage,
+    statusMessage: `Error: ${errorMessage}`,
+  }
+}
+
+function reportErrorOptionsToLogOptions(options: ReportErrorOptions | undefined): LogOptions {
+  const logOptions: LogOptions = { level: Level.Error }
+  if (options?.parentSpan !== undefined) {
+    logOptions.parentSpan = options.parentSpan
+  }
+  if (options?.tags !== undefined) {
+    logOptions.tags = options.tags
+  }
+  return logOptions
+}
+
 /**
  * Use this method to report an error to Logfire.
  * Captures the error stack trace and message in the respective semantic attributes and sets the correct level and status.
@@ -403,28 +463,34 @@ function recordSpanException(span: Span, thrown: unknown): void {
 function reportErrorWithSettings(
   settings: ResolvedLogfireClientSettings,
   message: string,
-  error: Error,
-  extraAttributes: Record<string, unknown> = {}
+  error: unknown,
+  extraAttributes: Record<string, unknown> = {},
+  options?: ReportErrorOptions
 ): void {
+  const normalized = normalizeReportError(error)
   const attributes: Record<string, unknown> = {
-    [ATTR_EXCEPTION_MESSAGE]: error.message,
-    [ATTR_EXCEPTION_STACKTRACE]: error.stack,
+    ...normalized.attributes,
     ...extraAttributes,
   }
 
-  if (logfireApiConfig.enableErrorFingerprinting) {
-    attributes[ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY] = computeFingerprint(error)
+  if (logfireApiConfig.enableErrorFingerprinting && normalized.fingerprintSource !== undefined) {
+    attributes[ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY] = computeFingerprint(normalized.fingerprintSource)
   }
 
-  const span = startSpanWithSettings(settings, message, attributes, { level: Level.Error })
+  const span = startSpanWithSettings(settings, message, attributes, reportErrorOptionsToLogOptions(options))
 
-  span.recordException(error)
-  span.setStatus({ code: SpanStatusCode.ERROR, message: `${error.name}: ${error.message}` })
+  span.recordException(normalized.recordExceptionValue)
+  span.setStatus({ code: SpanStatusCode.ERROR, message: normalized.statusMessage })
   span.end()
 }
 
-export function reportError(message: string, error: Error, extraAttributes: Record<string, unknown> = {}): void {
-  reportErrorWithSettings(ROOT_CLIENT_SETTINGS, message, error, extraAttributes)
+export function reportError(
+  message: string,
+  error: unknown,
+  extraAttributes: Record<string, unknown> = {},
+  options?: ReportErrorOptions
+): void {
+  reportErrorWithSettings(ROOT_CLIENT_SETTINGS, message, error, extraAttributes, options)
 }
 
 export interface LogfireClient {
@@ -434,7 +500,7 @@ export interface LogfireClient {
   info(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
   log(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
   notice(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
-  reportError(message: string, error: Error, extraAttributes?: Record<string, unknown>): void
+  reportError(message: string, error: unknown, extraAttributes?: Record<string, unknown>, options?: ReportErrorOptions): void
   span: typeof span
   startPendingSpan(message: string, attributes?: Record<string, unknown>, options?: StartPendingSpanOptions): Span
   startSpan(message: string, attributes?: Record<string, unknown>, options?: LogOptions): Span
@@ -467,8 +533,8 @@ function createLogfireClient(settings: ResolvedLogfireClientSettings): LogfireCl
     notice: (message, attributes, options) => {
       logWithSettings(settings, message, attributes, { ...options, level: Level.Notice })
     },
-    reportError: (message, error, extraAttributes) => {
-      reportErrorWithSettings(settings, message, error, extraAttributes)
+    reportError: (message, error, extraAttributes, options) => {
+      reportErrorWithSettings(settings, message, error, extraAttributes, options)
     },
     span: scopedSpan,
     startPendingSpan: (message, attributes, options) => startPendingSpanWithSettings(settings, message, attributes, options),

@@ -1,6 +1,6 @@
 import type { Context, Span } from '@opentelemetry/api'
 import { SpanStatusCode, trace } from '@opentelemetry/api'
-import { ATTR_EXCEPTION_MESSAGE } from '@opentelemetry/semantic-conventions'
+import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test'
 
 import {
@@ -278,6 +278,82 @@ describe('span', () => {
   })
 })
 
+describe('reportError', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.reset()
+  })
+
+  test('preserves legacy attributes argument and error behavior', () => {
+    const error = new Error('legacy')
+
+    reportError('Legacy error', error, { path: '/users' })
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual([])
+    expect(attributes[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Error)
+    expect(attributes[ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY]).toEqual(expect.any(String))
+    expect(attributes[ATTR_EXCEPTION_MESSAGE]).toBe('legacy')
+    expect(attributes[ATTR_EXCEPTION_STACKTRACE]).toBe(error.stack)
+    expect(attributes['path']).toBe('/users')
+    expect(spanMock.recordException).toHaveBeenCalledWith(error)
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: legacy' })
+  })
+
+  test('applies fourth-argument tags', () => {
+    reportError('Tagged error', new Error('tagged'), { path: '/users' }, { tags: ['api', 'db'] })
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual(['api', 'db'])
+    expect(attributes['path']).toBe('/users')
+  })
+
+  test('uses fourth-argument parentSpan', () => {
+    const parentSpan = mocks.makeSpan({ startTime: [100, 0] })
+
+    reportError('Child error', new Error('child'), {}, { parentSpan: parentSpan as unknown as Span })
+
+    expect(mocks.setSpan).toHaveBeenCalledWith(mocks.activeContext, parentSpan)
+    expect(mocks.tracerMock.startSpan.mock.calls[0]?.[2]).toBe(mocks.setSpan.mock.results[0]?.value)
+  })
+
+  test('accepts a thrown string without fingerprinting', () => {
+    reportError('String error', 'oops', { path: '/users' })
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTR_EXCEPTION_MESSAGE]).toBe('oops')
+    expect(attributes).not.toHaveProperty(ATTR_EXCEPTION_STACKTRACE)
+    expect(attributes).not.toHaveProperty(ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY)
+    expect(attributes['path']).toBe('/users')
+    expect(spanMock.recordException).toHaveBeenCalledWith('oops')
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: oops' })
+  })
+
+  test('accepts null, undefined, and plain object values without throwing', () => {
+    const values = [null, undefined, { code: 'E_OBJECT' }]
+
+    for (const value of values) {
+      expect(() => {
+        reportError('Unknown error', value)
+      }).not.toThrow()
+    }
+
+    expect(mocks.tracerMock.startSpan).toHaveBeenCalledTimes(3)
+    expect(spanMock.recordException).toHaveBeenNthCalledWith(1, 'null')
+    expect(spanMock.recordException).toHaveBeenNthCalledWith(2, 'undefined')
+    expect(spanMock.recordException).toHaveBeenNthCalledWith(3, '[object Object]')
+  })
+
+  test('default export exposes the updated reportError function', () => {
+    const defaultReportError = Object.getOwnPropertyDescriptor(defaultExport, 'reportError')?.value as typeof reportError
+
+    expect(defaultReportError).toBe(reportError)
+    expect(() => {
+      defaultReportError('Default export error', 'oops')
+    }).not.toThrow()
+  })
+})
+
 describe('scoped clients', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -385,6 +461,16 @@ describe('scoped clients', () => {
     expect(spanMock.recordException).toHaveBeenCalledWith(error)
   })
 
+  test('scoped reportError tags merge with fourth-argument tags and keep error level', () => {
+    const error = new Error('boom')
+
+    withSettings({ level: Level.Warning, tags: ['scope', 'shared'] }).reportError('Caught error', error, {}, { tags: ['shared', 'call'] })
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual(['scope', 'shared', 'call'])
+    expect(attributes[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Error)
+  })
+
   test('top-level and default exports expose scoped client helpers', () => {
     const defaultWithTags = Object.getOwnPropertyDescriptor(defaultExport, 'withTags')?.value as typeof withTags
     const defaultWithSettings = Object.getOwnPropertyDescriptor(defaultExport, 'withSettings')?.value as typeof withSettings
@@ -392,17 +478,6 @@ describe('scoped clients', () => {
     expect(defaultWithTags).toBe(withTags)
     expect(defaultWithSettings).toBe(withSettings)
     expect(typeof defaultWithTags('default').info).toBe('function')
-  })
-
-  test('existing reportError export remains source-compatible', () => {
-    const error = new Error('legacy')
-
-    reportError('Legacy error', error, { path: '/users' })
-
-    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
-    expect(attributes[ATTRIBUTES_TAGS_KEY]).toEqual([])
-    expect(attributes['path']).toBe('/users')
-    expect(spanMock.recordException).toHaveBeenCalledWith(error)
   })
 })
 
