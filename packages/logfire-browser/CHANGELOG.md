@@ -1,5 +1,16 @@
 # @pydantic/logfire-browser
 
+## 0.15.3
+
+### Patch Changes
+
+- db97858: Make Browser cleanup safe to call repeatedly by sharing one cleanup promise, preserving cleanup order, and avoiding hidden retries after failure.
+- db97858: Add a shared `startPendingSpan()` helper for explicit pending placeholders without enabling automatic Browser pending spans.
+- Updated dependencies [db97858]
+- Updated dependencies [db97858]
+- Updated dependencies [db97858]
+  - logfire@0.16.0
+
 ## 0.15.2
 
 ### Patch Changes
