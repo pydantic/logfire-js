@@ -43,6 +43,10 @@ export interface LogfireShutdownOptions extends LogfireFlushOptions {
   flush?: boolean
 }
 
+interface ShutdownRuntimeOptions extends LogfireShutdownOptions {
+  shutdownVariables?: boolean
+}
+
 interface ProcessListeners {
   beforeExit: () => void
   SIGTERM: () => void
@@ -180,7 +184,7 @@ async function handleSIGTERM(runtime: ActiveRuntime, listener: () => void): Prom
   }
 }
 
-async function shutdownRuntime(runtime: ActiveRuntime, options: LogfireShutdownOptions = {}): Promise<void> {
+async function shutdownRuntime(runtime: ActiveRuntime, options: ShutdownRuntimeOptions = {}): Promise<void> {
   if (runtime.shutdownPromise !== undefined) {
     return runtime.shutdownPromise
   }
@@ -199,7 +203,11 @@ async function shutdownRuntime(runtime: ActiveRuntime, options: LogfireShutdownO
         }
       }
 
-      const shutdownPromise = Promise.all([runtime.sdk.shutdown(), shutdownVariables()]).then(() => undefined)
+      const shutdownOperations = [runtime.sdk.shutdown()]
+      if (options.shutdownVariables !== false) {
+        shutdownOperations.push(shutdownVariables())
+      }
+      const shutdownPromise = Promise.all(shutdownOperations).then(() => undefined)
       shutdownPromise.catch(() => undefined)
       try {
         await withDeadline('shutdown', deadline, shutdownPromise)
@@ -257,7 +265,7 @@ export function start(): void {
   if (previousRuntime !== undefined) {
     activeRuntime = undefined
     removeProcessListeners(previousRuntime)
-    shutdownRuntime(previousRuntime).catch((e: unknown) => {
+    shutdownRuntime(previousRuntime, { shutdownVariables: false }).catch((e: unknown) => {
       diag.warn('logfire SDK: error shutting down previous SDK', e)
     })
   }

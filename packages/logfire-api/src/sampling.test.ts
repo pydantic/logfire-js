@@ -330,6 +330,31 @@ describe('TailSamplingProcessor', () => {
     expect(getPendingSpanNames(downstream.calls)).toEqual(['root', 'child a', 'child b'])
   })
 
+  test('emits pending spans when a duration-threshold tail callback accepts a deferred trace', () => {
+    const downstream = makeProcessor()
+    const tail = levelOrDuration({ durationThreshold: 2.0 }).tail
+    if (tail === undefined) {
+      throw new Error('expected tail sampler')
+    }
+    const processor = new TailSamplingProcessor(downstream, tail, {
+      deferredProcessor: new PendingSpanProcessor(downstream, { idGenerator: makeIdGenerator() }),
+    })
+
+    const root = makeSpan({ attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'span' }, name: 'root', startTime: [1000, 0] })
+    processor.onStart(root, ROOT_CONTEXT)
+
+    const child = makeSpan({
+      attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'span' },
+      name: 'slow child',
+      parentSpanContext: root.spanContext(),
+      spanId: 'child00000000000',
+      startTime: [1003, 0],
+    })
+    processor.onStart(child, ROOT_CONTEXT)
+
+    expect(getPendingSpanNames(downstream.calls)).toEqual(['root', 'slow child'])
+  })
+
   test('emits pending spans for later children after acceptance from onEnd', () => {
     const downstream = makeProcessor()
     const processor = new TailSamplingProcessor(downstream, (info) => (info.event === 'end' && info.span.name === 'child a' ? 1.0 : 0.0), {

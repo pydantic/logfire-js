@@ -25,8 +25,8 @@ The helper returns the real span for you to end and emits one
 `logfire.span_type = "pending_span"` placeholder at start time. Runtimes that
 also install automatic pending-span processing, such as Node.js, suppress the
 automatic placeholder for this one real span so the manual placeholder is not
-duplicated. That suppression expects `startPendingSpan()` and
-`PendingSpanProcessor` to come from the same installed `logfire` package copy.
+duplicated. The suppression marker is internal to `logfire` and is shared by
+the hardcoded OpenTelemetry context key.
 
 ## Evaluations
 

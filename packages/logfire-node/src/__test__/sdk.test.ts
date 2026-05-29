@@ -1,15 +1,29 @@
 /* eslint-disable import/first */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 import type { MockInstance } from 'vite-plus/test'
-import type * as LogfireModule from 'logfire'
 import type { HrTime } from '@opentelemetry/api'
 import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
 import { diag, ROOT_CONTEXT, SpanKind, SpanStatusCode, TraceFlags } from '@opentelemetry/api'
 
 const mocks = vi.hoisted(() => {
+  interface MockMetricReader {
+    forceFlush: () => Promise<void>
+    id: number
+    shutdown: () => Promise<void>
+  }
+
+  interface MockVariableState {
+    apiKey: unknown
+    baseUrl: unknown
+    providerConfigured: boolean
+    resourceAttributes: Record<string, unknown>
+  }
+
   const nodeSdkInstances: MockNodeSDK[] = []
   const configureVariablesCalls: unknown[][] = []
+  const createdMetricReaders: MockMetricReader[] = []
+  const metricReaderCallCounts = new Map<number, { forceFlush: number; shutdown: number }>()
   const shutdownPromises: Promise<void>[] = []
   let evalForceFlushCalls = 0
   let evalShutdownCalls = 0
@@ -24,6 +38,7 @@ const mocks = vi.hoisted(() => {
   const traceOnEndSpans: unknown[] = []
   const traceOnStartSpans: unknown[] = []
   let traceShutdownCalls = 0
+  let variableState = makeEmptyVariableState()
 
   const logProcessor = {
     forceFlush: async () => {
@@ -96,23 +111,60 @@ const mocks = vi.hoisted(() => {
     }
   }
 
-  function createMetricReader() {
-    const id = ++metricReaderId
+  function makeEmptyVariableState(): MockVariableState {
     return {
+      apiKey: undefined,
+      baseUrl: undefined,
+      providerConfigured: false,
+      resourceAttributes: {},
+    }
+  }
+
+  function toRecord(value: unknown): Record<string, unknown> {
+    return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+  }
+
+  function configureVariables(options: unknown, runtime: unknown) {
+    configureVariablesCalls.push([options, runtime])
+    const runtimeOptions = toRecord(runtime)
+    variableState = {
+      apiKey: runtimeOptions['apiKey'],
+      baseUrl: runtimeOptions['baseUrl'],
+      providerConfigured: options !== false,
+      resourceAttributes: { ...toRecord(runtimeOptions['resourceAttributes']) },
+    }
+  }
+
+  function createMetricReader(): MockMetricReader {
+    const id = ++metricReaderId
+    metricReaderCallCounts.set(id, { forceFlush: 0, shutdown: 0 })
+    const reader = {
       id,
       forceFlush: async () => {
         metricReaderForceFlushCalls++
+        const counts = metricReaderCallCounts.get(id)
+        if (counts !== undefined) {
+          counts.forceFlush++
+        }
         return Promise.resolve()
       },
       shutdown: async () => {
         metricReaderShutdownCalls++
+        const counts = metricReaderCallCounts.get(id)
+        if (counts !== undefined) {
+          counts.shutdown++
+        }
         return Promise.resolve()
       },
     }
+    createdMetricReaders.push(reader)
+    return reader
   }
 
   return {
+    configureVariables,
     configureVariablesCalls,
+    createdMetricReaders,
     createMetricReader,
     evalProcessor,
     get evalForceFlushCalls() {
@@ -134,14 +186,17 @@ const mocks = vi.hoisted(() => {
     get metricReaderShutdownCalls() {
       return metricReaderShutdownCalls
     },
+    metricReaderCallCounts,
     MockNodeSDK,
     nodeSdkInstances,
     reset() {
       configureVariablesCalls.length = 0
+      createdMetricReaders.length = 0
       evalForceFlushCalls = 0
       evalShutdownCalls = 0
       logForceFlushCalls = 0
       logShutdownCalls = 0
+      metricReaderCallCounts.clear()
       metricReaderForceFlushCalls = 0
       metricReaderId = 0
       metricReaderShutdownCalls = 0
@@ -152,6 +207,7 @@ const mocks = vi.hoisted(() => {
       traceOnEndSpans.length = 0
       traceOnStartSpans.length = 0
       traceShutdownCalls = 0
+      variableState = makeEmptyVariableState()
       nodeSdkInstances.length = 0
     },
     queueShutdownPromise(promise: Promise<void>) {
@@ -163,6 +219,7 @@ const mocks = vi.hoisted(() => {
     },
     shutdownVariables: async () => {
       shutdownVariablesCalls++
+      variableState = makeEmptyVariableState()
       return Promise.resolve()
     },
     get traceForceFlushCalls() {
@@ -174,6 +231,9 @@ const mocks = vi.hoisted(() => {
       return traceShutdownCalls
     },
     traceProcessor,
+    get variableState() {
+      return variableState
+    },
   }
 })
 
@@ -185,13 +245,19 @@ vi.mock('@opentelemetry/sdk-node', () => ({
   NodeSDK: mocks.MockNodeSDK,
 }))
 
-vi.mock('logfire', async (importOriginal) => {
-  const actual = await importOriginal<typeof LogfireModule>()
+vi.mock('logfire', async () => {
+  const [{ PendingSpanProcessor }, { TailSamplingProcessor }, { ULIDGenerator }] = await Promise.all([
+    import('../../../logfire-api/src/PendingSpanProcessor'),
+    import('../../../logfire-api/src/TailSamplingProcessor'),
+    import('../../../logfire-api/src/ULIDGenerator'),
+  ])
   return {
-    ...actual,
+    PendingSpanProcessor,
     reportError: (...args: unknown[]) => {
       mocks.reportErrorCalls.push(args)
     },
+    TailSamplingProcessor,
+    ULIDGenerator,
   }
 })
 
@@ -201,7 +267,7 @@ vi.mock('logfire/evals', () => ({
 
 vi.mock('logfire/vars', () => ({
   configureVariables: (...args: unknown[]) => {
-    mocks.configureVariablesCalls.push(args)
+    mocks.configureVariables(args[0], args[1])
   },
   shutdownVariables: async () => mocks.shutdownVariables(),
 }))
@@ -279,6 +345,18 @@ function getLatestSpanProcessors(): SpanProcessor[] {
   return (instance.options as { spanProcessors: SpanProcessor[] }).spanProcessors
 }
 
+function getLatestMetricReaders(): { forceFlush: () => Promise<void>; id?: number; shutdown: () => Promise<void> }[] {
+  const instance = mocks.nodeSdkInstances[mocks.nodeSdkInstances.length - 1]
+  expect(instance).toBeDefined()
+  if (instance === undefined) {
+    throw new Error('expected NodeSDK mock instance')
+  }
+  return (
+    (instance.options as { metricReaders?: { forceFlush: () => Promise<void>; id?: number; shutdown: () => Promise<void> }[] })
+      .metricReaders ?? []
+  )
+}
+
 function makeReadableSpan(): Span {
   const traceId = '11111111111111111111111111111111'
   const spanId = '2222222222222222'
@@ -354,6 +432,12 @@ describe('sdk lifecycle helpers', () => {
 
   it('forceFlush flushes trace, eval, log, and metric processors', async () => {
     start()
+    const metricReader = mocks.createdMetricReaders[0]
+    expect(metricReader).toBeDefined()
+    if (metricReader === undefined) {
+      throw new Error('expected metric reader')
+    }
+    expect(getLatestMetricReaders()[0]).toBe(metricReader)
 
     await forceFlush()
 
@@ -361,6 +445,7 @@ describe('sdk lifecycle helpers', () => {
     expect(mocks.evalForceFlushCalls).toBe(1)
     expect(mocks.logForceFlushCalls).toBe(1)
     expect(mocks.metricReaderForceFlushCalls).toBe(1)
+    expect(mocks.metricReaderCallCounts.get(metricReader.id)).toEqual({ forceFlush: 1, shutdown: 0 })
   })
 
   it('installs pending-span support in the non-tail-sampled path', () => {
@@ -462,17 +547,25 @@ describe('sdk lifecycle helpers', () => {
     start()
     const instance = mocks.nodeSdkInstances[mocks.nodeSdkInstances.length - 1]
     expect(instance?.options.metricReaders).toHaveLength(2)
+    const defaultMetricReader = mocks.createdMetricReaders[0]
+    expect(defaultMetricReader).toBeDefined()
+    if (defaultMetricReader === undefined) {
+      throw new Error('expected default metric reader')
+    }
+    expect(instance?.options.metricReaders?.[0]).toBe(defaultMetricReader)
     expect(instance?.options.metricReaders).toContain(additionalMetricReader)
 
     await forceFlush()
 
     expect(mocks.metricReaderForceFlushCalls).toBe(1)
     expect(additionalMetricForceFlushCalls).toBe(1)
+    expect(mocks.metricReaderCallCounts.get(defaultMetricReader.id)).toEqual({ forceFlush: 1, shutdown: 0 })
 
     await shutdown({ flush: false })
 
     expect(mocks.metricReaderShutdownCalls).toBe(1)
     expect(additionalMetricShutdownCalls).toBe(1)
+    expect(mocks.metricReaderCallCounts.get(defaultMetricReader.id)).toEqual({ forceFlush: 1, shutdown: 1 })
   })
 
   it('shutdown is idempotent and clears active processors', async () => {
@@ -624,6 +717,13 @@ describe('sdk lifecycle helpers', () => {
     }
     Object.assign(logfireConfig, {
       additionalSpanProcessors: [newRuntimeAdditionalProcessor],
+      apiKey: 'new-api-key',
+      resourceAttributes: { plan: 'pro' },
+      variables: {
+        config: { variables: {} },
+        instrument: false,
+      },
+      variablesBaseUrl: 'https://variables.example.com',
     })
     start()
 
@@ -632,6 +732,13 @@ describe('sdk lifecycle helpers', () => {
     await forceFlush()
 
     expect(newRuntimeAdditionalForceFlushCalls).toBe(1)
+    expect(mocks.shutdownVariablesCalls).toBe(0)
+    expect(mocks.variableState).toMatchObject({
+      apiKey: 'new-api-key',
+      baseUrl: 'https://variables.example.com',
+      providerConfigured: true,
+    })
+    expect(mocks.variableState.resourceAttributes).toMatchObject({ plan: 'pro' })
   })
 
   it('does not install a SIGINT listener', () => {
@@ -859,6 +966,22 @@ describe('sdk lifecycle helpers', () => {
     expect(mocks.reportErrorCalls).toHaveLength(1)
     expect(mocks.reportErrorCalls[0]?.[0]).toBe('boom')
     expect(mocks.reportErrorCalls[0]?.[1]).toBeInstanceOf(Error)
+  })
+
+  it('uncaughtExceptionMonitor swallows synchronous handler failures and logs them', () => {
+    const handlerError = new Error('diag failed')
+    start()
+    const warnSpy = vi.spyOn(diag, 'warn')
+    vi.spyOn(diag, 'info').mockImplementation(() => {
+      throw handlerError
+    })
+
+    const listener = getLatestProcessListener('uncaughtExceptionMonitor')
+    expect(() => {
+      listener(new Error('boom'))
+    }).not.toThrow()
+
+    expect(warnSpy).toHaveBeenCalledWith('logfire SDK: error handling uncaughtExceptionMonitor', handlerError)
   })
 
   it('adds configured resource attributes to the NodeSDK resource', () => {

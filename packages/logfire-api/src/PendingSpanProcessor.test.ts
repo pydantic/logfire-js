@@ -49,6 +49,7 @@ function makeSpan(
     startTime?: HrTime
     traceFlags?: number
     traceId?: string
+    traceState?: SpanContext['traceState']
   } = {}
 ): Span {
   const traceId = options.traceId ?? TRACE_ID
@@ -57,6 +58,7 @@ function makeSpan(
     spanId: options.spanId ?? SPAN_ID,
     traceFlags: options.traceFlags ?? TraceFlags.SAMPLED,
     traceId,
+    ...(options.traceState !== undefined ? { traceState: options.traceState } : {}),
   }
   const startTime = options.startTime ?? ([123, 456] as HrTime)
   const links = options.links ?? [
@@ -109,8 +111,14 @@ describe('PendingSpanProcessor', () => {
       traceFlags: TraceFlags.SAMPLED,
       traceId: TRACE_ID,
     }
+    const traceState: NonNullable<SpanContext['traceState']> = {
+      get: () => 'value',
+      serialize: () => 'vendor=value',
+      set: () => traceState,
+      unset: () => traceState,
+    }
     const startTime: HrTime = [1000, 500]
-    const realSpan = makeSpan({ parentSpanContext, startTime, traceFlags: TraceFlags.SAMPLED })
+    const realSpan = makeSpan({ parentSpanContext, startTime, traceFlags: TraceFlags.SAMPLED, traceState })
 
     processor.onStart(realSpan, ROOT_CONTEXT)
 
@@ -129,12 +137,14 @@ describe('PendingSpanProcessor', () => {
     expect(pendingSpan.startTime).toBe(startTime)
     expect(pendingSpan.endTime).toBe(startTime)
     expect(pendingSpan.duration).toEqual([0, 0])
+    expect(pendingSpan.ended).toBe(true)
     expect(pendingSpan.parentSpanContext).toEqual(realSpan.spanContext())
     expect(pendingSpan.spanContext()).toEqual({
       isRemote: false,
       spanId: PENDING_SPAN_ID,
       traceFlags: TraceFlags.SAMPLED,
       traceId: TRACE_ID,
+      traceState,
     })
     expect(pendingSpan.attributes).toEqual({
       ...realSpan.attributes,
@@ -218,6 +228,24 @@ describe('PendingSpanProcessor', () => {
       ROOT_CONTEXT
     )
     expect(wrapped.onEnd).toHaveBeenCalledTimes(1)
+
+    processor.onStart(
+      makeSpan({
+        attributes: { [ATTRIBUTES_SAMPLE_RATE_KEY]: 0.5, [ATTRIBUTES_SPAN_TYPE_KEY]: 'span' },
+        traceId: '80000000000000000000000000000000',
+      }),
+      ROOT_CONTEXT
+    )
+    expect(wrapped.onEnd).toHaveBeenCalledTimes(1)
+
+    processor.onStart(
+      makeSpan({
+        attributes: { [ATTRIBUTES_SAMPLE_RATE_KEY]: 0.5, [ATTRIBUTES_SPAN_TYPE_KEY]: 'span' },
+        traceId: '7fffffff000000000000000000000000',
+      }),
+      ROOT_CONTEXT
+    )
+    expect(wrapped.onEnd).toHaveBeenCalledTimes(2)
   })
 
   test('does not forward final spans or own lifecycle calls', async () => {

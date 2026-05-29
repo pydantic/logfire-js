@@ -10,6 +10,7 @@ import {
   ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY,
   ATTRIBUTES_SPAN_TYPE_KEY,
   ATTRIBUTES_TAGS_KEY,
+  INVALID_SPAN_ID,
 } from './constants'
 import defaultExport, { info, span, startPendingSpan } from './index'
 import { isPendingSpanSuppressed } from './pendingSpanSuppression'
@@ -113,7 +114,7 @@ vi.mock('@opentelemetry/api', () => {
       active: vi.fn<() => unknown>(() => mocks.activeContext),
       with: mocks.contextWith,
     },
-    createContextKey: (description: string) => Symbol(description),
+    createContextKey: (description: string) => Symbol.for(description),
     SpanStatusCode: { ERROR: 2 },
     trace: {
       getTracer: vi.fn<() => typeof mocks.tracerMock>(() => mocks.tracerMock),
@@ -348,6 +349,25 @@ describe('startPendingSpan', () => {
 
     expect(result).toBe(realSpan)
     expect(mocks.tracerMock.startSpan).toHaveBeenCalledTimes(1)
+  })
+
+  test('records an all-zero pending parent ID for root pending spans', () => {
+    const startTime: [number, number] = [123, 456]
+    const realSpan = mocks.makeSpan({ startTime })
+    const pendingSpan = mocks.makeSpan({ startTime })
+    mocks.startSpanResults.push(realSpan, pendingSpan)
+
+    startPendingSpan('load')
+
+    const pendingStartCall = mocks.tracerMock.startSpan.mock.calls[1]
+    expect(pendingStartCall?.[1]).toMatchObject({
+      attributes: {
+        [ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY]: INVALID_SPAN_ID,
+        [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span',
+      },
+      startTime,
+    })
+    expect(pendingSpan.end).toHaveBeenCalledWith(startTime)
   })
 
   test('supports parentSpan and _spanName options', () => {
