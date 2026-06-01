@@ -33,6 +33,12 @@ logfire.configure({
 
 The write token is read from `LOGFIRE_TOKEN` unless you pass `token`.
 
+Service metadata can be configured in code, with Logfire-specific environment
+variables, or with standard OpenTelemetry service variables. Precedence is
+`configure()` options, then `LOGFIRE_SERVICE_NAME` /
+`LOGFIRE_SERVICE_VERSION`, then `OTEL_SERVICE_NAME` /
+`OTEL_SERVICE_VERSION`.
+
 For rotating proxy or OAuth credentials, pass a token provider. The provider is
 resolved by the OpenTelemetry exporters when telemetry is exported, so
 `configure()` remains synchronous:

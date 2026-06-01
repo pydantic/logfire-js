@@ -33,6 +33,17 @@ LOGFIRE_SERVICE_VERSION=1.0.0
 LOGFIRE_ENVIRONMENT=production
 ```
 
+Node.js also accepts standard OpenTelemetry service metadata when the
+Logfire-specific variables are omitted:
+
+```bash
+OTEL_SERVICE_NAME=checkout-api
+OTEL_SERVICE_VERSION=1.0.0
+```
+
+Precedence is `configure()` options, then `LOGFIRE_*` environment variables,
+then `OTEL_*` environment variables.
+
 ## Tokens
 
 Node.js and Cloudflare read `LOGFIRE_TOKEN` by default. Browser code must not receive the token; use a backend proxy and configure `traceUrl` instead.

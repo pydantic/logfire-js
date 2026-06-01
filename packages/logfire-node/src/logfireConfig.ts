@@ -140,12 +140,12 @@ export interface LogfireConfigOptions {
   sendToLogfire?: 'if-token-present' | boolean
   /**
    * Name of this service.
-   * Defaults to the `LOGFIRE_SERVICE_NAME` environment variable.
+   * Defaults to the `LOGFIRE_SERVICE_NAME` environment variable, then `OTEL_SERVICE_NAME`.
    */
   serviceName?: string
   /**
    * Version of this service.
-   * Defaults to the `LOGFIRE_SERVICE_VERSION` environment variable.
+   * Defaults to the `LOGFIRE_SERVICE_VERSION` environment variable, then `OTEL_SERVICE_VERSION`.
    */
   serviceVersion?: string
   /**
@@ -228,8 +228,8 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   resourceAttributes: {},
   sampling: undefined,
   sendToLogfire: false,
-  serviceName: process.env['LOGFIRE_SERVICE_NAME'],
-  serviceVersion: process.env['LOGFIRE_SERVICE_VERSION'],
+  serviceName: process.env['LOGFIRE_SERVICE_NAME'] ?? process.env['OTEL_SERVICE_NAME'],
+  serviceVersion: process.env['LOGFIRE_SERVICE_VERSION'] ?? process.env['OTEL_SERVICE_VERSION'],
   token: '',
   traceExporterUrl: '',
   variables: undefined,
@@ -287,8 +287,8 @@ export function configure(config: LogfireConfigOptions = {}): void {
   const sendToLogfire = resolveSendToLogfire(cnf.sendToLogfire, token)
   const baseUrl = resolveBaseUrl(env, cnf.advanced?.baseUrl, token, sendToLogfire)
   const deploymentEnvironment = cnf.environment ?? env['LOGFIRE_ENVIRONMENT']
-  const serviceName = cnf.serviceName ?? env['LOGFIRE_SERVICE_NAME']
-  const serviceVersion = cnf.serviceVersion ?? env['LOGFIRE_SERVICE_VERSION']
+  const serviceName = cnf.serviceName ?? env['LOGFIRE_SERVICE_NAME'] ?? env['OTEL_SERVICE_NAME']
+  const serviceVersion = cnf.serviceVersion ?? env['LOGFIRE_SERVICE_VERSION'] ?? env['OTEL_SERVICE_VERSION']
   const variablesBaseUrl =
     apiKey !== undefined && apiKey !== '' ? logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, apiKey) : cnf.advanced?.baseUrl
   if (requiresRemoteVariables(cnf.variables) && (apiKey === undefined || apiKey === '')) {

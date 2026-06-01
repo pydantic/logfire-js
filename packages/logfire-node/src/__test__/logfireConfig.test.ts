@@ -15,6 +15,10 @@ describe('logfire config', () => {
   const originalConsole = process.env['LOGFIRE_CONSOLE']
   const originalMinLevel = process.env['LOGFIRE_MIN_LEVEL']
   const originalSendToLogfire = process.env['LOGFIRE_SEND_TO_LOGFIRE']
+  const originalLogfireServiceName = process.env['LOGFIRE_SERVICE_NAME']
+  const originalLogfireServiceVersion = process.env['LOGFIRE_SERVICE_VERSION']
+  const originalOtelServiceName = process.env['OTEL_SERVICE_NAME']
+  const originalOtelServiceVersion = process.env['OTEL_SERVICE_VERSION']
   const originalToken = process.env['LOGFIRE_TOKEN']
 
   beforeEach(async () => {
@@ -23,6 +27,10 @@ describe('logfire config', () => {
     delete process.env['LOGFIRE_CONSOLE']
     delete process.env['LOGFIRE_MIN_LEVEL']
     delete process.env['LOGFIRE_SEND_TO_LOGFIRE']
+    delete process.env['LOGFIRE_SERVICE_NAME']
+    delete process.env['LOGFIRE_SERVICE_VERSION']
+    delete process.env['OTEL_SERVICE_NAME']
+    delete process.env['OTEL_SERVICE_VERSION']
     delete process.env['LOGFIRE_TOKEN']
     configureLogfireApi({ baggage: { spanAttributes: [] }, minLevel: null })
     await shutdownVariables()
@@ -54,6 +62,26 @@ describe('logfire config', () => {
     } else {
       process.env['LOGFIRE_SEND_TO_LOGFIRE'] = originalSendToLogfire
     }
+    if (originalLogfireServiceName === undefined) {
+      delete process.env['LOGFIRE_SERVICE_NAME']
+    } else {
+      process.env['LOGFIRE_SERVICE_NAME'] = originalLogfireServiceName
+    }
+    if (originalLogfireServiceVersion === undefined) {
+      delete process.env['LOGFIRE_SERVICE_VERSION']
+    } else {
+      process.env['LOGFIRE_SERVICE_VERSION'] = originalLogfireServiceVersion
+    }
+    if (originalOtelServiceName === undefined) {
+      delete process.env['OTEL_SERVICE_NAME']
+    } else {
+      process.env['OTEL_SERVICE_NAME'] = originalOtelServiceName
+    }
+    if (originalOtelServiceVersion === undefined) {
+      delete process.env['OTEL_SERVICE_VERSION']
+    } else {
+      process.env['OTEL_SERVICE_VERSION'] = originalOtelServiceVersion
+    }
     if (originalToken === undefined) {
       delete process.env['LOGFIRE_TOKEN']
     } else {
@@ -71,6 +99,8 @@ describe('logfire config', () => {
       minLevel: undefined,
       resourceAttributes: {},
       sendToLogfire: false,
+      serviceName: undefined,
+      serviceVersion: undefined,
       token: '',
       traceExporterUrl: '',
     })
@@ -133,6 +163,43 @@ describe('logfire config', () => {
     configure({ resourceAttributes })
 
     expect(logfireConfig.resourceAttributes).toBe(resourceAttributes)
+  })
+
+  it('reads OTEL service metadata when Logfire-specific environment variables are omitted', () => {
+    process.env['OTEL_SERVICE_NAME'] = 'otel-service'
+    process.env['OTEL_SERVICE_VERSION'] = '1.2.3'
+
+    configure()
+
+    expect(logfireConfig.serviceName).toBe('otel-service')
+    expect(logfireConfig.serviceVersion).toBe('1.2.3')
+  })
+
+  it('lets LOGFIRE service metadata override OTEL service metadata', () => {
+    process.env['LOGFIRE_SERVICE_NAME'] = 'logfire-service'
+    process.env['LOGFIRE_SERVICE_VERSION'] = '2.0.0'
+    process.env['OTEL_SERVICE_NAME'] = 'otel-service'
+    process.env['OTEL_SERVICE_VERSION'] = '1.2.3'
+
+    configure()
+
+    expect(logfireConfig.serviceName).toBe('logfire-service')
+    expect(logfireConfig.serviceVersion).toBe('2.0.0')
+  })
+
+  it('lets code service metadata override LOGFIRE and OTEL environment variables', () => {
+    process.env['LOGFIRE_SERVICE_NAME'] = 'logfire-service'
+    process.env['LOGFIRE_SERVICE_VERSION'] = '2.0.0'
+    process.env['OTEL_SERVICE_NAME'] = 'otel-service'
+    process.env['OTEL_SERVICE_VERSION'] = '1.2.3'
+
+    configure({
+      serviceName: 'code-service',
+      serviceVersion: '3.0.0',
+    })
+
+    expect(logfireConfig.serviceName).toBe('code-service')
+    expect(logfireConfig.serviceVersion).toBe('3.0.0')
   })
 
   it('preserves boolean console configuration compatibility', () => {

@@ -77,6 +77,9 @@ logfire.configure({
 First-class options such as `serviceName`, `serviceVersion`, and `environment`
 take precedence over conflicting `resourceAttributes` keys. Values from
 `OTEL_RESOURCE_ATTRIBUTES` still take precedence over code configuration.
+When `serviceName` or `serviceVersion` is omitted, Node reads
+`LOGFIRE_SERVICE_NAME` / `LOGFIRE_SERVICE_VERSION` first, then falls back to
+`OTEL_SERVICE_NAME` / `OTEL_SERVICE_VERSION`.
 
 ## Baggage span attributes
 

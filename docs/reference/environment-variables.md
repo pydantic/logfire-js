@@ -22,6 +22,11 @@ description: Environment variables used by the Logfire TypeScript SDK packages.
 | `LOGFIRE_DISTRIBUTED_TRACING` | Set to `false` to suppress extraction of incoming trace context.         |
 | `LOGFIRE_TRACE_SAMPLE_RATE`   | Head sampling rate from `0` to `1`.                                      |
 | `LOGFIRE_BASE_URL`            | Override the Logfire API base URL.                                       |
+| `OTEL_SERVICE_NAME`           | Service name fallback when `LOGFIRE_SERVICE_NAME` is unset.              |
+| `OTEL_SERVICE_VERSION`        | Service version fallback when `LOGFIRE_SERVICE_VERSION` is unset.        |
+
+For service metadata, precedence is code configuration, then `LOGFIRE_*`, then
+`OTEL_*`.
 
 `LOGFIRE_MIN_LEVEL` accepts `trace`, `debug`, `info`, `notice`, `warning`,
 `error`, or `fatal`. Values are matched case-insensitively. Numeric strings are
