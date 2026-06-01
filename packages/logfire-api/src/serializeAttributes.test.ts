@@ -226,22 +226,24 @@ describe('serializeAttributes', () => {
   })
 
   test('does not throw when object or array serialization fails', () => {
-    const circular: Record<string, unknown> = {}
+    const circular: Record<string, unknown> = { password: 'secret-value' }
     circular['self'] = circular
+    const circularArray: unknown[] = []
+    circularArray.push(circularArray)
 
     const result = serializeAttributes({
       bigintPayload: { value: 1n },
       circular,
+      circularArray,
       handler: () => undefined,
       symbol: Symbol('top-level'),
     })
 
-    expect(result).toEqual({
-      bigintPayload: '[unserializable]',
-      circular: '[unserializable]',
-      handler: '[unserializable]',
-      symbol: '[unserializable]',
-    })
+    expect(result['bigintPayload']).toBe('[unserializable]')
+    expect(result['circular']).toBe('{"password":"[Scrubbed due to \'password\']","self":"[Scrubbed due to cycle]"}')
+    expect(result['circularArray']).toBe('["[Scrubbed due to cycle]"]')
+    expect(result['handler']).toBe('[unserializable]')
+    expect(result['symbol']).toBe('[unserializable]')
   })
 
   test('does not throw for deeply nested attributes before JSON serialization', () => {

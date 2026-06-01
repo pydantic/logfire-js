@@ -101,6 +101,7 @@ const SAFE_KEYS = new Set([
 
 const MAX_SCRUB_DEPTH = 100
 const MAX_DEPTH_REPLACEMENT = '[Scrubbed due to max depth]'
+const CYCLE_REPLACEMENT = '[Scrubbed due to cycle]'
 
 export class LogfireAttributeScrubber implements BaseScrubber {
   /**
@@ -176,7 +177,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
         return MAX_DEPTH_REPLACEMENT
       }
       if (seen.has(value)) {
-        return value
+        return CYCLE_REPLACEMENT
       }
       seen.add(value)
       try {
@@ -189,7 +190,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
         return MAX_DEPTH_REPLACEMENT
       }
       if (seen.has(value)) {
-        return value
+        return CYCLE_REPLACEMENT
       }
       seen.add(value)
       // Object

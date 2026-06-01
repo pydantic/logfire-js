@@ -993,13 +993,13 @@ describe('instrument', () => {
     )
   })
 
-  test('recordReturn true falls back when serialization fails', () => {
+  test('recordReturn true records circular return values with a cycle placeholder', () => {
     const circular: Record<string, unknown> = {}
     circular['self'] = circular
     const wrapped = instrument(() => circular, { recordReturn: true })
 
     expect(wrapped()).toBe(circular)
-    expect(spanMock.setAttribute).toHaveBeenCalledWith('return', '[unserializable]')
+    expect(spanMock.setAttribute).toHaveBeenCalledWith('return', '{"self":"[Scrubbed due to cycle]"}')
   })
 
   test('recordReturn true does not record thrown or rejected values', async () => {
