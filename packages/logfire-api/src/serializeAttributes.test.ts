@@ -244,6 +244,18 @@ describe('serializeAttributes', () => {
     })
   })
 
+  test('does not throw for deeply nested attributes before JSON serialization', () => {
+    let deep: Record<string, unknown> = { value: 'ok' }
+    for (let index = 0; index < 10_000; index++) {
+      deep = { child: deep }
+    }
+
+    const result = serializeAttributes({ deep })
+
+    expect(result).toHaveProperty('deep')
+    expect(result['deep']).toContain('[Scrubbed due to max depth]')
+  })
+
   test('uses scrubbed values for schema inference', () => {
     const result = serializeAttributes({
       payload: {

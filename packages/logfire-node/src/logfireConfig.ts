@@ -181,6 +181,19 @@ const DEFAULT_AUTO_INSTRUMENTATION_CONFIG: InstrumentationConfigMap = {
   },
 }
 
+function readNonEmptyEnv(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  const value = env[key]
+  return value === undefined || value.trim() === '' ? undefined : value
+}
+
+function readServiceNameEnv(env: NodeJS.ProcessEnv): string | undefined {
+  return readNonEmptyEnv(env, 'LOGFIRE_SERVICE_NAME') ?? readNonEmptyEnv(env, 'OTEL_SERVICE_NAME')
+}
+
+function readServiceVersionEnv(env: NodeJS.ProcessEnv): string | undefined {
+  return readNonEmptyEnv(env, 'LOGFIRE_SERVICE_VERSION') ?? readNonEmptyEnv(env, 'OTEL_SERVICE_VERSION')
+}
+
 export interface LogfireConfig {
   additionalSpanProcessors: SpanProcessor[]
   apiKey: string | undefined
@@ -236,8 +249,8 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   resourceAttributes: {},
   sampling: undefined,
   sendToLogfire: false,
-  serviceName: process.env['LOGFIRE_SERVICE_NAME'] ?? process.env['OTEL_SERVICE_NAME'],
-  serviceVersion: process.env['LOGFIRE_SERVICE_VERSION'] ?? process.env['OTEL_SERVICE_VERSION'],
+  serviceName: readServiceNameEnv(process.env),
+  serviceVersion: readServiceVersionEnv(process.env),
   token: '',
   traceExporterUrl: '',
   variables: undefined,
@@ -299,8 +312,8 @@ export function configure(config: LogfireConfigOptions = {}): void {
   const sendToLogfire = resolveSendToLogfire(cnf.sendToLogfire, token)
   const baseUrl = resolveBaseUrl(env, cnf.advanced?.baseUrl, token, sendToLogfire)
   const deploymentEnvironment = cnf.environment ?? env['LOGFIRE_ENVIRONMENT']
-  const serviceName = cnf.serviceName ?? env['LOGFIRE_SERVICE_NAME'] ?? env['OTEL_SERVICE_NAME']
-  const serviceVersion = cnf.serviceVersion ?? env['LOGFIRE_SERVICE_VERSION'] ?? env['OTEL_SERVICE_VERSION']
+  const serviceName = cnf.serviceName ?? readServiceNameEnv(env)
+  const serviceVersion = cnf.serviceVersion ?? readServiceVersionEnv(env)
   const variablesBaseUrl =
     apiKey !== undefined && apiKey !== '' ? logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, apiKey) : cnf.advanced?.baseUrl
   if (requiresRemoteVariables(cnf.variables) && (apiKey === undefined || apiKey === '')) {

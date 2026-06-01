@@ -1,7 +1,7 @@
 ---
 'logfire': minor
-'@pydantic/logfire-browser': patch
-'@pydantic/logfire-cf-workers': patch
+'@pydantic/logfire-browser': minor
+'@pydantic/logfire-cf-workers': minor
 '@pydantic/logfire-node': patch
 ---
 

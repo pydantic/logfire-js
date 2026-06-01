@@ -487,6 +487,32 @@ describe('minLevel filtering', () => {
     expect(spanMock.setAttribute).not.toHaveBeenCalled()
   })
 
+  test('filtered async instrumented calls still resolve their original value', async () => {
+    configureLogfireApi({ minLevel: 'warning' })
+    const wrapped = instrument(
+      async () => {
+        await sleep(0)
+        return 'ok'
+      },
+      { level: Level.Debug, recordReturn: true }
+    )
+
+    await expect(wrapped()).resolves.toBe('ok')
+
+    expect(mocks.tracerMock.startActiveSpan).not.toHaveBeenCalled()
+    expect(spanMock.setAttribute).not.toHaveBeenCalled()
+  })
+
+  test('does not filter instrumented calls without an explicit level', () => {
+    configureLogfireApi({ minLevel: 'fatal' })
+    const wrapped = instrument(() => 'ok')
+
+    expect(wrapped()).toBe('ok')
+
+    expect(mocks.tracerMock.startActiveSpan).toHaveBeenCalledOnce()
+    expect(getStartActiveSpanAttributes()[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Info)
+  })
+
   test('applies scoped levels and helper overrides before filtering', () => {
     configureLogfireApi({ minLevel: 'warning' })
     const scoped = withSettings({ level: Level.Debug })
@@ -846,6 +872,20 @@ describe('instrument', () => {
     expect(attributes['includeDetails']).toBe(true)
   })
 
+  test('extractArgs true falls back to arg names for bare-arrow functions', () => {
+    const identity = ((id: string) => id) as ((id: string) => string) & { toString: () => string }
+    identity.toString = () => 'id => id'
+
+    instrument(identity, {
+      extractArgs: true,
+      message: 'fetch user {arg0}',
+    })('user-123')
+
+    const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes['arg0']).toBe('user-123')
+    expect(attributes[ATTRIBUTES_MESSAGE_KEY]).toBe('fetch user user-123')
+  })
+
   test('extracted args override static attributes', () => {
     function fetchUser(id: string) {
       return id
@@ -933,6 +973,23 @@ describe('instrument', () => {
     expect(spanMock.setAttribute).toHaveBeenCalledWith(
       'logfire.json_schema',
       '{"properties":{"return":{"items":{"type":"string"},"type":"array"}},"type":"object"}'
+    )
+  })
+
+  test('recordReturn true records resolved non-Promise thenable values', async () => {
+    const thenable: PromiseLike<{ ok: boolean }> = {
+      async then(onFulfilled, onRejected) {
+        return Promise.resolve({ ok: true }).then(onFulfilled, onRejected)
+      },
+    }
+    const wrapped = instrument(() => thenable, { recordReturn: true })
+
+    await expect(wrapped()).resolves.toEqual({ ok: true })
+
+    expect(spanMock.setAttribute).toHaveBeenCalledWith('return', '{"ok":true}')
+    expect(spanMock.setAttribute).toHaveBeenCalledWith(
+      JSON_SCHEMA_KEY,
+      '{"properties":{"return":{"properties":{"ok":{"type":"boolean"}},"type":"object"}},"type":"object"}'
     )
   })
 

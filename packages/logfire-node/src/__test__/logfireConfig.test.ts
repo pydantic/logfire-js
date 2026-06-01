@@ -183,6 +183,28 @@ describe('logfire config', () => {
     expect(logfireConfig.serviceVersion).toBe('1.2.3')
   })
 
+  it('ignores empty service metadata environment variables', () => {
+    process.env['LOGFIRE_SERVICE_NAME'] = ' '
+    process.env['LOGFIRE_SERVICE_VERSION'] = ''
+    process.env['OTEL_SERVICE_NAME'] = 'otel-service'
+    process.env['OTEL_SERVICE_VERSION'] = '1.2.3'
+
+    configure()
+
+    expect(logfireConfig.serviceName).toBe('otel-service')
+    expect(logfireConfig.serviceVersion).toBe('1.2.3')
+
+    process.env['LOGFIRE_SERVICE_NAME'] = ''
+    process.env['LOGFIRE_SERVICE_VERSION'] = ' '
+    process.env['OTEL_SERVICE_NAME'] = ''
+    process.env['OTEL_SERVICE_VERSION'] = ' '
+
+    configure()
+
+    expect(logfireConfig.serviceName).toBeUndefined()
+    expect(logfireConfig.serviceVersion).toBeUndefined()
+  })
+
   it('lets LOGFIRE service metadata override OTEL service metadata', () => {
     process.env['LOGFIRE_SERVICE_NAME'] = 'logfire-service'
     process.env['LOGFIRE_SERVICE_VERSION'] = '2.0.0'

@@ -99,6 +99,9 @@ const SAFE_KEYS = new Set([
   'url.query',
 ])
 
+const MAX_SCRUB_DEPTH = 100
+const MAX_DEPTH_REPLACEMENT = '[Scrubbed due to max depth]'
+
 export class LogfireAttributeScrubber implements BaseScrubber {
   /**
    * List of keys that are considered safe and don't need scrubbing
@@ -124,7 +127,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
    */
   scrubValue<T>(path: JsonPath, value: T): readonly [T, ScrubbedNote[]] {
     const scrubbedNotes: ScrubbedNote[] = []
-    const scrubbedValue = this.scrub(path, value, scrubbedNotes, new WeakSet())
+    const scrubbedValue = this.scrub(path, value, scrubbedNotes, new WeakSet(), 0)
     return [scrubbedValue as T, scrubbedNotes] as const
   }
 
@@ -142,7 +145,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
     return `[Scrubbed due to '${matchedSubstring}']`
   }
 
-  private scrub(path: JsonPath, value: unknown, notes: ScrubbedNote[], seen: WeakSet<object>): unknown {
+  private scrub(path: JsonPath, value: unknown, notes: ScrubbedNote[], seen: WeakSet<object>, depth: number): unknown {
     if (typeof value === 'string') {
       // Check if the string matches the pattern
       const match = value.match(this.pattern)
@@ -153,8 +156,11 @@ export class LogfireAttributeScrubber implements BaseScrubber {
           // Try to parse as JSON
           try {
             const parsed = JSON.parse(value) as unknown
+            if (depth >= MAX_SCRUB_DEPTH) {
+              return this.redact(path, value, match, notes)
+            }
             // If parsed, scrub the parsed object
-            const newVal = this.scrub(path, parsed, notes, seen)
+            const newVal = this.scrub(path, parsed, notes, seen, depth + 1)
             return JSON.stringify(newVal)
           } catch {
             // Not JSON, redact directly
@@ -166,16 +172,22 @@ export class LogfireAttributeScrubber implements BaseScrubber {
     } else if (value instanceof Date) {
       return value
     } else if (Array.isArray(value)) {
+      if (depth >= MAX_SCRUB_DEPTH) {
+        return MAX_DEPTH_REPLACEMENT
+      }
       if (seen.has(value)) {
         return value
       }
       seen.add(value)
       try {
-        return value.map((v, i) => this.scrub([...path, i], v, notes, seen))
+        return value.map((v, i) => this.scrub([...path, i], v, notes, seen, depth + 1))
       } finally {
         seen.delete(value)
       }
     } else if (value !== null && typeof value === 'object') {
+      if (depth >= MAX_SCRUB_DEPTH) {
+        return MAX_DEPTH_REPLACEMENT
+      }
       if (seen.has(value)) {
         return value
       }
@@ -199,7 +211,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
               result[k] = redacted
             } else {
               // Scrub the value recursively
-              result[k] = this.scrub([...path, k], v, notes, seen)
+              result[k] = this.scrub([...path, k], v, notes, seen, depth + 1)
             }
           }
         }

@@ -316,6 +316,12 @@ function isHrTime(value: unknown): value is HrTime {
   return Array.isArray(value) && value.length === 2 && typeof value[0] === 'number' && typeof value[1] === 'number'
 }
 
+function isThenable<T>(value: T): value is T & PromiseLike<Awaited<T>> {
+  return (
+    (typeof value === 'object' || typeof value === 'function') && value !== null && typeof (value as { then?: unknown }).then === 'function'
+  )
+}
+
 function getFunctionName(fn: InstrumentableFunction): string {
   return fn.name || 'function'
 }
@@ -637,7 +643,7 @@ function instrumentWithSettings<F extends InstrumentableFunction>(
         if (options.recordReturn !== true) {
           return result
         }
-        if (result instanceof Promise) {
+        if (isThenable(result)) {
           return result.then((value: Awaited<ReturnType<F>>) => {
             recordReturnAttributes(activeSpan, spanSerializationAttributes ?? {}, value)
             return value
