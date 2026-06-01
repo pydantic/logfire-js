@@ -86,7 +86,21 @@ Node.js runtime setup:
 
 The package also re-exports the public API from `logfire`.
 Node `configure()` accepts `baggage.spanAttributes` and `minLevel` for the
-shared manual API.
+shared manual API. It also accepts Node-only object-style console options:
+
+```ts
+logfire.configure({
+  console: {
+    minLevel: 'warning',
+    includeTags: true,
+    includeTimestamps: true,
+  },
+})
+```
+
+`console.minLevel` filters console output only. Browser and Cloudflare
+configuration remain boolean-only for console output. Spans without a Logfire
+level are treated as `info` for console filtering.
 
 ## `@pydantic/logfire-browser`
 

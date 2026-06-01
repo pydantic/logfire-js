@@ -16,7 +16,7 @@ description: Environment variables used by the Logfire TypeScript SDK packages.
 | `LOGFIRE_SERVICE_NAME`        | Service name resource metadata.                                          |
 | `LOGFIRE_SERVICE_VERSION`     | Service version resource metadata.                                       |
 | `LOGFIRE_ENVIRONMENT`         | Deployment environment resource metadata.                                |
-| `LOGFIRE_CONSOLE`             | Set to `true` to also print spans to the console.                        |
+| `LOGFIRE_CONSOLE`             | Set to `true` to also print spans to the console. Boolean-only.          |
 | `LOGFIRE_MIN_LEVEL`           | Minimum manual Logfire level to emit.                                    |
 | `LOGFIRE_SEND_TO_LOGFIRE`     | Set sending behavior. `if-token-present` sends only when a token exists. |
 | `LOGFIRE_DISTRIBUTED_TRACING` | Set to `false` to suppress extraction of incoming trace context.         |
@@ -26,6 +26,11 @@ description: Environment variables used by the Logfire TypeScript SDK packages.
 `LOGFIRE_MIN_LEVEL` accepts `trace`, `debug`, `info`, `notice`, `warning`,
 `error`, or `fatal`. Values are matched case-insensitively. Numeric strings are
 not accepted. Invalid values warn with `console.warn` and are ignored.
+
+`LOGFIRE_CONSOLE=true` enables Node console output with the default console
+minimum level of `info`. Object-style console options such as
+`console.minLevel`, `console.includeTags`, and `console.includeTimestamps` are
+available only through code configuration.
 
 ## Cloudflare Workers
 

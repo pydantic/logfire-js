@@ -161,6 +161,29 @@ logfire.configure({
 })
 ```
 
+Console output defaults to a minimum level of `info`, matching Python's
+console behavior. To change console output without changing which telemetry is
+created, pass object-style console options:
+
+```ts
+logfire.configure({
+  console: {
+    minLevel: 'warning',
+    includeTags: true,
+    includeTimestamps: false,
+  },
+  serviceName: 'worker',
+})
+```
+
+Use `console: { minLevel: 'debug' }` or `console: { minLevel: 'trace' }` when
+you want lower-severity spans printed locally. `LOGFIRE_CONSOLE=true` remains a
+boolean enable switch and uses the default `info` console minimum.
+
+Spans without a Logfire level, including ordinary auto-instrumentation spans,
+are treated as `info` for console filtering. Setting `console.minLevel` above
+`info` hides those spans from local console output.
+
 ## Flush And Shutdown
 
 Logfire batches telemetry through OpenTelemetry processors. For short-lived

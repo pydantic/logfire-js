@@ -8,7 +8,11 @@ import type { MetricReader } from '@opentelemetry/sdk-metrics'
 import type { IdGenerator, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as logfireApi from 'logfire'
 
+import type { ConsoleConfig } from './consoleOptions'
+import { resolveConsoleOptions } from './consoleOptions'
 import { start } from './sdk'
+
+export type { ConsoleConfig, ConsoleOptions } from './consoleOptions'
 
 export interface AdvancedLogfireConfigOptions {
   /**
@@ -70,7 +74,7 @@ export interface LogfireConfigOptions {
   /**
    * Whether to log the spans to the console in addition to sending them to the Logfire API.
    */
-  console?: boolean
+  console?: ConsoleConfig
   /**
    * Defines the available internal logging levels for the diagnostic logger.
    */
@@ -178,7 +182,7 @@ export interface LogfireConfig {
   baggage: BaggageOptions
   baseUrl: string
   codeSource: CodeSource | undefined
-  console: boolean | undefined
+  console: ConsoleConfig | undefined
   deploymentEnvironment: string | undefined
   diagLogLevel?: DiagLogLevel
   distributedTracing: boolean
@@ -239,6 +243,9 @@ export function configure(config: LogfireConfigOptions = {}): void {
 
   const env = process.env
   const envMinLevel = env['LOGFIRE_MIN_LEVEL']
+  const console = 'console' in cnf ? cnf.console : env['LOGFIRE_CONSOLE'] === 'true'
+
+  resolveConsoleOptions(console)
 
   if (
     baggage !== undefined ||
@@ -279,7 +286,6 @@ export function configure(config: LogfireConfigOptions = {}): void {
   const apiKey = cnf.apiKey ?? env['LOGFIRE_API_KEY']
   const sendToLogfire = resolveSendToLogfire(cnf.sendToLogfire, token)
   const baseUrl = resolveBaseUrl(env, cnf.advanced?.baseUrl, token, sendToLogfire)
-  const console = 'console' in cnf ? cnf.console : env['LOGFIRE_CONSOLE'] === 'true'
   const deploymentEnvironment = cnf.environment ?? env['LOGFIRE_ENVIRONMENT']
   const serviceName = cnf.serviceName ?? env['LOGFIRE_SERVICE_NAME']
   const serviceVersion = cnf.serviceVersion ?? env['LOGFIRE_SERVICE_VERSION']

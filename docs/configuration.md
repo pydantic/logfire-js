@@ -65,7 +65,28 @@ logfire.configure({
 })
 ```
 
-In Node.js, `LOGFIRE_CONSOLE=true` has the same effect.
+In Node.js, `LOGFIRE_CONSOLE=true` has the same effect and uses a console
+minimum level of `info`, matching Python's default. To tune Node console output
+without changing which telemetry is created, pass object-style console options:
+
+```ts
+logfire.configure({
+  console: {
+    minLevel: 'warning',
+    includeTags: true,
+    includeTimestamps: false,
+  },
+  serviceName: 'local-worker',
+})
+```
+
+`console.minLevel` filters console output only. SDK-level `minLevel` controls
+whether manual Logfire telemetry is created. Browser and Cloudflare
+configuration currently support only boolean `console` values.
+
+Spans without a Logfire level, including ordinary auto-instrumentation spans,
+are treated as `info` for console filtering. Setting `console.minLevel` above
+`info` hides those spans from local console output.
 
 ## Minimum Level
 

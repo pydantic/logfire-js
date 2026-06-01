@@ -246,12 +246,14 @@ vi.mock('@opentelemetry/sdk-node', () => ({
 }))
 
 vi.mock('logfire', async () => {
-  const [{ PendingSpanProcessor }, { TailSamplingProcessor }, { ULIDGenerator }] = await Promise.all([
+  const [{ Level }, { PendingSpanProcessor }, { TailSamplingProcessor }, { ULIDGenerator }] = await Promise.all([
+    import('../../../logfire-api/src/levels'),
     import('../../../logfire-api/src/PendingSpanProcessor'),
     import('../../../logfire-api/src/TailSamplingProcessor'),
     import('../../../logfire-api/src/ULIDGenerator'),
   ])
   return {
+    Level,
     PendingSpanProcessor,
     reportError: (...args: unknown[]) => {
       mocks.reportErrorCalls.push(args)

@@ -123,6 +123,43 @@ Log helpers and `reportError()` are filtered by their level. Duration-style APIs
 such as `span()`, `startSpan()`, `startPendingSpan()`, and `instrument()` are
 filtered only when the call or scoped client sets an explicit level.
 
+## Console output
+
+Use `console: true` to print spans to the console while developing. Console
+output defaults to a minimum level of `info`, matching Python's console
+behavior:
+
+```js
+import * as logfire from '@pydantic/logfire-node'
+
+logfire.configure({
+  serviceName: 'example-node-script',
+  console: true,
+})
+```
+
+To change console output without changing which telemetry is created, pass
+object-style console options:
+
+```js
+logfire.configure({
+  serviceName: 'example-node-script',
+  console: {
+    minLevel: 'warning',
+    includeTags: true,
+    includeTimestamps: false,
+  },
+})
+```
+
+Use `console: { minLevel: 'debug' }` or `console: { minLevel: 'trace' }` when
+you want lower-severity spans printed locally. `LOGFIRE_CONSOLE=true` remains a
+boolean enable switch and uses the default `info` console minimum.
+
+Spans without a Logfire level, including ordinary auto-instrumentation spans,
+are treated as `info` for console filtering. Setting `console.minLevel` above
+`info` hides those spans from local console output.
+
 ## Flush and shutdown
 
 Logfire batches telemetry through OpenTelemetry processors. For short-lived

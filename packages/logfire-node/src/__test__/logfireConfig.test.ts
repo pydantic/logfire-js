@@ -12,6 +12,7 @@ vi.mock('../sdk', () => ({
 describe('logfire config', () => {
   const originalApiKey = process.env['LOGFIRE_API_KEY']
   const originalBaseUrl = process.env['LOGFIRE_BASE_URL']
+  const originalConsole = process.env['LOGFIRE_CONSOLE']
   const originalMinLevel = process.env['LOGFIRE_MIN_LEVEL']
   const originalSendToLogfire = process.env['LOGFIRE_SEND_TO_LOGFIRE']
   const originalToken = process.env['LOGFIRE_TOKEN']
@@ -19,6 +20,7 @@ describe('logfire config', () => {
   beforeEach(async () => {
     process.env['LOGFIRE_API_KEY'] = ''
     delete process.env['LOGFIRE_BASE_URL']
+    delete process.env['LOGFIRE_CONSOLE']
     delete process.env['LOGFIRE_MIN_LEVEL']
     delete process.env['LOGFIRE_SEND_TO_LOGFIRE']
     delete process.env['LOGFIRE_TOKEN']
@@ -36,6 +38,11 @@ describe('logfire config', () => {
       delete process.env['LOGFIRE_BASE_URL']
     } else {
       process.env['LOGFIRE_BASE_URL'] = originalBaseUrl
+    }
+    if (originalConsole === undefined) {
+      delete process.env['LOGFIRE_CONSOLE']
+    } else {
+      process.env['LOGFIRE_CONSOLE'] = originalConsole
     }
     if (originalMinLevel === undefined) {
       delete process.env['LOGFIRE_MIN_LEVEL']
@@ -58,6 +65,7 @@ describe('logfire config', () => {
         spanAttributes: [],
       },
       baseUrl: '',
+      console: false,
       logsExporterUrl: '',
       metricExporterUrl: '',
       minLevel: undefined,
@@ -125,6 +133,54 @@ describe('logfire config', () => {
     configure({ resourceAttributes })
 
     expect(logfireConfig.resourceAttributes).toBe(resourceAttributes)
+  })
+
+  it('preserves boolean console configuration compatibility', () => {
+    configure({ console: true })
+    expect(logfireConfig.console).toBe(true)
+
+    configure({ console: false })
+    expect(logfireConfig.console).toBe(false)
+  })
+
+  it('stores object-style console configuration', () => {
+    const consoleConfig = {
+      includeTags: false,
+      includeTimestamps: false,
+      minLevel: 'warning' as const,
+    }
+
+    configure({ console: consoleConfig })
+
+    expect(logfireConfig.console).toBe(consoleConfig)
+  })
+
+  it('rejects invalid object-style console min levels during configure', () => {
+    expect(() => {
+      configure({
+        console: {
+          minLevel: 'warn' as never,
+        },
+      })
+    }).toThrow('Invalid console.minLevel')
+
+    expect(logfireConfig.console).toBe(false)
+  })
+
+  it('reads LOGFIRE_CONSOLE as boolean true when code config omits console', () => {
+    process.env['LOGFIRE_CONSOLE'] = 'true'
+
+    configure()
+
+    expect(logfireConfig.console).toBe(true)
+  })
+
+  it('does not parse LOGFIRE_CONSOLE as object-style console config', () => {
+    process.env['LOGFIRE_CONSOLE'] = '{"enabled":true}'
+
+    configure()
+
+    expect(logfireConfig.console).toBe(false)
   })
 
   it('passes baggage span attributes config to the shared API', () => {

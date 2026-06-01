@@ -1,7 +1,13 @@
 import type { ExportResult } from '@opentelemetry/core'
 import { ExportResultCode, hrTimeToMicroseconds } from '@opentelemetry/core'
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base'
+import { Level } from 'logfire'
 import pc from 'picocolors'
+
+import type { ResolvedConsoleOptions } from './consoleOptions'
+
+const ATTRIBUTES_LEVEL_KEY = 'logfire.level_num'
+const ATTRIBUTES_TAGS_KEY = 'logfire.tags'
 
 const LevelLabels = {
   1: 'trace',
@@ -23,7 +29,20 @@ const ColorMap = {
   warning: pc.yellow,
 }
 
+const DEFAULT_OPTIONS = {
+  enabled: true,
+  includeTags: true,
+  includeTimestamps: true,
+  minLevel: Level.Info,
+} satisfies ResolvedConsoleOptions
+
 export class LogfireConsoleSpanExporter implements SpanExporter {
+  private readonly options: ResolvedConsoleOptions
+
+  constructor(options: ResolvedConsoleOptions = DEFAULT_OPTIONS) {
+    this.options = options
+  }
+
   export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
     this.sendSpans(spans, resultCallback)
   }
@@ -63,16 +82,53 @@ export class LogfireConsoleSpanExporter implements SpanExporter {
 
   private sendSpans(spans: ReadableSpan[], done?: (result: ExportResult) => void): void {
     for (const span of spans) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      const type = LevelLabels[span.attributes['logfire.level_num'] as keyof typeof LevelLabels] ?? 'info'
+      const { level, type } = this.getSpanLevel(span)
+      if (level < this.options.minLevel) {
+        continue
+      }
 
       const { attributes, name, ...rest } = this.exportInfo(span)
       console.log(`${pc.bgMagentaBright('Logfire')} ${ColorMap[type](type)} ${name}`)
-      console.dir(attributes)
-      console.dir(rest)
+      console.dir(this.printedAttributes(attributes))
+      console.dir(this.printedMetadata(rest))
     }
     if (done) {
       done({ code: ExportResultCode.SUCCESS })
     }
+  }
+
+  private getSpanLevel(span: ReadableSpan): {
+    level: (typeof Level)[keyof typeof Level]
+    type: (typeof LevelLabels)[keyof typeof LevelLabels]
+  } {
+    const level = span.attributes[ATTRIBUTES_LEVEL_KEY]
+    if (typeof level === 'number' && Object.hasOwn(LevelLabels, level)) {
+      return {
+        level: level as (typeof Level)[keyof typeof Level],
+        type: LevelLabels[level as keyof typeof LevelLabels],
+      }
+    }
+    return {
+      level: Level.Info,
+      type: 'info',
+    }
+  }
+
+  private printedAttributes(attributes: ReadableSpan['attributes']): ReadableSpan['attributes'] {
+    if (this.options.includeTags) {
+      return attributes
+    }
+
+    const { [ATTRIBUTES_TAGS_KEY]: _tags, ...rest } = attributes
+    return rest
+  }
+
+  private printedMetadata<T extends { timestamp: number }>(metadata: T): Omit<T, 'timestamp'> | T {
+    if (this.options.includeTimestamps) {
+      return metadata
+    }
+
+    const { timestamp: _timestamp, ...rest } = metadata
+    return rest
   }
 }
