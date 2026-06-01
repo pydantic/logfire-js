@@ -28,7 +28,7 @@ import {
   ATTR_BROWSER_PLATFORM,
   ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
 } from '@opentelemetry/semantic-conventions/incubating'
-import type { BaggageOptions, LogfireApiConfigOptions, MinLevel, SamplingOptions, ScrubbingOptions } from 'logfire'
+import type { BaggageOptions, JsonSchemaMode, LogfireApiConfigOptions, MinLevel, SamplingOptions, ScrubbingOptions } from 'logfire'
 import {
   configureLogfireApi,
   debug,
@@ -96,6 +96,12 @@ export interface LogfireConfigOptions {
    * Defaults to false for browser since minified code produces unstable fingerprints.
    */
   errorFingerprinting?: boolean
+  /**
+   * Controls JSON schema metadata for serialized object/array attributes.
+   *
+   * Defaults to 'rich'. Use 'basic' for legacy broad schemas, or false to omit schema metadata.
+   */
+  jsonSchema?: JsonSchemaMode
   /**
    * The instrumentations to register - a common one [is the fetch instrumentation](https://www.npmjs.com/package/@opentelemetry/instrumentation-fetch).
    */
@@ -179,6 +185,9 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   }
   if (options.baggage !== undefined) {
     apiConfig.baggage = options.baggage
+  }
+  if (options.jsonSchema !== undefined) {
+    apiConfig.jsonSchema = options.jsonSchema
   }
   if (options.minLevel !== undefined) {
     apiConfig.minLevel = options.minLevel

@@ -95,6 +95,30 @@ errors propagate normally, but Logfire does not record them because the call was
 filtered. Use `reportError()` or a span level at or above the minimum when
 errors should always be reported.
 
+## Attribute serialization
+
+Logfire serializes object and array attributes as JSON strings and adds
+`logfire.json_schema` metadata so the backend can render them as structured
+values. By default, schema metadata uses bounded best-effort inference for
+ordinary JSON-like values such as objects, arrays, strings, numbers, booleans,
+`null`, and dates.
+
+Configure `jsonSchema` when you need a cheaper or quieter mode:
+
+```ts
+import * as logfire from 'logfire'
+
+logfire.configureLogfireApi({
+  jsonSchema: 'basic',
+})
+```
+
+Use `jsonSchema: 'basic'` for legacy broad top-level `object`/`array` schemas,
+or `jsonSchema: false` to omit `logfire.json_schema` entirely. This only
+controls schema metadata; object and array attributes are still serialized as
+JSON strings. Values that cannot be serialized are recorded as
+`"[unserializable]"`.
+
 ## Error reporting
 
 Use `reportError()` from explicit catch blocks. The caught value can be

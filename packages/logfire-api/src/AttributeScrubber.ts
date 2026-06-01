@@ -124,7 +124,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
    */
   scrubValue<T>(path: JsonPath, value: T): readonly [T, ScrubbedNote[]] {
     const scrubbedNotes: ScrubbedNote[] = []
-    const scrubbedValue = this.scrub(path, value, scrubbedNotes)
+    const scrubbedValue = this.scrub(path, value, scrubbedNotes, new WeakSet())
     return [scrubbedValue as T, scrubbedNotes] as const
   }
 
@@ -142,7 +142,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
     return `[Scrubbed due to '${matchedSubstring}']`
   }
 
-  private scrub(path: JsonPath, value: unknown, notes: ScrubbedNote[]): unknown {
+  private scrub(path: JsonPath, value: unknown, notes: ScrubbedNote[], seen: WeakSet<object>): unknown {
     if (typeof value === 'string') {
       // Check if the string matches the pattern
       const match = value.match(this.pattern)
@@ -154,7 +154,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
           try {
             const parsed = JSON.parse(value) as unknown
             // If parsed, scrub the parsed object
-            const newVal = this.scrub(path, parsed, notes)
+            const newVal = this.scrub(path, parsed, notes, seen)
             return JSON.stringify(newVal)
           } catch {
             // Not JSON, redact directly
@@ -163,32 +163,50 @@ export class LogfireAttributeScrubber implements BaseScrubber {
         }
       }
       return value
+    } else if (value instanceof Date) {
+      return value
     } else if (Array.isArray(value)) {
-      return value.map((v, i) => this.scrub([...path, i], v, notes))
+      if (seen.has(value)) {
+        return value
+      }
+      seen.add(value)
+      try {
+        return value.map((v, i) => this.scrub([...path, i], v, notes, seen))
+      } finally {
+        seen.delete(value)
+      }
     } else if (value !== null && typeof value === 'object') {
+      if (seen.has(value)) {
+        return value
+      }
+      seen.add(value)
       // Object
-      const result: Record<string, unknown> = {}
-      for (const [k, v] of Object.entries(value)) {
-        if (SAFE_KEYS.has(k) || ['boolean', 'number', 'undefined'].includes(typeof v) || v === null) {
-          // Safe key or a primitive value, no scrubbing of the key itself.
-          // (In the Python SDK we still scrub primitive values to be extra careful)
-          result[k] = v
-        } else {
-          // Check key against the pattern
-          const keyMatch = k.match(this.pattern)
-          if (keyMatch) {
-            // Key contains sensitive substring
-            const redacted = this.redact([...path, k], v, keyMatch, notes)
-            // If v is an object/array and got redacted to a string, we may want to consider if that's correct.
-            // For simplicity, we just store the redacted string.
-            result[k] = redacted
+      try {
+        const result: Record<string, unknown> = {}
+        for (const [k, v] of Object.entries(value)) {
+          if (SAFE_KEYS.has(k) || ['boolean', 'number', 'undefined'].includes(typeof v) || v === null) {
+            // Safe key or a primitive value, no scrubbing of the key itself.
+            // (In the Python SDK we still scrub primitive values to be extra careful)
+            result[k] = v
           } else {
-            // Scrub the value recursively
-            result[k] = this.scrub([...path, k], v, notes)
+            // Check key against the pattern
+            const keyMatch = k.match(this.pattern)
+            if (keyMatch) {
+              // Key contains sensitive substring
+              const redacted = this.redact([...path, k], v, keyMatch, notes)
+              // If v is an object/array and got redacted to a string, we may want to consider if that's correct.
+              // For simplicity, we just store the redacted string.
+              result[k] = redacted
+            } else {
+              // Scrub the value recursively
+              result[k] = this.scrub([...path, k], v, notes, seen)
+            }
           }
         }
+        return result
+      } finally {
+        seen.delete(value)
       }
-      return result
     }
 
     return value

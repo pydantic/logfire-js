@@ -187,7 +187,7 @@ vi.mock('@opentelemetry/api', () => {
 })
 
 beforeEach(() => {
-  configureLogfireApi({ baggage: { spanAttributes: [] }, errorFingerprinting: true, minLevel: null })
+  configureLogfireApi({ baggage: { spanAttributes: [] }, errorFingerprinting: true, jsonSchema: 'rich', minLevel: null })
   mocks.setActiveBaggage(undefined)
 })
 
@@ -240,7 +240,8 @@ describe('info', () => {
           [ATTRIBUTES_SPAN_TYPE_KEY]: 'log',
           [ATTRIBUTES_TAGS_KEY]: [],
           i: 1,
-          'logfire.json_schema': '{"properties":{"logfire.scrubbed":{"type":"array"}},"type":"object"}',
+          'logfire.json_schema':
+            '{"properties":{"logfire.scrubbed":{"items":{"properties":{"matched_substring":{"type":"string"},"path":{"items":{"type":"string"},"type":"array"}},"type":"object"},"type":"array"}},"type":"object"}',
           'logfire.scrubbed': '[{"matched_substring":"password","path":["password"]}]',
           password: "[Scrubbed due to 'password']",
         },
@@ -871,7 +872,10 @@ describe('instrument', () => {
 
     expect(wrapped()).toEqual({ ok: true })
     expect(spanMock.setAttribute).toHaveBeenCalledWith('return', '{"ok":true}')
-    expect(spanMock.setAttribute).toHaveBeenCalledWith('logfire.json_schema', '{"properties":{"return":{"type":"object"}},"type":"object"}')
+    expect(spanMock.setAttribute).toHaveBeenCalledWith(
+      'logfire.json_schema',
+      '{"properties":{"return":{"properties":{"ok":{"type":"boolean"}},"type":"object"}},"type":"object"}'
+    )
   })
 
   test('recordReturn true preserves complex input schema when recording complex return values', () => {
@@ -887,11 +891,13 @@ describe('instrument', () => {
     expect(wrapped({ value: 'input' })).toEqual({ status: 'ok' })
 
     const attributes = (mocks.tracerMock.startActiveSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
-    expect(attributes[JSON_SCHEMA_KEY]).toBe('{"properties":{"payload":{"type":"object"}},"type":"object"}')
+    expect(attributes[JSON_SCHEMA_KEY]).toBe(
+      '{"properties":{"payload":{"properties":{"value":{"type":"string"}},"type":"object"}},"type":"object"}'
+    )
     expect(spanMock.setAttribute).toHaveBeenCalledWith('return', '{"status":"ok"}')
     expect(spanMock.setAttribute).toHaveBeenCalledWith(
       JSON_SCHEMA_KEY,
-      '{"properties":{"payload":{"type":"object"},"return":{"type":"object"}},"type":"object"}'
+      '{"properties":{"payload":{"properties":{"value":{"type":"string"}},"type":"object"},"return":{"properties":{"status":{"type":"string"}},"type":"object"}},"type":"object"}'
     )
   })
 
@@ -924,7 +930,10 @@ describe('instrument', () => {
     await expect(wrapped()).resolves.toEqual(['ok'])
 
     expect(spanMock.setAttribute).toHaveBeenCalledWith('return', '["ok"]')
-    expect(spanMock.setAttribute).toHaveBeenCalledWith('logfire.json_schema', '{"properties":{"return":{"type":"array"}},"type":"object"}')
+    expect(spanMock.setAttribute).toHaveBeenCalledWith(
+      'logfire.json_schema',
+      '{"properties":{"return":{"items":{"type":"string"},"type":"array"}},"type":"object"}'
+    )
   })
 
   test('recordReturn true falls back when serialization fails', () => {

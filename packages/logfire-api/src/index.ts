@@ -39,6 +39,7 @@ export { canonicalizeError, computeFingerprint } from './fingerprint'
 export { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire } from './logfireApiConfig'
 export type {
   BaggageOptions,
+  JsonSchemaMode,
   LevelName,
   LogFireLevel,
   LogfireApiConfig,

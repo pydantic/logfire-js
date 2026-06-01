@@ -184,7 +184,7 @@ describe('browser configure resource attributes', () => {
 
   afterEach(async () => {
     await cleanup?.()
-    configureLogfireApi({ baggage: { spanAttributes: [] }, minLevel: null })
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,
       value: originalNavigator,
@@ -249,6 +249,15 @@ describe('browser configure resource attributes', () => {
 
     expect(logfireApiConfig.minLevel).toBe(Level.Warning)
   })
+
+  it('passes jsonSchema config to the shared API', () => {
+    cleanup = configure({
+      jsonSchema: 'basic',
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(logfireApiConfig.jsonSchema).toBe('basic')
+  })
 })
 
 describe('browser pending spans', () => {
@@ -267,7 +276,7 @@ describe('browser pending spans', () => {
 
   afterEach(async () => {
     await cleanup?.()
-    configureLogfireApi({ baggage: { spanAttributes: [] }, minLevel: null })
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,
       value: originalNavigator,
@@ -337,7 +346,7 @@ describe('browser cleanup', () => {
 
   afterEach(async () => {
     await cleanup?.()
-    configureLogfireApi({ baggage: { spanAttributes: [] }, minLevel: null })
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,
       value: originalNavigator,

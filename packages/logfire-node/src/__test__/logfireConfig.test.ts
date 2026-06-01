@@ -32,7 +32,7 @@ describe('logfire config', () => {
     delete process.env['OTEL_SERVICE_NAME']
     delete process.env['OTEL_SERVICE_VERSION']
     delete process.env['LOGFIRE_TOKEN']
-    configureLogfireApi({ baggage: { spanAttributes: [] }, minLevel: null })
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     await shutdownVariables()
   })
 
@@ -94,6 +94,7 @@ describe('logfire config', () => {
       },
       baseUrl: '',
       console: false,
+      jsonSchema: 'rich',
       logsExporterUrl: '',
       metricExporterUrl: '',
       minLevel: undefined,
@@ -104,7 +105,7 @@ describe('logfire config', () => {
       token: '',
       traceExporterUrl: '',
     })
-    configureLogfireApi({ baggage: { spanAttributes: [] }, minLevel: null })
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     await shutdownVariables()
   })
 
@@ -163,6 +164,13 @@ describe('logfire config', () => {
     configure({ resourceAttributes })
 
     expect(logfireConfig.resourceAttributes).toBe(resourceAttributes)
+  })
+
+  it('passes jsonSchema config to the shared API', () => {
+    configure({ jsonSchema: 'basic' })
+
+    expect(logfireApiConfig.jsonSchema).toBe('basic')
+    expect(logfireConfig.jsonSchema).toBe('basic')
   })
 
   it('reads OTEL service metadata when Logfire-specific environment variables are omitted', () => {

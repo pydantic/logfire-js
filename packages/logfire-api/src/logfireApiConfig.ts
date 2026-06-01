@@ -27,6 +27,8 @@ export interface BaggageOptions {
   spanAttributes?: readonly string[]
 }
 
+export type JsonSchemaMode = 'rich' | 'basic' | false
+
 export interface LogfireApiConfigOptions {
   baggage?: BaggageOptions
   /**
@@ -35,6 +37,17 @@ export interface LogfireApiConfigOptions {
    * Defaults to true for Node.js, false for browser (minified code produces unstable fingerprints).
    */
   errorFingerprinting?: boolean
+  /**
+   * Controls JSON schema metadata for serialized object/array attributes.
+   *
+   * - 'rich' infers bounded nested schema metadata.
+   * - 'basic' preserves the legacy broad top-level object/array schema metadata.
+   * - false omits logfire.json_schema metadata.
+   *
+   * This does not change how attribute values are serialized.
+   * Defaults to 'rich'.
+   */
+  jsonSchema?: JsonSchemaMode
   minLevel?: MinLevel | null
   otelScope?: string
   /**
@@ -61,6 +74,7 @@ export interface LogfireApiConfig {
   baggage: ResolvedBaggageOptions
   context: Context
   enableErrorFingerprinting: boolean
+  jsonSchema: JsonSchemaMode
   minLevel: LogFireLevel | undefined
   otelScope: string
   scrubber: BaseScrubber
@@ -80,6 +94,7 @@ const DEFAULT_LOGFIRE_API_CONFIG: LogfireApiConfig = {
     return ContextAPI.active()
   },
   enableErrorFingerprinting: true,
+  jsonSchema: 'rich',
   minLevel: undefined,
   otelScope: DEFAULT_OTEL_SCOPE,
   scrubber: new LogfireAttributeScrubber(),
@@ -97,6 +112,10 @@ export function configureLogfireApi(config: LogfireApiConfigOptions): void {
 
   if (config.errorFingerprinting !== undefined) {
     logfireApiConfig.enableErrorFingerprinting = config.errorFingerprinting
+  }
+
+  if (config.jsonSchema !== undefined) {
+    logfireApiConfig.jsonSchema = config.jsonSchema
   }
 
   if (config.minLevel !== undefined) {

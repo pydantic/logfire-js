@@ -172,6 +172,44 @@ logfire.error('payment provider failed', { provider: 'stripe' })
 
 Message templates become structured telemetry. Attribute values are attached to the span and are available for search and SQL queries.
 
+## Attribute Serialization
+
+OpenTelemetry span attributes are scalar values or scalar arrays, so Logfire
+serializes object and array attributes as JSON strings and adds
+`logfire.json_schema` metadata to help the backend render them as structured
+values.
+
+By default, Logfire emits bounded best-effort nested schema metadata for
+ordinary JSON-like values:
+
+```ts
+logfire.info('order received', {
+  order: {
+    id: 'ord_123',
+    items: [{ sku: 'sku_123', quantity: 2 }],
+  },
+})
+```
+
+Schema inference is intentionally limited to normal JavaScript JSON-like data
+such as objects, arrays, strings, numbers, booleans, `null`, and dates. It is
+bounded by internal depth, object-property, and array-sampling limits. Exotic
+objects fall back to broad metadata, and values that cannot be serialized are
+recorded as `"[unserializable]"` instead of making application code fail.
+
+Configure `jsonSchema` when you need a cheaper or quieter mode:
+
+```ts
+logfire.configureLogfireApi({
+  jsonSchema: 'basic',
+})
+```
+
+Use `jsonSchema: 'basic'` for legacy broad top-level `object`/`array` schemas,
+or `jsonSchema: false` to omit `logfire.json_schema` entirely. This only
+controls schema metadata; object and array attributes are still serialized as
+JSON strings.
+
 ## Minimum Level Filtering
 
 Configure `minLevel` to suppress low-severity manual Logfire telemetry before a

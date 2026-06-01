@@ -67,6 +67,21 @@ a previously configured minimum. Log helpers and `reportError()` are filtered by
 their level; span-like APIs are filtered only when the call or scoped client
 sets an explicit level.
 
+`configureLogfireApi()` accepts `jsonSchema` to control schema metadata for
+serialized object and array attributes:
+
+```ts
+configureLogfireApi({
+  jsonSchema: 'rich',
+})
+```
+
+The default `rich` mode emits bounded best-effort nested schema metadata for
+ordinary JSON-like values. Use `basic` to keep legacy broad top-level
+`object`/`array` metadata, or `false` to omit `logfire.json_schema` entirely.
+This setting controls schema metadata only; object and array attributes are
+still serialized as JSON strings.
+
 Subpaths:
 
 - `logfire/evals`
@@ -85,8 +100,9 @@ Node.js runtime setup:
 - `DiagLogLevel`
 
 The package also re-exports the public API from `logfire`.
-Node `configure()` accepts `baggage.spanAttributes` and `minLevel` for the
-shared manual API. It also accepts Node-only object-style console options:
+Node `configure()` accepts `baggage.spanAttributes`, `minLevel`, and
+`jsonSchema` for the shared manual API. It also accepts Node-only object-style
+console options:
 
 ```ts
 logfire.configure({
@@ -110,8 +126,8 @@ Browser runtime setup:
 - `DiagLogLevel`
 
 The package also re-exports the public API from `logfire`.
-Browser `configure()` accepts `baggage.spanAttributes` and `minLevel` for the
-shared manual API.
+Browser `configure()` accepts `baggage.spanAttributes`, `minLevel`, and
+`jsonSchema` for the shared manual API.
 
 ## `@pydantic/logfire-cf-workers`
 

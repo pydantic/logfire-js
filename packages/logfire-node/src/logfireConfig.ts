@@ -1,4 +1,4 @@
-import type { BaggageOptions, LogFireLevel, MinLevel, SamplingOptions } from 'logfire'
+import type { BaggageOptions, JsonSchemaMode, LogFireLevel, MinLevel, SamplingOptions } from 'logfire'
 import type { VariablesConfigOptions } from 'logfire/vars'
 
 import type { Attributes, DiagLogLevel } from '@opentelemetry/api'
@@ -95,6 +95,12 @@ export interface LogfireConfigOptions {
    */
   errorFingerprinting?: boolean
   /**
+   * Controls JSON schema metadata for serialized object/array attributes.
+   *
+   * Defaults to 'rich'. Use 'basic' for legacy broad schemas, or false to omit schema metadata.
+   */
+  jsonSchema?: JsonSchemaMode
+  /**
    * Additional third-party instrumentations to use.
    */
   instrumentations?: Instrumentation[]
@@ -188,6 +194,7 @@ export interface LogfireConfig {
   distributedTracing: boolean
   idGenerator: IdGenerator
   instrumentations: Instrumentation[]
+  jsonSchema: JsonSchemaMode
   logsExporterUrl: string
   metricExporterUrl: string
   metrics: false | MetricsOptions | undefined
@@ -219,6 +226,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   distributedTracing: true,
   idGenerator: new logfireApi.ULIDGenerator(),
   instrumentations: [],
+  jsonSchema: 'rich',
   logsExporterUrl: '',
   metricExporterUrl: '',
   metrics: undefined,
@@ -239,7 +247,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
 export const logfireConfig: LogfireConfig = DEFAULT_LOGFIRE_CONFIG
 
 export function configure(config: LogfireConfigOptions = {}): void {
-  const { baggage, errorFingerprinting, minLevel, otelScope, sampling, scrubbing, ...cnf } = config
+  const { baggage, errorFingerprinting, jsonSchema, minLevel, otelScope, sampling, scrubbing, ...cnf } = config
 
   const env = process.env
   const envMinLevel = env['LOGFIRE_MIN_LEVEL']
@@ -250,6 +258,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
   if (
     baggage !== undefined ||
     errorFingerprinting !== undefined ||
+    jsonSchema !== undefined ||
     minLevel !== undefined ||
     envMinLevel !== undefined ||
     otelScope !== undefined ||
@@ -262,6 +271,9 @@ export function configure(config: LogfireConfigOptions = {}): void {
     }
     if (errorFingerprinting !== undefined) {
       apiConfig.errorFingerprinting = errorFingerprinting
+    }
+    if (jsonSchema !== undefined) {
+      apiConfig.jsonSchema = jsonSchema
     }
     if (otelScope !== undefined) {
       apiConfig.otelScope = otelScope
@@ -308,6 +320,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),
     idGenerator: cnf.advanced?.idGenerator ?? new logfireApi.ULIDGenerator(),
     instrumentations: cnf.instrumentations ?? [],
+    jsonSchema: jsonSchema ?? logfireConfig.jsonSchema,
     logsExporterUrl: `${baseUrl}/${LOGS_ENDPOINT_PATH}`,
     metricExporterUrl: `${baseUrl}/${METRIC_ENDPOINT_PATH}`,
     metrics: cnf.metrics,
