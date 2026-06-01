@@ -101,6 +101,28 @@ characters. Do not store secrets, credentials, session cookies, raw emails, or
 other sensitive user data in baggage because baggage propagates across service
 boundaries.
 
+## Minimum level filtering
+
+Use `minLevel` to suppress low-severity manual Logfire telemetry before spans
+are created:
+
+```js
+import * as logfire from '@pydantic/logfire-node'
+
+logfire.configure({
+  serviceName: 'example-node-script',
+  minLevel: 'warning',
+})
+```
+
+Node.js also reads `LOGFIRE_MIN_LEVEL` when code configuration omits
+`minLevel`. Code configuration takes precedence, and `minLevel: null` clears a
+previous setting. Invalid environment values are warned about and ignored.
+
+Log helpers and `reportError()` are filtered by their level. Duration-style APIs
+such as `span()`, `startSpan()`, `startPendingSpan()`, and `instrument()` are
+filtered only when the call or scoped client sets an explicit level.
+
 ## Flush and shutdown
 
 Logfire batches telemetry through OpenTelemetry processors. For short-lived

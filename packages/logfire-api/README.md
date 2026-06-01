@@ -70,6 +70,31 @@ const syncCustomer = customers.instrument(syncCustomerImpl, {
 
 TypeScript decorators are intentionally not part of this first pass.
 
+## Minimum level filtering
+
+Use `configureLogfireApi({ minLevel })` to suppress low-severity manual Logfire
+telemetry before spans are created. This is separate from console-output
+configuration:
+
+```ts
+import * as logfire from 'logfire'
+
+logfire.configureLogfireApi({
+  minLevel: 'warning',
+})
+```
+
+`minLevel` accepts `trace`, `debug`, `info`, `notice`, `warning`, `error`, or
+`fatal`, or numeric values from `logfire.Level`. Set `minLevel: null` to clear a
+previous setting. Log helpers and `reportError()` are filtered by their level;
+`span()`, `startSpan()`, `startPendingSpan()`, and `instrument()` are filtered
+only when the call or scoped client sets an explicit level.
+
+Filtered `span()` callbacks still run with a no-op span. Thrown or rejected
+errors propagate normally, but Logfire does not record them because the call was
+filtered. Use `reportError()` or a span level at or above the minimum when
+errors should always be reported.
+
 ## Error reporting
 
 Use `reportError()` from explicit catch blocks. The caught value can be

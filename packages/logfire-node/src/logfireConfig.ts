@@ -1,4 +1,4 @@
-import type { BaggageOptions, SamplingOptions } from 'logfire'
+import type { BaggageOptions, LogFireLevel, MinLevel, SamplingOptions } from 'logfire'
 import type { VariablesConfigOptions } from 'logfire/vars'
 
 import type { Attributes, DiagLogLevel } from '@opentelemetry/api'
@@ -95,6 +95,14 @@ export interface LogfireConfigOptions {
    */
   instrumentations?: Instrumentation[]
   /**
+   * Minimum Logfire level to emit for manual log-like spans.
+   *
+   * Accepts lowercase level names (trace, debug, info, notice, warning, error, fatal)
+   * or numeric values from `logfire.Level`. Set to null to disable a previously configured minimum.
+   * Defaults to the `LOGFIRE_MIN_LEVEL` environment variable when omitted.
+   */
+  minLevel?: MinLevel | null
+  /**
    * Set to False to disable sending all metrics, or provide a MetricsOptions object to configure metrics, e.g. additional metric readers.
    */
   metrics?: false | MetricsOptions
@@ -179,6 +187,7 @@ export interface LogfireConfig {
   logsExporterUrl: string
   metricExporterUrl: string
   metrics: false | MetricsOptions | undefined
+  minLevel: LogFireLevel | undefined
   nodeAutoInstrumentations: InstrumentationConfigMap
   otelScope: string
   resourceAttributes: Attributes
@@ -209,6 +218,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   logsExporterUrl: '',
   metricExporterUrl: '',
   metrics: undefined,
+  minLevel: undefined,
   nodeAutoInstrumentations: DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
   otelScope: DEFAULT_OTEL_SCOPE,
   resourceAttributes: {},
@@ -225,12 +235,21 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
 export const logfireConfig: LogfireConfig = DEFAULT_LOGFIRE_CONFIG
 
 export function configure(config: LogfireConfigOptions = {}): void {
-  const { baggage, errorFingerprinting, otelScope, sampling, scrubbing, ...cnf } = config
+  const { baggage, errorFingerprinting, minLevel, otelScope, sampling, scrubbing, ...cnf } = config
 
   const env = process.env
+  const envMinLevel = env['LOGFIRE_MIN_LEVEL']
 
-  if (baggage !== undefined || errorFingerprinting !== undefined || otelScope !== undefined || scrubbing !== undefined) {
+  if (
+    baggage !== undefined ||
+    errorFingerprinting !== undefined ||
+    minLevel !== undefined ||
+    envMinLevel !== undefined ||
+    otelScope !== undefined ||
+    scrubbing !== undefined
+  ) {
     const apiConfig: logfireApi.LogfireApiConfigOptions = {}
+    let minLevelSource: 'code' | 'env' | undefined
     if (baggage !== undefined) {
       apiConfig.baggage = baggage
     }
@@ -240,10 +259,20 @@ export function configure(config: LogfireConfigOptions = {}): void {
     if (otelScope !== undefined) {
       apiConfig.otelScope = otelScope
     }
+    if (minLevel !== undefined) {
+      apiConfig.minLevel = minLevel
+      minLevelSource = 'code'
+    } else if (envMinLevel !== undefined) {
+      apiConfig.minLevel = envMinLevel as MinLevel
+      minLevelSource = 'env'
+    }
     if (scrubbing !== undefined) {
       apiConfig.scrubbing = scrubbing
     }
-    logfireApi.configureLogfireApi(apiConfig)
+    const minLevelUpdated = configureSharedApi(apiConfig, minLevelSource)
+    if (minLevelUpdated) {
+      logfireConfig.minLevel = logfireApi.logfireApiConfig.minLevel
+    }
   }
 
   const token = cnf.token ?? env['LOGFIRE_TOKEN']
@@ -276,6 +305,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
     logsExporterUrl: `${baseUrl}/${LOGS_ENDPOINT_PATH}`,
     metricExporterUrl: `${baseUrl}/${METRIC_ENDPOINT_PATH}`,
     metrics: cnf.metrics,
+    minLevel: logfireConfig.minLevel,
     nodeAutoInstrumentations: cnf.nodeAutoInstrumentations ?? DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
     resourceAttributes: cnf.resourceAttributes ?? {},
     sampling: resolveSampling(sampling),
@@ -289,6 +319,25 @@ export function configure(config: LogfireConfigOptions = {}): void {
   })
 
   start()
+}
+
+function configureSharedApi(apiConfig: logfireApi.LogfireApiConfigOptions, minLevelSource: 'code' | 'env' | undefined): boolean {
+  try {
+    logfireApi.configureLogfireApi(apiConfig)
+    return minLevelSource !== undefined
+  } catch (error) {
+    if (minLevelSource !== 'env') {
+      throw error
+    }
+
+    console.warn(`Invalid LOGFIRE_MIN_LEVEL value "${String(apiConfig.minLevel)}" ignored.`)
+    const fallbackApiConfig = { ...apiConfig }
+    delete fallbackApiConfig.minLevel
+    if (Object.keys(fallbackApiConfig).length > 0) {
+      logfireApi.configureLogfireApi(fallbackApiConfig)
+    }
+    return false
+  }
 }
 
 function resolveSampling(option: SamplingOptions | undefined): SamplingOptions | undefined {

@@ -172,6 +172,36 @@ logfire.error('payment provider failed', { provider: 'stripe' })
 
 Message templates become structured telemetry. Attribute values are attached to the span and are available for search and SQL queries.
 
+## Minimum Level Filtering
+
+Configure `minLevel` to suppress low-severity manual Logfire telemetry before a
+span is created. This is separate from console-output configuration.
+
+```ts
+import * as logfire from 'logfire'
+
+logfire.configureLogfireApi({
+  minLevel: 'warning',
+})
+```
+
+The accepted names are `trace`, `debug`, `info`, `notice`, `warning`, `error`,
+and `fatal`. You can also pass numeric values from `logfire.Level`, such as
+`logfire.Level.Warning`. Set `minLevel: null` to clear a previous setting.
+
+Log helpers are filtered by their level, and `log()` defaults to
+`logfire.Level.Info`. `reportError()` uses `logfire.Level.Error`. Duration-style
+APIs such as `span()`, `startSpan()`, `startPendingSpan()`, and `instrument()`
+are filtered only when the call or a scoped client sets an explicit `level`.
+This preserves ordinary unlevelled spans while still allowing opt-in debug span
+filtering.
+
+When a filtered `span()` call uses a callback, Logfire still runs the callback
+with a no-op span. If the callback throws or rejects, that error propagates to
+your code normally, but Logfire does not record it because the call was
+filtered. Use `reportError()` or a span level at or above the minimum when
+errors should always be reported.
+
 ## Errors
 
 Use `reportError()` when you catch an exception and want it to appear as an error event in Logfire:

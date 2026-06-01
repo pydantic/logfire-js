@@ -67,6 +67,33 @@ logfire.configure({
 
 In Node.js, `LOGFIRE_CONSOLE=true` has the same effect.
 
+## Minimum Level
+
+Use `minLevel` to stop low-severity manual Logfire telemetry before spans are
+created. This is not console-output filtering; console configuration is
+separate.
+
+```ts
+logfire.configure({
+  minLevel: 'warning',
+  serviceName: 'checkout-api',
+})
+```
+
+`minLevel` accepts `trace`, `debug`, `info`, `notice`, `warning`, `error`, or
+`fatal`, or numeric values from `logfire.Level`. Set `minLevel: null` to disable
+a previously configured minimum. In Node.js, `LOGFIRE_MIN_LEVEL=warning` has
+the same effect when the code configuration omits `minLevel`; invalid
+environment values are warned about and ignored.
+
+The filter applies to manual Logfire APIs. Log helpers and `reportError()` are
+filtered by their level. `span()`, `startSpan()`, `startPendingSpan()`, and
+`instrument()` are filtered only when the call or scoped client sets an
+explicit level, so ordinary duration spans without a level are preserved. If a
+filtered `span()` callback throws or rejects, the error still propagates to your
+code but Logfire does not record it. Use `reportError()` or a span level at or
+above the minimum when errors should always be reported.
+
 ## Sending Control
 
 Node.js defaults to sending telemetry when a token is present. You can override this:

@@ -95,6 +95,28 @@ await logfire.span('charge card', {
 })
 ```
 
+## Minimum Level Filtering
+
+Use `minLevel` to suppress low-severity manual Logfire telemetry before spans
+are created:
+
+```ts
+logfire.configure({
+  serviceName: 'payments-api',
+  minLevel: 'warning',
+})
+```
+
+Node.js also reads `LOGFIRE_MIN_LEVEL` when `configure()` does not receive a
+`minLevel` option. Code configuration takes precedence over the environment,
+and `minLevel: null` clears a previous setting. Invalid environment values are
+warned about and ignored.
+
+The filter applies to manual Logfire APIs. Log helpers and `reportError()` are
+filtered by their level; `span()`, `startSpan()`, `startPendingSpan()`, and
+`instrument()` are filtered only when the call or scoped client sets an
+explicit level.
+
 ## Baggage Span Attributes
 
 Use `baggage.spanAttributes` to copy selected active OpenTelemetry baggage

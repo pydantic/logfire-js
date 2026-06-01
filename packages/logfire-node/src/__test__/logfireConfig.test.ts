@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
-import { configureLogfireApi, logfireApiConfig } from 'logfire'
+import { configureLogfireApi, Level, logfireApiConfig } from 'logfire'
 import { shutdownVariables } from 'logfire/vars'
 
 import { configure, logfireConfig } from '../logfireConfig'
@@ -12,15 +12,17 @@ vi.mock('../sdk', () => ({
 describe('logfire config', () => {
   const originalApiKey = process.env['LOGFIRE_API_KEY']
   const originalBaseUrl = process.env['LOGFIRE_BASE_URL']
+  const originalMinLevel = process.env['LOGFIRE_MIN_LEVEL']
   const originalSendToLogfire = process.env['LOGFIRE_SEND_TO_LOGFIRE']
   const originalToken = process.env['LOGFIRE_TOKEN']
 
   beforeEach(async () => {
     process.env['LOGFIRE_API_KEY'] = ''
     delete process.env['LOGFIRE_BASE_URL']
+    delete process.env['LOGFIRE_MIN_LEVEL']
     delete process.env['LOGFIRE_SEND_TO_LOGFIRE']
     delete process.env['LOGFIRE_TOKEN']
-    configureLogfireApi({ baggage: { spanAttributes: [] } })
+    configureLogfireApi({ baggage: { spanAttributes: [] }, minLevel: null })
     await shutdownVariables()
   })
 
@@ -34,6 +36,11 @@ describe('logfire config', () => {
       delete process.env['LOGFIRE_BASE_URL']
     } else {
       process.env['LOGFIRE_BASE_URL'] = originalBaseUrl
+    }
+    if (originalMinLevel === undefined) {
+      delete process.env['LOGFIRE_MIN_LEVEL']
+    } else {
+      process.env['LOGFIRE_MIN_LEVEL'] = originalMinLevel
     }
     if (originalSendToLogfire === undefined) {
       delete process.env['LOGFIRE_SEND_TO_LOGFIRE']
@@ -53,12 +60,13 @@ describe('logfire config', () => {
       baseUrl: '',
       logsExporterUrl: '',
       metricExporterUrl: '',
+      minLevel: undefined,
       resourceAttributes: {},
       sendToLogfire: false,
       token: '',
       traceExporterUrl: '',
     })
-    configureLogfireApi({ baggage: { spanAttributes: [] } })
+    configureLogfireApi({ baggage: { spanAttributes: [] }, minLevel: null })
     await shutdownVariables()
   })
 
@@ -128,6 +136,55 @@ describe('logfire config', () => {
 
     expect(logfireConfig.baggage).toEqual({ spanAttributes: ['tenant'] })
     expect(logfireApiConfig.baggage).toEqual({ spanAttributes: ['tenant'] })
+  })
+
+  it('passes code minLevel config to the shared API', () => {
+    configure({
+      minLevel: 'warning',
+    })
+
+    expect(logfireApiConfig.minLevel).toBe(Level.Warning)
+    expect(logfireConfig.minLevel).toBe(Level.Warning)
+  })
+
+  it('reads LOGFIRE_MIN_LEVEL when code config omits minLevel', () => {
+    process.env['LOGFIRE_MIN_LEVEL'] = 'ERROR'
+
+    configure()
+
+    expect(logfireApiConfig.minLevel).toBe(Level.Error)
+    expect(logfireConfig.minLevel).toBe(Level.Error)
+  })
+
+  it('lets code minLevel override LOGFIRE_MIN_LEVEL, including null reset', () => {
+    process.env['LOGFIRE_MIN_LEVEL'] = 'error'
+
+    configure({
+      minLevel: null,
+    })
+
+    expect(logfireApiConfig.minLevel).toBeUndefined()
+    expect(logfireConfig.minLevel).toBeUndefined()
+  })
+
+  it('warns and ignores invalid LOGFIRE_MIN_LEVEL values without dropping other shared API config', () => {
+    process.env['LOGFIRE_MIN_LEVEL'] = 'verbose'
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    try {
+      configure({
+        baggage: {
+          spanAttributes: ['tenant'],
+        },
+      })
+
+      expect(warnSpy).toHaveBeenCalledWith('Invalid LOGFIRE_MIN_LEVEL value "verbose" ignored.')
+      expect(logfireApiConfig.minLevel).toBeUndefined()
+      expect(logfireConfig.minLevel).toBeUndefined()
+      expect(logfireApiConfig.baggage).toEqual({ spanAttributes: ['tenant'] })
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it('supports a token provider without resolving it during configure', async () => {

@@ -1,5 +1,11 @@
 import type { Attributes, Context, HrTime, Span } from '@opentelemetry/api'
-import { SpanStatusCode, context as TheContextAPI, propagation as ThePropagationAPI, trace as TheTraceAPI } from '@opentelemetry/api'
+import {
+  INVALID_SPAN_CONTEXT,
+  SpanStatusCode,
+  context as TheContextAPI,
+  propagation as ThePropagationAPI,
+  trace as TheTraceAPI,
+} from '@opentelemetry/api'
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetry/semantic-conventions'
 
@@ -19,6 +25,8 @@ import {
 } from './constants'
 import { canonicalizeError, computeFingerprint } from './fingerprint'
 import { logfireFormatWithExtras, truncateString } from './formatter'
+import { Level } from './levels'
+import type { LogFireLevel } from './levels'
 import { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire, serializeAttributes } from './logfireApiConfig'
 import { PendingSpanProcessor } from './PendingSpanProcessor'
 import { setPendingSpanSuppressed } from './pendingSpanSuppression'
@@ -29,25 +37,22 @@ import { ULIDGenerator } from './ULIDGenerator'
 export * from './AttributeScrubber'
 export { canonicalizeError, computeFingerprint } from './fingerprint'
 export { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire } from './logfireApiConfig'
-export type { BaggageOptions, LogfireApiConfig, LogfireApiConfigOptions, ScrubbingOptions } from './logfireApiConfig'
+export type {
+  BaggageOptions,
+  LevelName,
+  LogFireLevel,
+  LogfireApiConfig,
+  LogfireApiConfigOptions,
+  MinLevel,
+  ScrubbingOptions,
+} from './logfireApiConfig'
 export { ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY } from './constants'
+export { Level } from './levels'
 export { PendingSpanProcessor } from './PendingSpanProcessor'
 export * from './sampling'
 export { serializeAttributes } from './serializeAttributes'
 export { TailSamplingProcessor, type TailSamplingProcessorOptions } from './TailSamplingProcessor'
 export * from './ULIDGenerator'
-
-export const Level = {
-  Trace: 1 as const,
-  Debug: 5 as const,
-  Info: 9 as const,
-  Notice: 10 as const,
-  Warning: 13 as const,
-  Error: 17 as const,
-  Fatal: 21 as const,
-}
-
-export type LogFireLevel = (typeof Level)[keyof typeof Level]
 
 export interface LogOptions {
   /**
@@ -139,6 +144,14 @@ interface LogfireSpanStart {
   name: string
 }
 
+type LevelSource = 'default' | 'explicit'
+
+interface ResolvedLogOptions extends Omit<LogOptions, 'level' | 'tags'> {
+  level: LogFireLevel
+  levelSource: LevelSource
+  tags: string[]
+}
+
 interface ResolvedLogfireClientSettings {
   level?: LogFireLevel
   tags: string[]
@@ -151,6 +164,7 @@ type SerializedAttributeValue = ReturnType<typeof serializeAttributes>[string]
 const ROOT_CLIENT_SETTINGS: ResolvedLogfireClientSettings = { tags: [] }
 const BAGGAGE_ATTRIBUTE_PREFIX = 'baggage.' as const
 const MAX_BAGGAGE_VALUE_LENGTH = 1000 as const
+const NOOP_SPAN = TheTraceAPI.wrapSpanContext(INVALID_SPAN_CONTEXT)
 
 function mergeTags(...tagGroups: (readonly string[] | undefined)[]): string[] {
   return Array.from(new Set(tagGroups.flatMap((tags) => tags ?? [])).values())
@@ -167,16 +181,56 @@ function mergeClientSettings(parent: ResolvedLogfireClientSettings, child: Logfi
   return merged
 }
 
-function mergeLogOptions(settings: ResolvedLogfireClientSettings, options: LogOptions | undefined, forcedLevel?: LogFireLevel): LogOptions {
-  const merged: LogOptions = {
+function resolveLogOptions(settings: ResolvedLogfireClientSettings, options: LogOptions | undefined): ResolvedLogOptions {
+  const merged: ResolvedLogOptions = {
     ...options,
+    level: Level.Info,
+    levelSource: 'default',
     tags: mergeTags(settings.tags, options?.tags),
   }
-  const level = forcedLevel ?? options?.level ?? settings.level
-  if (level !== undefined) {
-    merged.level = level
+  if (options?.level !== undefined) {
+    merged.level = options.level
+    merged.levelSource = 'explicit'
+  } else if (settings.level !== undefined) {
+    merged.level = settings.level
+    merged.levelSource = 'explicit'
   }
   return merged
+}
+
+function resolveLogLevel(
+  settings: ResolvedLogfireClientSettings,
+  options: { level?: LogFireLevel } | undefined
+): {
+  level: LogFireLevel
+  source: LevelSource
+} {
+  if (options?.level !== undefined) {
+    return { level: options.level, source: 'explicit' }
+  }
+  if (settings.level !== undefined) {
+    return { level: settings.level, source: 'explicit' }
+  }
+  return { level: Level.Info, source: 'default' }
+}
+
+function shouldFilterLevel(level: LogFireLevel, source: LevelSource, alwaysFilter: boolean): boolean {
+  const minLevel = logfireApiConfig.minLevel
+  if (minLevel === undefined) {
+    return false
+  }
+  if (!alwaysFilter && source !== 'explicit') {
+    return false
+  }
+  return level < minLevel
+}
+
+function getNoopSpan(): Span {
+  return NOOP_SPAN
+}
+
+function withNoopSpan<R>(callback: SpanCallback<R>): R {
+  return callback(getNoopSpan())
 }
 
 function getBaggageSpanAttributes(existingAttributes: Record<string, unknown>): Record<string, string> {
@@ -339,13 +393,16 @@ function startSpanWithSettings(
   attributes: Record<string, unknown> = {},
   options: LogOptions = {}
 ): Span {
-  options = mergeLogOptions(settings, options)
-  const spanStart = buildLogfireSpanStart(msgTemplate, attributes, options)
+  const resolvedOptions = resolveLogOptions(settings, options)
+  if (shouldFilterLevel(resolvedOptions.level, resolvedOptions.levelSource, resolvedOptions.log === true)) {
+    return getNoopSpan()
+  }
+  const spanStart = buildLogfireSpanStart(msgTemplate, attributes, resolvedOptions)
 
   const span = logfireApiConfig.tracer.startSpan(
     spanStart.name,
     { attributes: spanStart.attributes },
-    getSpanStartContext(options.parentSpan)
+    getSpanStartContext(resolvedOptions.parentSpan)
   )
 
   return span
@@ -365,9 +422,12 @@ function startPendingSpanWithSettings(
   attributes: Record<string, unknown> = {},
   options: StartPendingSpanOptions = {}
 ): Span {
-  options = mergeLogOptions(settings, options)
-  const spanStart = buildLogfireSpanStart(msgTemplate, attributes, options)
-  const parentContext = getSpanStartContext(options.parentSpan)
+  const resolvedOptions = resolveLogOptions(settings, options)
+  if (shouldFilterLevel(resolvedOptions.level, resolvedOptions.levelSource, false)) {
+    return getNoopSpan()
+  }
+  const spanStart = buildLogfireSpanStart(msgTemplate, attributes, resolvedOptions)
+  const parentContext = getSpanStartContext(resolvedOptions.parentSpan)
   const realSpan = logfireApiConfig.tracer.startSpan(
     spanStart.name,
     { attributes: spanStart.attributes },
@@ -441,26 +501,34 @@ function spanWithSettings<R>(
 ): R {
   let attributes: Record<string, unknown>
   let level: LogFireLevel
+  let levelSource: LevelSource
   let tags: string[]
   let callback!: SpanCallback<R>
   let parentSpan: Span | undefined
   let spanName: string | undefined
   if (args.length === 1) {
     const options = args[0]
+    const resolvedLevel = resolveLogLevel(settings, options)
     attributes = args[0].attributes ?? {}
-    level = options.level ?? settings.level ?? Level.Info
+    level = resolvedLevel.level
+    levelSource = resolvedLevel.source
     tags = mergeTags(settings.tags, options.tags)
     callback = options.callback
     parentSpan = options.parentSpan
     spanName = options._spanName
   } else {
-    const options = mergeLogOptions(settings, args[1])
+    const options = resolveLogOptions(settings, args[1])
     attributes = args[0]
-    level = options.level ?? Level.Info
-    tags = options.tags ?? []
+    level = options.level
+    levelSource = options.levelSource
+    tags = options.tags
     parentSpan = options.parentSpan
     spanName = options._spanName
     callback = args[2]
+  }
+
+  if (shouldFilterLevel(level, levelSource, false)) {
+    return withNoopSpan(callback)
   }
 
   const { serializedAttributes } = buildSerializedLogfireAttributes(msgTemplate, attributes, { tags, level })
@@ -554,6 +622,10 @@ function instrumentWithSettings<F extends InstrumentableFunction>(
 ): F {
   const wrapped = function (this: ThisParameterType<F>, ...args: Parameters<F>): ReturnType<F> {
     const message = options.message ?? `Calling ${getFunctionName(fn)}`
+    const resolvedLevel = resolveLogLevel(settings, options)
+    if (shouldFilterLevel(resolvedLevel.level, resolvedLevel.source, false)) {
+      return fn.apply(this, args) as ReturnType<F>
+    }
     const attributes = buildInstrumentedCallAttributes(fn, args, options)
     const spanSerializationAttributes =
       options.recordReturn === true ? buildInstrumentedCallSerializationAttributes(message, attributes) : undefined

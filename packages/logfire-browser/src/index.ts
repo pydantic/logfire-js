@@ -28,7 +28,7 @@ import {
   ATTR_BROWSER_PLATFORM,
   ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
 } from '@opentelemetry/semantic-conventions/incubating'
-import type { BaggageOptions, LogfireApiConfigOptions, SamplingOptions, ScrubbingOptions } from 'logfire'
+import type { BaggageOptions, LogfireApiConfigOptions, MinLevel, SamplingOptions, ScrubbingOptions } from 'logfire'
 import {
   configureLogfireApi,
   debug,
@@ -101,6 +101,13 @@ export interface LogfireConfigOptions {
    */
   instrumentations?: (Instrumentation | Instrumentation[])[]
   /**
+   * Minimum Logfire level to emit for manual log-like spans.
+   *
+   * Accepts lowercase level names (trace, debug, info, notice, warning, error, fatal)
+   * or numeric values from `logfire.Level`. Set to null to disable a previously configured minimum.
+   */
+  minLevel?: MinLevel | null
+  /**
    * Sampling options for controlling which traces are exported.
    * `head` sets a probabilistic sample rate (0.0-1.0) at trace creation time.
    * `tail` provides a callback evaluated on every span to decide whether to keep the trace.
@@ -172,6 +179,9 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   }
   if (options.baggage !== undefined) {
     apiConfig.baggage = options.baggage
+  }
+  if (options.minLevel !== undefined) {
+    apiConfig.minLevel = options.minLevel
   }
   if (options.scrubbing !== undefined) {
     apiConfig.scrubbing = options.scrubbing

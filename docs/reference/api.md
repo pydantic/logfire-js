@@ -51,6 +51,22 @@ missing keys are ignored, baggage metadata is ignored, and values are truncated
 to 1000 characters. The Node and browser runtime packages expose the same shape
 through `configure()`.
 
+`configureLogfireApi()` also accepts `minLevel` to suppress low-severity manual
+Logfire telemetry before spans are created. This is separate from console-output
+configuration:
+
+```ts
+configureLogfireApi({
+  minLevel: 'warning',
+})
+```
+
+Use lowercase level names (`trace`, `debug`, `info`, `notice`, `warning`,
+`error`, `fatal`) or numeric values from `Level`. Set `minLevel: null` to clear
+a previously configured minimum. Log helpers and `reportError()` are filtered by
+their level; span-like APIs are filtered only when the call or scoped client
+sets an explicit level.
+
 Subpaths:
 
 - `logfire/evals`
@@ -69,7 +85,8 @@ Node.js runtime setup:
 - `DiagLogLevel`
 
 The package also re-exports the public API from `logfire`.
-Node `configure()` accepts `baggage.spanAttributes` for the shared manual API.
+Node `configure()` accepts `baggage.spanAttributes` and `minLevel` for the
+shared manual API.
 
 ## `@pydantic/logfire-browser`
 
@@ -79,7 +96,8 @@ Browser runtime setup:
 - `DiagLogLevel`
 
 The package also re-exports the public API from `logfire`.
-Browser `configure()` accepts `baggage.spanAttributes` for the shared manual API.
+Browser `configure()` accepts `baggage.spanAttributes` and `minLevel` for the
+shared manual API.
 
 ## `@pydantic/logfire-cf-workers`
 

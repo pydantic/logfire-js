@@ -2,10 +2,14 @@ import type { Context, Tracer } from '@opentelemetry/api'
 import { context as ContextAPI, trace as TraceAPI } from '@opentelemetry/api'
 
 import type { BaseScrubber, ScrubCallback } from './AttributeScrubber'
+import type { LogFireLevel, MinLevel } from './levels'
 import { LogfireAttributeScrubber, NoopAttributeScrubber } from './AttributeScrubber'
 import { DEFAULT_OTEL_SCOPE } from './constants'
+import { Level, resolveMinLevel } from './levels'
 
 export * from './AttributeScrubber'
+export { Level }
+export type { LevelName, LogFireLevel, MinLevel } from './levels'
 export { serializeAttributes } from './serializeAttributes'
 
 export interface ScrubbingOptions {
@@ -31,6 +35,7 @@ export interface LogfireApiConfigOptions {
    * Defaults to true for Node.js, false for browser (minified code produces unstable fingerprints).
    */
   errorFingerprinting?: boolean
+  minLevel?: MinLevel | null
   otelScope?: string
   /**
    * Options for scrubbing sensitive data. Set to False to disable.
@@ -44,19 +49,7 @@ export interface ResolvedBaggageOptions {
 
 export type SendToLogfire = 'if-token-present' | boolean | undefined
 
-export const Level = {
-  Trace: 1 as const,
-  Debug: 5 as const,
-  Info: 9 as const,
-  Notice: 10 as const,
-  Warning: 13 as const,
-  Error: 17 as const,
-  Fatal: 21 as const,
-}
-
 export type Env = Record<string, string | undefined>
-
-export type LogFireLevel = (typeof Level)[keyof typeof Level]
 
 export interface LogOptions {
   level?: LogFireLevel
@@ -68,6 +61,7 @@ export interface LogfireApiConfig {
   baggage: ResolvedBaggageOptions
   context: Context
   enableErrorFingerprinting: boolean
+  minLevel: LogFireLevel | undefined
   otelScope: string
   scrubber: BaseScrubber
   tracer: Tracer
@@ -86,6 +80,7 @@ const DEFAULT_LOGFIRE_API_CONFIG: LogfireApiConfig = {
     return ContextAPI.active()
   },
   enableErrorFingerprinting: true,
+  minLevel: undefined,
   otelScope: DEFAULT_OTEL_SCOPE,
   scrubber: new LogfireAttributeScrubber(),
   tracer: TraceAPI.getTracer(DEFAULT_OTEL_SCOPE),
@@ -102,6 +97,10 @@ export function configureLogfireApi(config: LogfireApiConfigOptions): void {
 
   if (config.errorFingerprinting !== undefined) {
     logfireApiConfig.enableErrorFingerprinting = config.errorFingerprinting
+  }
+
+  if (config.minLevel !== undefined) {
+    logfireApiConfig.minLevel = config.minLevel === null ? undefined : resolveMinLevel(config.minLevel)
   }
 
   if (config.scrubbing !== undefined) {

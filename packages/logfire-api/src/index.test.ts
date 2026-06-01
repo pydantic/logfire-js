@@ -17,13 +17,18 @@ import {
 } from './constants'
 import defaultExport, {
   configureLogfireApi,
+  debug,
+  error,
   info,
   instrument,
   Level,
+  log,
+  logfireApiConfig,
   reportError,
   span,
   startPendingSpan,
   startSpan,
+  warning,
   withSettings,
   withTags,
 } from './index'
@@ -109,6 +114,7 @@ const mocks = vi.hoisted(() => {
 
   const activeContext = makeContext()
   const spanMock = makeSpan({ startTime: [1000, 0] })
+  const noopSpan = makeSpan({ recording: false })
   const startSpanResults: MockSpan[] = []
   const getActiveBaggage = vi.fn<() => MockBaggage | undefined>(() => activeBaggage)
 
@@ -136,11 +142,18 @@ const mocks = vi.hoisted(() => {
       spanMock.setAttribute.mockClear()
       spanMock.setStatus.mockClear()
       spanMock.spanContext.mockClear()
+      noopSpan.end.mockClear()
+      noopSpan.isRecording.mockClear()
+      noopSpan.recordException.mockClear()
+      noopSpan.setAttribute.mockClear()
+      noopSpan.setStatus.mockClear()
+      noopSpan.spanContext.mockClear()
     },
     setActiveBaggage(entries: Record<string, string> | undefined) {
       activeBaggage = entries === undefined ? undefined : makeBaggage(entries)
     },
     setSpan: vi.fn<(ctx: MockContext, span: MockSpan) => MockContext>((ctx, span) => ctx.setValue(Symbol.for('otel-test-span'), span)),
+    noopSpan,
     spanMock,
     startSpanResults,
     tracerMock,
@@ -156,6 +169,11 @@ vi.mock('@opentelemetry/api', () => {
       with: mocks.contextWith,
     },
     createContextKey: (description: string) => Symbol.for(description),
+    INVALID_SPAN_CONTEXT: {
+      spanId: '0000000000000000',
+      traceFlags: 0,
+      traceId: '00000000000000000000000000000000',
+    },
     SpanStatusCode: { ERROR: 2 },
     propagation: {
       getActiveBaggage: mocks.getActiveBaggage,
@@ -163,12 +181,13 @@ vi.mock('@opentelemetry/api', () => {
     trace: {
       getTracer: vi.fn<() => typeof mocks.tracerMock>(() => mocks.tracerMock),
       setSpan: mocks.setSpan,
+      wrapSpanContext: vi.fn<(_context?: unknown) => typeof mocks.noopSpan>(() => mocks.noopSpan),
     },
   }
 })
 
 beforeEach(() => {
-  configureLogfireApi({ baggage: { spanAttributes: [] }, errorFingerprinting: true })
+  configureLogfireApi({ baggage: { spanAttributes: [] }, errorFingerprinting: true, minLevel: null })
   mocks.setActiveBaggage(undefined)
 })
 
@@ -343,6 +362,166 @@ describe('baggage span attributes', () => {
 
     expect(getStartSpanAttributes()['baggage.tenant']).toBe('acme')
     expect(getStartSpanAttributes()[ATTRIBUTES_TAGS_KEY]).toEqual(['scope'])
+  })
+})
+
+describe('minLevel filtering', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.reset()
+  })
+
+  test('filters log helpers below minLevel and keeps logs at or above minLevel', () => {
+    configureLogfireApi({ minLevel: 'warning' })
+
+    debug('debug event')
+    log('default info event')
+    warning('warning event')
+    error('error event')
+
+    expect(mocks.tracerMock.startSpan).toHaveBeenCalledTimes(2)
+    expect(getStartSpanAttributes(0)[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Warning)
+    expect(getStartSpanAttributes(1)[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Error)
+    expect(spanMock.end).toHaveBeenCalledTimes(2)
+    expect(mocks.noopSpan.end).toHaveBeenCalledTimes(2)
+  })
+
+  test('filters explicit manual spans while preserving unlevelled spans', () => {
+    configureLogfireApi({ minLevel: 'fatal' })
+
+    expect(startSpan('manual span')).toBe(spanMock)
+    expect(mocks.tracerMock.startSpan).toHaveBeenCalledOnce()
+
+    mocks.reset()
+
+    expect(startSpan('debug span', {}, { level: Level.Debug })).toBe(mocks.noopSpan)
+    expect(startPendingSpan('debug pending span', {}, { level: Level.Debug })).toBe(mocks.noopSpan)
+    expect(mocks.tracerMock.startSpan).not.toHaveBeenCalled()
+  })
+
+  test('filters explicit active spans with a no-op span and still runs sync callbacks', () => {
+    configureLogfireApi({ minLevel: 'warning' })
+    const callback = vi.fn<(activeSpan: Span) => string>(() => 'ok')
+
+    const result = span('debug active span', { level: Level.Debug, callback })
+
+    expect(result).toBe('ok')
+    expect(callback).toHaveBeenCalledWith(mocks.noopSpan)
+    expect(mocks.tracerMock.startActiveSpan).not.toHaveBeenCalled()
+    expect(spanMock.end).not.toHaveBeenCalled()
+    expect(spanMock.recordException).not.toHaveBeenCalled()
+  })
+
+  test('filters positional active spans with explicit levels', () => {
+    configureLogfireApi({ minLevel: 'warning' })
+    const callback = vi.fn<(activeSpan: Span) => string>(() => 'ok')
+
+    const result = span('debug active span', { id: 1 }, { level: Level.Debug }, callback)
+
+    expect(result).toBe('ok')
+    expect(callback).toHaveBeenCalledWith(mocks.noopSpan)
+    expect(mocks.tracerMock.startActiveSpan).not.toHaveBeenCalled()
+    expect(mocks.getActiveBaggage).not.toHaveBeenCalled()
+  })
+
+  test('does not record filtered active span callback failures', async () => {
+    configureLogfireApi({ minLevel: 'warning' })
+    const syncError = new Error('sync failure')
+    const asyncError = new Error('async failure')
+
+    expect(() =>
+      span('debug active span', {
+        level: Level.Debug,
+        callback: () => {
+          throw syncError
+        },
+      })
+    ).toThrow(syncError)
+
+    await expect(
+      span('debug async span', {
+        level: Level.Debug,
+        callback: async () => Promise.reject(asyncError),
+      })
+    ).rejects.toThrow(asyncError)
+
+    expect(mocks.tracerMock.startActiveSpan).not.toHaveBeenCalled()
+    expect(spanMock.recordException).not.toHaveBeenCalled()
+    expect(mocks.noopSpan.recordException).not.toHaveBeenCalled()
+    expect(spanMock.end).not.toHaveBeenCalled()
+    expect(mocks.noopSpan.end).not.toHaveBeenCalled()
+  })
+
+  test('filters reportError only when error level is below minLevel', () => {
+    configureLogfireApi({ minLevel: 'fatal' })
+
+    reportError('caught error', new Error('boom'))
+
+    expect(mocks.tracerMock.startSpan).not.toHaveBeenCalled()
+    expect(spanMock.recordException).not.toHaveBeenCalled()
+    expect(mocks.noopSpan.recordException).toHaveBeenCalledWith(expect.any(Error))
+
+    mocks.reset()
+    configureLogfireApi({ minLevel: 'error' })
+
+    reportError('caught error', new Error('boom'))
+
+    expect(mocks.tracerMock.startSpan).toHaveBeenCalledOnce()
+    expect(getStartSpanAttributes()[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Error)
+  })
+
+  test('filters instrumented calls before creating span attributes', () => {
+    configureLogfireApi({ minLevel: 'warning' })
+    const fn = vi.fn<(payload: { id: string }) => { id: string }>((payload) => ({ id: payload.id }))
+    const wrapped = instrument(fn, {
+      extractArgs: ['payload'],
+      level: Level.Debug,
+      recordReturn: true,
+    })
+
+    expect(wrapped({ id: '123' })).toEqual({ id: '123' })
+
+    expect(fn).toHaveBeenCalledWith({ id: '123' })
+    expect(mocks.tracerMock.startActiveSpan).not.toHaveBeenCalled()
+    expect(spanMock.setAttribute).not.toHaveBeenCalled()
+  })
+
+  test('applies scoped levels and helper overrides before filtering', () => {
+    configureLogfireApi({ minLevel: 'warning' })
+    const scoped = withSettings({ level: Level.Debug })
+
+    scoped.log('scoped debug event')
+    scoped.warning('scoped warning event')
+
+    expect(mocks.tracerMock.startSpan).toHaveBeenCalledOnce()
+    expect(getStartSpanAttributes()[ATTRIBUTES_LEVEL_KEY]).toBe(Level.Warning)
+  })
+
+  test('parses minLevel names case-insensitively and resets with null', () => {
+    configureLogfireApi({ minLevel: ' WARNING ' as 'warning' })
+
+    debug('debug event')
+    warning('warning event')
+
+    expect(mocks.tracerMock.startSpan).toHaveBeenCalledOnce()
+    expect(logfireApiConfig.minLevel).toBe(Level.Warning)
+
+    mocks.reset()
+    configureLogfireApi({ minLevel: null })
+    error('error event')
+
+    expect(logfireApiConfig.minLevel).toBeUndefined()
+    expect(mocks.tracerMock.startSpan).toHaveBeenCalledOnce()
+  })
+
+  test('rejects invalid code-configured minLevel values', () => {
+    expect(() => {
+      configureLogfireApi({ minLevel: 12 as never })
+    }).toThrow('Invalid minLevel')
+
+    expect(() => {
+      configureLogfireApi({ minLevel: 'warn' as never })
+    }).toThrow('Invalid minLevel')
   })
 })
 
