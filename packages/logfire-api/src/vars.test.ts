@@ -8,6 +8,7 @@ import {
   LogfireRemoteVariableProvider,
   targetingContext,
   var as logfireVar,
+  VariableNotFoundError,
   variablesBuildConfig,
   variablesClear,
   variablesPullConfig,
@@ -26,6 +27,7 @@ describe('managed variables', () => {
 
   afterEach(async () => {
     await getVariableProvider().shutdown?.()
+    vi.useRealTimers()
     variablesClear()
     configureVariables(false)
   })
@@ -467,6 +469,103 @@ describe('managed variables', () => {
     ).rejects.toThrow('json_schema field required')
   })
 
+  it('preserves remote delete 204 handling and not-found mapping', async () => {
+    const calls: { method: string; url: string }[] = []
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      await Promise.resolve()
+      const url = requestInputToUrl(input)
+      const method = init?.method ?? 'GET'
+      calls.push({ method, url })
+      if (url.endsWith('/missing_remote/')) {
+        return new Response(JSON.stringify({ detail: 'not found' }), { status: 404 })
+      }
+      if (method === 'DELETE') {
+        return new Response(null, { status: 204 })
+      }
+      return new Response(JSON.stringify(config({})), { status: 200 })
+    })
+    const provider = new LogfireRemoteVariableProvider({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com/',
+      fetch: fetchImpl,
+      polling: false,
+      sse: false,
+    })
+
+    await provider.deleteVariable('old_remote')
+    await expect(provider.deleteVariable('missing_remote')).rejects.toBeInstanceOf(VariableNotFoundError)
+
+    expect(calls).toEqual([
+      { method: 'DELETE', url: 'https://example.com/v1/variables/old_remote/' },
+      { method: 'GET', url: 'https://example.com/v1/variables/' },
+      { method: 'DELETE', url: 'https://example.com/v1/variables/missing_remote/' },
+    ])
+  })
+
+  it('uses the shared platform transport timeout for remote variable JSON requests', async () => {
+    vi.useFakeTimers()
+    const fetchImpl = vi.fn<typeof fetch>(
+      async (_input, init) =>
+        await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            const error = new Error('aborted')
+            error.name = 'AbortError'
+            reject(error)
+          })
+        })
+    )
+    const provider = new LogfireRemoteVariableProvider({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: fetchImpl,
+      polling: false,
+      sse: false,
+      timeoutMs: 5,
+    })
+
+    const refresh = provider.refresh(true).catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(5)
+    const error = await refresh
+    expect(error).toBeInstanceOf(Error)
+    expect(error instanceof Error ? error.message : String(error)).toContain('timed out')
+  })
+
+  it('keeps SSE requests on the event-stream fetch path', async () => {
+    const calls: { headers: Headers; method: string; url: string }[] = []
+    const fetchImpl = vi.fn<typeof fetch>(
+      async (input, init) =>
+        await new Promise<Response>((_resolve, reject) => {
+          calls.push({
+            headers: new Headers(init?.headers),
+            method: init?.method ?? 'GET',
+            url: requestInputToUrl(input),
+          })
+          init?.signal?.addEventListener('abort', () => {
+            const error = new Error('aborted')
+            error.name = 'AbortError'
+            reject(error)
+          })
+        })
+    )
+    const provider = new LogfireRemoteVariableProvider({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com/',
+      fetch: fetchImpl,
+      polling: false,
+      sse: true,
+    })
+
+    provider.start()
+    await waitFor(() => calls.length > 0)
+    provider.shutdown()
+
+    expect(calls[0]?.url).toBe('https://example.com/v1/variable-updates/')
+    expect(calls[0]?.method).toBe('GET')
+    expect(calls[0]?.headers.get('Accept')).toBe('text/event-stream')
+    expect(calls[0]?.headers.get('Authorization')).toBe('bearer lf-api-key')
+    expect(calls[0]?.headers.get('Content-Type')).toBeNull()
+  })
+
   it('can disable variables explicitly', () => {
     configureVariables(false)
 
@@ -492,4 +591,17 @@ function parseJsonBody(body: BodyInit | null | undefined): unknown {
     throw new Error('Expected string request body')
   }
   return JSON.parse(body)
+}
+
+async function waitFor(predicate: () => boolean, attempts: number = 20): Promise<void> {
+  if (predicate()) {
+    return
+  }
+  if (attempts <= 0) {
+    throw new Error('Timed out waiting for condition')
+  }
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 0)
+  })
+  await waitFor(predicate, attempts - 1)
 }
