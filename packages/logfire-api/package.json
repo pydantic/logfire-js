@@ -52,6 +52,16 @@
         "default": "./dist/evals.cjs"
       }
     },
+    "./datasets": {
+      "import": {
+        "types": "./dist/datasets.d.ts",
+        "default": "./dist/datasets.js"
+      },
+      "require": {
+        "types": "./dist/datasets.d.cts",
+        "default": "./dist/datasets.cjs"
+      }
+    },
     "./vars": {
       "import": {
         "types": "./dist/vars.d.ts",

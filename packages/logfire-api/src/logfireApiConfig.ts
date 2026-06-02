@@ -166,12 +166,21 @@ export function resolveBaseUrl(env: Env, passedUrl: string | undefined, token: s
   return url
 }
 
-const PYDANTIC_LOGFIRE_TOKEN_PATTERN = /^(?<safe_part>pylf_v(?<version>[0-9]+)_(?<region>[a-z]+)_)(?<token>[a-zA-Z0-9]+)$/u
+const PYDANTIC_LOGFIRE_TOKEN_PATTERN =
+  /^(?<safe_part>pylf_v(?<version>[0-9]+)_(?<region>[a-z]+)_(?:(?<organization_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_)?)(?<token>[a-zA-Z0-9]+)$/u
 
 const REGIONS: Record<string, RegionData> = {
   eu: {
     baseUrl: 'https://logfire-eu.pydantic.dev',
     gcpRegion: 'europe-west4',
+  },
+  stagingeu: {
+    baseUrl: 'https://logfire-eu.pydantic.info',
+    gcpRegion: 'europe-west4',
+  },
+  stagingus: {
+    baseUrl: 'https://logfire-us.pydantic.info',
+    gcpRegion: 'us-east4',
   },
   us: {
     baseUrl: 'https://logfire-us.pydantic.dev',

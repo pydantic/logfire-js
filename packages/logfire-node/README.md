@@ -316,6 +316,24 @@ References:
 - [`examples/node/evals.ts`](https://github.com/pydantic/logfire-js/blob/main/examples/node/evals.ts)
 - [`examples/node/demo_online_evals.ts`](https://github.com/pydantic/logfire-js/blob/main/examples/node/demo_online_evals.ts)
 
+## Hosted Datasets
+
+Hosted evaluation datasets are available from
+`@pydantic/logfire-node/datasets` or `logfire/datasets`. Use the Node helper to
+read `LOGFIRE_API_KEY` and `LOGFIRE_BASE_URL` from the environment:
+
+```ts
+import { createLogfireAPIClient } from '@pydantic/logfire-node/datasets'
+
+const client = createLogfireAPIClient()
+
+const dataset = await client.createDataset({ name: 'sentiment-classifier' })
+await client.addCases(dataset.id, [{ expectedOutput: 'POSITIVE', inputs: { text: 'I love this!' } }])
+```
+
+The API key must be used only from trusted server-side runtimes and needs
+dataset read/write scopes for hosted dataset operations.
+
 ## Managed Variables
 
 Managed variables are available from `@pydantic/logfire-node/vars` or

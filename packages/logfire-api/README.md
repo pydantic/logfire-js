@@ -333,6 +333,24 @@ References and examples:
 - [`examples/node/demo_evals.ts`](https://github.com/pydantic/logfire-js/blob/main/examples/node/demo_evals.ts)
 - [`examples/node/demo_online_evals.ts`](https://github.com/pydantic/logfire-js/blob/main/examples/node/demo_online_evals.ts)
 
+## Hosted Datasets
+
+`logfire/datasets` exports a trusted-runtime API client for managing hosted
+evaluation datasets through the Logfire platform API. Pass an API key with
+dataset scopes explicitly when using the core package:
+
+```ts
+import { LogfireAPIClient } from 'logfire/datasets'
+
+const client = new LogfireAPIClient({ apiKey: process.env.LOGFIRE_API_KEY ?? '' })
+
+const dataset = await client.createDataset({ name: 'sentiment-classifier' })
+await client.addCases(dataset.id, [{ expectedOutput: 'POSITIVE', inputs: { text: 'I love this!' } }])
+```
+
+Use `@pydantic/logfire-node/datasets` in Node.js when you want the helper to
+read `LOGFIRE_API_KEY` and `LOGFIRE_BASE_URL` from the environment.
+
 ## Managed Variables
 
 `logfire/vars` exports managed variables for runtime configuration controlled

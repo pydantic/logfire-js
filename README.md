@@ -686,6 +686,26 @@ Local runnable JavaScript examples:
 - [`examples/node/demo_online_evals.ts`](examples/node/demo_online_evals.ts)
 - [`scripts/runtime-smoke/README.md`](scripts/runtime-smoke/README.md)
 
+## Hosted datasets API client
+
+Use `logfire/datasets` to manage hosted evaluation datasets through the
+Logfire platform API. In Node.js, `@pydantic/logfire-node/datasets` provides a
+helper that reads `LOGFIRE_API_KEY` and `LOGFIRE_BASE_URL` from the
+environment:
+
+```ts
+import { createLogfireAPIClient } from '@pydantic/logfire-node/datasets'
+
+const client = createLogfireAPIClient()
+
+const dataset = await client.createDataset({ name: 'sentiment-classifier' })
+await client.addCases(dataset.id, [{ expectedOutput: 'POSITIVE', inputs: { text: 'I love this!' } }])
+```
+
+API keys for this client need dataset scopes and should only be used from
+trusted server-side runtimes. See `docs/evals.md` for the full hosted dataset
+management guide.
+
 ### Configuring the instrumentation
 
 The `logfire.configure` function accepts a set of configuration options that

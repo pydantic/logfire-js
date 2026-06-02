@@ -308,6 +308,91 @@ example `expected_output`, `report_evaluators`, `predicted_from`,
 round-trip through YAML/JSON should set a stable `static evaluatorName` and
 implement `toJSON()` when their constructor needs arguments.
 
+## Hosted Dataset Management
+
+Hosted datasets are stored in Logfire and can be edited through the web UI or
+managed from trusted server-side JavaScript. Use API keys for this client, not
+project write tokens. The key needs `project:read_datasets` for reads and
+`project:write_datasets` for create, update, delete, and case import.
+
+For Node.js, the helper reads `LOGFIRE_API_KEY` and `LOGFIRE_BASE_URL`:
+
+```ts
+import { createLogfireAPIClient } from '@pydantic/logfire-node/datasets'
+
+const client = createLogfireAPIClient()
+```
+
+Other trusted runtimes can use the runtime-neutral client directly:
+
+```ts
+import { LogfireAPIClient } from 'logfire/datasets'
+
+const client = new LogfireAPIClient({
+  apiKey: 'pylf_v1_us_...',
+})
+```
+
+Create a dataset and import cases:
+
+```ts
+const datasetInfo = await client.createDataset({
+  description: 'Golden Q&A examples',
+  inputSchema: {
+    properties: { question: { type: 'string' } },
+    required: ['question'],
+    type: 'object',
+  },
+  name: 'qa-golden-set',
+  outputSchema: {
+    properties: { answer: { type: 'string' } },
+    required: ['answer'],
+    type: 'object',
+  },
+})
+
+await client.addCases(
+  datasetInfo.name,
+  [
+    {
+      expectedOutput: { answer: '4' },
+      inputs: { question: 'What is 2+2?' },
+      metadata: { source: 'seed' },
+      name: 'arithmetic-1',
+    },
+  ],
+  { onConflict: 'update' }
+)
+```
+
+List and retrieve hosted datasets:
+
+```ts
+const datasets = await client.listDatasets()
+const metadataOnly = await client.getDataset('qa-golden-set', {
+  includeCases: false,
+})
+const exported = await client.getDataset('qa-golden-set')
+```
+
+Cases can be managed by backend case ID:
+
+```ts
+const cases = await client.listCases('qa-golden-set')
+const first = cases[0]
+if (first !== undefined) {
+  await client.updateCase('qa-golden-set', first.id, {
+    metadata: { reviewed: true },
+  })
+}
+```
+
+This hosted client manages server-side dataset records. Running local
+experiments still uses `Dataset.evaluate()`. Pushing a local `Dataset` instance
+to hosted storage and fetching a hosted dataset back into a local `Dataset` are
+handled by the hosted evals integration work, not by this low-level management
+client.
+
 ## Online Evaluation
 
 Online evaluation wraps an async function and runs evaluators in the background
