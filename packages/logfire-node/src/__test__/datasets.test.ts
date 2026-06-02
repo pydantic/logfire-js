@@ -36,6 +36,8 @@ describe('node datasets API client helper', () => {
     const client = createLogfireAPIClient({ fetch: fetchSequence(calls) })
 
     expect(client).toBeInstanceOf(LogfireAPIClient)
+    expect((client as unknown as Record<string, unknown>)['pushEvaluationDataset']).toEqual(expect.any(Function))
+    expect((client as unknown as Record<string, unknown>)['getEvaluationDataset']).toEqual(expect.any(Function))
     await client.listDatasets()
 
     expect(calls[0]?.url).toBe('https://env.example.com/v1/datasets/')

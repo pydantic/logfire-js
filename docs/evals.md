@@ -333,10 +333,26 @@ const client = new LogfireAPIClient({
 })
 ```
 
-Create a dataset and import cases:
+For evals, the primary workflow is to push a local executable `Dataset` to
+hosted storage and later fetch it back as a local executable `Dataset`:
 
 ```ts
-const datasetInfo = await client.createDataset({
+import { Case, Dataset, EqualsExpected } from 'logfire/evals'
+
+const dataset = new Dataset<{ question: string }, { answer: string }>({
+  cases: [
+    new Case({
+      expectedOutput: { answer: '4' },
+      inputs: { question: 'What is 2+2?' },
+      metadata: { source: 'seed' },
+      name: 'arithmetic-1',
+    }),
+  ],
+  evaluators: [new EqualsExpected()],
+  name: 'qa-golden-set',
+})
+
+const datasetInfo = await client.pushEvaluationDataset(dataset, {
   description: 'Golden Q&A examples',
   inputSchema: {
     properties: { question: { type: 'string' } },
@@ -351,21 +367,76 @@ const datasetInfo = await client.createDataset({
   },
 })
 
-await client.addCases(
-  datasetInfo.name,
-  [
-    {
-      expectedOutput: { answer: '4' },
-      inputs: { question: 'What is 2+2?' },
-      metadata: { source: 'seed' },
-      name: 'arithmetic-1',
-    },
-  ],
-  { onConflict: 'update' }
-)
+console.log(datasetInfo.id, datasetInfo.case_count)
+
+const fetched = await client.getEvaluationDataset<{ question: string }, { answer: string }>('qa-golden-set')
+await fetched.evaluate(async ({ question }) => ({
+  answer: question.includes('2+2') ? '4' : 'unknown',
+}))
 ```
 
-List and retrieve hosted datasets:
+`pushEvaluationDataset()` creates the hosted dataset first, updates it when a
+dataset with the same name already exists, imports local cases, and returns
+hosted metadata. Dataset-level, report-level, and case-level evaluators are
+stored with the hosted dataset. Empty evaluator lists are sent on each push so
+removing local evaluators also clears the hosted values.
+
+Repeated pushes are idempotent for named cases because the import endpoint can
+match by case name. Unnamed cases are allowed, but they cannot participate in
+that named-case idempotency behavior. Pass `{ onCaseConflict: 'error' }` to
+fail on named-case conflicts instead of updating existing cases.
+
+Pass JSON Schema objects explicitly when you want hosted schemas. `undefined`
+omits a schema field, an object sets it, and `null` clears it on update. There
+are no built-in Zod, Valibot, or similar adapters; generate JSON Schema with
+your preferred library and pass the resulting object.
+
+Fetched case values can be parsed with library-agnostic hooks:
+
+```ts
+const fetched = await client.getEvaluationDataset<MyInput, MyOutput, MyMetadata>('qa-golden-set', {
+  parseExpectedOutput: (value) => OutputSchema.parse(value),
+  parseInputs: (value) => InputSchema.parse(value),
+  parseMetadata: (value) => MetadataSchema.parse(value),
+})
+```
+
+Custom evaluators and report evaluators round-trip when their classes are known
+to the local decoder:
+
+```ts
+const fetched = await client.getEvaluationDataset('qa-golden-set', {
+  customEvaluators: [MyCaseEvaluator],
+  customReportEvaluators: [MyReportEvaluator],
+  primaryArgKeys: { MyCaseEvaluator: 'value' },
+})
+```
+
+`primaryArgKeys` is an advanced compatibility option for compact single-value
+custom evaluator specs. Most custom evaluators should serialize constructor
+arguments as an object via `toJSON()`.
+
+Pushed inputs, expected outputs, metadata, and evaluator arguments must be
+JSON-compatible values. Dates are converted to ISO strings, but values such as
+`Map`, `Set`, `BigInt`, functions, symbols, class instances, non-finite numbers,
+and nested `undefined` are rejected. Use `serializeValue` for explicit domain
+conversions:
+
+```ts
+await client.pushEvaluationDataset(datasetWithSets, {
+  serializeValue(value) {
+    if (value instanceof Set) {
+      return [...value]
+    }
+    return undefined
+  },
+})
+```
+
+The high-level methods intentionally distinguish local executable eval
+datasets from raw hosted dataset JSON. Use the raw methods for listing hosted
+records, metadata-only reads, edit-by-ID workflows, and manual hosted JSON
+control:
 
 ```ts
 const datasets = await client.listDatasets()
@@ -373,11 +444,7 @@ const metadataOnly = await client.getDataset('qa-golden-set', {
   includeCases: false,
 })
 const exported = await client.getDataset('qa-golden-set')
-```
 
-Cases can be managed by backend case ID:
-
-```ts
 const cases = await client.listCases('qa-golden-set')
 const first = cases[0]
 if (first !== undefined) {
@@ -387,11 +454,10 @@ if (first !== undefined) {
 }
 ```
 
-This hosted client manages server-side dataset records. Running local
-experiments still uses `Dataset.evaluate()`. Pushing a local `Dataset` instance
-to hosted storage and fetching a hosted dataset back into a local `Dataset` are
-handled by the hosted evals integration work, not by this low-level management
-client.
+`getEvaluationDataset()` drops hosted-only case fields such as `id`, `tags`,
+`created_at`, and `updated_at` when constructing local `Case` instances. Keep
+using raw hosted methods if your workflow needs to preserve or edit those
+server-side fields.
 
 ## Online Evaluation
 

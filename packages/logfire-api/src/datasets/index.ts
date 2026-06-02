@@ -2,6 +2,25 @@ import { resolveBaseUrl } from '../logfireApiConfig'
 import { PlatformAPIClient, encodePathSegment } from '../platform/http'
 import type { PlatformAPIClientOptions } from '../platform/http'
 import { PlatformConfigurationError, PlatformHTTPError, PlatformTimeoutError, PlatformTransportError } from '../platform/errors'
+import type { Dataset } from '../evals'
+
+import {
+  evaluationDatasetCaseOptions,
+  evaluationDatasetCreateOptions,
+  evaluationDatasetFromHostedExport,
+  evaluationDatasetUpdateOptions,
+  resolveEvaluationDatasetName,
+} from './evaluation'
+import type { GetEvaluationDatasetOptions, PushEvaluationDatasetOptions } from './evaluation'
+import { DatasetSerializationError } from './json'
+
+export type {
+  EvaluationDatasetValueContext,
+  EvaluationDatasetValueParser,
+  EvaluationDatasetValueSerializer,
+  GetEvaluationDatasetOptions,
+  PushEvaluationDatasetOptions,
+} from './evaluation'
 
 export type JsonObject = Record<string, unknown>
 export type JsonSchema = Record<string, unknown>
@@ -190,6 +209,52 @@ export class LogfireAPIClient {
     const includeCases = options.includeCases ?? true
     const suffix = includeCases ? '/export/' : '/'
     return (await this.request(`/v1/datasets/${encodePathSegment(idOrName)}${suffix}`)) as HostedDataset | JsonObject
+  }
+
+  async pushEvaluationDataset<Inputs, Output, Metadata>(
+    dataset: Dataset<Inputs, Output, Metadata>,
+    options: PushEvaluationDatasetOptions = {}
+  ): Promise<HostedDataset> {
+    const targetName = resolveEvaluationDatasetName(dataset, options)
+    if (targetName === undefined) {
+      throw new DatasetConfigurationError('pushEvaluationDataset() requires a dataset name either on dataset.name or via options.name')
+    }
+
+    let createOptions: CreateDatasetOptions
+    let updateOptions: UpdateDatasetOptions
+    let cases: CreateCaseOptions[]
+    try {
+      createOptions = evaluationDatasetCreateOptions(dataset, targetName, options)
+      updateOptions = evaluationDatasetUpdateOptions(dataset, options)
+      cases = evaluationDatasetCaseOptions(dataset, options)
+    } catch (error) {
+      if (error instanceof DatasetSerializationError) {
+        throw new DatasetConfigurationError(error.message)
+      }
+      throw error
+    }
+
+    try {
+      await this.createDataset(createOptions)
+    } catch (error) {
+      if (!(error instanceof DatasetApiError) || error.status !== 409) {
+        throw error
+      }
+      await this.updateDataset(targetName, updateOptions)
+    }
+
+    if (cases.length > 0) {
+      await this.addCases(targetName, cases, { onConflict: options.onCaseConflict ?? 'update' })
+    }
+
+    return (await this.getDataset(targetName, { includeCases: false })) as HostedDataset
+  }
+
+  async getEvaluationDataset<Inputs = unknown, Output = unknown, Metadata = unknown>(
+    idOrName: string,
+    options: GetEvaluationDatasetOptions<Inputs, Output, Metadata> = {}
+  ): Promise<Dataset<Inputs, Output, Metadata>> {
+    return evaluationDatasetFromHostedExport<Inputs, Output, Metadata>(await this.getDataset(idOrName), idOrName, options)
   }
 
   async listCases(datasetIdOrName: string): Promise<HostedCase[]> {
