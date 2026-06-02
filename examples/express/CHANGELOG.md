@@ -1,5 +1,13 @@
 # @pydantic/logfire-express-example
 
+## 1.0.15
+
+### Patch Changes
+
+- Updated dependencies [b0661cd]
+- Updated dependencies [b0661cd]
+  - @pydantic/logfire-node@0.17.0
+
 ## 1.0.14
 
 ### Patch Changes
