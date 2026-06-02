@@ -11,11 +11,13 @@ This page is a package-level map of the public TypeScript SDK APIs. It is not a 
 
 Manual tracing and logging:
 
+- `instrument(fn, options?)`
 - `span(message, options)` and `span(message, attributes, options, callback)`
 - `startSpan(message, attributes?, options?)`
 - `startPendingSpan(message, attributes?, options?)`
+- `withTags(...tags)` and `withSettings(settings)` for scoped manual API clients
 - `log()`, `trace()`, `debug()`, `info()`, `notice()`, `warning()`, `error()`, `fatal()`
-- `reportError(message, error, extraAttributes?)`
+- `reportError(message, error, extraAttributes?, options?)`
 - `Level`
 
 Configuration helpers and utilities:
@@ -31,6 +33,54 @@ Configuration helpers and utilities:
 - `TailSamplingProcessor`
 - `ULIDGenerator`
 - sampling helpers such as `levelOrDuration()`
+
+`configureLogfireApi()` accepts `baggage.spanAttributes` to copy allowlisted
+active OpenTelemetry baggage keys onto Logfire manual spans/logs as
+`baggage.<key>` attributes:
+
+```ts
+configureLogfireApi({
+  baggage: {
+    spanAttributes: ['tenant', 'region'],
+  },
+})
+```
+
+Projection is disabled by default. Explicit user attributes win on conflict,
+missing keys are ignored, baggage metadata is ignored, and values are truncated
+to 1000 characters. The Node and browser runtime packages expose the same shape
+through `configure()`.
+
+`configureLogfireApi()` also accepts `minLevel` to suppress low-severity manual
+Logfire telemetry before spans are created. This is separate from console-output
+configuration:
+
+```ts
+configureLogfireApi({
+  minLevel: 'warning',
+})
+```
+
+Use lowercase level names (`trace`, `debug`, `info`, `notice`, `warning`,
+`error`, `fatal`) or numeric values from `Level`. Set `minLevel: null` to clear
+a previously configured minimum. Log helpers and `reportError()` are filtered by
+their level; span-like APIs are filtered only when the call or scoped client
+sets an explicit level.
+
+`configureLogfireApi()` accepts `jsonSchema` to control schema metadata for
+serialized object and array attributes:
+
+```ts
+configureLogfireApi({
+  jsonSchema: 'rich',
+})
+```
+
+The default `rich` mode emits bounded best-effort nested schema metadata for
+ordinary JSON-like values. Use `basic` to keep legacy broad top-level
+`object`/`array` metadata, or `false` to omit `logfire.json_schema` entirely.
+This setting controls schema metadata only; object and array attributes are
+still serialized as JSON strings.
 
 Subpaths:
 
@@ -50,6 +100,23 @@ Node.js runtime setup:
 - `DiagLogLevel`
 
 The package also re-exports the public API from `logfire`.
+Node `configure()` accepts `baggage.spanAttributes`, `minLevel`, and
+`jsonSchema` for the shared manual API. It also accepts Node-only object-style
+console options:
+
+```ts
+logfire.configure({
+  console: {
+    minLevel: 'warning',
+    includeTags: true,
+    includeTimestamps: true,
+  },
+})
+```
+
+`console.minLevel` filters console output only. Browser and Cloudflare
+configuration remain boolean-only for console output. Spans without a Logfire
+level are treated as `info` for console filtering.
 
 ## `@pydantic/logfire-browser`
 
@@ -59,6 +126,8 @@ Browser runtime setup:
 - `DiagLogLevel`
 
 The package also re-exports the public API from `logfire`.
+Browser `configure()` accepts `baggage.spanAttributes`, `minLevel`, and
+`jsonSchema` for the shared manual API.
 
 ## `@pydantic/logfire-cf-workers`
 
@@ -75,4 +144,13 @@ Unlike the Node and browser packages, this package does not re-export the manual
 ```ts
 import * as logfire from 'logfire'
 import { instrument } from '@pydantic/logfire-cf-workers'
+```
+
+The Cloudflare package's `instrument(handler, config)` configures Worker
+runtime tracing. To wrap an individual function in a manual span, import the
+core wrapper from `logfire`:
+
+```ts
+import { instrument as instrumentFunction } from 'logfire'
+import { instrument as instrumentWorker } from '@pydantic/logfire-cf-workers'
 ```

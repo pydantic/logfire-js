@@ -5,6 +5,7 @@ import {
   error,
   fatal,
   info,
+  instrument,
   Level,
   log,
   logfireApiConfig,
@@ -21,6 +22,8 @@ import {
   trace,
   ULIDGenerator,
   warning,
+  withSettings,
+  withTags,
 } from 'logfire'
 
 import { configure, logfireConfig } from './logfireConfig'
@@ -46,6 +49,7 @@ const defaultExport: {
   fatal: typeof fatal
   forceFlush: typeof forceFlush
   info: typeof info
+  instrument: typeof instrument
   log: typeof log
   logfireApiConfig: typeof logfireApiConfig
   notice: typeof notice
@@ -59,6 +63,8 @@ const defaultExport: {
   startSpan: typeof startSpan
   trace: typeof trace
   warning: typeof warning
+  withSettings: typeof withSettings
+  withTags: typeof withTags
 } = {
   configure,
   configureLogfireApi,
@@ -68,6 +74,7 @@ const defaultExport: {
   fatal,
   forceFlush,
   info,
+  instrument,
   // Re-export all from logfire
   Level,
   log,
@@ -87,6 +94,8 @@ const defaultExport: {
   trace,
   ULIDGenerator,
   warning,
+  withSettings,
+  withTags,
 }
 
 export default defaultExport

@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch|functions.apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/vp-check-fix-changed.sh\"",
+            "timeout": 60,
+            "statusMessage": "Running vp check --fix on changed files"
+          }
+        ]
+      }
+    ]
+  }
+}

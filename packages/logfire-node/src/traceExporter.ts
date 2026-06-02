@@ -5,10 +5,12 @@ import { BatchSpanProcessor, SimpleSpanProcessor } from '@opentelemetry/sdk-trac
 
 import { logfireConfig } from './logfireConfig'
 import { LogfireConsoleSpanExporter } from './LogfireConsoleSpanExporter'
+import type { ConsoleConfig } from './consoleOptions'
+import { resolveConsoleOptions } from './consoleOptions'
 import { VoidTraceExporter } from './VoidTraceExporter'
 
-export function logfireSpanProcessor(enableConsole: boolean | undefined): SpanProcessor {
-  return new LogfireSpanProcessor(new BatchSpanProcessor(traceExporter()), Boolean(enableConsole))
+export function logfireSpanProcessor(consoleConfig: ConsoleConfig | undefined): SpanProcessor {
+  return new LogfireSpanProcessor(new BatchSpanProcessor(traceExporter()), consoleConfig)
 }
 
 /**
@@ -35,9 +37,10 @@ class LogfireSpanProcessor implements SpanProcessor {
   private readonly console?: SpanProcessor
   private readonly wrapped: SpanProcessor
 
-  constructor(wrapped: SpanProcessor, enableConsole: boolean) {
-    if (enableConsole) {
-      this.console = new SimpleSpanProcessor(new LogfireConsoleSpanExporter())
+  constructor(wrapped: SpanProcessor, consoleConfig: ConsoleConfig | undefined) {
+    const consoleOptions = resolveConsoleOptions(consoleConfig)
+    if (consoleOptions.enabled) {
+      this.console = new SimpleSpanProcessor(new LogfireConsoleSpanExporter(consoleOptions))
     }
     this.wrapped = wrapped
   }

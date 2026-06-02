@@ -2,10 +2,14 @@ import type { Context, Tracer } from '@opentelemetry/api'
 import { context as ContextAPI, trace as TraceAPI } from '@opentelemetry/api'
 
 import type { BaseScrubber, ScrubCallback } from './AttributeScrubber'
+import type { LogFireLevel, MinLevel } from './levels'
 import { LogfireAttributeScrubber, NoopAttributeScrubber } from './AttributeScrubber'
 import { DEFAULT_OTEL_SCOPE } from './constants'
+import { Level, resolveMinLevel } from './levels'
 
 export * from './AttributeScrubber'
+export { Level }
+export type { LevelName, LogFireLevel, MinLevel } from './levels'
 export { serializeAttributes } from './serializeAttributes'
 
 export interface ScrubbingOptions {
@@ -13,13 +17,38 @@ export interface ScrubbingOptions {
   extraPatterns?: string[]
 }
 
+export interface BaggageOptions {
+  /**
+   * Active OpenTelemetry baggage keys to copy to Logfire spans/logs.
+   *
+   * Keys are emitted as attributes prefixed with `baggage.`.
+   * Defaults to [].
+   */
+  spanAttributes?: readonly string[]
+}
+
+export type JsonSchemaMode = 'rich' | 'basic' | false
+
 export interface LogfireApiConfigOptions {
+  baggage?: BaggageOptions
   /**
    * Whether to compute fingerprints for errors reported via reportError().
    * Fingerprints enable error grouping in the Logfire backend.
    * Defaults to true for Node.js, false for browser (minified code produces unstable fingerprints).
    */
   errorFingerprinting?: boolean
+  /**
+   * Controls JSON schema metadata for serialized object/array attributes.
+   *
+   * - 'rich' infers bounded nested schema metadata.
+   * - 'basic' preserves the legacy broad top-level object/array schema metadata.
+   * - false omits logfire.json_schema metadata.
+   *
+   * This does not change how attribute values are serialized.
+   * Defaults to 'rich'.
+   */
+  jsonSchema?: JsonSchemaMode
+  minLevel?: MinLevel | null
   otelScope?: string
   /**
    * Options for scrubbing sensitive data. Set to False to disable.
@@ -27,21 +56,13 @@ export interface LogfireApiConfigOptions {
   scrubbing?: false | ScrubbingOptions
 }
 
-export type SendToLogfire = 'if-token-present' | boolean | undefined
-
-export const Level = {
-  Trace: 1 as const,
-  Debug: 5 as const,
-  Info: 9 as const,
-  Notice: 10 as const,
-  Warning: 13 as const,
-  Error: 17 as const,
-  Fatal: 21 as const,
+export interface ResolvedBaggageOptions {
+  spanAttributes: readonly string[]
 }
 
-export type Env = Record<string, string | undefined>
+export type SendToLogfire = 'if-token-present' | boolean | undefined
 
-export type LogFireLevel = (typeof Level)[keyof typeof Level]
+export type Env = Record<string, string | undefined>
 
 export interface LogOptions {
   level?: LogFireLevel
@@ -50,8 +71,11 @@ export interface LogOptions {
 }
 
 export interface LogfireApiConfig {
+  baggage: ResolvedBaggageOptions
   context: Context
   enableErrorFingerprinting: boolean
+  jsonSchema: JsonSchemaMode
+  minLevel: LogFireLevel | undefined
   otelScope: string
   scrubber: BaseScrubber
   tracer: Tracer
@@ -63,10 +87,15 @@ export interface RegionData {
 }
 
 const DEFAULT_LOGFIRE_API_CONFIG: LogfireApiConfig = {
+  baggage: {
+    spanAttributes: [],
+  },
   get context() {
     return ContextAPI.active()
   },
   enableErrorFingerprinting: true,
+  jsonSchema: 'rich',
+  minLevel: undefined,
   otelScope: DEFAULT_OTEL_SCOPE,
   scrubber: new LogfireAttributeScrubber(),
   tracer: TraceAPI.getTracer(DEFAULT_OTEL_SCOPE),
@@ -75,8 +104,22 @@ const DEFAULT_LOGFIRE_API_CONFIG: LogfireApiConfig = {
 export const logfireApiConfig: LogfireApiConfig = DEFAULT_LOGFIRE_API_CONFIG
 
 export function configureLogfireApi(config: LogfireApiConfigOptions): void {
+  if (config.baggage !== undefined) {
+    logfireApiConfig.baggage = {
+      spanAttributes: [...(config.baggage.spanAttributes ?? [])],
+    }
+  }
+
   if (config.errorFingerprinting !== undefined) {
     logfireApiConfig.enableErrorFingerprinting = config.errorFingerprinting
+  }
+
+  if (config.jsonSchema !== undefined) {
+    logfireApiConfig.jsonSchema = config.jsonSchema
+  }
+
+  if (config.minLevel !== undefined) {
+    logfireApiConfig.minLevel = config.minLevel === null ? undefined : resolveMinLevel(config.minLevel)
   }
 
   if (config.scrubbing !== undefined) {

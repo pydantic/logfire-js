@@ -60,11 +60,54 @@ Report caught errors with `reportError()`:
 
 ```ts
 window.addEventListener('error', (event) => {
-  if (event.error instanceof Error) {
-    logfire.reportError('uncaught browser error', event.error)
-  }
+  logfire.reportError('uncaught browser error', event.error, { filename: event.filename }, { tags: ['browser'] })
 })
 ```
+
+## Minimum Level Filtering
+
+Use `minLevel` to suppress low-severity manual Logfire telemetry before spans
+are created:
+
+```ts
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'web-app',
+  minLevel: 'warning',
+})
+```
+
+Browser configuration does not read Logfire environment variables. Pass
+`minLevel` in code, or pass `minLevel: null` to clear a previous setting. The
+filter applies to manual Logfire APIs. Log helpers and `reportError()` are
+filtered by their level; `span()`, `startSpan()`, `startPendingSpan()`, and
+`instrument()` are filtered only when the call or scoped client sets an
+explicit level.
+
+## Baggage Span Attributes
+
+Use `baggage.spanAttributes` to copy selected active OpenTelemetry baggage
+values onto Logfire manual spans and logs:
+
+```ts
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'web-app',
+  baggage: {
+    spanAttributes: ['tenant', 'region'],
+  },
+})
+```
+
+Projection is disabled by default and allowlisted. Configured key `tenant` is
+emitted as `baggage.tenant` on manual spans/logs, including `span()`,
+`startSpan()`, `startPendingSpan()`, log helpers, `reportError()`, scoped
+clients, and `instrument()` spans. Explicit attributes win on conflict, missing
+keys are ignored, and values are truncated to 1000 characters.
+
+Baggage propagates across service boundaries. Do not store secrets,
+credentials, session cookies, raw emails, or other sensitive user data in
+baggage.
 
 ## Proxy Requirement
 

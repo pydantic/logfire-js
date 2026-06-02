@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
+import { configureLogfireApi, Level, logfireApiConfig } from 'logfire'
 import { shutdownVariables } from 'logfire/vars'
 
 import { configure, logfireConfig } from '../logfireConfig'
@@ -11,14 +12,27 @@ vi.mock('../sdk', () => ({
 describe('logfire config', () => {
   const originalApiKey = process.env['LOGFIRE_API_KEY']
   const originalBaseUrl = process.env['LOGFIRE_BASE_URL']
+  const originalConsole = process.env['LOGFIRE_CONSOLE']
+  const originalMinLevel = process.env['LOGFIRE_MIN_LEVEL']
   const originalSendToLogfire = process.env['LOGFIRE_SEND_TO_LOGFIRE']
+  const originalLogfireServiceName = process.env['LOGFIRE_SERVICE_NAME']
+  const originalLogfireServiceVersion = process.env['LOGFIRE_SERVICE_VERSION']
+  const originalOtelServiceName = process.env['OTEL_SERVICE_NAME']
+  const originalOtelServiceVersion = process.env['OTEL_SERVICE_VERSION']
   const originalToken = process.env['LOGFIRE_TOKEN']
 
   beforeEach(async () => {
     process.env['LOGFIRE_API_KEY'] = ''
     delete process.env['LOGFIRE_BASE_URL']
+    delete process.env['LOGFIRE_CONSOLE']
+    delete process.env['LOGFIRE_MIN_LEVEL']
     delete process.env['LOGFIRE_SEND_TO_LOGFIRE']
+    delete process.env['LOGFIRE_SERVICE_NAME']
+    delete process.env['LOGFIRE_SERVICE_VERSION']
+    delete process.env['OTEL_SERVICE_NAME']
+    delete process.env['OTEL_SERVICE_VERSION']
     delete process.env['LOGFIRE_TOKEN']
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     await shutdownVariables()
   })
 
@@ -33,10 +47,40 @@ describe('logfire config', () => {
     } else {
       process.env['LOGFIRE_BASE_URL'] = originalBaseUrl
     }
+    if (originalConsole === undefined) {
+      delete process.env['LOGFIRE_CONSOLE']
+    } else {
+      process.env['LOGFIRE_CONSOLE'] = originalConsole
+    }
+    if (originalMinLevel === undefined) {
+      delete process.env['LOGFIRE_MIN_LEVEL']
+    } else {
+      process.env['LOGFIRE_MIN_LEVEL'] = originalMinLevel
+    }
     if (originalSendToLogfire === undefined) {
       delete process.env['LOGFIRE_SEND_TO_LOGFIRE']
     } else {
       process.env['LOGFIRE_SEND_TO_LOGFIRE'] = originalSendToLogfire
+    }
+    if (originalLogfireServiceName === undefined) {
+      delete process.env['LOGFIRE_SERVICE_NAME']
+    } else {
+      process.env['LOGFIRE_SERVICE_NAME'] = originalLogfireServiceName
+    }
+    if (originalLogfireServiceVersion === undefined) {
+      delete process.env['LOGFIRE_SERVICE_VERSION']
+    } else {
+      process.env['LOGFIRE_SERVICE_VERSION'] = originalLogfireServiceVersion
+    }
+    if (originalOtelServiceName === undefined) {
+      delete process.env['OTEL_SERVICE_NAME']
+    } else {
+      process.env['OTEL_SERVICE_NAME'] = originalOtelServiceName
+    }
+    if (originalOtelServiceVersion === undefined) {
+      delete process.env['OTEL_SERVICE_VERSION']
+    } else {
+      process.env['OTEL_SERVICE_VERSION'] = originalOtelServiceVersion
     }
     if (originalToken === undefined) {
       delete process.env['LOGFIRE_TOKEN']
@@ -45,14 +89,23 @@ describe('logfire config', () => {
     }
     Object.assign(logfireConfig, {
       authorizationHeaders: {},
+      baggage: {
+        spanAttributes: [],
+      },
       baseUrl: '',
+      console: false,
+      jsonSchema: 'rich',
       logsExporterUrl: '',
       metricExporterUrl: '',
+      minLevel: undefined,
       resourceAttributes: {},
       sendToLogfire: false,
+      serviceName: undefined,
+      serviceVersion: undefined,
       token: '',
       traceExporterUrl: '',
     })
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     await shutdownVariables()
   })
 
@@ -111,6 +164,180 @@ describe('logfire config', () => {
     configure({ resourceAttributes })
 
     expect(logfireConfig.resourceAttributes).toBe(resourceAttributes)
+  })
+
+  it('passes jsonSchema config to the shared API', () => {
+    configure({ jsonSchema: 'basic' })
+
+    expect(logfireApiConfig.jsonSchema).toBe('basic')
+    expect(logfireConfig.jsonSchema).toBe('basic')
+  })
+
+  it('reads OTEL service metadata when Logfire-specific environment variables are omitted', () => {
+    process.env['OTEL_SERVICE_NAME'] = 'otel-service'
+    process.env['OTEL_SERVICE_VERSION'] = '1.2.3'
+
+    configure()
+
+    expect(logfireConfig.serviceName).toBe('otel-service')
+    expect(logfireConfig.serviceVersion).toBe('1.2.3')
+  })
+
+  it('ignores empty service metadata environment variables', () => {
+    process.env['LOGFIRE_SERVICE_NAME'] = ' '
+    process.env['LOGFIRE_SERVICE_VERSION'] = ''
+    process.env['OTEL_SERVICE_NAME'] = 'otel-service'
+    process.env['OTEL_SERVICE_VERSION'] = '1.2.3'
+
+    configure()
+
+    expect(logfireConfig.serviceName).toBe('otel-service')
+    expect(logfireConfig.serviceVersion).toBe('1.2.3')
+
+    process.env['LOGFIRE_SERVICE_NAME'] = ''
+    process.env['LOGFIRE_SERVICE_VERSION'] = ' '
+    process.env['OTEL_SERVICE_NAME'] = ''
+    process.env['OTEL_SERVICE_VERSION'] = ' '
+
+    configure()
+
+    expect(logfireConfig.serviceName).toBeUndefined()
+    expect(logfireConfig.serviceVersion).toBeUndefined()
+  })
+
+  it('lets LOGFIRE service metadata override OTEL service metadata', () => {
+    process.env['LOGFIRE_SERVICE_NAME'] = 'logfire-service'
+    process.env['LOGFIRE_SERVICE_VERSION'] = '2.0.0'
+    process.env['OTEL_SERVICE_NAME'] = 'otel-service'
+    process.env['OTEL_SERVICE_VERSION'] = '1.2.3'
+
+    configure()
+
+    expect(logfireConfig.serviceName).toBe('logfire-service')
+    expect(logfireConfig.serviceVersion).toBe('2.0.0')
+  })
+
+  it('lets code service metadata override LOGFIRE and OTEL environment variables', () => {
+    process.env['LOGFIRE_SERVICE_NAME'] = 'logfire-service'
+    process.env['LOGFIRE_SERVICE_VERSION'] = '2.0.0'
+    process.env['OTEL_SERVICE_NAME'] = 'otel-service'
+    process.env['OTEL_SERVICE_VERSION'] = '1.2.3'
+
+    configure({
+      serviceName: 'code-service',
+      serviceVersion: '3.0.0',
+    })
+
+    expect(logfireConfig.serviceName).toBe('code-service')
+    expect(logfireConfig.serviceVersion).toBe('3.0.0')
+  })
+
+  it('preserves boolean console configuration compatibility', () => {
+    configure({ console: true })
+    expect(logfireConfig.console).toBe(true)
+
+    configure({ console: false })
+    expect(logfireConfig.console).toBe(false)
+  })
+
+  it('stores object-style console configuration', () => {
+    const consoleConfig = {
+      includeTags: false,
+      includeTimestamps: false,
+      minLevel: 'warning' as const,
+    }
+
+    configure({ console: consoleConfig })
+
+    expect(logfireConfig.console).toBe(consoleConfig)
+  })
+
+  it('rejects invalid object-style console min levels during configure', () => {
+    expect(() => {
+      configure({
+        console: {
+          minLevel: 'warn' as never,
+        },
+      })
+    }).toThrow('Invalid console.minLevel')
+
+    expect(logfireConfig.console).toBe(false)
+  })
+
+  it('reads LOGFIRE_CONSOLE as boolean true when code config omits console', () => {
+    process.env['LOGFIRE_CONSOLE'] = 'true'
+
+    configure()
+
+    expect(logfireConfig.console).toBe(true)
+  })
+
+  it('does not parse LOGFIRE_CONSOLE as object-style console config', () => {
+    process.env['LOGFIRE_CONSOLE'] = '{"enabled":true}'
+
+    configure()
+
+    expect(logfireConfig.console).toBe(false)
+  })
+
+  it('passes baggage span attributes config to the shared API', () => {
+    configure({
+      baggage: {
+        spanAttributes: ['tenant'],
+      },
+    })
+
+    expect(logfireConfig.baggage).toEqual({ spanAttributes: ['tenant'] })
+    expect(logfireApiConfig.baggage).toEqual({ spanAttributes: ['tenant'] })
+  })
+
+  it('passes code minLevel config to the shared API', () => {
+    configure({
+      minLevel: 'warning',
+    })
+
+    expect(logfireApiConfig.minLevel).toBe(Level.Warning)
+    expect(logfireConfig.minLevel).toBe(Level.Warning)
+  })
+
+  it('reads LOGFIRE_MIN_LEVEL when code config omits minLevel', () => {
+    process.env['LOGFIRE_MIN_LEVEL'] = 'ERROR'
+
+    configure()
+
+    expect(logfireApiConfig.minLevel).toBe(Level.Error)
+    expect(logfireConfig.minLevel).toBe(Level.Error)
+  })
+
+  it('lets code minLevel override LOGFIRE_MIN_LEVEL, including null reset', () => {
+    process.env['LOGFIRE_MIN_LEVEL'] = 'error'
+
+    configure({
+      minLevel: null,
+    })
+
+    expect(logfireApiConfig.minLevel).toBeUndefined()
+    expect(logfireConfig.minLevel).toBeUndefined()
+  })
+
+  it('warns and ignores invalid LOGFIRE_MIN_LEVEL values without dropping other shared API config', () => {
+    process.env['LOGFIRE_MIN_LEVEL'] = 'verbose'
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    try {
+      configure({
+        baggage: {
+          spanAttributes: ['tenant'],
+        },
+      })
+
+      expect(warnSpy).toHaveBeenCalledWith('Invalid LOGFIRE_MIN_LEVEL value "verbose" ignored.')
+      expect(logfireApiConfig.minLevel).toBeUndefined()
+      expect(logfireConfig.minLevel).toBeUndefined()
+      expect(logfireApiConfig.baggage).toEqual({ spanAttributes: ['tenant'] })
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it('supports a token provider without resolving it during configure', async () => {

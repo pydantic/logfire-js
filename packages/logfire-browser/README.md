@@ -49,6 +49,51 @@ Do not use resource attributes for per-request values or sensitive user data.
 First-class options such as `serviceName`, `serviceVersion`, and `environment`
 take precedence over conflicting `resourceAttributes` keys.
 
+## Baggage span attributes
+
+Use `baggage.spanAttributes` to copy selected active OpenTelemetry baggage
+values onto Logfire manual spans and logs:
+
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+logfire.configure({
+  traceUrl: '/client-traces',
+  serviceName: 'browser-app',
+  baggage: {
+    spanAttributes: ['tenant', 'region'],
+  },
+})
+```
+
+Projection is disabled by default and allowlisted. Configured baggage key
+`tenant` is emitted as `baggage.tenant`. Explicit span attributes win on
+conflict, missing keys are ignored, and values are truncated to 1000
+characters. Do not store secrets, credentials, session cookies, raw emails, or
+other sensitive user data in baggage because baggage propagates across service
+boundaries.
+
+## Minimum level filtering
+
+Use `minLevel` to suppress low-severity manual Logfire telemetry before spans
+are created:
+
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+logfire.configure({
+  traceUrl: '/client-traces',
+  serviceName: 'browser-app',
+  minLevel: 'warning',
+})
+```
+
+Browser configuration does not read Logfire environment variables. Pass
+`minLevel` in code, or pass `minLevel: null` to clear a previous setting. Log
+helpers and `reportError()` are filtered by their level. Duration-style APIs
+such as `span()`, `startSpan()`, `startPendingSpan()`, and `instrument()` are
+filtered only when the call or scoped client sets an explicit level.
+
 ## Runtime lifecycle
 
 `configure()` returns an async cleanup function. Call it when your application is

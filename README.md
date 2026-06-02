@@ -693,6 +693,28 @@ control the behavior of the instrumentation. Alternatively, you can
 [use environment variables](https://logfire.pydantic.dev/docs/reference/configuration/#programmatically-via-configure)
 to configure the instrumentation.
 
+In Node.js, `console: true` or `LOGFIRE_CONSOLE=true` prints spans to the
+console with a default console minimum level of `info`. Use object-style
+console options when you want to tune local console output without changing
+which telemetry is created:
+
+```ts
+logfire.configure({
+  console: {
+    minLevel: 'warning',
+    includeTags: true,
+    includeTimestamps: false,
+  },
+})
+```
+
+Browser and Cloudflare configuration currently support only boolean `console`
+values.
+
+Spans without a Logfire level, including ordinary auto-instrumentation spans,
+are treated as `info` for console filtering, so `console.minLevel` above `info`
+hides those spans from local console output.
+
 ## Trace API
 
 The `logfire` package exports several convenience wrappers around the

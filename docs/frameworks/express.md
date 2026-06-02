@@ -45,8 +45,8 @@ app.get('/rolldice', (_req, res) => {
   res.send(String(Math.floor(Math.random() * 6) + 1))
 })
 
-app.use((err: Error, _req: express.Request, res: express.Response, _next: () => unknown) => {
-  logfire.reportError('express request failed', err)
+app.use((err: Error, req: express.Request, res: express.Response, _next: () => unknown) => {
+  logfire.reportError('express request failed', err, { path: req.path }, { tags: ['express'] })
   res.status(500).send('internal server error')
 })
 

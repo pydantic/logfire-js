@@ -33,6 +33,12 @@ logfire.configure({
 
 The write token is read from `LOGFIRE_TOKEN` unless you pass `token`.
 
+Service metadata can be configured in code, with Logfire-specific environment
+variables, or with standard OpenTelemetry service variables. Precedence is
+`configure()` options, then `LOGFIRE_SERVICE_NAME` /
+`LOGFIRE_SERVICE_VERSION`, then `OTEL_SERVICE_NAME` /
+`OTEL_SERVICE_VERSION`.
+
 For rotating proxy or OAuth credentials, pass a token provider. The provider is
 resolved by the OpenTelemetry exporters when telemetry is exported, so
 `configure()` remains synchronous:
@@ -95,6 +101,52 @@ await logfire.span('charge card', {
 })
 ```
 
+## Minimum Level Filtering
+
+Use `minLevel` to suppress low-severity manual Logfire telemetry before spans
+are created:
+
+```ts
+logfire.configure({
+  serviceName: 'payments-api',
+  minLevel: 'warning',
+})
+```
+
+Node.js also reads `LOGFIRE_MIN_LEVEL` when `configure()` does not receive a
+`minLevel` option. Code configuration takes precedence over the environment,
+and `minLevel: null` clears a previous setting. Invalid environment values are
+warned about and ignored.
+
+The filter applies to manual Logfire APIs. Log helpers and `reportError()` are
+filtered by their level; `span()`, `startSpan()`, `startPendingSpan()`, and
+`instrument()` are filtered only when the call or scoped client sets an
+explicit level.
+
+## Baggage Span Attributes
+
+Use `baggage.spanAttributes` to copy selected active OpenTelemetry baggage
+values onto Logfire manual spans and logs:
+
+```ts
+logfire.configure({
+  serviceName: 'payments-api',
+  baggage: {
+    spanAttributes: ['tenant', 'region'],
+  },
+})
+```
+
+Projection is disabled by default and allowlisted. Configured key `tenant` is
+emitted as `baggage.tenant` on manual spans/logs, including `span()`,
+`startSpan()`, `startPendingSpan()`, log helpers, `reportError()`, scoped
+clients, and `instrument()` spans. Explicit attributes win on conflict, missing
+keys are ignored, and values are truncated to 1000 characters.
+
+Baggage propagates across service boundaries. Do not store secrets,
+credentials, session cookies, raw emails, or other sensitive user data in
+baggage.
+
 ## Logs and Metrics
 
 Logs and metrics are sent to Logfire by default when a token is present. Disable metrics when you only want traces and logs:
@@ -114,6 +166,29 @@ logfire.configure({
   serviceName: 'worker',
 })
 ```
+
+Console output defaults to a minimum level of `info`, matching Python's
+console behavior. To change console output without changing which telemetry is
+created, pass object-style console options:
+
+```ts
+logfire.configure({
+  console: {
+    minLevel: 'warning',
+    includeTags: true,
+    includeTimestamps: false,
+  },
+  serviceName: 'worker',
+})
+```
+
+Use `console: { minLevel: 'debug' }` or `console: { minLevel: 'trace' }` when
+you want lower-severity spans printed locally. `LOGFIRE_CONSOLE=true` remains a
+boolean enable switch and uses the default `info` console minimum.
+
+Spans without a Logfire level, including ordinary auto-instrumentation spans,
+are treated as `info` for console filtering. Setting `console.minLevel` above
+`info` hides those spans from local console output.
 
 ## Flush And Shutdown
 

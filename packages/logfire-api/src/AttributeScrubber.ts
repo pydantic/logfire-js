@@ -99,6 +99,10 @@ const SAFE_KEYS = new Set([
   'url.query',
 ])
 
+const MAX_SCRUB_DEPTH = 100
+const MAX_DEPTH_REPLACEMENT = '[Scrubbed due to max depth]'
+const CYCLE_REPLACEMENT = '[Scrubbed due to cycle]'
+
 export class LogfireAttributeScrubber implements BaseScrubber {
   /**
    * List of keys that are considered safe and don't need scrubbing
@@ -124,7 +128,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
    */
   scrubValue<T>(path: JsonPath, value: T): readonly [T, ScrubbedNote[]] {
     const scrubbedNotes: ScrubbedNote[] = []
-    const scrubbedValue = this.scrub(path, value, scrubbedNotes)
+    const scrubbedValue = this.scrub(path, value, scrubbedNotes, new WeakSet(), 0)
     return [scrubbedValue as T, scrubbedNotes] as const
   }
 
@@ -142,7 +146,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
     return `[Scrubbed due to '${matchedSubstring}']`
   }
 
-  private scrub(path: JsonPath, value: unknown, notes: ScrubbedNote[]): unknown {
+  private scrub(path: JsonPath, value: unknown, notes: ScrubbedNote[], seen: WeakSet<object>, depth: number): unknown {
     if (typeof value === 'string') {
       // Check if the string matches the pattern
       const match = value.match(this.pattern)
@@ -153,8 +157,11 @@ export class LogfireAttributeScrubber implements BaseScrubber {
           // Try to parse as JSON
           try {
             const parsed = JSON.parse(value) as unknown
+            if (depth >= MAX_SCRUB_DEPTH) {
+              return this.redact(path, value, match, notes)
+            }
             // If parsed, scrub the parsed object
-            const newVal = this.scrub(path, parsed, notes)
+            const newVal = this.scrub(path, parsed, notes, seen, depth + 1)
             return JSON.stringify(newVal)
           } catch {
             // Not JSON, redact directly
@@ -163,32 +170,56 @@ export class LogfireAttributeScrubber implements BaseScrubber {
         }
       }
       return value
+    } else if (value instanceof Date) {
+      return value
     } else if (Array.isArray(value)) {
-      return value.map((v, i) => this.scrub([...path, i], v, notes))
+      if (depth >= MAX_SCRUB_DEPTH) {
+        return MAX_DEPTH_REPLACEMENT
+      }
+      if (seen.has(value)) {
+        return CYCLE_REPLACEMENT
+      }
+      seen.add(value)
+      try {
+        return value.map((v, i) => this.scrub([...path, i], v, notes, seen, depth + 1))
+      } finally {
+        seen.delete(value)
+      }
     } else if (value !== null && typeof value === 'object') {
+      if (depth >= MAX_SCRUB_DEPTH) {
+        return MAX_DEPTH_REPLACEMENT
+      }
+      if (seen.has(value)) {
+        return CYCLE_REPLACEMENT
+      }
+      seen.add(value)
       // Object
-      const result: Record<string, unknown> = {}
-      for (const [k, v] of Object.entries(value)) {
-        if (SAFE_KEYS.has(k) || ['boolean', 'number', 'undefined'].includes(typeof v) || v === null) {
-          // Safe key or a primitive value, no scrubbing of the key itself.
-          // (In the Python SDK we still scrub primitive values to be extra careful)
-          result[k] = v
-        } else {
-          // Check key against the pattern
-          const keyMatch = k.match(this.pattern)
-          if (keyMatch) {
-            // Key contains sensitive substring
-            const redacted = this.redact([...path, k], v, keyMatch, notes)
-            // If v is an object/array and got redacted to a string, we may want to consider if that's correct.
-            // For simplicity, we just store the redacted string.
-            result[k] = redacted
+      try {
+        const result: Record<string, unknown> = {}
+        for (const [k, v] of Object.entries(value)) {
+          if (SAFE_KEYS.has(k) || ['boolean', 'number', 'undefined'].includes(typeof v) || v === null) {
+            // Safe key or a primitive value, no scrubbing of the key itself.
+            // (In the Python SDK we still scrub primitive values to be extra careful)
+            result[k] = v
           } else {
-            // Scrub the value recursively
-            result[k] = this.scrub([...path, k], v, notes)
+            // Check key against the pattern
+            const keyMatch = k.match(this.pattern)
+            if (keyMatch) {
+              // Key contains sensitive substring
+              const redacted = this.redact([...path, k], v, keyMatch, notes)
+              // If v is an object/array and got redacted to a string, we may want to consider if that's correct.
+              // For simplicity, we just store the redacted string.
+              result[k] = redacted
+            } else {
+              // Scrub the value recursively
+              result[k] = this.scrub([...path, k], v, notes, seen, depth + 1)
+            }
           }
         }
+        return result
+      } finally {
+        seen.delete(value)
       }
-      return result
     }
 
     return value

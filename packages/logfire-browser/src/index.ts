@@ -28,13 +28,14 @@ import {
   ATTR_BROWSER_PLATFORM,
   ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
 } from '@opentelemetry/semantic-conventions/incubating'
-import type { SamplingOptions, ScrubbingOptions } from 'logfire'
+import type { BaggageOptions, JsonSchemaMode, LogfireApiConfigOptions, MinLevel, SamplingOptions, ScrubbingOptions } from 'logfire'
 import {
   configureLogfireApi,
   debug,
   error,
   fatal,
   info,
+  instrument,
   Level,
   log,
   logfireApiConfig,
@@ -52,6 +53,8 @@ import {
   trace,
   ULIDGenerator,
   warning,
+  withSettings,
+  withTags,
 } from 'logfire'
 
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
@@ -65,6 +68,10 @@ export interface LogfireConfigOptions {
    * The configuration of the batch span processor.
    */
   batchSpanProcessorConfig?: BufferConfig
+  /**
+   * Active OpenTelemetry baggage keys to copy to Logfire manual spans/logs as span attributes.
+   */
+  baggage?: BaggageOptions
   /**
    * Whether to log the spans to the console in addition to sending them to the Logfire API.
    */
@@ -90,9 +97,22 @@ export interface LogfireConfigOptions {
    */
   errorFingerprinting?: boolean
   /**
+   * Controls JSON schema metadata for serialized object/array attributes.
+   *
+   * Defaults to 'rich'. Use 'basic' for legacy broad schemas, or false to omit schema metadata.
+   */
+  jsonSchema?: JsonSchemaMode
+  /**
    * The instrumentations to register - a common one [is the fetch instrumentation](https://www.npmjs.com/package/@opentelemetry/instrumentation-fetch).
    */
   instrumentations?: (Instrumentation | Instrumentation[])[]
+  /**
+   * Minimum Logfire level to emit for manual log-like spans.
+   *
+   * Accepts lowercase level names (trace, debug, info, notice, warning, error, fatal)
+   * or numeric values from `logfire.Level`. Set to null to disable a previously configured minimum.
+   */
+  minLevel?: MinLevel | null
   /**
    * Sampling options for controlling which traces are exported.
    * `head` sets a probabilistic sample rate (0.0-1.0) at trace creation time.
@@ -160,11 +180,17 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
     diag.setLogger(new DiagConsoleLogger(), options.diagLogLevel)
   }
 
-  const apiConfig: {
-    errorFingerprinting: boolean
-    scrubbing?: false | ScrubbingOptions
-  } = {
+  const apiConfig: LogfireApiConfigOptions = {
     errorFingerprinting: options.errorFingerprinting ?? false,
+  }
+  if (options.baggage !== undefined) {
+    apiConfig.baggage = options.baggage
+  }
+  if (options.jsonSchema !== undefined) {
+    apiConfig.jsonSchema = options.jsonSchema
+  }
+  if (options.minLevel !== undefined) {
+    apiConfig.minLevel = options.minLevel
   }
   if (options.scrubbing !== undefined) {
     apiConfig.scrubbing = options.scrubbing
@@ -284,6 +310,7 @@ const defaultExport: {
   error: typeof error
   fatal: typeof fatal
   info: typeof info
+  instrument: typeof instrument
   log: typeof log
   logfireApiConfig: typeof logfireApiConfig
   notice: typeof notice
@@ -296,6 +323,8 @@ const defaultExport: {
   startSpan: typeof startSpan
   trace: typeof trace
   warning: typeof warning
+  withSettings: typeof withSettings
+  withTags: typeof withTags
 } = {
   configure,
   configureLogfireApi,
@@ -304,6 +333,7 @@ const defaultExport: {
   error,
   fatal,
   info,
+  instrument,
   // Re-export all from logfire
   Level,
   log,
@@ -321,6 +351,8 @@ const defaultExport: {
   trace,
   ULIDGenerator,
   warning,
+  withSettings,
+  withTags,
 }
 
 export default defaultExport

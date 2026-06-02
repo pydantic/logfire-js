@@ -2,18 +2,8 @@ import type { Context } from '@opentelemetry/api'
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 
 import { ATTRIBUTES_LEVEL_KEY } from './constants'
-
-type LevelName = 'debug' | 'error' | 'fatal' | 'info' | 'notice' | 'trace' | 'warning'
-
-const LEVEL_NUMBERS: Record<LevelName, number> = {
-  debug: 5,
-  error: 17,
-  fatal: 21,
-  info: 9,
-  notice: 10,
-  trace: 1,
-  warning: 13,
-}
+import { LEVEL_NUMBERS } from './levels'
+import type { LevelName } from './levels'
 
 const DEFAULT_LEVEL_NUM = LEVEL_NUMBERS.info
 

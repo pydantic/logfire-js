@@ -64,6 +64,15 @@ export default instrument(handler, {
 
 `instrument()` is an alias for `instrumentInProcess()`. It reads `LOGFIRE_TOKEN`, `LOGFIRE_ENVIRONMENT`, and `LOGFIRE_BASE_URL` from the Worker environment.
 
+This `instrument(handler, config)` function is the Cloudflare Worker runtime
+entrypoint. If you also want to wrap an individual business function in a
+manual span, import the core wrapper from `logfire` directly:
+
+```ts
+import { instrument as instrumentFunction } from 'logfire'
+import { instrument as instrumentWorker } from '@pydantic/logfire-cf-workers'
+```
+
 ## Tail Workers
 
 The package also supports Cloudflare Tail Worker flows:

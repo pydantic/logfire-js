@@ -113,9 +113,9 @@ vi.mock('@opentelemetry/sdk-trace-web', () => ({
   WebTracerProvider: mocks.MockWebTracerProvider,
 }))
 
-import { PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
+import { configureLogfireApi, Level, logfireApiConfig, PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
 
-import logfireBrowser, { configure, startPendingSpan } from './index'
+import logfireBrowser, { configure, instrument, startPendingSpan, withSettings, withTags } from './index'
 
 const originalNavigator = globalThis.navigator
 let cleanup: (() => Promise<void>) | undefined
@@ -184,6 +184,7 @@ describe('browser configure resource attributes', () => {
 
   afterEach(async () => {
     await cleanup?.()
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,
       value: originalNavigator,
@@ -228,6 +229,35 @@ describe('browser configure resource attributes', () => {
       'telemetry.sdk.name': 'logfire-browser',
     })
   })
+
+  it('passes baggage span attributes config to the shared API', () => {
+    cleanup = configure({
+      baggage: {
+        spanAttributes: ['tenant'],
+      },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(logfireApiConfig.baggage).toEqual({ spanAttributes: ['tenant'] })
+  })
+
+  it('passes minLevel config to the shared API', () => {
+    cleanup = configure({
+      minLevel: 'warning',
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(logfireApiConfig.minLevel).toBe(Level.Warning)
+  })
+
+  it('passes jsonSchema config to the shared API', () => {
+    cleanup = configure({
+      jsonSchema: 'basic',
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(logfireApiConfig.jsonSchema).toBe('basic')
+  })
 })
 
 describe('browser pending spans', () => {
@@ -246,6 +276,7 @@ describe('browser pending spans', () => {
 
   afterEach(async () => {
     await cleanup?.()
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,
       value: originalNavigator,
@@ -288,6 +319,15 @@ describe('browser pending spans', () => {
     expect(typeof startPendingSpan).toBe('function')
     expect(logfireBrowser.startPendingSpan).toBe(startPendingSpan)
   })
+
+  it('re-exports instrument from the shared API', () => {
+    expect(logfireBrowser.instrument).toBe(instrument)
+  })
+
+  it('re-exports scoped client helpers from the shared API', () => {
+    expect(logfireBrowser.withSettings).toBe(withSettings)
+    expect(logfireBrowser.withTags).toBe(withTags)
+  })
 })
 
 describe('browser cleanup', () => {
@@ -306,6 +346,7 @@ describe('browser cleanup', () => {
 
   afterEach(async () => {
     await cleanup?.()
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,
       value: originalNavigator,

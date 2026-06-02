@@ -1,4 +1,4 @@
-import type { SamplingOptions } from 'logfire'
+import type { BaggageOptions, JsonSchemaMode, LogFireLevel, MinLevel, SamplingOptions } from 'logfire'
 import type { VariablesConfigOptions } from 'logfire/vars'
 
 import type { Attributes, DiagLogLevel } from '@opentelemetry/api'
@@ -8,7 +8,11 @@ import type { MetricReader } from '@opentelemetry/sdk-metrics'
 import type { IdGenerator, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as logfireApi from 'logfire'
 
+import type { ConsoleConfig } from './consoleOptions'
+import { resolveConsoleOptions } from './consoleOptions'
 import { start } from './sdk'
+
+export type { ConsoleConfig, ConsoleOptions } from './consoleOptions'
 
 export interface AdvancedLogfireConfigOptions {
   /**
@@ -60,13 +64,17 @@ export interface LogfireConfigOptions {
    */
   advanced?: AdvancedLogfireConfigOptions
   /**
+   * Active OpenTelemetry baggage keys to copy to Logfire manual spans/logs as span attributes.
+   */
+  baggage?: BaggageOptions
+  /**
    * Settings for the source code of the project.
    */
   codeSource?: CodeSource
   /**
    * Whether to log the spans to the console in addition to sending them to the Logfire API.
    */
-  console?: boolean
+  console?: ConsoleConfig
   /**
    * Defines the available internal logging levels for the diagnostic logger.
    */
@@ -87,9 +95,23 @@ export interface LogfireConfigOptions {
    */
   errorFingerprinting?: boolean
   /**
+   * Controls JSON schema metadata for serialized object/array attributes.
+   *
+   * Defaults to 'rich'. Use 'basic' for legacy broad schemas, or false to omit schema metadata.
+   */
+  jsonSchema?: JsonSchemaMode
+  /**
    * Additional third-party instrumentations to use.
    */
   instrumentations?: Instrumentation[]
+  /**
+   * Minimum Logfire level to emit for manual log-like spans.
+   *
+   * Accepts lowercase level names (trace, debug, info, notice, warning, error, fatal)
+   * or numeric values from `logfire.Level`. Set to null to disable a previously configured minimum.
+   * Defaults to the `LOGFIRE_MIN_LEVEL` environment variable when omitted.
+   */
+  minLevel?: MinLevel | null
   /**
    * Set to False to disable sending all metrics, or provide a MetricsOptions object to configure metrics, e.g. additional metric readers.
    */
@@ -124,12 +146,12 @@ export interface LogfireConfigOptions {
   sendToLogfire?: 'if-token-present' | boolean
   /**
    * Name of this service.
-   * Defaults to the `LOGFIRE_SERVICE_NAME` environment variable.
+   * Defaults to the `LOGFIRE_SERVICE_NAME` environment variable, then `OTEL_SERVICE_NAME`.
    */
   serviceName?: string
   /**
    * Version of this service.
-   * Defaults to the `LOGFIRE_SERVICE_VERSION` environment variable.
+   * Defaults to the `LOGFIRE_SERVICE_VERSION` environment variable, then `OTEL_SERVICE_VERSION`.
    */
   serviceVersion?: string
   /**
@@ -159,21 +181,37 @@ const DEFAULT_AUTO_INSTRUMENTATION_CONFIG: InstrumentationConfigMap = {
   },
 }
 
+function readNonEmptyEnv(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  const value = env[key]
+  return value === undefined || value.trim() === '' ? undefined : value
+}
+
+function readServiceNameEnv(env: NodeJS.ProcessEnv): string | undefined {
+  return readNonEmptyEnv(env, 'LOGFIRE_SERVICE_NAME') ?? readNonEmptyEnv(env, 'OTEL_SERVICE_NAME')
+}
+
+function readServiceVersionEnv(env: NodeJS.ProcessEnv): string | undefined {
+  return readNonEmptyEnv(env, 'LOGFIRE_SERVICE_VERSION') ?? readNonEmptyEnv(env, 'OTEL_SERVICE_VERSION')
+}
+
 export interface LogfireConfig {
   additionalSpanProcessors: SpanProcessor[]
   apiKey: string | undefined
   authorizationHeaders: AuthorizationHeaders
+  baggage: BaggageOptions
   baseUrl: string
   codeSource: CodeSource | undefined
-  console: boolean | undefined
+  console: ConsoleConfig | undefined
   deploymentEnvironment: string | undefined
   diagLogLevel?: DiagLogLevel
   distributedTracing: boolean
   idGenerator: IdGenerator
   instrumentations: Instrumentation[]
+  jsonSchema: JsonSchemaMode
   logsExporterUrl: string
   metricExporterUrl: string
   metrics: false | MetricsOptions | undefined
+  minLevel: LogFireLevel | undefined
   nodeAutoInstrumentations: InstrumentationConfigMap
   otelScope: string
   resourceAttributes: Attributes
@@ -191,6 +229,9 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   additionalSpanProcessors: [],
   apiKey: undefined,
   authorizationHeaders: {},
+  baggage: {
+    spanAttributes: [],
+  },
   baseUrl: '',
   codeSource: undefined,
   console: false,
@@ -198,16 +239,18 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   distributedTracing: true,
   idGenerator: new logfireApi.ULIDGenerator(),
   instrumentations: [],
+  jsonSchema: 'rich',
   logsExporterUrl: '',
   metricExporterUrl: '',
   metrics: undefined,
+  minLevel: undefined,
   nodeAutoInstrumentations: DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
   otelScope: DEFAULT_OTEL_SCOPE,
   resourceAttributes: {},
   sampling: undefined,
   sendToLogfire: false,
-  serviceName: process.env['LOGFIRE_SERVICE_NAME'],
-  serviceVersion: process.env['LOGFIRE_SERVICE_VERSION'],
+  serviceName: readServiceNameEnv(process.env),
+  serviceVersion: readServiceVersionEnv(process.env),
   token: '',
   traceExporterUrl: '',
   variables: undefined,
@@ -217,32 +260,60 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
 export const logfireConfig: LogfireConfig = DEFAULT_LOGFIRE_CONFIG
 
 export function configure(config: LogfireConfigOptions = {}): void {
-  const { errorFingerprinting, otelScope, sampling, scrubbing, ...cnf } = config
+  const { baggage, errorFingerprinting, jsonSchema, minLevel, otelScope, sampling, scrubbing, ...cnf } = config
 
   const env = process.env
+  const envMinLevel = env['LOGFIRE_MIN_LEVEL']
+  const console = 'console' in cnf ? cnf.console : env['LOGFIRE_CONSOLE'] === 'true'
 
-  if (errorFingerprinting !== undefined || otelScope !== undefined || scrubbing !== undefined) {
+  resolveConsoleOptions(console)
+
+  if (
+    baggage !== undefined ||
+    errorFingerprinting !== undefined ||
+    jsonSchema !== undefined ||
+    minLevel !== undefined ||
+    envMinLevel !== undefined ||
+    otelScope !== undefined ||
+    scrubbing !== undefined
+  ) {
     const apiConfig: logfireApi.LogfireApiConfigOptions = {}
+    let minLevelSource: 'code' | 'env' | undefined
+    if (baggage !== undefined) {
+      apiConfig.baggage = baggage
+    }
     if (errorFingerprinting !== undefined) {
       apiConfig.errorFingerprinting = errorFingerprinting
+    }
+    if (jsonSchema !== undefined) {
+      apiConfig.jsonSchema = jsonSchema
     }
     if (otelScope !== undefined) {
       apiConfig.otelScope = otelScope
     }
+    if (minLevel !== undefined) {
+      apiConfig.minLevel = minLevel
+      minLevelSource = 'code'
+    } else if (envMinLevel !== undefined) {
+      apiConfig.minLevel = envMinLevel as MinLevel
+      minLevelSource = 'env'
+    }
     if (scrubbing !== undefined) {
       apiConfig.scrubbing = scrubbing
     }
-    logfireApi.configureLogfireApi(apiConfig)
+    const minLevelUpdated = configureSharedApi(apiConfig, minLevelSource)
+    if (minLevelUpdated) {
+      logfireConfig.minLevel = logfireApi.logfireApiConfig.minLevel
+    }
   }
 
   const token = cnf.token ?? env['LOGFIRE_TOKEN']
   const apiKey = cnf.apiKey ?? env['LOGFIRE_API_KEY']
   const sendToLogfire = resolveSendToLogfire(cnf.sendToLogfire, token)
   const baseUrl = resolveBaseUrl(env, cnf.advanced?.baseUrl, token, sendToLogfire)
-  const console = 'console' in cnf ? cnf.console : env['LOGFIRE_CONSOLE'] === 'true'
   const deploymentEnvironment = cnf.environment ?? env['LOGFIRE_ENVIRONMENT']
-  const serviceName = cnf.serviceName ?? env['LOGFIRE_SERVICE_NAME']
-  const serviceVersion = cnf.serviceVersion ?? env['LOGFIRE_SERVICE_VERSION']
+  const serviceName = cnf.serviceName ?? readServiceNameEnv(env)
+  const serviceVersion = cnf.serviceVersion ?? readServiceVersionEnv(env)
   const variablesBaseUrl =
     apiKey !== undefined && apiKey !== '' ? logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, apiKey) : cnf.advanced?.baseUrl
   if (requiresRemoteVariables(cnf.variables) && (apiKey === undefined || apiKey === '')) {
@@ -253,6 +324,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
     additionalSpanProcessors: cnf.additionalSpanProcessors ?? [],
     apiKey,
     authorizationHeaders: resolveAuthorizationHeaders(token),
+    baggage: baggage !== undefined ? { spanAttributes: [...(baggage.spanAttributes ?? [])] } : logfireConfig.baggage,
     baseUrl,
     codeSource: cnf.codeSource,
     console,
@@ -261,9 +333,11 @@ export function configure(config: LogfireConfigOptions = {}): void {
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),
     idGenerator: cnf.advanced?.idGenerator ?? new logfireApi.ULIDGenerator(),
     instrumentations: cnf.instrumentations ?? [],
+    jsonSchema: jsonSchema ?? logfireConfig.jsonSchema,
     logsExporterUrl: `${baseUrl}/${LOGS_ENDPOINT_PATH}`,
     metricExporterUrl: `${baseUrl}/${METRIC_ENDPOINT_PATH}`,
     metrics: cnf.metrics,
+    minLevel: logfireConfig.minLevel,
     nodeAutoInstrumentations: cnf.nodeAutoInstrumentations ?? DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
     resourceAttributes: cnf.resourceAttributes ?? {},
     sampling: resolveSampling(sampling),
@@ -277,6 +351,25 @@ export function configure(config: LogfireConfigOptions = {}): void {
   })
 
   start()
+}
+
+function configureSharedApi(apiConfig: logfireApi.LogfireApiConfigOptions, minLevelSource: 'code' | 'env' | undefined): boolean {
+  try {
+    logfireApi.configureLogfireApi(apiConfig)
+    return minLevelSource !== undefined
+  } catch (error) {
+    if (minLevelSource !== 'env') {
+      throw error
+    }
+
+    console.warn(`Invalid LOGFIRE_MIN_LEVEL value "${String(apiConfig.minLevel)}" ignored.`)
+    const fallbackApiConfig = { ...apiConfig }
+    delete fallbackApiConfig.minLevel
+    if (Object.keys(fallbackApiConfig).length > 0) {
+      logfireApi.configureLogfireApi(fallbackApiConfig)
+    }
+    return false
+  }
 }
 
 function resolveSampling(option: SamplingOptions | undefined): SamplingOptions | undefined {

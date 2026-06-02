@@ -77,6 +77,91 @@ logfire.configure({
 First-class options such as `serviceName`, `serviceVersion`, and `environment`
 take precedence over conflicting `resourceAttributes` keys. Values from
 `OTEL_RESOURCE_ATTRIBUTES` still take precedence over code configuration.
+When `serviceName` or `serviceVersion` is omitted, Node reads
+`LOGFIRE_SERVICE_NAME` / `LOGFIRE_SERVICE_VERSION` first, then falls back to
+`OTEL_SERVICE_NAME` / `OTEL_SERVICE_VERSION`.
+
+## Baggage span attributes
+
+Use `baggage.spanAttributes` to copy selected active OpenTelemetry baggage
+values onto Logfire manual spans and logs:
+
+```js
+import * as logfire from '@pydantic/logfire-node'
+
+logfire.configure({
+  serviceName: 'example-node-script',
+  baggage: {
+    spanAttributes: ['tenant', 'region'],
+  },
+})
+```
+
+Projection is disabled by default and allowlisted. Configured baggage key
+`tenant` is emitted as `baggage.tenant`. Explicit span attributes win on
+conflict, missing keys are ignored, and values are truncated to 1000
+characters. Do not store secrets, credentials, session cookies, raw emails, or
+other sensitive user data in baggage because baggage propagates across service
+boundaries.
+
+## Minimum level filtering
+
+Use `minLevel` to suppress low-severity manual Logfire telemetry before spans
+are created:
+
+```js
+import * as logfire from '@pydantic/logfire-node'
+
+logfire.configure({
+  serviceName: 'example-node-script',
+  minLevel: 'warning',
+})
+```
+
+Node.js also reads `LOGFIRE_MIN_LEVEL` when code configuration omits
+`minLevel`. Code configuration takes precedence, and `minLevel: null` clears a
+previous setting. Invalid environment values are warned about and ignored.
+
+Log helpers and `reportError()` are filtered by their level. Duration-style APIs
+such as `span()`, `startSpan()`, `startPendingSpan()`, and `instrument()` are
+filtered only when the call or scoped client sets an explicit level.
+
+## Console output
+
+Use `console: true` to print spans to the console while developing. Console
+output defaults to a minimum level of `info`, matching Python's console
+behavior:
+
+```js
+import * as logfire from '@pydantic/logfire-node'
+
+logfire.configure({
+  serviceName: 'example-node-script',
+  console: true,
+})
+```
+
+To change console output without changing which telemetry is created, pass
+object-style console options:
+
+```js
+logfire.configure({
+  serviceName: 'example-node-script',
+  console: {
+    minLevel: 'warning',
+    includeTags: true,
+    includeTimestamps: false,
+  },
+})
+```
+
+Use `console: { minLevel: 'debug' }` or `console: { minLevel: 'trace' }` when
+you want lower-severity spans printed locally. `LOGFIRE_CONSOLE=true` remains a
+boolean enable switch and uses the default `info` console minimum.
+
+Spans without a Logfire level, including ordinary auto-instrumentation spans,
+are treated as `info` for console filtering. Setting `console.minLevel` above
+`info` hides those spans from local console output.
 
 ## Flush and shutdown
 
