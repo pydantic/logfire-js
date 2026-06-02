@@ -301,6 +301,94 @@ describe('hosted evaluation datasets bridge', () => {
     })
   })
 
+  it('serializes shared unsupported values without treating sibling references as cycles', async () => {
+    const calls: CapturedRequest[] = []
+    const client = new LogfireAPIClient({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: fetchSequence(calls, [jsonResponse(hostedMetadata), jsonResponse([{ id: 'case-1' }]), jsonResponse(hostedMetadata)]),
+    })
+    const shared = new Set(['x'])
+
+    await client.pushEvaluationDataset(
+      new Dataset({
+        cases: [
+          new Case({
+            inputs: { first: shared, second: shared },
+            name: 'shared-set',
+          }),
+        ],
+        name: 'shared-values',
+      }),
+      {
+        serializeValue(value) {
+          if (value instanceof Set) {
+            return Array.from(value as Set<unknown>)
+          }
+          return undefined
+        },
+      }
+    )
+
+    expect(calls[1]?.body).toEqual({
+      cases: [
+        {
+          evaluators: [],
+          inputs: { first: ['x'], second: ['x'] },
+          name: 'shared-set',
+        },
+      ],
+    })
+  })
+
+  it('rejects circular pushed values and serialize-induced cycles', async () => {
+    const client = new LogfireAPIClient({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: fetchSequence([], []),
+    })
+    const circularArray: unknown[] = []
+    circularArray.push(circularArray)
+    const circularObject: Record<string, unknown> = {}
+    circularObject['self'] = circularObject
+    const recursiveSet = new Set(['x'])
+
+    await expect(
+      client.pushEvaluationDataset(
+        new Dataset({
+          cases: [new Case({ inputs: { recursive: circularArray }, name: 'bad-array-cycle' })],
+          name: 'bad-json',
+        })
+      )
+    ).rejects.toThrow('contains a circular array')
+
+    await expect(
+      client.pushEvaluationDataset(
+        new Dataset({
+          cases: [new Case({ inputs: { recursive: circularObject }, name: 'bad-object-cycle' })],
+          name: 'bad-json',
+        })
+      )
+    ).rejects.toThrow('contains a circular object')
+
+    await expect(
+      client.pushEvaluationDataset(
+        new Dataset({
+          cases: [new Case({ inputs: { value: recursiveSet }, name: 'bad-serialize-cycle' })],
+          name: 'bad-json',
+        }),
+        {
+          serializeValue(value) {
+            if (value instanceof Set) {
+              return { wrap: value }
+            }
+            return undefined
+          },
+        }
+      )
+    ).rejects.toThrow('serializeValue returned the same unsupported Set value')
+  })
+
   it('rejects unsupported pushed values with path-aware messages', async () => {
     const client = new LogfireAPIClient({
       apiKey: 'lf-api-key',

@@ -73,17 +73,24 @@ function normalizeUnsupportedValue(
   if (serializeValue === undefined) {
     throw new DatasetSerializationError(`${formatContext(context)} contains unsupported ${reason}; pass serializeValue to convert it`)
   }
-  if (typeof value === 'object' && value !== null) {
+  const tracked = typeof value === 'object' && value !== null
+  if (tracked) {
     if (serializedValues.has(value)) {
       throw new DatasetSerializationError(`${formatContext(context)} serializeValue returned the same unsupported ${reason}`)
     }
     serializedValues.add(value)
   }
-  const serialized = serializeValue(value, context)
-  if (serialized === undefined) {
-    throw new DatasetSerializationError(`${formatContext(context)} contains unsupported ${reason}; serializeValue did not convert it`)
+  try {
+    const serialized = serializeValue(value, context)
+    if (serialized === undefined) {
+      throw new DatasetSerializationError(`${formatContext(context)} contains unsupported ${reason}; serializeValue did not convert it`)
+    }
+    return normalizeValue(serialized, context, serializeValue, ancestors, serializedValues)
+  } finally {
+    if (tracked) {
+      serializedValues.delete(value)
+    }
   }
-  return normalizeValue(serialized, context, serializeValue, ancestors, serializedValues)
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

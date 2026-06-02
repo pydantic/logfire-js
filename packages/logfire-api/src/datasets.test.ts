@@ -251,9 +251,17 @@ describe('hosted datasets API client', () => {
       baseUrl: 'https://example.com',
       fetch: fetchSequence([], [jsonResponse({ detail: 'Case not found' }, 404)]),
     })
+    const missingDatasetFromCaseEndpointClient = new LogfireAPIClient({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: fetchSequence([], [jsonResponse({ detail: 'Not found' }, 404)]),
+    })
 
     await expect(datasetClient.getDataset('missing')).rejects.toBeInstanceOf(DatasetNotFoundError)
     await expect(caseClient.getCase('test-dataset', 'missing')).rejects.toBeInstanceOf(CaseNotFoundError)
+    await expect(missingDatasetFromCaseEndpointClient.getCase('missing-dataset', 'missing-case')).rejects.toBeInstanceOf(
+      DatasetNotFoundError
+    )
   })
 
   it('maps non-404 API errors with parsed details', async () => {
