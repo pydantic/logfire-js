@@ -23,16 +23,17 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
       resolver: 'tsc',
     },
     deps: {
-      neverBundle: [/^@opentelemetry/u, /^node:/u, 'logfire', 'logfire/evals', 'logfire/vars', 'picocolors'],
+      neverBundle: [/^@opentelemetry/u, /^node:/u, 'logfire', 'logfire/datasets', 'logfire/evals', 'logfire/vars', 'picocolors'],
     },
     entry: {
+      datasets: 'src/datasets.ts',
       index: 'src/index.ts',
       vars: 'src/vars.ts',
     },
     format: ['esm', 'cjs'],
     hooks: {
       'build:done': () => {
-        copyCjsDeclarations(['index', 'vars'])
+        copyCjsDeclarations(['datasets', 'index', 'vars'])
       },
     },
     minify: true,

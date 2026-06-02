@@ -2,6 +2,8 @@ import { context as ContextAPI, createContextKey, propagation, trace as TraceAPI
 
 import { murmurhash3x64128 } from '../murmurhash'
 import { startSpan } from '../index'
+import { PlatformAPIClient, encodePathSegment } from '../platform/http'
+import { PlatformHTTPError } from '../platform/errors'
 
 export type JsonSchema = Record<string, unknown>
 
@@ -381,6 +383,7 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
   private readonly pollingIntervalMs: number
   private readonly sseEnabled: boolean
   private readonly timeoutMs: number
+  private readonly transport: PlatformAPIClient
 
   private config: VariablesConfig | undefined
   private hasAttemptedFetch: boolean = false
@@ -404,6 +407,12 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
     if (typeof this.fetchImpl !== 'function') {
       throw new Error('Managed variables require a fetch implementation')
     }
+    this.transport = new PlatformAPIClient({
+      apiKey: this.apiKey,
+      baseUrl: this.baseUrl,
+      fetch: this.fetchImpl,
+      timeoutMs: this.timeoutMs,
+    })
   }
 
   start(): void {
@@ -451,7 +460,8 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
       return
     }
 
-    this.refreshPromise = this.fetchJson(`${this.baseUrl}/v1/variables/`, { method: 'GET' })
+    this.refreshPromise = this.transport
+      .requestJson('/v1/variables/', { method: 'GET' })
       .then((data) => {
         this.config = normalizeVariablesConfig(data)
         this.lastFetchedAt = Date.now()
@@ -520,12 +530,12 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
   async createVariable(config: VariableConfig): Promise<VariableConfig> {
     const normalized = normalizeVariableConfig(config)
     try {
-      await this.fetchJson(`${this.baseUrl}/v1/variables/`, {
-        body: JSON.stringify(configToApiBody(normalized)),
+      await this.transport.requestJson('/v1/variables/', {
+        body: configToApiBody(normalized),
         method: 'POST',
       })
     } catch (error) {
-      if (error instanceof HttpStatusError && error.status === 409) {
+      if (error instanceof PlatformHTTPError && error.status === 409) {
         throw new VariableAlreadyExistsError(`Variable '${normalized.name}' already exists`)
       }
       throw toVariableWriteError('Failed to create variable', error)
@@ -537,12 +547,12 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
   async updateVariable(name: string, config: VariableConfig): Promise<VariableConfig> {
     const normalized = normalizeVariableConfig(config)
     try {
-      await this.fetchJson(`${this.baseUrl}/v1/variables/${encodeURIComponent(name)}/`, {
-        body: JSON.stringify(configToApiBody(normalized)),
+      await this.transport.requestJson(`/v1/variables/${encodePathSegment(name)}/`, {
+        body: configToApiBody(normalized),
         method: 'PUT',
       })
     } catch (error) {
-      if (error instanceof HttpStatusError && error.status === 404) {
+      if (error instanceof PlatformHTTPError && error.status === 404) {
         throw new VariableNotFoundError(`Variable '${name}' not found`)
       }
       throw toVariableWriteError('Failed to update variable', error)
@@ -553,9 +563,9 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
 
   async deleteVariable(name: string): Promise<void> {
     try {
-      await this.fetchJson(`${this.baseUrl}/v1/variables/${encodeURIComponent(name)}/`, { method: 'DELETE' })
+      await this.transport.requestJson(`/v1/variables/${encodePathSegment(name)}/`, { method: 'DELETE' })
     } catch (error) {
-      if (error instanceof HttpStatusError && error.status === 404) {
+      if (error instanceof PlatformHTTPError && error.status === 404) {
         throw new VariableNotFoundError(`Variable '${name}' not found`)
       }
       throw toVariableWriteError('Failed to delete variable', error)
@@ -581,7 +591,7 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
   }
 
   async listVariableTypes(): Promise<Record<string, VariableTypeConfig>> {
-    const data = await this.fetchJson(`${this.baseUrl}/v1/variable-types/`, { method: 'GET' })
+    const data = await this.transport.requestJson('/v1/variable-types/', { method: 'GET' })
     if (!Array.isArray(data)) {
       throw new VariableWriteError('Failed to list variable types: expected an array response')
     }
@@ -596,41 +606,14 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
   async upsertVariableType(config: VariableTypeConfig): Promise<VariableTypeConfig> {
     const normalized = normalizeVariableTypeConfig(config)
     try {
-      await this.fetchJson(`${this.baseUrl}/v1/variable-types/`, {
-        body: JSON.stringify(normalized),
+      await this.transport.requestJson('/v1/variable-types/', {
+        body: normalized,
         method: 'POST',
       })
     } catch (error) {
       throw toVariableWriteError('Failed to upsert variable type', error)
     }
     return normalized
-  }
-
-  private async fetchJson(url: string, init: RequestInit): Promise<unknown> {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => {
-      controller.abort()
-    }, this.timeoutMs)
-    try {
-      const headers = new Headers(init.headers)
-      headers.set('Accept', 'application/json')
-      headers.set('Authorization', `bearer ${this.apiKey}`)
-      headers.set('Content-Type', 'application/json')
-      const response = await this.fetchImpl(url, {
-        ...init,
-        headers,
-        signal: controller.signal,
-      })
-      if (!response.ok) {
-        throw new HttpStatusError(response.status, response.statusText, await response.text())
-      }
-      if (response.status === 204) {
-        return null
-      }
-      return await response.json()
-    } finally {
-      clearTimeout(timeout)
-    }
   }
 
   private async runSseLoop(): Promise<void> {

@@ -26,6 +26,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
       neverBundle: [/^@opentelemetry/u, /^node:/u, 'js-yaml', 'p-retry', 'zod'],
     },
     entry: {
+      datasets: 'src/datasets/index.ts',
       evals: 'src/evals/index.ts',
       index: 'src/index.ts',
       vars: 'src/vars/index.ts',
@@ -33,7 +34,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
     format: ['esm', 'cjs'],
     hooks: {
       'build:done': () => {
-        copyCjsDeclarations(['evals', 'index', 'vars'])
+        copyCjsDeclarations(['datasets', 'evals', 'index', 'vars'])
       },
     },
     minify: true,
