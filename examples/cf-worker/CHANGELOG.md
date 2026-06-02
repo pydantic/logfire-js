@@ -1,5 +1,18 @@
 # @pydantic/cf-worker
 
+## 0.0.11
+
+### Patch Changes
+
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+  - logfire@0.17.0
+  - @pydantic/logfire-cf-workers@0.12.0
+
 ## 0.0.10
 
 ### Patch Changes
