@@ -9,7 +9,7 @@ export function normalizeHostedJsonValue(
   context: EvaluationDatasetValueContext,
   serializeValue: EvaluationDatasetValueSerializer | undefined
 ): unknown {
-  return normalizeValue(value, context, serializeValue, new WeakSet(), new WeakSet())
+  return normalizeValue(value, context, serializeValue, new WeakSet(), new Set())
 }
 
 function normalizeValue(
@@ -17,7 +17,7 @@ function normalizeValue(
   context: EvaluationDatasetValueContext,
   serializeValue: EvaluationDatasetValueSerializer | undefined,
   ancestors: WeakSet<object>,
-  serializedValues: WeakSet<object>
+  serializedValues: Set<unknown>
 ): unknown {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
     return value
@@ -67,19 +67,16 @@ function normalizeUnsupportedValue(
   context: EvaluationDatasetValueContext,
   serializeValue: EvaluationDatasetValueSerializer | undefined,
   ancestors: WeakSet<object>,
-  serializedValues: WeakSet<object>,
+  serializedValues: Set<unknown>,
   reason: string
 ): unknown {
   if (serializeValue === undefined) {
     throw new DatasetSerializationError(`${formatContext(context)} contains unsupported ${reason}; pass serializeValue to convert it`)
   }
-  const tracked = typeof value === 'object' && value !== null
-  if (tracked) {
-    if (serializedValues.has(value)) {
-      throw new DatasetSerializationError(`${formatContext(context)} serializeValue returned the same unsupported ${reason}`)
-    }
-    serializedValues.add(value)
+  if (serializedValues.has(value)) {
+    throw new DatasetSerializationError(`${formatContext(context)} serializeValue returned the same unsupported ${reason}`)
   }
+  serializedValues.add(value)
   try {
     const serialized = serializeValue(value, context)
     if (serialized === undefined) {
@@ -87,9 +84,7 @@ function normalizeUnsupportedValue(
     }
     return normalizeValue(serialized, context, serializeValue, ancestors, serializedValues)
   } finally {
-    if (tracked) {
-      serializedValues.delete(value)
-    }
+    serializedValues.delete(value)
   }
 }
 

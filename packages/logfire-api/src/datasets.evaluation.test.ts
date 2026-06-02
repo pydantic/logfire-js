@@ -190,6 +190,29 @@ describe('hosted evaluation datasets bridge', () => {
     })
   })
 
+  it('pushEvaluationDataset trims the resolved hosted dataset name', async () => {
+    const calls: CapturedRequest[] = []
+    const client = new LogfireAPIClient({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: fetchSequence(calls, [jsonResponse(hostedMetadata), jsonResponse(hostedMetadata)]),
+    })
+
+    await client.pushEvaluationDataset(
+      new Dataset({
+        cases: [],
+        name: ' local-name ',
+      }),
+      { name: ' remote-name ' }
+    )
+
+    expect(calls.map((call) => [call.method, call.url])).toEqual([
+      ['POST', 'https://example.com/v1/datasets/'],
+      ['GET', 'https://example.com/v1/datasets/remote-name/'],
+    ])
+    expect(calls[0]?.body).toMatchObject({ name: 'remote-name' })
+  })
+
   it('pushEvaluationDataset propagates non-409 API errors', async () => {
     const client = new LogfireAPIClient({
       apiKey: 'lf-api-key',
@@ -352,6 +375,7 @@ describe('hosted evaluation datasets bridge', () => {
     const circularObject: Record<string, unknown> = {}
     circularObject['self'] = circularObject
     const recursiveSet = new Set(['x'])
+    const recursiveBigInt = 1n
 
     await expect(
       client.pushEvaluationDataset(
@@ -387,6 +411,23 @@ describe('hosted evaluation datasets bridge', () => {
         }
       )
     ).rejects.toThrow('serializeValue returned the same unsupported Set value')
+
+    await expect(
+      client.pushEvaluationDataset(
+        new Dataset({
+          cases: [new Case({ inputs: { value: recursiveBigInt }, name: 'bad-primitive-serialize-cycle' })],
+          name: 'bad-json',
+        }),
+        {
+          serializeValue(value) {
+            if (typeof value === 'bigint') {
+              return { wrap: value }
+            }
+            return undefined
+          },
+        }
+      )
+    ).rejects.toThrow('serializeValue returned the same unsupported bigint value')
   })
 
   it('rejects unsupported pushed values with path-aware messages', async () => {

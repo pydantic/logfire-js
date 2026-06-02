@@ -45,8 +45,8 @@ export function resolveEvaluationDatasetName<Inputs, Output, Metadata>(
   dataset: Dataset<Inputs, Output, Metadata>,
   options: PushEvaluationDatasetOptions
 ): string | undefined {
-  const name = options.name ?? dataset.name
-  return name.trim() === '' ? undefined : name
+  const name = (options.name ?? dataset.name).trim()
+  return name === '' ? undefined : name
 }
 
 export function evaluationDatasetCreateOptions<Inputs, Output, Metadata>(
