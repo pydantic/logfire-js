@@ -1,5 +1,23 @@
 # @pydantic/logfire-cf-workers
 
+## 0.12.0
+
+### Minor Changes
+
+- 45c545d: Add scoped manual API clients with `withTags()` and `withSettings()` for reusable tags and default levels.
+
+### Patch Changes
+
+- 45c545d: Add a core `instrument(fn, options?)` wrapper for manual function spans.
+- 45c545d: Add `reportError()` options for tags and parent spans, and allow reporting unknown caught values.
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+  - logfire@0.17.0
+
 ## 0.11.11
 
 ### Patch Changes

@@ -1,5 +1,26 @@
 # @pydantic/logfire-browser
 
+## 0.16.0
+
+### Minor Changes
+
+- 45c545d: Add scoped manual API clients with `withTags()` and `withSettings()` for reusable tags and default levels.
+
+### Patch Changes
+
+- 45c545d: Add opt-in baggage projection for Logfire JS manual span attributes.
+- 45c545d: Add a core `instrument(fn, options?)` wrapper for manual function spans.
+- 45c545d: Add richer bounded JSON schema metadata for serialized object and array attributes, with `jsonSchema` modes for rich, legacy broad, or disabled schema metadata.
+- 45c545d: Add configurable minimum-level filtering for manual Logfire telemetry.
+- 45c545d: Add `reportError()` options for tags and parent spans, and allow reporting unknown caught values.
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+- Updated dependencies [45c545d]
+  - logfire@0.17.0
+
 ## 0.15.3
 
 ### Patch Changes
