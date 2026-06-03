@@ -1,5 +1,11 @@
 # @pydantic/cf-tail-worker
 
+## 0.0.12
+
+### Patch Changes
+
+- @pydantic/logfire-cf-workers@0.12.1
+
 ## 0.0.11
 
 ### Patch Changes
