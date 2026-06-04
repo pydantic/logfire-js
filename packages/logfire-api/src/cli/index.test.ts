@@ -30,6 +30,16 @@ describe('CLI entrypoint', () => {
     expect(stdout.text()).not.toMatch(/^  gateway\s/mu)
   })
 
+  it('prints read-tokens help for no args without requiring --project', async () => {
+    const stdout = new MemoryOutput()
+    const fetchImpl = vi.fn<typeof fetch>()
+
+    await expect(runCli(['read-tokens'], { fetch: fetchImpl, homeDir: makeTmpDir(), stdout })).resolves.toBe(0)
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(stdout.text()).toContain('read-tokens --project')
+  })
+
   it('rejects unexpected auth arguments instead of starting the flow', async () => {
     const stderr = new MemoryOutput()
     const fetchImpl = vi.fn<typeof fetch>()

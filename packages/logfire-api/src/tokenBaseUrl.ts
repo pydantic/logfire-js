@@ -44,7 +44,7 @@ export function getBaseUrlFromToken(token: string | undefined): string {
     const match = PYDANTIC_LOGFIRE_TOKEN_PATTERN.exec(token)
     if (match) {
       const region = match.groups?.['region']
-      if (region !== undefined && region in LOGFIRE_REGIONS) {
+      if (region !== undefined && Object.hasOwn(LOGFIRE_REGIONS, region)) {
         regionKey = region
       }
     }

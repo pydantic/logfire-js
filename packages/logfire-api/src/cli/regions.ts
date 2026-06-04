@@ -35,5 +35,5 @@ export async function promptForRegion(prompt: Prompt): Promise<string> {
 }
 
 export function isCliRegion(region: string): region is CliRegion {
-  return region in LOGFIRE_PUBLIC_REGIONS
+  return Object.hasOwn(LOGFIRE_PUBLIC_REGIONS, region)
 }

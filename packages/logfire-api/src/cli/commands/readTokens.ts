@@ -4,6 +4,10 @@ import { LogfireCliError } from '../errors'
 import { writeLine } from '../output'
 
 export async function runReadTokensCommand(args: string[], globalOptions: GlobalOptions, context: CliContext): Promise<void> {
+  if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
+    printReadTokensHelp(context)
+    return
+  }
   const parsed = parseReadTokensArgs(args)
   if (parsed.command === undefined) {
     printReadTokensHelp(context)
@@ -12,6 +16,9 @@ export async function runReadTokensCommand(args: string[], globalOptions: Global
   if (parsed.command !== 'create') {
     throw new LogfireCliError(`Unknown read-tokens command "${parsed.command}".`)
   }
+  if (parsed.organization === undefined || parsed.project === undefined) {
+    throw new LogfireCliError('Missing --project. Expected <org>/<project>.')
+  }
   const client = await createAuthenticatedClient(globalOptions, context)
   const response = await client.createReadToken(parsed.organization, parsed.project)
   writeLine(context.stdout, response.token)
@@ -19,8 +26,8 @@ export async function runReadTokensCommand(args: string[], globalOptions: Global
 
 interface ReadTokensArgs {
   command: string | undefined
-  organization: string
-  project: string
+  organization: string | undefined
+  project: string | undefined
 }
 
 function parseReadTokensArgs(args: string[]): ReadTokensArgs {
@@ -43,9 +50,6 @@ function parseReadTokensArgs(args: string[]): ReadTokensArgs {
     }
   }
 
-  if (organization === undefined || project === undefined) {
-    throw new LogfireCliError('Missing --project. Expected <org>/<project>.')
-  }
   return { command, organization, project }
 }
 

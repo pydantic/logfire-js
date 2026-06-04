@@ -52,7 +52,7 @@ export function formatUserToken(userToken: UserToken): string {
   const match = PYDANTIC_LOGFIRE_TOKEN_PATTERN.exec(userToken.token)
   if (match) {
     const matchedRegion = match.groups?.['region']
-    if (matchedRegion !== undefined && matchedRegion in LOGFIRE_REGIONS) {
+    if (matchedRegion !== undefined && Object.hasOwn(LOGFIRE_REGIONS, matchedRegion)) {
       region = matchedRegion
     }
   }
