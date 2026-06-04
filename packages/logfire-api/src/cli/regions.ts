@@ -6,6 +6,9 @@ export type CliRegion = keyof typeof LOGFIRE_PUBLIC_REGIONS
 
 export function resolveSelectedBaseUrl(baseUrl: string | undefined, region: string | undefined): string | undefined {
   if (baseUrl !== undefined) {
+    if (baseUrl.trim() === '') {
+      throw new LogfireCliError('The --base-url value cannot be empty.')
+    }
     return removeTrailingSlash(baseUrl)
   }
   if (region === undefined) {

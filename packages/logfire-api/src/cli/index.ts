@@ -69,13 +69,18 @@ function createCliContext(options: CliContextOptions): CliContext {
   const stdin = options.stdin ?? process.stdin
   const stderr = options.stderr ?? process.stderr
   const stdout = options.stdout ?? process.stdout
+  const platform = options.platform ?? process.platform
   return {
     cwd: options.cwd ?? process.cwd(),
     env: options.env ?? process.env,
     fetch: options.fetch ?? fetch,
     homeDir: options.homeDir ?? homedir(),
-    openBrowser: options.openBrowser ?? openBrowser,
-    platform: options.platform ?? process.platform,
+    openBrowser:
+      options.openBrowser ??
+      ((url: string) => {
+        openBrowser(url, platform)
+      }),
+    platform,
     prompt: options.prompt ?? createPrompt({ input: stdin, output: stderr }),
     stderr,
     stdin,
@@ -206,9 +211,9 @@ function printVersion(context: CliContext): void {
   writeLine(context.stdout, `Running Logfire ${PACKAGE_VERSION} with Node ${process.version} on ${context.platform}.`)
 }
 
-function openBrowser(url: string): void {
-  const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open'
-  const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url]
+function openBrowser(url: string, platform: NodeJS.Platform): void {
+  const command = platform === 'darwin' ? 'open' : platform === 'win32' ? 'cmd' : 'xdg-open'
+  const args = platform === 'win32' ? ['/c', 'start', '', url] : [url]
   try {
     const child = spawn(command, args, { detached: true, stdio: 'ignore' })
     child.on('error', () => undefined)

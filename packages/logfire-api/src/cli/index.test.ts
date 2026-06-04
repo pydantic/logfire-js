@@ -30,6 +30,16 @@ describe('CLI entrypoint', () => {
     expect(stdout.text()).not.toMatch(/^  gateway\s/mu)
   })
 
+  it('rejects a blank --base-url value', async () => {
+    const stderr = new MemoryOutput()
+    const fetchImpl = vi.fn<typeof fetch>()
+
+    await expect(runCli(['--base-url=', 'whoami'], { fetch: fetchImpl, homeDir: makeTmpDir(), stderr })).resolves.toBe(1)
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(stderr.text()).toContain('The --base-url value cannot be empty.')
+  })
+
   it('prints read-tokens help for no args without requiring --project', async () => {
     const stdout = new MemoryOutput()
     const fetchImpl = vi.fn<typeof fetch>()
