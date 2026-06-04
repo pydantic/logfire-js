@@ -10,6 +10,7 @@ import * as logfireApi from 'logfire'
 
 import type { ConsoleConfig } from './consoleOptions'
 import { resolveConsoleOptions } from './consoleOptions'
+import { readLocalProjectCredentials, resolveCredentialsDir } from './credentials'
 import { start } from './sdk'
 
 export type { ConsoleConfig, ConsoleOptions } from './consoleOptions'
@@ -83,6 +84,11 @@ export interface LogfireConfigOptions {
    * Set to False to suppress extraction of incoming trace context. See [Unintentional Distributed Tracing](https://logfire.pydantic.dev/docs/how-to-guides/distributed-tracing/#unintentional-distributed-tracing) for more information.
    */
   distributedTracing?: boolean
+  /**
+   * Directory containing `.logfire` project credentials written by `npx logfire projects use/new`.
+   * Defaults to `LOGFIRE_CREDENTIALS_DIR`, then `.logfire` in the current working directory.
+   */
+  dataDir?: string
   /**
    * The environment this service is running in, e.g. `staging` or `prod`. Sets the deployment.environment.name resource attribute. Useful for filtering within projects in the Logfire UI.
    * Defaults to the `LOGFIRE_ENVIRONMENT` environment variable.
@@ -205,6 +211,7 @@ export interface LogfireConfig {
   deploymentEnvironment: string | undefined
   diagLogLevel?: DiagLogLevel
   distributedTracing: boolean
+  dataDir: string
   idGenerator: IdGenerator
   instrumentations: Instrumentation[]
   jsonSchema: JsonSchemaMode
@@ -237,6 +244,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   console: false,
   deploymentEnvironment: undefined,
   distributedTracing: true,
+  dataDir: '.logfire',
   idGenerator: new logfireApi.ULIDGenerator(),
   instrumentations: [],
   jsonSchema: 'rich',
@@ -265,6 +273,8 @@ export function configure(config: LogfireConfigOptions = {}): void {
   const env = process.env
   const envMinLevel = env['LOGFIRE_MIN_LEVEL']
   const console = 'console' in cnf ? cnf.console : env['LOGFIRE_CONSOLE'] === 'true'
+  const shouldReadLocalCredentials =
+    cnf.token === undefined && readNonEmptyEnv(env, 'LOGFIRE_TOKEN') === undefined && cnf.sendToLogfire !== false
 
   resolveConsoleOptions(console)
 
@@ -307,10 +317,13 @@ export function configure(config: LogfireConfigOptions = {}): void {
     }
   }
 
-  const token = cnf.token ?? env['LOGFIRE_TOKEN']
+  const envToken = readNonEmptyEnv(env, 'LOGFIRE_TOKEN')
+  const dataDir = resolveCredentialsDir(cnf.dataDir, env)
+  const localCredentials = shouldReadLocalCredentials ? readLocalProjectCredentials(dataDir) : undefined
+  const token = cnf.token ?? envToken ?? localCredentials?.token
   const apiKey = cnf.apiKey ?? env['LOGFIRE_API_KEY']
   const sendToLogfire = resolveSendToLogfire(cnf.sendToLogfire, token)
-  const baseUrl = resolveBaseUrl(env, cnf.advanced?.baseUrl, token, sendToLogfire)
+  const baseUrl = resolveBaseUrl(env, cnf.advanced?.baseUrl, token, sendToLogfire, localCredentials?.logfire_api_url)
   const deploymentEnvironment = cnf.environment ?? env['LOGFIRE_ENVIRONMENT']
   const serviceName = cnf.serviceName ?? readServiceNameEnv(env)
   const serviceVersion = cnf.serviceVersion ?? readServiceVersionEnv(env)
@@ -328,6 +341,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
     baseUrl,
     codeSource: cnf.codeSource,
     console,
+    dataDir,
     deploymentEnvironment,
     diagLogLevel: cnf.diagLogLevel,
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),
@@ -397,7 +411,8 @@ function resolveBaseUrl(
   env: NodeJS.ProcessEnv,
   passedUrl: string | undefined,
   token: LogfireToken | undefined,
-  sendToLogfire: boolean
+  sendToLogfire: boolean,
+  localCredentialsBaseUrl: string | undefined
 ): string {
   if (!sendToLogfire) {
     return ''
@@ -412,7 +427,11 @@ function resolveBaseUrl(
   if (token === undefined || token === '') {
     return ''
   }
-  return logfireApi.resolveBaseUrl(env, passedUrl, token)
+  const configuredBaseUrl = passedUrl ?? env['LOGFIRE_BASE_URL'] ?? localCredentialsBaseUrl
+  if (configuredBaseUrl !== undefined && configuredBaseUrl !== '') {
+    return removeTrailingSlash(configuredBaseUrl)
+  }
+  return logfireApi.resolveBaseUrl(env, undefined, token)
 }
 
 function removeTrailingSlash(url: string): string {

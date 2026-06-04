@@ -48,6 +48,21 @@ then `OTEL_*` environment variables.
 
 Node.js and Cloudflare read `LOGFIRE_TOKEN` by default. Browser code must not receive the token; use a backend proxy and configure `traceUrl` instead.
 
+For local Node.js development, you can also let the CLI write project credentials:
+
+```bash
+npx logfire auth
+npx logfire projects use my-project
+```
+
+`@pydantic/logfire-node` reads `.logfire/logfire_credentials.json` when no explicit `token` and no `LOGFIRE_TOKEN` are set. Token precedence in Node.js is:
+
+1. `configure({ token })`
+2. `LOGFIRE_TOKEN`
+3. Local project credentials from `dataDir`, `LOGFIRE_CREDENTIALS_DIR`, or `.logfire`
+
+If local credentials supply the token, their `logfire_api_url` is also used as the base URL unless `advanced.baseUrl` or `LOGFIRE_BASE_URL` overrides it. Browser and Cloudflare packages do not read local credential files.
+
 In Node.js, `token` can also be a function when credentials rotate:
 
 ```ts
