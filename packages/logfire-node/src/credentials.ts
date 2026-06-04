@@ -44,7 +44,11 @@ export function readLocalProjectCredentials(dataDir: string): ProjectCredentials
 }
 
 export function resolveCredentialsDir(option: string | undefined, env: NodeJS.ProcessEnv, cwd: string = process.cwd()): string {
-  return option ?? env['LOGFIRE_CREDENTIALS_DIR'] ?? join(cwd, '.logfire')
+  return nonBlank(option) ?? nonBlank(env['LOGFIRE_CREDENTIALS_DIR']) ?? join(cwd, '.logfire')
+}
+
+function nonBlank(value: string | undefined): string | undefined {
+  return value !== undefined && value.trim() !== '' ? value : undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

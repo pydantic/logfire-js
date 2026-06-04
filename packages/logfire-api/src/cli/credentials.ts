@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -39,7 +39,10 @@ export function projectCredentialsPath(dataDir: string): string {
 }
 
 export function isExpired(expiration: string): boolean {
-  const normalizedExpiration = expiration.endsWith('Z') ? expiration : `${expiration}Z`
+  // Match Python, which parses naive timestamps as UTC but honors explicit offsets:
+  // only assume UTC when the string carries no timezone designator of its own.
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/u.test(expiration)
+  const normalizedExpiration = hasTimezone ? expiration : `${expiration}Z`
   const expiresAt = new Date(normalizedExpiration).getTime()
   return Number.isNaN(expiresAt) || Date.now() >= expiresAt
 }
@@ -242,6 +245,14 @@ function writeUserTokensFile(path: string, tokens: ReadonlyMap<string, UserToken
 }
 
 function ensureDataDir(dataDir: string): void {
+  // Match Python's `ensure_data_dir_exists`: only seed `.gitignore` when creating the
+  // directory, so an existing dir's ignore rules are never clobbered.
+  if (existsSync(dataDir)) {
+    if (!statSync(dataDir).isDirectory()) {
+      throw new LogfireCliError(`Data directory ${dataDir} exists but is not a directory`)
+    }
+    return
+  }
   mkdirSync(dataDir, { recursive: true })
   writeFileSync(join(dataDir, '.gitignore'), '*')
 }

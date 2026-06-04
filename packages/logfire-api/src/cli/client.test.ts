@@ -60,6 +60,33 @@ describe('CLI client', () => {
     expect(calls[4]?.body).toBe('{"description":"Created by Logfire CLI"}')
   })
 
+  it('creates a new project with the Python-compatible endpoint and body', async () => {
+    const calls: CapturedRequest[] = []
+    const client = new LogfireApiClient({
+      fetch: fetchSequence(calls, [jsonResponse({ project_name: 'project', project_url: 'url', token: 'write-token' })]),
+      userToken: {
+        baseUrl: 'https://logfire-us.pydantic.dev',
+        expiration: '2099-12-31T23:59:59Z',
+        token: 'user-token',
+      },
+    })
+
+    await expect(client.createNewProject('org', 'project')).resolves.toEqual({
+      project_name: 'project',
+      project_url: 'url',
+      token: 'write-token',
+    })
+
+    expect(calls).toEqual([
+      {
+        authorization: 'user-token',
+        body: '{"project_name":"project"}',
+        method: 'POST',
+        url: 'https://logfire-us.pydantic.dev/v1/organizations/org/projects',
+      },
+    ])
+  })
+
   it('maps project creation errors', async () => {
     const duplicateClient = makeClient(jsonResponse({ detail: 'exists' }, 409))
     await expect(duplicateClient.createNewProject('org', 'project')).rejects.toBeInstanceOf(ProjectAlreadyExistsError)

@@ -30,6 +30,16 @@ describe('CLI entrypoint', () => {
     expect(stdout.text()).not.toMatch(/^  gateway\s/mu)
   })
 
+  it('rejects unexpected auth arguments instead of starting the flow', async () => {
+    const stderr = new MemoryOutput()
+    const fetchImpl = vi.fn<typeof fetch>()
+
+    await expect(runCli(['auth', 'bogus'], { fetch: fetchImpl, homeDir: makeTmpDir(), stderr })).resolves.toBe(1)
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(stderr.text()).toContain('Unexpected argument bogus')
+  })
+
   it('authenticates and writes global user credentials', async () => {
     const homeDir = makeTmpDir()
     const stderr = new MemoryOutput()

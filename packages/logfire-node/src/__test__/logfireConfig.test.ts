@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 import { configureLogfireApi, Level, logfireApiConfig } from 'logfire'
 import { shutdownVariables } from 'logfire/vars'
 
+import { resolveCredentialsDir } from '../credentials'
 import { configure, logfireConfig } from '../logfireConfig'
 
 vi.mock('../sdk', () => ({
@@ -459,6 +460,12 @@ describe('logfire config', () => {
     expect(logfireConfig.dataDir).toBe(dataDir)
     expect(logfireConfig.token).toBe('env-dir-token')
     expect(logfireConfig.baseUrl).toBe('https://env-dir.example.com')
+  })
+
+  it('treats blank data dir options and env vars as unset', () => {
+    expect(resolveCredentialsDir('  ', {}, '/work')).toBe(join('/work', '.logfire'))
+    expect(resolveCredentialsDir(undefined, { LOGFIRE_CREDENTIALS_DIR: '' }, '/work')).toBe(join('/work', '.logfire'))
+    expect(resolveCredentialsDir('/custom', {}, '/work')).toBe('/custom')
   })
 
   it('throws for invalid local credentials only when no higher-precedence token exists', () => {

@@ -1,13 +1,20 @@
 import { requestDeviceCode, pollForToken } from '../client'
 import type { CliContext, GlobalOptions } from '../context'
 import { defaultAuthFilePath, UserTokenCollection } from '../credentials'
+import { LogfireCliError } from '../errors'
 import { promptForRegion } from '../regions'
 import { writeLine } from '../output'
 
 export async function runAuthCommand(args: string[], globalOptions: GlobalOptions, context: CliContext): Promise<void> {
   if (args[0] === 'logout') {
+    if (args.length > 1) {
+      throw new LogfireCliError(`Unexpected argument ${args[1] ?? ''}`)
+    }
     runLogout(globalOptions, context)
     return
+  }
+  if (args.length > 0) {
+    throw new LogfireCliError(`Unexpected argument ${args[0] ?? ''}`)
   }
 
   const authFile = globalOptions.authFile ?? defaultAuthFilePath(context.homeDir)
