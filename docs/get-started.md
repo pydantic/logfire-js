@@ -22,6 +22,15 @@ Set your Logfire write token in the environment:
 export LOGFIRE_TOKEN="your-write-token"
 ```
 
+For local development, you can also authenticate and select a project with the CLI:
+
+```bash
+npx logfire auth
+npx logfire projects use my-project
+```
+
+The CLI writes `.logfire/logfire_credentials.json`, which `@pydantic/logfire-node` reads when `LOGFIRE_TOKEN` is unset.
+
 ## Send a Span
 
 Create `hello.mjs`:

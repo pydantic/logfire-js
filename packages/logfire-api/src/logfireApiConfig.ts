@@ -6,11 +6,13 @@ import type { LogFireLevel, MinLevel } from './levels'
 import { LogfireAttributeScrubber, NoopAttributeScrubber } from './AttributeScrubber'
 import { DEFAULT_OTEL_SCOPE } from './constants'
 import { Level, resolveMinLevel } from './levels'
+import { resolveLogfireBaseUrl } from './tokenBaseUrl'
 
 export * from './AttributeScrubber'
 export { Level }
 export type { LevelName, LogFireLevel, MinLevel } from './levels'
 export { serializeAttributes } from './serializeAttributes'
+export type { RegionData } from './tokenBaseUrl'
 
 export interface ScrubbingOptions {
   callback?: ScrubCallback
@@ -79,11 +81,6 @@ export interface LogfireApiConfig {
   otelScope: string
   scrubber: BaseScrubber
   tracer: Tracer
-}
-
-export interface RegionData {
-  baseUrl: string
-  gcpRegion: string
 }
 
 const DEFAULT_LOGFIRE_API_CONFIG: LogfireApiConfig = {
@@ -159,49 +156,5 @@ export function resolveSendToLogfire(env: Env, option: SendToLogfire, token: str
 }
 
 export function resolveBaseUrl(env: Env, passedUrl: string | undefined, token: string): string {
-  let url = passedUrl ?? env['LOGFIRE_BASE_URL'] ?? getBaseUrlFromToken(token)
-  if (url.endsWith('/')) {
-    url = url.slice(0, -1)
-  }
-  return url
-}
-
-const PYDANTIC_LOGFIRE_TOKEN_PATTERN =
-  /^(?<safe_part>pylf_v(?<version>[0-9]+)_(?<region>[a-z]+)_(?:(?<organization_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_)?)(?<token>[a-zA-Z0-9]+)$/u
-
-const REGIONS: Record<string, RegionData> = {
-  eu: {
-    baseUrl: 'https://logfire-eu.pydantic.dev',
-    gcpRegion: 'europe-west4',
-  },
-  stagingeu: {
-    baseUrl: 'https://logfire-eu.pydantic.info',
-    gcpRegion: 'europe-west4',
-  },
-  stagingus: {
-    baseUrl: 'https://logfire-us.pydantic.info',
-    gcpRegion: 'us-east4',
-  },
-  us: {
-    baseUrl: 'https://logfire-us.pydantic.dev',
-    gcpRegion: 'us-east4',
-  },
-}
-
-function getBaseUrlFromToken(token: string | undefined): string {
-  let regionKey = 'us'
-  if (token !== undefined && token !== '') {
-    const match = PYDANTIC_LOGFIRE_TOKEN_PATTERN.exec(token)
-    if (match) {
-      const region = match.groups?.['region']
-      if (region !== undefined && region in REGIONS) {
-        regionKey = region
-      }
-    }
-  }
-  const regionData = REGIONS[regionKey]
-  if (!regionData) {
-    throw new Error(`Unknown region in token: ${regionKey}. Valid regions are: ${Object.keys(REGIONS).join(', ')}`)
-  }
-  return regionData.baseUrl
+  return resolveLogfireBaseUrl(env, passedUrl, token)
 }

@@ -80,6 +80,10 @@
         "label": "Reference",
         "items": [
           {
+            "label": "CLI",
+            "slug": "reference/cli"
+          },
+          {
             "label": "Environment Variables",
             "slug": "reference/environment-variables"
           },

@@ -1,8 +1,13 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
 import { configureLogfireApi, Level, logfireApiConfig } from 'logfire'
 import { shutdownVariables } from 'logfire/vars'
 
+import { resolveCredentialsDir } from '../credentials'
 import { configure, logfireConfig } from '../logfireConfig'
 
 vi.mock('../sdk', () => ({
@@ -20,6 +25,8 @@ describe('logfire config', () => {
   const originalOtelServiceName = process.env['OTEL_SERVICE_NAME']
   const originalOtelServiceVersion = process.env['OTEL_SERVICE_VERSION']
   const originalToken = process.env['LOGFIRE_TOKEN']
+  const originalCredentialsDir = process.env['LOGFIRE_CREDENTIALS_DIR']
+  const tmpDirs: string[] = []
 
   beforeEach(async () => {
     process.env['LOGFIRE_API_KEY'] = ''
@@ -32,6 +39,7 @@ describe('logfire config', () => {
     delete process.env['OTEL_SERVICE_NAME']
     delete process.env['OTEL_SERVICE_VERSION']
     delete process.env['LOGFIRE_TOKEN']
+    delete process.env['LOGFIRE_CREDENTIALS_DIR']
     configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     await shutdownVariables()
   })
@@ -87,6 +95,14 @@ describe('logfire config', () => {
     } else {
       process.env['LOGFIRE_TOKEN'] = originalToken
     }
+    if (originalCredentialsDir === undefined) {
+      delete process.env['LOGFIRE_CREDENTIALS_DIR']
+    } else {
+      process.env['LOGFIRE_CREDENTIALS_DIR'] = originalCredentialsDir
+    }
+    for (const dir of tmpDirs.splice(0)) {
+      rmSync(dir, { force: true, recursive: true })
+    }
     Object.assign(logfireConfig, {
       authorizationHeaders: {},
       baggage: {
@@ -94,6 +110,7 @@ describe('logfire config', () => {
       },
       baseUrl: '',
       console: false,
+      dataDir: '.logfire',
       jsonSchema: 'rich',
       logsExporterUrl: '',
       metricExporterUrl: '',
@@ -391,6 +408,90 @@ describe('logfire config', () => {
     expect(logfireConfig.baseUrl).toBe('')
   })
 
+  it('uses local project credentials when no explicit or environment token is set', () => {
+    const dataDir = makeCredentialsDir({
+      logfire_api_url: 'https://local.example.com/',
+      project_name: 'local-project',
+      project_url: 'https://example.com/project',
+      token: 'local-token',
+    })
+
+    configure({ dataDir })
+
+    expect(logfireConfig.dataDir).toBe(dataDir)
+    expect(logfireConfig.token).toBe('local-token')
+    expect(logfireConfig.baseUrl).toBe('https://local.example.com')
+    expect(logfireConfig.sendToLogfire).toBe(true)
+    expect(logfireConfig.authorizationHeaders).toEqual({ Authorization: 'local-token' })
+  })
+
+  it('lets explicit and environment tokens override local credentials', () => {
+    const dataDir = makeCredentialsDir({
+      logfire_api_url: 'https://local.example.com',
+      project_name: 'local-project',
+      project_url: 'https://example.com/project',
+      token: 'local-token',
+    })
+
+    configure({ advanced: { baseUrl: 'https://explicit.example.com' }, dataDir, token: 'explicit-token' })
+
+    expect(logfireConfig.token).toBe('explicit-token')
+    expect(logfireConfig.baseUrl).toBe('https://explicit.example.com')
+
+    process.env['LOGFIRE_TOKEN'] = 'env-token'
+    process.env['LOGFIRE_BASE_URL'] = 'https://env.example.com'
+    configure({ dataDir })
+
+    expect(logfireConfig.token).toBe('env-token')
+    expect(logfireConfig.baseUrl).toBe('https://env.example.com')
+  })
+
+  it('uses LOGFIRE_CREDENTIALS_DIR for local credentials', () => {
+    const dataDir = makeCredentialsDir({
+      logfire_api_url: 'https://env-dir.example.com',
+      project_name: 'local-project',
+      project_url: 'https://example.com/project',
+      token: 'env-dir-token',
+    })
+    process.env['LOGFIRE_CREDENTIALS_DIR'] = dataDir
+
+    configure()
+
+    expect(logfireConfig.dataDir).toBe(dataDir)
+    expect(logfireConfig.token).toBe('env-dir-token')
+    expect(logfireConfig.baseUrl).toBe('https://env-dir.example.com')
+  })
+
+  it('treats blank data dir options and env vars as unset', () => {
+    expect(resolveCredentialsDir('  ', {}, '/work')).toBe(join('/work', '.logfire'))
+    expect(resolveCredentialsDir(undefined, { LOGFIRE_CREDENTIALS_DIR: '' }, '/work')).toBe(join('/work', '.logfire'))
+    expect(resolveCredentialsDir('/custom', {}, '/work')).toBe('/custom')
+  })
+
+  it('throws for invalid local credentials only when no higher-precedence token exists', () => {
+    const dataDir = makeTmpDir()
+    writeFileSync(join(dataDir, 'logfire_credentials.json'), '{"token": 123}')
+
+    expect(() => {
+      configure({ dataDir })
+    }).toThrow('Invalid credentials file')
+
+    configure({ advanced: { baseUrl: 'https://explicit.example.com' }, dataDir, token: 'explicit-token' })
+
+    expect(logfireConfig.token).toBe('explicit-token')
+  })
+
+  it('does not read invalid local credentials when sending is disabled', () => {
+    const dataDir = makeTmpDir()
+    writeFileSync(join(dataDir, 'logfire_credentials.json'), '{"token": 123}')
+
+    configure({ dataDir, sendToLogfire: false })
+
+    expect(logfireConfig.sendToLogfire).toBe(false)
+    expect(logfireConfig.token).toBeUndefined()
+    expect(logfireConfig.baseUrl).toBe('')
+  })
+
   it('throws when explicit remote variables have no api key', () => {
     expect(() => {
       configure({
@@ -401,4 +502,17 @@ describe('logfire config', () => {
       })
     }).toThrow('Remote variables require an API key')
   })
+
+  function makeCredentialsDir(credentials: { logfire_api_url: string; project_name: string; project_url: string; token: string }): string {
+    const dataDir = makeTmpDir()
+    writeFileSync(join(dataDir, 'logfire_credentials.json'), `${JSON.stringify(credentials)}\n`)
+    return dataDir
+  }
+
+  function makeTmpDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'logfire-node-config-'))
+    mkdirSync(dir, { recursive: true })
+    tmpDirs.push(dir)
+    return dir
+  }
 })
