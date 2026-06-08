@@ -18,7 +18,7 @@ This repository is the Pydantic Logfire JavaScript SDK monorepo. It provides Ope
 ## Environment
 
 - Use the Node.js version in `.node-version`. The root `package.json` also enforces Node.js 24 through `engines`.
-- Use pnpm 10.28.0. The package manager is pinned in `packageManager`.
+- Use pnpm 11.5.2. The package manager is pinned in `packageManager`.
 - Use Vite+ (`vp`) for the JavaScript toolchain entrypoint. Vite+ manages Vite, Vitest, Oxlint, Oxfmt, and package build tasks.
 - Run workspace commands from the repository root unless a package-level command is explicitly needed.
 
