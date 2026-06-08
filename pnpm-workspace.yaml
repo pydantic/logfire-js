@@ -52,3 +52,9 @@ catalog:
   'p-retry': ^6.2.1
   typescript: ^6.0.3
   zod: ^3.23.8
+
+allowBuilds:
+  esbuild: true
+  protobufjs: true
+  sharp: false
+  workerd: true
