@@ -141,6 +141,6 @@ describe('variable template rendering', () => {
       },
     })
 
-    await expect(prompt.get({ missing: 'Ada' })).resolves.toMatchObject({ reason: 'no_provider', value: 'Hello ' })
+    await expect(prompt.get({ missing: 'Ada' })).resolves.toMatchObject({ reason: 'code_default', value: 'Hello ' })
   })
 })

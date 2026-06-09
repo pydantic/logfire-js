@@ -19,9 +19,9 @@ export interface ReferencesAndErrors {
 
 let sentinelCounter = 0
 
-export function renderOnce(template: string, context: Record<string, unknown>): string {
+export function renderOnce(template: string, context: Record<string, unknown>, options: { strict?: boolean } = {}): string {
   const adapted = adaptCompositionTemplate(template, collectStringLeaves(context))
-  const rendered = Handlebars.compile(adapted.template)(createSafeHandlebarsContext(context))
+  const rendered = Handlebars.compile(adapted.template, { strict: options.strict === true })(createSafeHandlebarsContext(context))
   return adapted.restore(rendered)
 }
 

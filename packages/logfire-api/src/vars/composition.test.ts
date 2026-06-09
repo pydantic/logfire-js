@@ -58,6 +58,7 @@ describe('variable composition', () => {
     expect(JSON.parse(result.serializedValue)).toBe('Hello, Hello World')
     expect(result.composedFrom).toEqual([
       {
+        fatal: false,
         label: 'production',
         name: 'greeting',
         reason: 'resolved',
@@ -151,8 +152,8 @@ describe('variable composition', () => {
       resolver({ outer: resolved(['item']) })
     )
 
-    expect(JSON.parse(result.serializedValue)).toBe('start @{#each inner}@data@{/each}@ end')
-    expect(result.composedFrom).toEqual([{ name: 'outer', reason: 'resolved', value: '["item"]' }])
+    expect(JSON.parse(result.serializedValue)).toBe('start  end')
+    expect(result.composedFrom).toEqual([{ fatal: false, name: 'outer', reason: 'resolved', value: '["item"]' }])
   })
 
   it('preserves runtime placeholders and escaped references', async () => {
@@ -180,20 +181,20 @@ describe('variable composition', () => {
     expect(JSON.parse(result.serializedValue)).toBe(`Value: ${value}`)
   })
 
-  it('keeps unresolved references literal and records metadata', async () => {
+  it('renders unresolved references as empty strings and records metadata', async () => {
     const result = await expandReferences(JSON.stringify('@{missing}@ @{present}@'), resolver({ present: resolved('ok') }))
 
-    expect(JSON.parse(result.serializedValue)).toBe('@{missing}@ ok')
+    expect(JSON.parse(result.serializedValue)).toBe(' ok')
     expect(result.composedFrom).toEqual([
-      { name: 'missing', reason: 'unrecognized_variable' },
-      { name: 'present', reason: 'resolved', value: '"ok"' },
+      { fatal: false, name: 'missing', reason: 'unrecognized_variable' },
+      { fatal: false, name: 'present', reason: 'resolved', value: '"ok"' },
     ])
   })
 
-  it('keeps unresolved dotted references literal', async () => {
+  it('renders unresolved dotted references as empty strings', async () => {
     await expect(expandReferences(JSON.stringify('Hello @{nonexistent.field}@'), resolver({}))).resolves.toMatchObject({
       composedFrom: [{ name: 'nonexistent', reason: 'unrecognized_variable' }],
-      serializedValue: JSON.stringify('Hello @{nonexistent.field}@'),
+      serializedValue: JSON.stringify('Hello '),
     })
     await expect(
       expandReferences(JSON.stringify('Hi @{known}@ @{missing.field}@'), resolver({ known: resolved('there') }))
@@ -202,14 +203,14 @@ describe('variable composition', () => {
         { name: 'known', reason: 'resolved', value: '"there"' },
         { name: 'missing', reason: 'unrecognized_variable' },
       ],
-      serializedValue: JSON.stringify('Hi there @{missing.field}@'),
+      serializedValue: JSON.stringify('Hi there '),
     })
   })
 
   it('records invalid referenced JSON without replacing the reference', async () => {
     const result = await expandReferences(JSON.stringify('@{bad}@'), resolver({ bad: { reason: 'resolved', value: 'not-json' } }))
 
-    expect(JSON.parse(result.serializedValue)).toBe('@{bad}@')
+    expect(JSON.parse(result.serializedValue)).toBe('')
     expect(result.composedFrom[0]?.error).toContain('non-JSON')
   })
 
@@ -223,8 +224,9 @@ describe('variable composition', () => {
       { rootName: 'a' }
     )
 
-    expect(JSON.parse(result.serializedValue)).toBe('@{a}@')
+    expect(JSON.parse(result.serializedValue)).toBe('@{b}@')
     expect(hasFatalCompositionError(result.composedFrom)).toBe(true)
+    expect(result.composedFrom[0]?.composedFrom?.[0]?.fatal).toBe(true)
     expect(result.composedFrom[0]?.composedFrom?.[0]?.error).toBe('VariableCompositionCycleError: Circular variable reference: a -> b -> a')
   })
 

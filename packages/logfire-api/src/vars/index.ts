@@ -4,7 +4,7 @@ import { murmurhash3x64128 } from '../murmurhash'
 import { startSpan } from '../index'
 import { PlatformAPIClient, encodePathSegment } from '../platform/http'
 import { PlatformHTTPError } from '../platform/errors'
-import { expandReferences, hasFatalCompositionError } from './composition'
+import { expandReferences, firstCompositionError } from './composition'
 import type { ComposedReference, ResolvedReference } from './composition'
 import { VariableCompositionError, VariableRenderError } from './errors'
 import { renderSerializedTemplate } from './template'
@@ -64,6 +64,7 @@ export interface ResolvedVariableInit<T> {
 }
 
 export type VariableResolutionReason =
+  | 'code_default'
   | 'context_override'
   | 'missing_config'
   | 'no_provider'
@@ -730,6 +731,34 @@ class HttpStatusError extends Error {
   }
 }
 
+type ResolutionStage = 'composition' | 'template rendering' | 'validation' | ''
+
+interface DefaultCacheHit<T> {
+  ok: true
+  value: T
+}
+
+interface DefaultCacheMiss {
+  error: unknown
+  ok: false
+}
+
+type DefaultCacheEntry<T> = DefaultCacheHit<T> | DefaultCacheMiss
+
+interface ResolutionContext {
+  attributes: Record<string, unknown>
+  defaultCache: Map<object, DefaultCacheEntry<unknown>>
+  provider: VariableProvider
+  targetingKey: string | undefined
+}
+
+interface ResolveAttempt<T> {
+  composedFrom: ComposedReference[]
+  exception?: unknown
+  result?: ResolvedVariable<T>
+  stage: ResolutionStage
+}
+
 export class Variable<T> {
   codec: VariableCodec<T>
   defaultValue: ResolveFunction<T> | T
@@ -813,124 +842,441 @@ export class Variable<T> {
     attributes: Record<string, unknown>,
     label: string | undefined
   ): Promise<ResolvedVariable<T>> {
+    const context: ResolutionContext = {
+      attributes,
+      defaultCache: new Map(),
+      provider: getVariableProvider(),
+      targetingKey,
+    }
+    return await this.resolveInner(context, label)
+  }
+
+  private async resolveInner(context: ResolutionContext, label: string | undefined): Promise<ResolvedVariable<T>> {
+    let serialized: SerializedResolvedVariable | undefined
     try {
       const overrides = getOverrideContext()
       if (Object.hasOwn(overrides, this.name)) {
-        const overrideValue = overrides[this.name] as ResolveFunction<T> | T
-        return new ResolvedVariable({
-          name: this.name,
-          reason: 'context_override',
-          value: await resolveMaybeFunction(overrideValue, targetingKey, attributes),
+        return await this.resolveContextOverride(overrides[this.name] as ResolveFunction<T> | T, context)
+      }
+
+      serialized = await this.lookupSerialized(this.name, context, label)
+
+      if (serialized.value === undefined) {
+        const options: {
+          exception?: unknown
+          label?: string
+          reason: VariableResolutionReason
+          version?: number
+        } = { exception: serialized.exception, reason: 'code_default' }
+        if (serialized.label !== undefined) {
+          options.label = serialized.label
+        }
+        if (serialized.version !== undefined) {
+          options.version = serialized.version
+        }
+        return await this.resolveRawCodeDefault(context, options)
+      }
+
+      if (serialized.reason === 'code_default') {
+        return await this.resolveCodeDefaultValue(serialized.value, context, {
+          providerException: serialized.exception,
         })
       }
 
-      const provider = getVariableProvider()
-      let serialized =
-        label === undefined
-          ? await provider.getSerializedValue(this.name, targetingKey, attributes)
-          : await getSerializedValueForLabel(provider, this.name, label)
-
-      if (label !== undefined && serialized.value === undefined && serialized.label === undefined) {
-        serialized = await provider.getSerializedValue(this.name, targetingKey, attributes)
+      const attempt = await this.tryResolveSerialized(serialized, context, true)
+      if (attempt.result !== undefined) {
+        return attempt.result
       }
-
-      if (serialized.value === undefined) {
-        return await resolvedWithDefault(this, serialized, targetingKey, attributes)
+      const options: {
+        label?: string
+        providerException?: unknown
+        triggerComposedFrom: ComposedReference[]
+        triggerException?: unknown
+        triggerStage: ResolutionStage
+        version?: number
+      } = {
+        providerException: serialized.exception,
+        triggerComposedFrom: attempt.composedFrom,
+        triggerException: attempt.exception,
+        triggerStage: attempt.stage,
       }
-
-      let serializedValue = serialized.value
-      let composedFrom: ComposedReference[] = []
-      if (serializedValue.includes('@{')) {
-        try {
-          const expanded = await expandReferences(
-            serializedValue,
-            async (name): Promise<ResolvedReference> => {
-              const resolved = await provider.getSerializedValue(name, targetingKey, attributes)
-              return serializedResolvedToReference(resolved)
-            },
-            { rootName: this.name }
-          )
-          serializedValue = expanded.serializedValue
-          composedFrom = expanded.composedFrom
-          if (hasFatalCompositionError(composedFrom)) {
-            const init: ResolvedVariableInit<T> = {
-              composedFrom,
-              exception: new VariableCompositionError(`Failed to compose variable '${this.name}'`),
-              name: this.name,
-              reason: 'other_error',
-              value: await resolveMaybeFunction(this.defaultValue, targetingKey, attributes),
-            }
-            if (serialized.label !== undefined) {
-              init.label = serialized.label
-            }
-            if (serialized.version !== undefined) {
-              init.version = serialized.version
-            }
-            return new ResolvedVariable(init)
-          }
-        } catch (error) {
-          const init: ResolvedVariableInit<T> = {
-            exception: error,
-            name: this.name,
-            reason: 'other_error',
-            value: await resolveMaybeFunction(this.defaultValue, targetingKey, attributes),
-          }
-          if (serialized.label !== undefined) {
-            init.label = serialized.label
-          }
-          if (serialized.version !== undefined) {
-            init.version = serialized.version
-          }
-          return new ResolvedVariable(init)
-        }
+      if (serialized.label !== undefined) {
+        options.label = serialized.label
       }
-
-      try {
-        const deserializer = (value: string): T => this.codec.parse(JSON.parse(value))
-        const parsed = deserializer(serializedValue)
-        const init: ResolvedVariableInit<T> = {
-          composedFrom,
-          deserializer,
-          name: serialized.name,
-          reason: 'resolved',
-          serializedValue,
-          value: parsed,
-        }
-        if (serialized.label !== undefined) {
-          init.label = serialized.label
-        }
-        if (serialized.version !== undefined) {
-          init.version = serialized.version
-        }
-        return new ResolvedVariable(init)
-      } catch (error) {
-        const init: ResolvedVariableInit<T> = {
-          exception: error,
-          name: this.name,
-          reason: isSyntaxOrValidationError(error) ? 'validation_error' : 'other_error',
-          value: await resolveMaybeFunction(this.defaultValue, targetingKey, attributes),
-        }
-        if (serialized.label !== undefined) {
-          init.label = serialized.label
-        }
-        if (serialized.version !== undefined) {
-          init.version = serialized.version
-        }
-        return new ResolvedVariable(init)
+      if (serialized.version !== undefined) {
+        options.version = serialized.version
       }
+      return await this.resolveCodeDefaultValue(await this.getSerializedDefault(context), context, options)
     } catch (error) {
+      let value: T
+      try {
+        value = await this.getDefaultCached(context)
+      } catch (defaultError) {
+        emitResolutionWarning(
+          `Variable '${this.name}' could not be resolved and its code default raised; returning undefined: ${formatUnknown(defaultError)}`
+        )
+        value = undefined as T
+      }
       return new ResolvedVariable({
         exception: error,
         name: this.name,
         reason: 'other_error',
-        value: await resolveMaybeFunction(this.defaultValue, targetingKey, attributes),
+        value,
       })
+    }
+  }
+
+  private async resolveContextOverride(value: ResolveFunction<T> | T, context: ResolutionContext): Promise<ResolvedVariable<T>> {
+    const overrideValue = await resolveMaybeFunction(value, context.targetingKey, context.attributes)
+    const serializedValue = trySerializeWithCodec(this.codec, overrideValue)
+    if (serializedValue === undefined) {
+      return new ResolvedVariable({ name: this.name, reason: 'context_override', value: overrideValue })
+    }
+
+    const serialized = new SerializedResolvedVariable({ name: this.name, reason: 'context_override', value: serializedValue })
+    const attempt = await this.tryResolveSerialized(serialized, context, true)
+    if (attempt.result !== undefined) {
+      return new ResolvedVariable({ ...resolvedVariableInit(attempt.result), reason: 'context_override' })
+    }
+    return await this.resolveCodeDefaultValue(await this.getSerializedDefault(context), context, {
+      triggerComposedFrom: attempt.composedFrom,
+      triggerException: attempt.exception,
+      triggerStage: attempt.stage,
+    })
+  }
+
+  private async lookupSerialized(name: string, context: ResolutionContext, label?: string): Promise<SerializedResolvedVariable> {
+    const registered = registeredVariables.get(name)
+    const overrides = getOverrideContext()
+    if (registered instanceof Variable && Object.hasOwn(overrides, name)) {
+      const overrideValue = await resolveMaybeFunction(overrides[name], context.targetingKey, context.attributes)
+      const serialized = trySerializeWithCodec(registered.codec, overrideValue)
+      if (serialized !== undefined) {
+        return new SerializedResolvedVariable({ name, reason: 'context_override', value: serialized })
+      }
+      emitResolutionWarning(
+        `Context override for variable '${name}' could not be serialized while resolving '${this.name}' composition; falling through to provider/code default.`
+      )
+    }
+
+    let providerResult =
+      label === undefined
+        ? await context.provider.getSerializedValue(name, context.targetingKey, context.attributes)
+        : await getSerializedValueForLabel(context.provider, name, label)
+
+    if (label !== undefined && providerResult.value === undefined && providerResult.label === undefined) {
+      providerResult = await context.provider.getSerializedValue(name, context.targetingKey, context.attributes)
+    }
+    if (providerResult.value !== undefined) {
+      return providerResult
+    }
+
+    if (registered instanceof Variable) {
+      const serializedDefault = await registered.getSerializedDefault(context)
+      if (serializedDefault !== undefined) {
+        return new SerializedResolvedVariable({
+          exception: providerResult.exception,
+          name,
+          reason: 'code_default',
+          value: serializedDefault,
+        })
+      }
+    }
+    return providerResult
+  }
+
+  private async tryResolveSerialized(
+    serialized: SerializedResolvedVariable,
+    context: ResolutionContext,
+    strict: boolean
+  ): Promise<ResolveAttempt<T>> {
+    if (serialized.value === undefined) {
+      return { composedFrom: [], stage: '' }
+    }
+
+    let serializedValue = serialized.value
+    let composedFrom: ComposedReference[] = []
+    try {
+      const expanded = await expandReferences(
+        serializedValue,
+        async (name): Promise<ResolvedReference> => serializedResolvedToReference(await this.lookupSerialized(name, context)),
+        { rootName: this.name, strict }
+      )
+      serializedValue = expanded.serializedValue
+      composedFrom = expanded.composedFrom
+      const compositionError = firstCompositionError(composedFrom, { includeSoft: strict })
+      if (compositionError !== undefined) {
+        return {
+          composedFrom,
+          exception: new VariableCompositionError(compositionError),
+          stage: 'composition',
+        }
+      }
+    } catch (error) {
+      return { composedFrom, exception: error, stage: 'composition' }
+    }
+
+    try {
+      const deserializer = (value: string): T => this.codec.parse(JSON.parse(value))
+      const value = deserializer(serializedValue)
+      const init: ResolvedVariableInit<T> = {
+        composedFrom,
+        deserializer,
+        name: serialized.name,
+        reason: 'resolved',
+        serializedValue,
+        value,
+      }
+      if (serialized.label !== undefined) {
+        init.label = serialized.label
+      }
+      if (serialized.version !== undefined) {
+        init.version = serialized.version
+      }
+      return { composedFrom, result: new ResolvedVariable(init), stage: '' }
+    } catch (error) {
+      return {
+        composedFrom,
+        exception: error,
+        stage: 'validation',
+      }
+    }
+  }
+
+  private async resolveCodeDefaultValue(
+    serializedDefault: string | undefined,
+    context: ResolutionContext,
+    options: {
+      label?: string | undefined
+      providerException?: unknown
+      triggerComposedFrom?: ComposedReference[] | undefined
+      triggerException?: unknown
+      triggerStage?: ResolutionStage | undefined
+      version?: number | undefined
+    } = {}
+  ): Promise<ResolvedVariable<T>> {
+    if (options.triggerException !== undefined) {
+      warnFallback(this.name, options.triggerStage ?? '', options.triggerException)
+    }
+
+    if (serializedDefault === undefined) {
+      const rawOptions: {
+        exception?: unknown
+        label?: string
+        reason: VariableResolutionReason
+        version?: number
+      } = {
+        exception: options.triggerException ?? options.providerException,
+        reason: options.triggerException === undefined ? 'code_default' : fallbackReason(options.triggerStage ?? ''),
+      }
+      if (options.label !== undefined) {
+        rawOptions.label = options.label
+      }
+      if (options.version !== undefined) {
+        rawOptions.version = options.version
+      }
+      return await this.resolveRawCodeDefault(context, rawOptions)
+    }
+
+    const defaultSerialized = new SerializedResolvedVariable({ name: this.name, reason: 'code_default', value: serializedDefault })
+    let attempt = await this.tryResolveSerialized(defaultSerialized, context, true)
+    if (attempt.result === undefined && attempt.stage === 'composition') {
+      attempt = await this.tryResolveSerialized(defaultSerialized, context, false)
+      if (attempt.result !== undefined) {
+        emitResolutionWarning(
+          `Variable '${this.name}' code default has unresolved composition reference(s); rendering them as empty strings.`
+        )
+      }
+    }
+
+    if (attempt.result !== undefined) {
+      const init = resolvedVariableInit(attempt.result)
+      init.reason = options.triggerException === undefined ? 'code_default' : fallbackReason(options.triggerStage ?? '')
+      if (options.triggerException === undefined) {
+        delete init.label
+        delete init.version
+      } else {
+        if (options.label !== undefined) {
+          init.label = options.label
+        } else {
+          delete init.label
+        }
+        if (options.version !== undefined) {
+          init.version = options.version
+        } else {
+          delete init.version
+        }
+      }
+      init.exception = options.triggerException ?? options.providerException
+      if (options.triggerComposedFrom !== undefined && options.triggerComposedFrom.length > 0) {
+        init.composedFrom = options.triggerComposedFrom
+      }
+      return new ResolvedVariable(init)
+    }
+
+    if (options.triggerException === undefined && attempt.exception !== undefined) {
+      warnFallback(this.name, attempt.stage, attempt.exception, true)
+    }
+    const rawOptions: {
+      composedFrom?: ComposedReference[]
+      exception?: unknown
+      label?: string
+      reason: VariableResolutionReason
+      version?: number
+    } = {
+      exception: options.triggerException ?? attempt.exception,
+      reason: fallbackReason(options.triggerException === undefined ? attempt.stage : (options.triggerStage ?? '')),
+    }
+    if (options.triggerComposedFrom !== undefined) {
+      rawOptions.composedFrom = options.triggerComposedFrom
+    }
+    if (options.label !== undefined) {
+      rawOptions.label = options.label
+    }
+    if (options.version !== undefined) {
+      rawOptions.version = options.version
+    }
+    return await this.resolveRawCodeDefault(context, rawOptions)
+  }
+
+  private async resolveRawCodeDefault(
+    context: ResolutionContext,
+    options: {
+      composedFrom?: ComposedReference[] | undefined
+      exception?: unknown
+      label?: string | undefined
+      reason?: VariableResolutionReason | undefined
+      version?: number | undefined
+    } = {}
+  ): Promise<ResolvedVariable<T>> {
+    try {
+      const init: ResolvedVariableInit<T> = {
+        name: this.name,
+        reason: options.reason ?? 'code_default',
+        value: await this.getDefaultCached(context),
+      }
+      if (options.composedFrom !== undefined) {
+        init.composedFrom = options.composedFrom
+      }
+      if (options.exception !== undefined) {
+        init.exception = options.exception
+      }
+      if (options.label !== undefined) {
+        init.label = options.label
+      }
+      if (options.version !== undefined) {
+        init.version = options.version
+      }
+      return new ResolvedVariable(init)
+    } catch (error) {
+      emitResolutionWarning(
+        `Variable '${this.name}' could not be resolved and its code default raised; returning undefined: ${formatUnknown(error)}`
+      )
+      const init: ResolvedVariableInit<T> = {
+        exception: error,
+        name: this.name,
+        reason: 'other_error',
+        value: undefined as T,
+      }
+      if (options.label !== undefined) {
+        init.label = options.label
+      }
+      if (options.version !== undefined) {
+        init.version = options.version
+      }
+      return new ResolvedVariable(init)
+    }
+  }
+
+  private async getDefaultCached(context: ResolutionContext): Promise<T> {
+    if (!context.defaultCache.has(this)) {
+      try {
+        context.defaultCache.set(this, {
+          ok: true,
+          value: await resolveMaybeFunction(this.defaultValue, context.targetingKey, context.attributes),
+        })
+      } catch (error) {
+        context.defaultCache.set(this, { error, ok: false })
+      }
+    }
+    const cached = context.defaultCache.get(this) as DefaultCacheEntry<T> | undefined
+    if (cached?.ok === true) {
+      return cached.value
+    }
+    if (cached?.error instanceof Error) {
+      throw cached.error
+    }
+    throw new Error(cached === undefined ? `Default value for variable '${this.name}' was not cached` : formatUnknown(cached.error))
+  }
+
+  private async getSerializedDefault(context: ResolutionContext): Promise<string | undefined> {
+    try {
+      return trySerializeWithCodec(this.codec, await this.getDefaultCached(context))
+    } catch {
+      return undefined
     }
   }
 }
 
 export type TemplateVariableOptions<T, InputsT extends Record<string, unknown>> =
   InputsT extends Record<string, unknown> ? VariableOptions<T> : never
+
+function resolvedVariableInit<T>(resolved: ResolvedVariable<T>): ResolvedVariableInit<T> {
+  const init: ResolvedVariableInit<T> = {
+    name: resolved.name,
+    reason: resolved.reason,
+    value: resolved.value,
+  }
+  if (resolved.composedFrom.length > 0) {
+    init.composedFrom = resolved.composedFrom
+  }
+  if (resolved.exception !== undefined) {
+    init.exception = resolved.exception
+  }
+  if (resolved.label !== undefined) {
+    init.label = resolved.label
+  }
+  if (resolved.serializedValue !== undefined) {
+    init.serializedValue = resolved.serializedValue
+  }
+  if (resolved.version !== undefined) {
+    init.version = resolved.version
+  }
+  return init
+}
+
+function trySerializeWithCodec<T>(codec: VariableCodec<T>, value: T): string | undefined {
+  try {
+    const serialized = serializeWithCodec(codec, value)
+    return typeof serialized === 'string' ? serialized : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function emitResolutionWarning(message: string): void {
+  try {
+    console.warn(message)
+  } catch {
+    // Warnings must not change resolution behavior.
+  }
+}
+
+function fallbackReason(stage: ResolutionStage): VariableResolutionReason {
+  return stage === 'validation' ? 'validation_error' : 'other_error'
+}
+
+function warnFallback(variableName: string, stage: ResolutionStage, exception: unknown, codeDefault: boolean = false): void {
+  if (stage === 'validation') {
+    emitResolutionWarning(`Variable '${variableName}' value failed validation; falling back to code default: ${formatUnknown(exception)}`)
+    return
+  }
+  if (codeDefault) {
+    emitResolutionWarning(`Variable '${variableName}' code default ${stage} failed; returning the raw default: ${formatUnknown(exception)}`)
+    return
+  }
+  emitResolutionWarning(`Variable '${variableName}' ${stage} failed; falling back to code default: ${formatUnknown(exception)}`)
+}
 
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- InputsT provides the typed input contract for get().
 export class TemplateVariable<T, InputsT extends Record<string, unknown>> extends Variable<T> {
@@ -1387,29 +1733,6 @@ function serializedResolvedToReference(serialized: SerializedResolvedVariable): 
     reference.version = serialized.version
   }
   return reference
-}
-
-async function resolvedWithDefault<T>(
-  variable: Variable<T>,
-  serialized: SerializedResolvedVariable,
-  targetingKey: string | undefined,
-  attributes: Record<string, unknown>
-): Promise<ResolvedVariable<T>> {
-  const init: ResolvedVariableInit<T> = {
-    name: serialized.name,
-    reason: serialized.reason,
-    value: await resolveMaybeFunction(variable.defaultValue, targetingKey, attributes),
-  }
-  if (serialized.exception !== undefined) {
-    init.exception = serialized.exception
-  }
-  if (serialized.label !== undefined) {
-    init.label = serialized.label
-  }
-  if (serialized.version !== undefined) {
-    init.version = serialized.version
-  }
-  return new ResolvedVariable(init)
 }
 
 async function resolveMaybeFunction<T>(
@@ -2029,10 +2352,6 @@ function isLocalVariablesOptions(options: VariablesConfigOptions): options is Lo
 
 function isLabeledValue(value: LabelRef | LabeledValue): value is LabeledValue {
   return 'serialized_value' in value
-}
-
-function isSyntaxOrValidationError(error: unknown): boolean {
-  return error instanceof SyntaxError || error instanceof TypeError
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

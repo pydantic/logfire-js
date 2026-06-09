@@ -72,7 +72,7 @@ describe('managed variables', () => {
     const missing = defineVar('missing', { default: 'fallback' })
 
     await expect(count.get()).resolves.toMatchObject({ label: 'bad', reason: 'validation_error', value: 3, version: 1 })
-    await expect(missing.get()).resolves.toMatchObject({ reason: 'unrecognized_variable', value: 'fallback' })
+    await expect(missing.get()).resolves.toMatchObject({ reason: 'code_default', value: 'fallback' })
   })
 
   it('parses inferred object codecs', async () => {
@@ -117,7 +117,7 @@ describe('managed variables', () => {
     const color = defineVar('color', { default: 'red' })
 
     await expect(color.get({ label: 'current' })).resolves.toMatchObject({ label: 'current', value: 'green', version: 2 })
-    await expect(color.get({ label: 'defaulted' })).resolves.toMatchObject({ label: 'defaulted', value: 'red' })
+    await expect(color.get({ label: 'defaulted' })).resolves.toMatchObject({ label: undefined, reason: 'code_default', value: 'red' })
   })
 
   it('falls back to contextual rollout when an explicit label is missing', async () => {
@@ -154,7 +154,7 @@ describe('managed variables', () => {
     const disabled = defineVar('disabled_label', { default: 'fallback' })
 
     await expect(disabled.get({ label: 'missing' })).resolves.toMatchObject({
-      reason: 'no_provider',
+      reason: 'code_default',
       value: 'fallback',
     })
   })
