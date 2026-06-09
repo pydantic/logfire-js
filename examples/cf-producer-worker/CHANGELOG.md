@@ -1,5 +1,13 @@
 # @pydantic/logfire-cloudflare-worker-example
 
+## 0.0.14
+
+### Patch Changes
+
+- Updated dependencies [0c0045c]
+  - logfire@0.20.0
+  - @pydantic/logfire-cf-workers@0.12.3
+
 ## 0.0.13
 
 ### Patch Changes

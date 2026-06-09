@@ -1,5 +1,12 @@
 # @pydantic/logfire-browser
 
+## 0.16.3
+
+### Patch Changes
+
+- Updated dependencies [0c0045c]
+  - logfire@0.20.0
+
 ## 0.16.2
 
 ### Patch Changes
