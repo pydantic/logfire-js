@@ -117,12 +117,22 @@ describe('variable template validation', () => {
 
     const report = await variablesValidate([prompt, cyclic])
 
-    expect(report.referenceWarnings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ reference: 'missing', type: 'missing_reference', variableName: 'prompt' }),
-        expect.objectContaining({ reference: 'cyclic', type: 'composition_cycle', variableName: 'cyclic' }),
-      ])
-    )
+    expect(report.referenceWarnings).toEqual([
+      {
+        label: 'prod',
+        message: "Variable 'prompt' references missing variable 'missing'",
+        reference: 'missing',
+        type: 'missing_reference',
+        variableName: 'prompt',
+      },
+      {
+        label: 'prod',
+        message: 'VariableCompositionCycleError: Circular variable reference: cyclic -> cyclic',
+        reference: 'cyclic',
+        type: 'composition_cycle',
+        variableName: 'cyclic',
+      },
+    ])
     expect(report.isValid).toBe(false)
   })
 
@@ -146,6 +156,8 @@ describe('variable template validation', () => {
       },
     })
 
-    await expect(variablesPush([prompt], { strict: true })).rejects.toThrow('template input schemas')
+    await expect(variablesPush([prompt], { strict: true })).rejects.toThrow(
+      'Cannot push variables: provider values are incompatible with local variable codecs, references, or template input schemas'
+    )
   })
 })

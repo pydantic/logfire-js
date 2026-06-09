@@ -4,7 +4,8 @@ import type { VariableResolutionReason } from './index'
 
 export const MAX_COMPOSITION_DEPTH = 20
 export const HBS_KEYWORDS: ReadonlySet<string> = new Set(['else', 'this'])
-const BLOCK_WITH_BODY_REF = /(?<!\\)@\{#(\w+)\s+([a-zA-Z_][a-zA-Z0-9_]*)(.*?)\}@[\s\S]*?(?<!\\)@\{\/\1\}@/g
+const BLOCK_OPEN_EXPRESSION = /^#(\w+)\s+([a-zA-Z_][a-zA-Z0-9_]*)/u
+const BLOCK_CLOSE_EXPRESSION = /^\/(\w+)\s*$/u
 
 export interface ComposedReference {
   composedFrom?: ComposedReference[]
@@ -42,6 +43,17 @@ interface ExpandedValue {
 
 interface Range {
   end: number
+  start: number
+}
+
+interface BlockRange extends Range {
+  helper: string
+  name: string
+}
+
+interface BlockFrame {
+  helper: string
+  name: string
   start: number
 }
 
@@ -277,9 +289,7 @@ async function expandReferenceSerializedValue(
 
 function protectUnresolvedReferences(value: string, context: Record<string, unknown>): { sentinel: string; template: string } {
   const sentinel = `LOGFIRE_UNRESOLVED_REFERENCE_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}_LOGFIRE`
-  const protectedBlocks = value.replace(BLOCK_WITH_BODY_REF, (match: string, _helper: string, name: string) => {
-    return Object.hasOwn(context, name) && !HBS_KEYWORDS.has(name) ? match : encodeProtected(match, sentinel)
-  })
+  const protectedBlocks = protectRanges(value, collectUnresolvedBlockRanges(value, context), sentinel)
   const resolvedBlockRanges = collectResolvedBlockRanges(protectedBlocks, context)
   return {
     sentinel,
@@ -296,16 +306,64 @@ function protectUnresolvedReferences(value: string, context: Record<string, unkn
   }
 }
 
+function collectUnresolvedBlockRanges(value: string, context: Record<string, unknown>): Range[] {
+  const ranges = collectBlockRanges(value).filter((range) => !Object.hasOwn(context, range.name) || HBS_KEYWORDS.has(range.name))
+  return ranges.filter((range) => !ranges.some((other) => other !== range && containsRange(other, range)))
+}
+
 function collectResolvedBlockRanges(value: string, context: Record<string, unknown>): Range[] {
   const ranges: Range[] = []
-  BLOCK_WITH_BODY_REF.lastIndex = 0
-  for (const match of value.matchAll(BLOCK_WITH_BODY_REF)) {
-    const name = match[2]
-    if (name !== undefined && Object.hasOwn(context, name) && !HBS_KEYWORDS.has(name)) {
-      ranges.push({ end: match.index + match[0].length, start: match.index })
+  for (const block of collectBlockRanges(value)) {
+    if (Object.hasOwn(context, block.name) && !HBS_KEYWORDS.has(block.name)) {
+      ranges.push({ end: block.end, start: block.start })
     }
   }
   return ranges
+}
+
+function collectBlockRanges(value: string): BlockRange[] {
+  const ranges: BlockRange[] = []
+  const stack: BlockFrame[] = []
+  for (const match of value.matchAll(REFERENCE_TAG)) {
+    const expression = (match[1] ?? '').trim()
+    const openMatch = BLOCK_OPEN_EXPRESSION.exec(expression)
+    if (openMatch?.[1] !== undefined && openMatch[2] !== undefined) {
+      stack.push({ helper: openMatch[1], name: openMatch[2], start: match.index })
+      continue
+    }
+
+    const closeMatch = BLOCK_CLOSE_EXPRESSION.exec(expression)
+    const frame = stack.at(-1)
+    if (closeMatch?.[1] !== undefined && frame?.helper === closeMatch[1]) {
+      stack.pop()
+      ranges.push({
+        end: match.index + match[0].length,
+        helper: frame.helper,
+        name: frame.name,
+        start: frame.start,
+      })
+    }
+  }
+  return ranges
+}
+
+function protectRanges(value: string, ranges: Range[], sentinel: string): string {
+  const sortedRanges = [...ranges].sort((left, right) => left.start - right.start)
+  let protectedValue = ''
+  let cursor = 0
+  for (const range of sortedRanges) {
+    if (range.start < cursor) {
+      continue
+    }
+    protectedValue += value.slice(cursor, range.start)
+    protectedValue += encodeProtected(value.slice(range.start, range.end), sentinel)
+    cursor = range.end
+  }
+  return protectedValue + value.slice(cursor)
+}
+
+function containsRange(outer: Range, inner: Range): boolean {
+  return outer.start <= inner.start && outer.end >= inner.end
 }
 
 function isOffsetInRanges(offset: number, ranges: Range[]): boolean {
@@ -317,14 +375,14 @@ function encodeProtected(value: string, sentinel: string): string {
 }
 
 function restoreProtected(value: string, sentinel: string): string {
-  return value.replaceAll(new RegExp(`${escapeRegExp(sentinel)}([0-9a-f]+)${escapeRegExp(sentinel)}`, 'g'), (_match, hex) => {
-    const chunks = String(hex).match(/.{1,6}/g) ?? []
+  return value.replaceAll(new RegExp(`${escapeRegExp(sentinel)}([0-9a-f]+)${escapeRegExp(sentinel)}`, 'gu'), (_match, hex) => {
+    const chunks = String(hex).match(/.{1,6}/gu) ?? []
     return chunks.map((chunk) => String.fromCodePoint(Number.parseInt(chunk, 16))).join('')
   })
 }
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
 }
 
 function getExpressionBaseName(expression: string): string | undefined {
@@ -332,11 +390,11 @@ function getExpressionBaseName(expression: string): string | undefined {
   if (trimmed === '' || trimmed === 'else' || trimmed.startsWith('/')) {
     return undefined
   }
-  const blockMatch = /^#\w+\s+([a-zA-Z_][a-zA-Z0-9_]*)/.exec(trimmed)
+  const blockMatch = /^#\w+\s+([a-zA-Z_][a-zA-Z0-9_]*)/u.exec(trimmed)
   if (blockMatch?.[1] !== undefined) {
     return blockMatch[1]
   }
-  const simpleMatch = /^([a-zA-Z_][a-zA-Z0-9_]*)(?:\.|$)/.exec(trimmed)
+  const simpleMatch = /^([a-zA-Z_][a-zA-Z0-9_]*)(?:\.|$)/u.exec(trimmed)
   return simpleMatch?.[1]
 }
 

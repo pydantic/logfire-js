@@ -118,6 +118,19 @@ describe('variable composition', () => {
     })
   })
 
+  it('preserves unresolved nested same-helper blocks inside resolved blocks', async () => {
+    const result = await expandReferences(
+      JSON.stringify('@{#each outer}@start @{#each inner}@data@{/each}@ end@{/each}@'),
+      resolver({ outer: resolved(['item']) })
+    )
+
+    expect(JSON.parse(result.serializedValue)).toBe('start @{#each inner}@data@{/each}@ end')
+    expect(result.composedFrom).toEqual([
+      { name: 'outer', reason: 'resolved', value: '["item"]' },
+      { name: 'inner', reason: 'unrecognized_variable' },
+    ])
+  })
+
   it('preserves runtime placeholders and escaped references', async () => {
     const result = await expandReferences(JSON.stringify('\\@{name}@ @{name}@ {{runtime}}'), resolver({ name: resolved('Ada') }))
 
@@ -188,7 +201,7 @@ describe('variable composition', () => {
 
     expect(JSON.parse(result.serializedValue)).toBe('@{a}@')
     expect(hasFatalCompositionError(result.composedFrom)).toBe(true)
-    expect(result.composedFrom[0]?.composedFrom?.[0]?.error).toContain('VariableCompositionCycleError')
+    expect(result.composedFrom[0]?.composedFrom?.[0]?.error).toBe('VariableCompositionCycleError: Circular variable reference: a -> b -> a')
   })
 
   it('records depth overflows as fatal composition errors', async () => {
