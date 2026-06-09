@@ -74,6 +74,16 @@
         "types": "./dist/vars.d.cts",
         "default": "./dist/vars.cjs"
       }
+    },
+    "./vars/reference-syntax": {
+      "import": {
+        "types": "./dist/vars/reference-syntax.d.ts",
+        "default": "./dist/vars/reference-syntax.js"
+      },
+      "require": {
+        "types": "./dist/vars/reference-syntax.d.cts",
+        "default": "./dist/vars/reference-syntax.cjs"
+      }
     }
   },
   "scripts": {
