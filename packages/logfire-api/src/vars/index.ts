@@ -4,16 +4,17 @@ import { murmurhash3x64128 } from '../murmurhash'
 import { startSpan } from '../index'
 import { PlatformAPIClient, encodePathSegment } from '../platform/http'
 import { PlatformHTTPError } from '../platform/errors'
-import { expandReferences, findReferences, firstCompositionError } from './composition'
+import { expandReferences, findReferences, findReferencesAndErrors, firstCompositionError, MAX_COMPOSITION_DEPTH } from './composition'
 import type { ComposedReference, ResolvedReference } from './composition'
 import { VariableCompositionError, VariableRenderError } from './errors'
 import { renderSerializedTemplate } from './template'
-import { collectReferenceValidationIssues, validateTemplateInputs } from './templateValidation'
-import type { ReferenceValidationIssue, TemplateInputValidationIssue } from './templateValidation'
+import { validateTemplateInputs } from './templateValidation'
+import type { TemplateFieldIssue } from './templateValidation'
 
 export { findReferences, findReferencesAndErrors, hasReferences, MAX_COMPOSITION_DEPTH, type ComposedReference } from './composition'
 export { VariableCompositionCycleError, VariableCompositionDepthError, VariableCompositionError, VariableRenderError } from './errors'
 export { renderOnce } from './referenceSyntax'
+export type { TemplateFieldIssue } from './templateValidation'
 
 export type JsonSchema = Record<string, unknown>
 
@@ -248,11 +249,19 @@ export interface ValidationReport {
   descriptionDifferences: DescriptionDifference[]
   errors: LabelValidationError[]
   isValid: boolean
-  referenceWarnings: ReferenceValidationIssue[]
-  templateInputWarnings: TemplateInputValidationIssue[]
+  referenceCycles: string[]
+  referenceErrors: string[]
+  templateFieldIssues: TemplateFieldIssue[]
   variablesChecked: number
   variablesNotOnServer: string[]
 }
+
+export type VariablePushBlockReason =
+  | 'incompatible_labels'
+  | 'incompatible_type_labels'
+  | 'reference_cycles'
+  | 'reference_errors'
+  | 'template_field_issues'
 
 export type MaybePromise<T> = T | Promise<T>
 
@@ -308,6 +317,8 @@ export interface ConfigureVariablesRuntimeOptions {
 }
 
 export interface VariablePushResult {
+  blocked: boolean
+  blockedBy: VariablePushBlockReason[]
   changes: VariablePushChange[]
   dryRun: boolean
 }
@@ -1473,13 +1484,6 @@ export async function variablesPush(
   const provider = getWritableProvider()
   await provider.refresh?.(true)
   const serverConfig = (await provider.getAllVariablesConfig?.()) ?? { variables: {} }
-  const report = await validateVariablesAgainstConfig(variables, serverConfig)
-  if (options.strict === true && !report.isValid) {
-    throw new VariableWriteError(
-      'Cannot push variables: provider values are incompatible with local variable codecs, references, or template input schemas'
-    )
-  }
-
   const updates: Record<string, VariableConfig> = {}
   const changes: VariablePushChange[] = []
   for (const variable of variables) {
@@ -1504,10 +1508,17 @@ export async function variablesPush(
     }
   }
 
+  const report = await validateVariablesAgainstConfig(variables, serverConfig)
+  const blockedBy = getVariablePushBlockedBy(report, options.strict === true)
+  if (blockedBy.length > 0) {
+    return { blocked: true, blockedBy, changes, dryRun: options.dryRun === true }
+  }
+  warnForNonStrictVariablePush(report)
+
   if (options.dryRun !== true && Object.keys(updates).length > 0) {
     await provider.batchUpdate(updates)
   }
-  return { changes, dryRun: options.dryRun === true }
+  return { blocked: false, blockedBy: [], changes, dryRun: options.dryRun === true }
 }
 
 export async function variablesPushConfig(
@@ -1539,7 +1550,7 @@ export async function variablesPushConfig(
   if (options.dryRun !== true && Object.keys(updates).length > 0) {
     await provider.batchUpdate(updates)
   }
-  return { changes, dryRun: options.dryRun === true }
+  return { blocked: false, blockedBy: [], changes, dryRun: options.dryRun === true }
 }
 
 export async function variablesPullConfig(): Promise<VariablesConfig> {
@@ -1564,7 +1575,7 @@ export async function variablesPushTypes(types: VariableTypeConfig[], options: {
     }
   }
   await Promise.all(upserts)
-  return { changes, dryRun: options.dryRun === true }
+  return { blocked: false, blockedBy: [], changes, dryRun: options.dryRun === true }
 }
 
 export function configureVariables(options?: VariablesConfigOptions, runtime: ConfigureVariablesRuntimeOptions = {}): void {
@@ -1678,60 +1689,43 @@ export async function targetingContext<R>(
 
 async function validateVariablesAgainstConfig(variables: VariableDefinition[], config: VariablesConfig): Promise<ValidationReport> {
   const errors: LabelValidationError[] = []
-  const referenceWarnings: ReferenceValidationIssue[] = []
-  const templateInputWarnings: TemplateInputValidationIssue[] = []
   const variablesNotOnServer: string[] = []
   const descriptionDifferences: DescriptionDifference[] = []
+  const localByName = new Map(variables.map((variable) => [variable.name, variable]))
   for (const variable of variables) {
     const serverVariable = getVariableConfig(config, variable.name)
     if (serverVariable === undefined) {
       variablesNotOnServer.push(variable.name)
-      continue
-    }
-    const serverDescription = normalizeDescriptionForComparison(serverVariable.description)
-    const localDescription = normalizeDescriptionForComparison(variable.description)
-    if (serverDescription !== localDescription) {
-      descriptionDifferences.push({
-        localDescription,
-        serverDescription,
-        variableName: variable.name,
-      })
-    }
-    for (const [label, labeled] of Object.entries(serverVariable.labels)) {
-      if (!isLabeledValue(labeled)) {
-        continue
+    } else {
+      const serverDescription = normalizeDescriptionForComparison(serverVariable.description)
+      const localDescription = normalizeDescriptionForComparison(variable.description)
+      if (serverDescription !== localDescription) {
+        descriptionDifferences.push({
+          localDescription,
+          serverDescription,
+          variableName: variable.name,
+        })
       }
-      // eslint-disable-next-line no-await-in-loop -- validation warnings follow provider label order.
-      await validateSerializedVariableValue(
-        variable,
-        labeled.serialized_value,
-        label,
-        config,
-        errors,
-        referenceWarnings,
-        templateInputWarnings
-      )
     }
-    if (serverVariable.latest_version !== null && serverVariable.latest_version !== undefined) {
-      // eslint-disable-next-line no-await-in-loop -- validation warnings follow provider variable order.
-      await validateSerializedVariableValue(
-        variable,
-        serverVariable.latest_version.serialized_value,
-        'latest',
-        config,
-        errors,
-        referenceWarnings,
-        templateInputWarnings
-      )
+
+    for (const source of getValidationSourcesForVariable(variable.name, localByName, config)) {
+      // eslint-disable-next-line no-await-in-loop -- validation errors follow provider/static source order.
+      await validateSerializedVariableValue(variable, source.serializedValue, source.foundInLabel, localByName, config, errors)
     }
   }
+  const referenceDiagnostics = collectReferenceDiagnostics(variables, localByName, config)
+  const templateFieldIssues = collectTemplateFieldIssues(variables, localByName, config)
   return {
     descriptionDifferences,
     errors,
     isValid:
-      errors.length === 0 && variablesNotOnServer.length === 0 && referenceWarnings.length === 0 && templateInputWarnings.length === 0,
-    referenceWarnings: dedupeByJson(referenceWarnings),
-    templateInputWarnings: dedupeByJson(templateInputWarnings),
+      errors.length === 0 &&
+      variablesNotOnServer.length === 0 &&
+      referenceDiagnostics.referenceErrors.length === 0 &&
+      templateFieldIssues.length === 0,
+    referenceCycles: referenceDiagnostics.referenceCycles,
+    referenceErrors: referenceDiagnostics.referenceErrors,
+    templateFieldIssues,
     variablesChecked: variables.length,
     variablesNotOnServer,
   }
@@ -1741,27 +1735,327 @@ async function validateSerializedVariableValue(
   variable: VariableDefinition,
   serializedValue: string,
   label: string | undefined,
+  localByName: Map<string, VariableDefinition>,
   config: VariablesConfig,
-  errors: LabelValidationError[],
-  referenceWarnings: ReferenceValidationIssue[],
-  templateInputWarnings: TemplateInputValidationIssue[]
+  errors: LabelValidationError[]
 ): Promise<void> {
   let valueToParse = serializedValue
   if (serializedValue.includes('@{')) {
     const expanded = await expandReferences(
       serializedValue,
-      (name) => serializedResolvedToReference(resolveSerializedValue(config, name)),
-      { rootName: variable.name }
+      (name) => serializedResolvedToReference(resolveFirstValidationSource(name, localByName, config)),
+      { rootName: variable.name, strict: false }
     )
     valueToParse = expanded.serializedValue
-    referenceWarnings.push(...collectReferenceValidationIssues(variable.name, label, expanded.composedFrom))
   }
   try {
     variable.codec.parse(JSON.parse(valueToParse))
   } catch (error) {
     errors.push({ error, label, variableName: variable.name })
   }
-  templateInputWarnings.push(...validateTemplateInputs(valueToParse, variable.templateInputsSchema, variable.name, label))
+}
+
+interface ValidationSource {
+  foundInLabel?: string
+  foundInVariable: string
+  reason: VariableResolutionReason
+  serializedValue: string
+}
+
+interface ReferenceDiagnostics {
+  referenceCycles: string[]
+  referenceErrors: string[]
+}
+
+function getValidationSourcesForVariable(
+  variableName: string,
+  localByName: Map<string, VariableDefinition>,
+  config: VariablesConfig
+): ValidationSource[] {
+  const sources: ValidationSource[] = []
+  const localDefault = getStaticSerializedDefault(localByName.get(variableName))
+  if (localDefault !== undefined) {
+    sources.push({
+      foundInVariable: variableName,
+      reason: 'code_default',
+      serializedValue: localDefault,
+    })
+  }
+
+  const serverVariable = getVariableConfig(config, variableName)
+  if (serverVariable !== undefined) {
+    for (const [label, labeled] of Object.entries(serverVariable.labels)) {
+      const serializedValue = resolveLabelSourceForValidation(serverVariable, labeled, localDefault)
+      if (serializedValue !== undefined) {
+        sources.push({
+          foundInLabel: label,
+          foundInVariable: serverVariable.name,
+          reason: 'resolved',
+          serializedValue,
+        })
+      }
+    }
+    if (serverVariable.latest_version !== null && serverVariable.latest_version !== undefined) {
+      sources.push({
+        foundInLabel: 'latest',
+        foundInVariable: serverVariable.name,
+        reason: 'resolved',
+        serializedValue: serverVariable.latest_version.serialized_value,
+      })
+    }
+  }
+  return dedupeByJson(sources)
+}
+
+function getStaticSerializedDefault(variable: VariableDefinition | undefined): string | undefined {
+  if (!(variable instanceof Variable) || typeof variable.defaultValue === 'function') {
+    return undefined
+  }
+  return trySerializeWithCodec(variable.codec, variable.defaultValue)
+}
+
+function resolveLabelSourceForValidation(
+  config: VariableConfig,
+  labeled: LabelRef | LabeledValue,
+  localDefault: string | undefined,
+  visited: Set<string> = new Set<string>()
+): string | undefined {
+  if (isLabeledValue(labeled)) {
+    return labeled.serialized_value
+  }
+  if (labeled.ref === 'code_default') {
+    return localDefault
+  }
+  if (labeled.ref === 'latest') {
+    return config.latest_version?.serialized_value
+  }
+  if (visited.has(labeled.ref)) {
+    return undefined
+  }
+  visited.add(labeled.ref)
+  const next = config.labels[labeled.ref]
+  return next === undefined ? undefined : resolveLabelSourceForValidation(config, next, localDefault, visited)
+}
+
+function resolveFirstValidationSource(
+  variableName: string,
+  localByName: Map<string, VariableDefinition>,
+  config: VariablesConfig
+): SerializedResolvedVariable {
+  const source = getValidationSourcesForVariable(variableName, localByName, config)[0]
+  if (source === undefined) {
+    return new SerializedResolvedVariable({ name: variableName, reason: 'unrecognized_variable', value: undefined })
+  }
+  const init: SerializedResolvedVariableInit = {
+    name: source.foundInVariable,
+    reason: source.reason,
+    value: source.serializedValue,
+  }
+  if (source.foundInLabel !== undefined) {
+    init.label = source.foundInLabel
+  }
+  return new SerializedResolvedVariable(init)
+}
+
+function collectReferenceDiagnostics(
+  variables: VariableDefinition[],
+  localByName: Map<string, VariableDefinition>,
+  config: VariablesConfig
+): ReferenceDiagnostics {
+  const referenceErrors = new Set<string>()
+  const referenceCycles = new Set<string>()
+  for (const variable of variables) {
+    for (const source of getValidationSourcesForVariable(variable.name, localByName, config)) {
+      collectReferenceDiagnosticsFromSource(
+        variable.name,
+        source,
+        localByName,
+        config,
+        [variable.name],
+        referenceErrors,
+        referenceCycles,
+        0
+      )
+    }
+  }
+  return {
+    referenceCycles: [...referenceCycles],
+    referenceErrors: [...referenceErrors],
+  }
+}
+
+function collectReferenceDiagnosticsFromSource(
+  rootVariable: string,
+  source: ValidationSource,
+  localByName: Map<string, VariableDefinition>,
+  config: VariablesConfig,
+  referencePath: string[],
+  referenceErrors: Set<string>,
+  referenceCycles: Set<string>,
+  depth: number
+): void {
+  if (depth > MAX_COMPOSITION_DEPTH) {
+    referenceErrors.add(
+      `Variable '${rootVariable}' reference graph exceeded maximum depth of ${String(MAX_COMPOSITION_DEPTH)} via ${referencePath.join(' -> ')}`
+    )
+    return
+  }
+
+  const references = findReferencesAndErrors(source.serializedValue)
+  for (const error of references.errors) {
+    referenceErrors.add(`Variable '${rootVariable}' has invalid reference syntax in '${formatValidationSource(source)}': ${error.message}`)
+  }
+
+  for (const reference of references.references) {
+    const nextPath = [...referencePath, reference]
+    if (referencePath.includes(reference)) {
+      const cycle = `Circular variable reference: ${nextPath.join(' -> ')}`
+      referenceCycles.add(cycle)
+      referenceErrors.add(cycle)
+      continue
+    }
+
+    const sources = getValidationSourcesForVariable(reference, localByName, config)
+    if (sources.length === 0) {
+      referenceErrors.add(`Variable '${rootVariable}' references missing variable '${reference}' via ${nextPath.join(' -> ')}`)
+      continue
+    }
+    for (const nextSource of sources) {
+      collectReferenceDiagnosticsFromSource(
+        rootVariable,
+        nextSource,
+        localByName,
+        config,
+        nextPath,
+        referenceErrors,
+        referenceCycles,
+        depth + 1
+      )
+    }
+  }
+}
+
+function collectTemplateFieldIssues(
+  variables: VariableDefinition[],
+  localByName: Map<string, VariableDefinition>,
+  config: VariablesConfig
+): TemplateFieldIssue[] {
+  const issues: TemplateFieldIssue[] = []
+  for (const variable of variables) {
+    if (variable.templateInputsSchema === undefined) {
+      continue
+    }
+    const rootIssues: TemplateFieldIssue[] = []
+    for (const source of getValidationSourcesForVariable(variable.name, localByName, config)) {
+      collectTemplateFieldIssuesFromSource(
+        variable.name,
+        variable.templateInputsSchema,
+        source,
+        localByName,
+        config,
+        [variable.name],
+        rootIssues,
+        0
+      )
+    }
+    issues.push(...dedupeByJson(rootIssues))
+  }
+  return issues
+}
+
+function collectTemplateFieldIssuesFromSource(
+  rootVariable: string,
+  templateInputsSchema: JsonSchema,
+  source: ValidationSource,
+  localByName: Map<string, VariableDefinition>,
+  config: VariablesConfig,
+  referencePath: string[],
+  issues: TemplateFieldIssue[],
+  depth: number
+): void {
+  if (depth > MAX_COMPOSITION_DEPTH) {
+    return
+  }
+
+  for (const issue of validateTemplateInputs(source.serializedValue, templateInputsSchema, rootVariable, source.foundInLabel)) {
+    const templateIssue: TemplateFieldIssue = {
+      fieldName: issue.path,
+      foundInVariable: source.foundInVariable,
+      message: issue.message,
+      referencePath,
+      rootVariable,
+    }
+    if (source.foundInLabel !== undefined) {
+      templateIssue.foundInLabel = source.foundInLabel
+    }
+    issues.push(templateIssue)
+  }
+
+  for (const reference of findReferences(source.serializedValue)) {
+    if (referencePath.includes(reference)) {
+      continue
+    }
+    const sources = getValidationSourcesForVariable(reference, localByName, config)
+    for (const nextSource of sources) {
+      collectTemplateFieldIssuesFromSource(
+        rootVariable,
+        templateInputsSchema,
+        nextSource,
+        localByName,
+        config,
+        [...referencePath, reference],
+        issues,
+        depth + 1
+      )
+    }
+  }
+}
+
+function formatValidationSource(source: ValidationSource): string {
+  return source.foundInLabel === undefined ? source.foundInVariable : `${source.foundInVariable}:${source.foundInLabel}`
+}
+
+function getVariablePushBlockedBy(report: ValidationReport, strict: boolean): VariablePushBlockReason[] {
+  if (report.referenceCycles.length > 0) {
+    return ['reference_cycles']
+  }
+  if (!strict) {
+    return []
+  }
+  if (nonCycleReferenceErrors(report).length > 0) {
+    return ['reference_errors']
+  }
+  if (report.templateFieldIssues.length > 0) {
+    return ['template_field_issues']
+  }
+  if (report.errors.length > 0) {
+    return ['incompatible_labels']
+  }
+  return []
+}
+
+function warnForNonStrictVariablePush(report: ValidationReport): void {
+  for (const error of nonCycleReferenceErrors(report)) {
+    emitResolutionWarning(`Variable push reference warning: ${error}`)
+  }
+  for (const issue of report.templateFieldIssues) {
+    emitResolutionWarning(
+      `Variable push template warning: ${issue.message} in '${formatTemplateIssueLocation(issue)}' for root '${issue.rootVariable}'`
+    )
+  }
+  for (const error of report.errors) {
+    emitResolutionWarning(
+      `Variable push label warning: '${error.variableName}'${error.label === undefined ? '' : ` label '${error.label}'`} is incompatible: ${formatUnknown(error.error)}`
+    )
+  }
+}
+
+function nonCycleReferenceErrors(report: ValidationReport): string[] {
+  return report.referenceErrors.filter((error) => !report.referenceCycles.includes(error))
+}
+
+function formatTemplateIssueLocation(issue: TemplateFieldIssue): string {
+  return issue.foundInLabel === undefined ? issue.foundInVariable : `${issue.foundInVariable}:${issue.foundInLabel}`
 }
 
 function getWritableProvider(): Required<Pick<VariableProvider, 'batchUpdate'>> & VariableProvider {

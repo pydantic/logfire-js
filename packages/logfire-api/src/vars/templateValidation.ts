@@ -18,6 +18,15 @@ export interface TemplateInputValidationIssue {
   variableName: string
 }
 
+export interface TemplateFieldIssue {
+  fieldName: string
+  foundInLabel?: string
+  foundInVariable: string
+  message: string
+  referencePath: string[]
+  rootVariable: string
+}
+
 export function collectReferenceValidationIssues(
   variableName: string,
   label: string | undefined,
