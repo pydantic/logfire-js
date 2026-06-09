@@ -47,6 +47,27 @@ describe('variable template validation', () => {
     ).toEqual([])
   })
 
+  it('reports template paths rejected by additionalProperties false without explicit properties', () => {
+    expect(
+      validateTemplateInputs(
+        JSON.stringify('Hello {{extra}}'),
+        {
+          additionalProperties: false,
+          type: 'object',
+        },
+        'prompt',
+        'prod'
+      )
+    ).toEqual([
+      {
+        label: 'prod',
+        message: "Template path 'extra' is not present in template_inputs_schema",
+        path: 'extra',
+        variableName: 'prompt',
+      },
+    ])
+  })
+
   it('reports template paths missing from template_inputs_schema', async () => {
     configureVariables({
       config: config({
@@ -150,6 +171,27 @@ describe('variable template validation', () => {
     ])
     expect(report.referenceCycles).toEqual(['Circular variable reference: cyclic -> cyclic'])
     expect(report.isValid).toBe(false)
+  })
+
+  it('reports invalid reference syntax without throwing during validation', async () => {
+    configureVariables({
+      config: config({
+        prompt: {
+          labels: { prod: { serialized_value: JSON.stringify('Hello @{#if missing}@'), version: 1 } },
+          name: 'prompt',
+          overrides: [],
+          rollout: { labels: { prod: 1 } },
+        },
+      }),
+      instrument: false,
+    })
+    const prompt = defineVar('prompt', { default: '' })
+
+    const report = await variablesValidate([prompt])
+
+    expect(report.isValid).toBe(false)
+    expect(report.referenceErrors).toHaveLength(1)
+    expect(report.referenceErrors[0]).toContain("Variable 'prompt' has invalid reference syntax in 'prompt:prod'")
   })
 
   it('strict push returns a blocked result for reference and template validation issues', async () => {

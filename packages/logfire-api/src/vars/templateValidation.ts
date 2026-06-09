@@ -196,23 +196,34 @@ function isSchemaPathKnown(schema: JsonSchema, path: string): boolean {
       return false
     }
     const properties = current['properties']
-    if (!isRecord(properties)) {
+    const hasProperties = isRecord(properties)
+    if (hasProperties && Object.hasOwn(properties, segment)) {
+      current = properties[segment]
+      continue
+    }
+
+    const additionalProperties = current['additionalProperties']
+    if (additionalProperties === false) {
+      return false
+    }
+    if (additionalProperties === true) {
       return true
     }
-    if (!Object.hasOwn(properties, segment)) {
-      const additionalProperties = current['additionalProperties']
-      if (additionalProperties === true) {
-        return true
-      }
-      if (!isRecord(additionalProperties)) {
-        return false
-      }
+    if (isRecord(additionalProperties)) {
       current = additionalProperties
       continue
     }
-    current = properties[segment]
+    if (hasProperties) {
+      return false
+    }
+    return canHaveUnknownProperties(current)
   }
   return true
+}
+
+function canHaveUnknownProperties(schema: Record<string, unknown>): boolean {
+  const type = schema['type']
+  return type === undefined || type === 'object' || (Array.isArray(type) && type.includes('object'))
 }
 
 function collectStringLeaves(value: unknown): string[] {

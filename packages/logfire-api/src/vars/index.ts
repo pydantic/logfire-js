@@ -1355,7 +1355,7 @@ export class TemplateVariable<T, InputsT extends Record<string, unknown>> extend
         exception: toVariableRenderError(error, this.name),
         name: resolved.name,
         reason: 'other_error',
-        value: await resolveDefaultForVariable(this, options),
+        value: await this.resolveRenderFallbackValue(resolved, options),
       }
       if (resolved.label !== undefined) {
         init.label = resolved.label
@@ -1365,6 +1365,13 @@ export class TemplateVariable<T, InputsT extends Record<string, unknown>> extend
       }
       return new ResolvedVariable(init)
     }
+  }
+
+  private async resolveRenderFallbackValue(resolved: ResolvedVariable<T>, options: VariableGetOptions): Promise<T> {
+    if (resolved.reason === 'code_default' || resolved.reason === 'validation_error' || resolved.reason === 'other_error') {
+      return resolved.value
+    }
+    return await resolveDefaultForVariable(this, options)
   }
 
   private effectiveTemplateMismatchPolicy(): TemplateMismatchPolicy {
@@ -1787,12 +1794,16 @@ async function validateSerializedVariableValue(
 ): Promise<void> {
   let valueToParse = serializedValue
   if (serializedValue.includes('@{')) {
-    const expanded = await expandReferences(
-      serializedValue,
-      (name) => serializedResolvedToReference(resolveFirstValidationSource(name, localByName, config)),
-      { rootName: variable.name, strict: false }
-    )
-    valueToParse = expanded.serializedValue
+    try {
+      const expanded = await expandReferences(
+        serializedValue,
+        (name) => serializedResolvedToReference(resolveFirstValidationSource(name, localByName, config)),
+        { rootName: variable.name, strict: false }
+      )
+      valueToParse = expanded.serializedValue
+    } catch {
+      // Reference graph diagnostics are collected separately; codec validation should not abort the full report.
+    }
   }
   try {
     variable.codec.parse(JSON.parse(valueToParse))

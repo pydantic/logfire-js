@@ -133,6 +133,31 @@ describe('variable template rendering', () => {
     expect(resolved.exception).toBeInstanceOf(VariableRenderError)
   })
 
+  it('does not invoke callable defaults twice when template rendering fails', async () => {
+    configureVariables(false)
+    let calls = 0
+    const prompt = defineTemplateVar<string, { name: string }>('bad_callable_default_prompt', {
+      codec: {
+        parse(value) {
+          if (typeof value !== 'string') {
+            throw new TypeError('Expected string')
+          }
+          return value
+        },
+      },
+      default: () => {
+        calls += 1
+        return 'Hello {{#if name}}'
+      },
+    })
+
+    const resolved = await prompt.get({ name: 'Ada' })
+
+    expect(calls).toBe(1)
+    expect(resolved).toMatchObject({ reason: 'other_error', value: 'Hello {{#if name}}' })
+    expect(resolved.exception).toBeInstanceOf(VariableRenderError)
+  })
+
   it('renders template defaults and trusts schema-mismatched inputs at runtime', async () => {
     configureVariables(false)
     const prompt = defineTemplateVar<string>('fallback_prompt', {
