@@ -3,9 +3,6 @@ import Handlebars from 'handlebars'
 import { createSafeHandlebarsContext } from './template'
 
 export const HAS_REFERENCE: RegExp = /(?<!\\)@\{/u
-export const REFERENCE_TAG: RegExp = /(?<!\\)@\{(.*?)\}@/gu
-export const SIMPLE_REF: RegExp = /(?<!\\)@\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\}@/gu
-export const BLOCK_REF: RegExp = /(?<!\\)@\{#\w+\s+([a-zA-Z_][a-zA-Z0-9_]*)(?:\s|\}@)/gu
 
 export interface ReferenceSyntaxError {
   message: string
