@@ -49,7 +49,7 @@
     "preview": "vp preview",
     "typecheck": "tsc",
     "prepack": "cp ../../LICENSE .",
-    "postpack": "rm LICENSE",
+    "postpublish": "rm LICENSE",
     "test": "vp test --passWithNoTests"
   },
   "dependencies": {

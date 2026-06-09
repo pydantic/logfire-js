@@ -53,6 +53,7 @@ catalog:
   'js-yaml': ^4.1.0
   'p-retry': ^6.2.1
   typescript: ^6.0.3
+  vitest: 'npm:@voidzero-dev/vite-plus-test@0.1.22'
   zod: ^3.23.8
 
 allowBuilds:
