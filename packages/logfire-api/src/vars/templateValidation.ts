@@ -200,7 +200,15 @@ function isSchemaPathKnown(schema: JsonSchema, path: string): boolean {
       return true
     }
     if (!Object.hasOwn(properties, segment)) {
-      return current['additionalProperties'] === true
+      const additionalProperties = current['additionalProperties']
+      if (additionalProperties === true) {
+        return true
+      }
+      if (!isRecord(additionalProperties)) {
+        return false
+      }
+      current = additionalProperties
+      continue
     }
     current = properties[segment]
   }

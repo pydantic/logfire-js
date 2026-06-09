@@ -11,7 +11,7 @@ import {
   variablesValidate,
 } from './index'
 import type { VariablesConfig } from './index'
-import { extractTemplatePaths } from './templateValidation'
+import { extractTemplatePaths, validateTemplateInputs } from './templateValidation'
 
 const config = (variables: VariablesConfig['variables']): VariablesConfig => ({ variables })
 
@@ -30,6 +30,21 @@ describe('variable template validation', () => {
 
   it('extracts common Handlebars paths from templates', () => {
     expect(extractTemplatePaths('Hello {{user.name}} {{#if beta}}yes{{/if}}')).toEqual(['user.name', 'beta'])
+  })
+
+  it('allows template paths covered by object-valued additionalProperties', () => {
+    expect(
+      validateTemplateInputs(
+        JSON.stringify('Hello {{name}} {{extra}}'),
+        {
+          additionalProperties: { type: 'string' },
+          properties: { name: { type: 'string' } },
+          type: 'object',
+        },
+        'prompt',
+        'prod'
+      )
+    ).toEqual([])
   })
 
   it('reports template paths missing from template_inputs_schema', async () => {
