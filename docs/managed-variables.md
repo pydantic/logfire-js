@@ -80,9 +80,33 @@ const resolved = await checkoutPrompt.get({ customerName: 'Ada' })
 
 A remote or local value such as `"Use @{brand_voice}@. Customer: {{customerName}}"` first expands `@{brand_voice}@`, then `defineTemplateVar().get()` renders the remaining `{{customerName}}` placeholder.
 
-Use `\@{name}@` for a literal `@{name}@`. Missing references remain literal and are reported by validation.
+Provider values compose strictly. If a selected provider value has an unresolved reference, a cycle, or an invalid referenced value, resolution falls back to the variable's code default. Code defaults also compose; if a code default has unresolved non-fatal references, those references render as empty strings and a warning is emitted.
 
-`templateInputsSchema` is explicit in JavaScript because TypeScript types are not available at runtime. It is used by `variablesValidate()` and strict push checks; `get(inputs)` trusts the caller and does not run JSON Schema validation.
+Serializable context overrides participate in composition. Overrides that cannot be serialized through the variable codec are returned verbatim for the top-level variable and are skipped with a warning when referenced from another variable.
+
+Use `\@{name}@` for a literal `@{name}@`.
+
+`templateInputsSchema` is explicit in JavaScript because TypeScript types are not available at runtime. It is used to check that composed template strings only reference declared `{{field}}` paths. The default `templateMismatchPolicy` is `warn`; use `error` to throw `TemplateInputsMismatchError` or `ignore` to render silently:
+
+```ts
+logfire.configure({
+  variables: {
+    config: { variables: {} },
+    templateMismatchPolicy: 'error',
+  },
+})
+
+const prompt = defineTemplateVar<string, { customerName: string }>('checkout_prompt', {
+  default: 'Hello {{customerName}}',
+  templateInputsSchema: {
+    properties: { customerName: { type: 'string' } },
+    type: 'object',
+  },
+  templateMismatchPolicy: 'warn',
+})
+```
+
+`variablesValidate()` returns structured `referenceErrors`, `referenceCycles`, and `templateFieldIssues`. `variablesPush()` defaults to non-strict mode: reference cycles block, while missing references, template field issues, and incompatible labels warn and apply. Pass `{ strict: true }` to block on those issues and receive `{ blocked: true, blockedBy, changes, dryRun }` without mutating the provider.
 
 ## Baggage Context
 
