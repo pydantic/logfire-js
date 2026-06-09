@@ -1,6 +1,7 @@
 packages:
   - 'packages/*'
   - 'examples/*'
+  - '!examples/nextjs-bun'
 
 strictPeerDependencies: true
 autoInstallPeers: false
