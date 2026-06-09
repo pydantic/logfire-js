@@ -1,5 +1,6 @@
 import { VariableCompositionCycleError, VariableCompositionDepthError, VariableCompositionError } from './errors'
-import { BLOCK_REF, HAS_REFERENCE, REFERENCE_TAG, SIMPLE_REF, renderOnce } from './referenceSyntax'
+import { HAS_REFERENCE, REFERENCE_TAG, findReferencesAndErrorsInString, hasCompositionReferences, renderOnce } from './referenceSyntax'
+import type { ReferenceSyntaxError } from './referenceSyntax'
 import type { VariableResolutionReason } from './index'
 
 export const MAX_COMPOSITION_DEPTH = 20
@@ -36,6 +37,11 @@ export interface ExpandReferencesResult {
   serializedValue: string
 }
 
+export interface FindReferencesAndErrorsResult {
+  errors: ReferenceSyntaxError[]
+  references: string[]
+}
+
 interface ExpandedValue {
   composedFrom: ComposedReference[]
   value: unknown
@@ -59,7 +65,7 @@ interface BlockFrame {
 
 export function hasReferences(value: unknown): boolean {
   if (typeof value === 'string') {
-    return HAS_REFERENCE.test(value)
+    return hasCompositionReferences(value)
   }
   if (Array.isArray(value)) {
     return value.some(hasReferences)
@@ -71,10 +77,14 @@ export function hasReferences(value: unknown): boolean {
 }
 
 export function findReferences(value: unknown): string[] {
-  const references: string[] = []
-  const seen = new Set<string>()
-  collectReferences(value, references, seen)
-  return references
+  return findReferencesAndErrors(value).references
+}
+
+export function findReferencesAndErrors(value: unknown): FindReferencesAndErrorsResult {
+  const references = new Set<string>()
+  const errors: ReferenceSyntaxError[] = []
+  collectReferences(decodeReferenceInput(value), references, errors)
+  return { errors, references: [...references].sort() }
 }
 
 export async function expandReferences(
@@ -105,50 +115,36 @@ export function hasFatalCompositionError(composedFrom: ComposedReference[]): boo
   )
 }
 
-function collectReferences(value: unknown, references: string[], seen: Set<string>): void {
+function collectReferences(value: unknown, references: Set<string>, errors: ReferenceSyntaxError[]): void {
   if (typeof value === 'string') {
-    for (const reference of findReferencesInString(value)) {
-      if (!seen.has(reference)) {
-        seen.add(reference)
-        references.push(reference)
-      }
-    }
+    const result = findReferencesAndErrorsInString(value)
+    result.references.forEach((reference) => {
+      references.add(reference)
+    })
+    errors.push(...result.errors)
     return
   }
   if (Array.isArray(value)) {
     for (const item of value) {
-      collectReferences(item, references, seen)
+      collectReferences(item, references, errors)
     }
     return
   }
   if (isRecord(value)) {
     for (const item of Object.values(value)) {
-      collectReferences(item, references, seen)
+      collectReferences(item, references, errors)
     }
   }
 }
 
-function findReferencesInString(value: string): string[] {
-  const references: string[] = []
-  const seen = new Set<string>()
-  collectRegexReferences(value, SIMPLE_REF, references, seen)
-  collectRegexReferences(value, BLOCK_REF, references, seen)
-  return references
-}
-
-function collectRegexReferences(value: string, regex: RegExp, references: string[], seen: Set<string>): void {
-  regex.lastIndex = 0
-  for (const match of value.matchAll(regex)) {
-    const path = match[1]
-    if (path === undefined) {
-      continue
-    }
-    const name = path.split('.')[0]
-    if (name === undefined || HBS_KEYWORDS.has(name) || seen.has(name)) {
-      continue
-    }
-    seen.add(name)
-    references.push(name)
+function decodeReferenceInput(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value
+  }
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
   }
 }
 
@@ -180,9 +176,10 @@ async function expandValue(value: unknown, resolveReference: ResolveReference, s
 }
 
 async function expandString(value: string, resolveReference: ResolveReference, stack: string[], depth: number): Promise<ExpandedValue> {
-  const referenceNames = findReferencesInString(value)
+  const referencesResult = findReferencesAndErrorsInString(value)
+  const referenceNames = referencesResult.references
   if (referenceNames.length === 0) {
-    return { composedFrom: [], value: value.includes('\\@{') ? renderOnce(value, {}) : value }
+    return { composedFrom: [], value: value.includes('\\@{') || referencesResult.errors.length > 0 ? renderOnce(value, {}) : value }
   }
 
   const context: Record<string, unknown> = {}

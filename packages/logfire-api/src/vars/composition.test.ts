@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { expandReferences, findReferences, hasFatalCompositionError } from './composition'
+import { expandReferences, findReferences, findReferencesAndErrors, hasFatalCompositionError } from './composition'
 import type { ResolvedReference } from './composition'
 
 const resolved = (value: unknown, extra: Partial<ResolvedReference> = {}): ResolvedReference => ({
@@ -17,9 +17,36 @@ const resolver =
     values[name] ?? missing(name)
 
 describe('variable composition', () => {
-  it('finds simple, dotted, and block references in encounter order', () => {
-    expect(findReferences('@{greeting}@ @{brand.tagline}@ @{#if beta}@yes@{/if}@ @{greeting}@')).toEqual(['greeting', 'brand', 'beta'])
+  it('finds simple, dotted, and block references as sorted unique top-level names', () => {
+    expect(findReferences('@{greeting}@ @{brand.tagline}@ @{#if beta}@yes@{/if}@ @{greeting}@')).toEqual(['beta', 'brand', 'greeting'])
     expect(findReferences('\\@{escaped}@ @{#if this}@yes@{/if}@ @{else}@')).toEqual([])
+  })
+
+  it('finds references through Handlebars helper arguments and scoped blocks', () => {
+    expect(findReferences('@{lookup obj key}@')).toEqual(['key', 'obj'])
+    expect(findReferences('@{#if user.active}@premium@{/if}@')).toEqual(['user'])
+    expect(findReferences('@{#each items}@@{lookup obj key}@@{else}@@{fallback}@@{/each}@')).toEqual(['fallback', 'items'])
+    expect(findReferences('@{#with brand}@@{this.tagline}@@{../sep}@@{/with}@')).toEqual(['brand', 'sep'])
+  })
+
+  it('finds references from serialized JSON values like the Python API', () => {
+    expect(findReferences(JSON.stringify('@{c}@ @{a}@ @{b}@'))).toEqual(['a', 'b', 'c'])
+    expect(findReferences(JSON.stringify('\\@{escaped}@ @{real}@'))).toEqual(['real'])
+    expect(findReferences(JSON.stringify({ '@{key}@': 'ignored', prompt: '@{safety}@' }))).toEqual(['safety'])
+  })
+
+  it('ignores runtime Handlebars dependencies while finding composition references', () => {
+    expect(findReferences('{{runtime}} {{{html}}} {{{{raw}}}}{{runtime}}{{{{/raw}}}}')).toEqual([])
+    expect(findReferences('{{#if @{enabled}@}}{{runtime}}{{/if}}')).toEqual(['enabled'])
+  })
+
+  it('returns parser diagnostics without crashing public findReferences', () => {
+    const result = findReferencesAndErrors('@{#if flag}@x')
+
+    expect(findReferences('@{#if flag}@x')).toEqual([])
+    expect(result.references).toEqual([])
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]?.type).toBe('parse_error')
   })
 
   it('expands simple and duplicate references once in metadata', async () => {
@@ -118,17 +145,14 @@ describe('variable composition', () => {
     })
   })
 
-  it('preserves unresolved nested same-helper blocks inside resolved blocks', async () => {
+  it('does not resolve nested same-helper references inside each blocks as top-level variables', async () => {
     const result = await expandReferences(
       JSON.stringify('@{#each outer}@start @{#each inner}@data@{/each}@ end@{/each}@'),
       resolver({ outer: resolved(['item']) })
     )
 
     expect(JSON.parse(result.serializedValue)).toBe('start @{#each inner}@data@{/each}@ end')
-    expect(result.composedFrom).toEqual([
-      { name: 'outer', reason: 'resolved', value: '["item"]' },
-      { name: 'inner', reason: 'unrecognized_variable' },
-    ])
+    expect(result.composedFrom).toEqual([{ name: 'outer', reason: 'resolved', value: '["item"]' }])
   })
 
   it('preserves runtime placeholders and escaped references', async () => {

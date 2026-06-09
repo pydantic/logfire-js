@@ -11,7 +11,7 @@ import { renderSerializedTemplate } from './template'
 import { collectReferenceValidationIssues, validateTemplateInputs } from './templateValidation'
 import type { ReferenceValidationIssue, TemplateInputValidationIssue } from './templateValidation'
 
-export { findReferences, hasReferences, MAX_COMPOSITION_DEPTH, type ComposedReference } from './composition'
+export { findReferences, findReferencesAndErrors, hasReferences, MAX_COMPOSITION_DEPTH, type ComposedReference } from './composition'
 export { VariableCompositionCycleError, VariableCompositionDepthError, VariableCompositionError, VariableRenderError } from './errors'
 export { renderOnce } from './referenceSyntax'
 
