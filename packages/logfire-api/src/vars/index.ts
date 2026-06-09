@@ -4,7 +4,7 @@ import { murmurhash3x64128 } from '../murmurhash'
 import { startSpan } from '../index'
 import { PlatformAPIClient, encodePathSegment } from '../platform/http'
 import { PlatformHTTPError } from '../platform/errors'
-import { expandReferences, firstCompositionError } from './composition'
+import { expandReferences, findReferences, firstCompositionError } from './composition'
 import type { ComposedReference, ResolvedReference } from './composition'
 import { VariableCompositionError, VariableRenderError } from './errors'
 import { renderSerializedTemplate } from './template'
@@ -31,6 +31,12 @@ export interface VariableOptions<T> {
   default: ResolveFunction<T> | T
   description?: string
   templateInputsSchema?: JsonSchema
+}
+
+export type TemplateMismatchPolicy = 'error' | 'ignore' | 'warn'
+
+export class TemplateInputsMismatchError extends Error {
+  override name: string = 'TemplateInputsMismatchError'
 }
 
 export interface VariableDefinition {
@@ -282,6 +288,7 @@ export interface VariablesOptions {
   pollingInterval?: number
   sse?: boolean
   timeoutMs?: number
+  templateMismatchPolicy?: TemplateMismatchPolicy
 }
 
 export interface LocalVariablesOptions {
@@ -289,6 +296,7 @@ export interface LocalVariablesOptions {
   includeBaggageInContext?: boolean
   includeResourceAttributesInContext?: boolean
   instrument?: boolean
+  templateMismatchPolicy?: TemplateMismatchPolicy
 }
 
 export type VariablesConfigOptions = false | LocalVariablesOptions | VariablesOptions | undefined
@@ -1219,7 +1227,7 @@ export class Variable<T> {
 }
 
 export type TemplateVariableOptions<T, InputsT extends Record<string, unknown>> =
-  InputsT extends Record<string, unknown> ? VariableOptions<T> : never
+  InputsT extends Record<string, unknown> ? VariableOptions<T> & { templateMismatchPolicy?: TemplateMismatchPolicy } : never
 
 function resolvedVariableInit<T>(resolved: ResolvedVariable<T>): ResolvedVariableInit<T> {
   const init: ResolvedVariableInit<T> = {
@@ -1278,12 +1286,19 @@ function warnFallback(variableName: string, stage: ResolutionStage, exception: u
   emitResolutionWarning(`Variable '${variableName}' ${stage} failed; falling back to code default: ${formatUnknown(exception)}`)
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- InputsT provides the typed input contract for get().
 export class TemplateVariable<T, InputsT extends Record<string, unknown>> extends Variable<T> {
+  private readonly templateMismatchPolicy: TemplateMismatchPolicy | undefined
+
+  constructor(name: string, options: TemplateVariableOptions<T, InputsT>) {
+    super(name, options)
+    this.templateMismatchPolicy = options.templateMismatchPolicy
+  }
+
   override async get(inputs: InputsT, options: VariableGetOptions = {}): Promise<ResolvedVariable<T>> {
     const resolved = await super.get(options)
     try {
       const serializedValue = resolved.serializedValue ?? serializeWithCodec(this.codec, resolved.value)
+      this.checkTemplateInputs(serializedValue, resolved.label)
       const renderedSerializedValue = renderSerializedTemplate(serializedValue, inputs)
       const renderedValue = this.codec.parse(JSON.parse(renderedSerializedValue))
       const init: ResolvedVariableInit<T> = {
@@ -1305,6 +1320,9 @@ export class TemplateVariable<T, InputsT extends Record<string, unknown>> extend
       }
       return new ResolvedVariable(init)
     } catch (error) {
+      if (error instanceof TemplateInputsMismatchError) {
+        throw error
+      }
       const init: ResolvedVariableInit<T> = {
         composedFrom: resolved.composedFrom,
         exception: toVariableRenderError(error, this.name),
@@ -1321,6 +1339,26 @@ export class TemplateVariable<T, InputsT extends Record<string, unknown>> extend
       return new ResolvedVariable(init)
     }
   }
+
+  private effectiveTemplateMismatchPolicy(): TemplateMismatchPolicy {
+    return this.templateMismatchPolicy ?? runtimeState.templateMismatchPolicy
+  }
+
+  private checkTemplateInputs(serializedValue: string, label: string | undefined): void {
+    const policy = this.effectiveTemplateMismatchPolicy()
+    if (policy === 'ignore') {
+      return
+    }
+    const issues = validateTemplateInputs(serializedValue, this.templateInputsSchema, this.name, label)
+    if (issues.length === 0) {
+      return
+    }
+    const message = issues.map((issue) => issue.message).join('; ')
+    if (policy === 'error') {
+      throw new TemplateInputsMismatchError(message)
+    }
+    emitResolutionWarning(message)
+  }
 }
 
 const registeredVariables = new Map<string, VariableDefinition>()
@@ -1335,6 +1373,7 @@ interface VariableRuntimeState {
   provider: VariableProvider
   remoteOptions: VariablesOptions | undefined
   resourceAttributes: Record<string, unknown>
+  templateMismatchPolicy: TemplateMismatchPolicy
 }
 
 const runtimeState: VariableRuntimeState = {
@@ -1347,6 +1386,7 @@ const runtimeState: VariableRuntimeState = {
   provider: new NoOpVariableProvider(),
   remoteOptions: undefined,
   resourceAttributes: {},
+  templateMismatchPolicy: 'warn',
 }
 
 export function defineVar<T>(name: string, options: VariableOptions<T>): Variable<T> {
@@ -1364,8 +1404,40 @@ function registerVariable<T extends VariableDefinition>(name: string, variable: 
   if (registeredVariables.has(name)) {
     throw new Error(`A variable with name '${name}' has already been registered`)
   }
+  warnOnTemplateInputsCompositionMismatch(variable)
   registeredVariables.set(name, variable)
   return variable
+}
+
+function warnOnTemplateInputsCompositionMismatch(variable: VariableDefinition): void {
+  if (variable instanceof TemplateVariable) {
+    for (const registered of registeredVariables.values()) {
+      if (!(registered instanceof TemplateVariable) && staticCompositionRefs(registered).includes(variable.name)) {
+        warnPlainComposesTemplate(registered.name, variable.name)
+      }
+    }
+    return
+  }
+
+  for (const ref of staticCompositionRefs(variable)) {
+    if (registeredVariables.get(ref) instanceof TemplateVariable) {
+      warnPlainComposesTemplate(variable.name, ref)
+    }
+  }
+}
+
+function staticCompositionRefs(variable: VariableDefinition): string[] {
+  if (!(variable instanceof Variable) || typeof variable.defaultValue === 'function') {
+    return []
+  }
+  const serialized = trySerializeWithCodec(variable.codec, variable.defaultValue)
+  return serialized === undefined ? [] : findReferences(serialized)
+}
+
+function warnPlainComposesTemplate(plainName: string, templateName: string): void {
+  emitResolutionWarning(
+    `plain variable '${plainName}' composes template variable '${templateName}', but '${plainName}' has no template inputs schema.`
+  )
 }
 
 export { defineVar as var }
@@ -1505,6 +1577,7 @@ export function configureVariables(options?: VariablesConfigOptions, runtime: Co
     runtimeState.explicitProviderConfigured = true
     runtimeState.provider = new NoOpVariableProvider()
     runtimeState.remoteOptions = undefined
+    runtimeState.templateMismatchPolicy = 'warn'
     shutdownProvider(oldProvider)
     return
   }
@@ -1516,6 +1589,7 @@ export function configureVariables(options?: VariablesConfigOptions, runtime: Co
     runtimeState.instrument = options.instrument ?? true
     runtimeState.provider = new LocalVariableProvider(options.config)
     runtimeState.remoteOptions = undefined
+    runtimeState.templateMismatchPolicy = options.templateMismatchPolicy ?? 'warn'
     shutdownProvider(oldProvider)
     return
   }
@@ -1526,6 +1600,7 @@ export function configureVariables(options?: VariablesConfigOptions, runtime: Co
   runtimeState.includeResourceAttributesInContext = remoteOptions?.includeResourceAttributesInContext ?? true
   runtimeState.instrument = remoteOptions?.instrument ?? true
   runtimeState.remoteOptions = remoteOptions
+  runtimeState.templateMismatchPolicy = remoteOptions?.templateMismatchPolicy ?? 'warn'
 
   if (remoteOptions !== undefined) {
     const apiKey = remoteOptions.apiKey ?? runtime.apiKey
@@ -1543,6 +1618,7 @@ export function configureVariables(options?: VariablesConfigOptions, runtime: Co
   }
 
   runtimeState.provider = new NoOpVariableProvider()
+  runtimeState.templateMismatchPolicy = 'warn'
   shutdownProvider(oldProvider)
 }
 
@@ -1557,6 +1633,7 @@ export async function shutdownVariables(): Promise<void> {
   runtimeState.provider = new NoOpVariableProvider()
   runtimeState.remoteOptions = undefined
   runtimeState.resourceAttributes = {}
+  runtimeState.templateMismatchPolicy = 'warn'
 }
 
 export function getVariableProvider(): VariableProvider {

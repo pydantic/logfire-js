@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   configureVariables,
@@ -6,6 +6,7 @@ import {
   defineVar,
   getVariableProvider,
   ResolvedVariable,
+  TemplateInputsMismatchError,
   VariableRenderError,
   variablesClear,
 } from './index'
@@ -21,6 +22,7 @@ describe('variable template rendering', () => {
 
   afterEach(async () => {
     await getVariableProvider().shutdown?.()
+    vi.restoreAllMocks()
     variablesClear()
     configureVariables(false)
   })
@@ -142,5 +144,111 @@ describe('variable template rendering', () => {
     })
 
     await expect(prompt.get({ missing: 'Ada' })).resolves.toMatchObject({ reason: 'code_default', value: 'Hello ' })
+  })
+
+  it('warns by default when resolved templates reference fields outside the schema', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    configureVariables({
+      config: config({
+        prompt: {
+          labels: { prod: { serialized_value: JSON.stringify('Hello {{missing}}'), version: 1 } },
+          name: 'prompt',
+          overrides: [],
+          rollout: { labels: { prod: 1 } },
+        },
+      }),
+      instrument: false,
+    })
+    const prompt = defineTemplateVar<string, { name: string }>('prompt', {
+      default: 'Hello {{name}}',
+      templateInputsSchema: {
+        properties: { name: { type: 'string' } },
+        type: 'object',
+      },
+    })
+
+    await expect(prompt.get({ name: 'Ada' })).resolves.toMatchObject({ value: 'Hello ' })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Template path 'missing' is not present"))
+  })
+
+  it('throws for template mismatch policy error without falling back to the default', async () => {
+    configureVariables({
+      config: config({
+        prompt: {
+          labels: { prod: { serialized_value: JSON.stringify('Hello {{missing}}'), version: 1 } },
+          name: 'prompt',
+          overrides: [],
+          rollout: { labels: { prod: 1 } },
+        },
+      }),
+      instrument: false,
+      templateMismatchPolicy: 'error',
+    })
+    const prompt = defineTemplateVar<string, { name: string }>('prompt', {
+      default: 'fallback',
+      templateInputsSchema: {
+        properties: { name: { type: 'string' } },
+        type: 'object',
+      },
+    })
+
+    await expect(prompt.get({ name: 'Ada' })).rejects.toBeInstanceOf(TemplateInputsMismatchError)
+  })
+
+  it('lets per-variable template mismatch policy relax the runtime policy', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    configureVariables({
+      config: config({
+        prompt: {
+          labels: { prod: { serialized_value: JSON.stringify('Hello {{missing}}'), version: 1 } },
+          name: 'prompt',
+          overrides: [],
+          rollout: { labels: { prod: 1 } },
+        },
+      }),
+      instrument: false,
+      templateMismatchPolicy: 'error',
+    })
+    const prompt = defineTemplateVar<string, { name: string }>('prompt', {
+      default: 'fallback',
+      templateInputsSchema: {
+        properties: { name: { type: 'string' } },
+        type: 'object',
+      },
+      templateMismatchPolicy: 'ignore',
+    })
+
+    await expect(prompt.get({ name: 'Ada' })).resolves.toMatchObject({ value: 'Hello ' })
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('warns when a plain variable statically composes a template variable', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    defineTemplateVar<string, { name: string }>('fragment', {
+      default: 'Hello {{name}}',
+      templateInputsSchema: {
+        properties: { name: { type: 'string' } },
+        type: 'object',
+      },
+    })
+    defineVar('plain_prompt', { default: 'Use @{fragment}@' })
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("plain variable 'plain_prompt' composes template variable 'fragment'"))
+  })
+
+  it('warns when a template variable is declared after a plain variable that composes it', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    defineVar('plain_prompt', { default: 'Use @{fragment}@' })
+    defineTemplateVar<string, { name: string }>('fragment', {
+      default: 'Hello {{name}}',
+      templateInputsSchema: {
+        properties: { name: { type: 'string' } },
+        type: 'object',
+      },
+    })
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("plain variable 'plain_prompt' composes template variable 'fragment'"))
   })
 })
