@@ -74,6 +74,16 @@
         "types": "./dist/vars.d.cts",
         "default": "./dist/vars.cjs"
       }
+    },
+    "./vars/reference-syntax": {
+      "import": {
+        "types": "./dist/vars/reference-syntax.d.ts",
+        "default": "./dist/vars/reference-syntax.js"
+      },
+      "require": {
+        "types": "./dist/vars/reference-syntax.d.cts",
+        "default": "./dist/vars/reference-syntax.cjs"
+      }
     }
   },
   "scripts": {
@@ -88,6 +98,7 @@
     "test": "vp test"
   },
   "dependencies": {
+    "handlebars": "catalog:",
     "js-yaml": "catalog:",
     "p-retry": "catalog:",
     "zod": "catalog:"
@@ -99,7 +110,8 @@
     "@opentelemetry/sdk-logs": "catalog:",
     "@opentelemetry/sdk-trace-base": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
-    "@types/js-yaml": "catalog:"
+    "@types/js-yaml": "catalog:",
+    "vitest": "catalog:"
   },
   "peerDependencies": {
     "@opentelemetry/api": "catalog:",

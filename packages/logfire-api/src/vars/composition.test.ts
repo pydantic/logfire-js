@@ -1,0 +1,244 @@
+import { describe, expect, it } from 'vitest'
+
+import { expandReferences, findReferences, findReferencesAndErrors, hasFatalCompositionError } from './composition'
+import type { ResolvedReference } from './composition'
+
+const resolved = (value: unknown, extra: Partial<ResolvedReference> = {}): ResolvedReference => ({
+  reason: 'resolved',
+  value: JSON.stringify(value),
+  ...extra,
+})
+
+const missing = (name: string): ResolvedReference => ({ name, reason: 'unrecognized_variable', value: undefined })
+
+const resolver =
+  (values: Record<string, ResolvedReference>) =>
+  (name: string): ResolvedReference =>
+    values[name] ?? missing(name)
+
+describe('variable composition', () => {
+  it('finds simple, dotted, and block references as sorted unique top-level names', () => {
+    expect(findReferences('@{greeting}@ @{brand.tagline}@ @{#if beta}@yes@{/if}@ @{greeting}@')).toEqual(['beta', 'brand', 'greeting'])
+    expect(findReferences('\\@{escaped}@ @{#if this}@yes@{/if}@ @{else}@')).toEqual([])
+  })
+
+  it('finds references through Handlebars helper arguments and scoped blocks', () => {
+    expect(findReferences('@{lookup obj key}@')).toEqual(['key', 'obj'])
+    expect(findReferences('@{#if user.active}@premium@{/if}@')).toEqual(['user'])
+    expect(findReferences('@{#each items}@@{lookup obj key}@@{else}@@{fallback}@@{/each}@')).toEqual(['fallback', 'items'])
+    expect(findReferences('@{#with brand}@@{this.tagline}@@{../sep}@@{/with}@')).toEqual(['brand', 'sep'])
+  })
+
+  it('finds references from serialized JSON values like the Python API', () => {
+    expect(findReferences(JSON.stringify('@{c}@ @{a}@ @{b}@'))).toEqual(['a', 'b', 'c'])
+    expect(findReferences(JSON.stringify('\\@{escaped}@ @{real}@'))).toEqual(['real'])
+    expect(findReferences(JSON.stringify({ '@{key}@': 'ignored', prompt: '@{safety}@' }))).toEqual(['safety'])
+  })
+
+  it('ignores runtime Handlebars dependencies while finding composition references', () => {
+    expect(findReferences('{{runtime}} {{{html}}} {{{{raw}}}}{{runtime}}{{{{/raw}}}}')).toEqual([])
+    expect(findReferences('{{#if @{enabled}@}}{{runtime}}{{/if}}')).toEqual(['enabled'])
+  })
+
+  it('returns parser diagnostics without crashing public findReferences', () => {
+    const result = findReferencesAndErrors('@{#if flag}@x')
+
+    expect(findReferences('@{#if flag}@x')).toEqual([])
+    expect(result.references).toEqual([])
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]?.type).toBe('parse_error')
+  })
+
+  it('expands simple and duplicate references once in metadata', async () => {
+    const result = await expandReferences(
+      JSON.stringify('@{greeting}@, @{greeting}@ World'),
+      resolver({ greeting: resolved('Hello', { label: 'production', version: 1 }) })
+    )
+
+    expect(JSON.parse(result.serializedValue)).toBe('Hello, Hello World')
+    expect(result.composedFrom).toEqual([
+      {
+        fatal: false,
+        label: 'production',
+        name: 'greeting',
+        reason: 'resolved',
+        value: '"Hello"',
+        version: 1,
+      },
+    ])
+  })
+
+  it('expands nested references and preserves nested metadata', async () => {
+    const result = await expandReferences(
+      JSON.stringify('@{outer}@'),
+      resolver({
+        inner: resolved('inside'),
+        outer: resolved('@{inner}@'),
+      })
+    )
+
+    expect(JSON.parse(result.serializedValue)).toBe('inside')
+    expect(result.composedFrom[0]?.composedFrom?.[0]).toMatchObject({ name: 'inner', value: '"inside"' })
+  })
+
+  it('expands nested references inside structured referenced values', async () => {
+    const result = await expandReferences(
+      JSON.stringify('@{config.prompt}@ using @{config.model}@'),
+      resolver({
+        config: resolved({ model: 'gpt-4', prompt: 'Hello @{name}@' }),
+        name: resolved('Alice'),
+      })
+    )
+
+    expect(JSON.parse(result.serializedValue)).toBe('Hello Alice using gpt-4')
+    expect(result.composedFrom).toHaveLength(1)
+    expect(result.composedFrom[0]).toMatchObject({
+      composedFrom: [{ name: 'name', value: '"Alice"' }],
+      name: 'config',
+      value: '{"model":"gpt-4","prompt":"Hello Alice"}',
+    })
+  })
+
+  it('walks structured values and supports dotted references', async () => {
+    const result = await expandReferences(
+      JSON.stringify({ items: ['@{brand.tagline}@', 3], title: '@{brand.name}@' }),
+      resolver({ brand: resolved({ name: 'Logfire', tagline: 'Observe everything' }) })
+    )
+
+    expect(JSON.parse(result.serializedValue)).toEqual({
+      items: ['Observe everything', 3],
+      title: 'Logfire',
+    })
+  })
+
+  it('walks lists and leaves non-string values unchanged', async () => {
+    const result = await expandReferences(
+      JSON.stringify(['@{greeting}@ @{name}@', 42, { nested: '@{name}@' }]),
+      resolver({ greeting: resolved('Hello'), name: resolved('Alice') })
+    )
+
+    expect(JSON.parse(result.serializedValue)).toEqual(['Hello Alice', 42, { nested: 'Alice' }])
+    expect(result.composedFrom.map((reference) => reference.name)).toEqual(['greeting', 'name'])
+  })
+
+  it('supports block helpers without treating helper keywords as variables', async () => {
+    const result = await expandReferences(JSON.stringify('@{#if beta}@beta@{else}@stable@{/if}@'), resolver({ beta: resolved(true) }))
+
+    expect(JSON.parse(result.serializedValue)).toBe('beta')
+    expect(result.composedFrom).toHaveLength(1)
+  })
+
+  it('supports unless, each, and with block helper contexts', async () => {
+    const values = resolver({
+      beta: resolved(false),
+      brand: resolved({ tagline: 'Observe everything' }),
+      items: resolved(['a', 'b']),
+    })
+
+    await expect(expandReferences(JSON.stringify('@{#unless beta}@stable@{/unless}@'), values)).resolves.toMatchObject({
+      serializedValue: JSON.stringify('stable'),
+    })
+    await expect(expandReferences(JSON.stringify('@{#each items}@<@{this}@>@{/each}@'), values)).resolves.toMatchObject({
+      serializedValue: JSON.stringify('<a><b>'),
+    })
+    await expect(expandReferences(JSON.stringify('@{#with brand}@@{this.tagline}@@{/with}@'), values)).resolves.toMatchObject({
+      serializedValue: JSON.stringify('Observe everything'),
+    })
+  })
+
+  it('does not resolve nested same-helper references inside each blocks as top-level variables', async () => {
+    const result = await expandReferences(
+      JSON.stringify('@{#each outer}@start @{#each inner}@data@{/each}@ end@{/each}@'),
+      resolver({ outer: resolved(['item']) })
+    )
+
+    expect(JSON.parse(result.serializedValue)).toBe('start  end')
+    expect(result.composedFrom).toEqual([{ fatal: false, name: 'outer', reason: 'resolved', value: '["item"]' }])
+  })
+
+  it('preserves runtime placeholders and escaped references', async () => {
+    const result = await expandReferences(JSON.stringify('\\@{name}@ @{name}@ {{runtime}}'), resolver({ name: resolved('Ada') }))
+
+    expect(JSON.parse(result.serializedValue)).toBe('@{name}@ Ada {{runtime}}')
+    expect(result.composedFrom).toHaveLength(1)
+  })
+
+  it('preserves referenced HTML entities and escaped reference syntax', async () => {
+    await expect(
+      expandReferences(JSON.stringify('@{ref}@'), resolver({ ref: resolved('literal &#123; and &#125;') }))
+    ).resolves.toMatchObject({
+      serializedValue: JSON.stringify('literal &#123; and &#125;'),
+    })
+    await expect(expandReferences(JSON.stringify('@{ref}@'), resolver({ ref: resolved('\\@{not_a_ref}@') }))).resolves.toMatchObject({
+      serializedValue: JSON.stringify('\\@{not_a_ref}@'),
+    })
+  })
+
+  it('preserves JSON encoding for rendered reference values', async () => {
+    const value = 'line 1\n"quoted" \\ slash café'
+    const result = await expandReferences(JSON.stringify('Value: @{text}@'), resolver({ text: resolved(value) }))
+
+    expect(JSON.parse(result.serializedValue)).toBe(`Value: ${value}`)
+  })
+
+  it('renders unresolved references as empty strings and records metadata', async () => {
+    const result = await expandReferences(JSON.stringify('@{missing}@ @{present}@'), resolver({ present: resolved('ok') }))
+
+    expect(JSON.parse(result.serializedValue)).toBe(' ok')
+    expect(result.composedFrom).toEqual([
+      { fatal: false, name: 'missing', reason: 'unrecognized_variable' },
+      { fatal: false, name: 'present', reason: 'resolved', value: '"ok"' },
+    ])
+  })
+
+  it('renders unresolved dotted references as empty strings', async () => {
+    await expect(expandReferences(JSON.stringify('Hello @{nonexistent.field}@'), resolver({}))).resolves.toMatchObject({
+      composedFrom: [{ name: 'nonexistent', reason: 'unrecognized_variable' }],
+      serializedValue: JSON.stringify('Hello '),
+    })
+    await expect(
+      expandReferences(JSON.stringify('Hi @{known}@ @{missing.field}@'), resolver({ known: resolved('there') }))
+    ).resolves.toMatchObject({
+      composedFrom: [
+        { name: 'known', reason: 'resolved', value: '"there"' },
+        { name: 'missing', reason: 'unrecognized_variable' },
+      ],
+      serializedValue: JSON.stringify('Hi there '),
+    })
+  })
+
+  it('records invalid referenced JSON without replacing the reference', async () => {
+    const result = await expandReferences(JSON.stringify('@{bad}@'), resolver({ bad: { reason: 'resolved', value: 'not-json' } }))
+
+    expect(JSON.parse(result.serializedValue)).toBe('')
+    expect(result.composedFrom[0]?.error).toContain('non-JSON')
+  })
+
+  it('records cycles as fatal composition errors', async () => {
+    const result = await expandReferences(
+      JSON.stringify('@{b}@'),
+      resolver({
+        a: resolved('@{b}@'),
+        b: resolved('@{a}@'),
+      }),
+      { rootName: 'a' }
+    )
+
+    expect(JSON.parse(result.serializedValue)).toBe('@{b}@')
+    expect(hasFatalCompositionError(result.composedFrom)).toBe(true)
+    expect(result.composedFrom[0]?.composedFrom?.[0]?.fatal).toBe(true)
+    expect(result.composedFrom[0]?.composedFrom?.[0]?.error).toBe('VariableCompositionCycleError: Circular variable reference: a -> b -> a')
+  })
+
+  it('records depth overflows as fatal composition errors', async () => {
+    const values: Record<string, ResolvedReference> = {}
+    for (let index = 0; index < 22; index += 1) {
+      values[`v${String(index)}`] = resolved(`@{v${String(index + 1)}}@`)
+    }
+    values['v22'] = resolved('done')
+
+    const result = await expandReferences(JSON.stringify('@{v0}@'), resolver(values), { rootName: 'root' })
+
+    expect(hasFatalCompositionError(result.composedFrom)).toBe(true)
+  })
+})

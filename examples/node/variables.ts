@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import * as logfire from '@pydantic/logfire-node'
-import { defineVar, targetingContext, variablesPushConfig } from '@pydantic/logfire-node/vars'
+import { defineTemplateVar, defineVar, targetingContext, variablesPushConfig } from '@pydantic/logfire-node/vars'
 import type { VariablesConfig } from '@pydantic/logfire-node/vars'
 
 const localVariablesConfig = {
@@ -18,6 +18,33 @@ const localVariablesConfig = {
         },
       ],
       rollout: { labels: { control: 1 } },
+    },
+    checkout_prompt: {
+      labels: {
+        production: {
+          serialized_value: '"Use @{brand_voice}@ Button copy: {{buttonCopy}}. Cart items: {{itemCount}}."',
+          version: 1,
+        },
+      },
+      name: 'checkout_prompt',
+      overrides: [],
+      rollout: { labels: { production: 1 } },
+      template_inputs_schema: {
+        properties: {
+          buttonCopy: { type: 'string' },
+          itemCount: { type: 'number' },
+        },
+        required: ['buttonCopy', 'itemCount'],
+        type: 'object',
+      },
+    },
+    brand_voice: {
+      labels: {
+        production: { serialized_value: '"clear, concise, and helpful"', version: 1 },
+      },
+      name: 'brand_voice',
+      overrides: [],
+      rollout: { labels: { production: 1 } },
     },
     request_timeout_ms: {
       labels: {
@@ -46,18 +73,31 @@ logfire.configure({
   console: false,
   diagLogLevel: logfire.DiagLogLevel.NONE,
   environment: 'local',
+  sendToLogfire: false,
   serviceName: 'example-node-variables',
   serviceVersion: '1.0.0',
   variables: useRemoteVariables
-    ? { blockBeforeFirstResolve: true, polling: false, sse: false }
+    ? { blockBeforeFirstResolve: true, instrument: false, polling: false, sse: false }
     : {
         config: localVariablesConfig,
+        instrument: false,
       },
 })
 
 console.log(useRemoteVariables ? `using remote variables from ${baseUrl}` : 'using local variables config')
 
 const checkoutButtonCopy = defineVar('checkout_button_copy', { default: 'Continue' })
+const checkoutPrompt = defineTemplateVar<string, { buttonCopy: string; itemCount: number }>('checkout_prompt', {
+  default: 'Button copy: {{buttonCopy}}. Cart items: {{itemCount}}.',
+  templateInputsSchema: {
+    properties: {
+      buttonCopy: { type: 'string' },
+      itemCount: { type: 'number' },
+    },
+    required: ['buttonCopy', 'itemCount'],
+    type: 'object',
+  },
+})
 const requestTimeoutMs = defineVar('request_timeout_ms', { default: 1000 })
 const featureConfig = defineVar('feature_config', { default: { maxItems: 10, showBeta: false } })
 
@@ -74,6 +114,19 @@ console.log('enterprise copy:', enterpriseCopy.value, {
   label: enterpriseCopy.label,
   reason: enterpriseCopy.reason,
   version: enterpriseCopy.version,
+})
+
+const prompt = await checkoutPrompt.get(
+  { buttonCopy: enterpriseCopy.value, itemCount: 3 },
+  {
+    attributes: { plan: 'enterprise' },
+    targetingKey: 'user_123',
+  }
+)
+console.log('composed checkout prompt:', prompt.value, {
+  composedFrom: prompt.composedFrom.map((reference) => reference.name),
+  label: prompt.label,
+  reason: prompt.reason,
 })
 
 await targetingContext('user_456', async () => {
@@ -94,7 +147,5 @@ const missingRemoteConfig = await featureConfig.get()
 console.log('code default object:', missingRemoteConfig.value, { reason: missingRemoteConfig.reason })
 
 await enterpriseCopy.withContext(async () => {
-  logfire.info('Resolved checkout copy is attached to baggage for this span')
+  console.log('resolved checkout copy is attached to baggage inside this callback')
 })
-
-await logfire.forceFlush()

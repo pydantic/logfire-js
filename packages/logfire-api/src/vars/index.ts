@@ -4,6 +4,17 @@ import { murmurhash3x64128 } from '../murmurhash'
 import { startSpan } from '../index'
 import { PlatformAPIClient, encodePathSegment } from '../platform/http'
 import { PlatformHTTPError } from '../platform/errors'
+import { expandReferences, findReferences, findReferencesAndErrors, firstCompositionError, MAX_COMPOSITION_DEPTH } from './composition'
+import type { ComposedReference, ResolvedReference } from './composition'
+import { VariableCompositionError, VariableRenderError } from './errors'
+import { renderSerializedTemplate } from './template'
+import { validateTemplateInputs } from './templateValidation'
+import type { TemplateFieldIssue } from './templateValidation'
+
+export { findReferences, findReferencesAndErrors, hasReferences, MAX_COMPOSITION_DEPTH, type ComposedReference } from './composition'
+export { VariableCompositionCycleError, VariableCompositionDepthError, VariableCompositionError, VariableRenderError } from './errors'
+export { renderOnce } from './referenceSyntax'
+export type { TemplateFieldIssue } from './templateValidation'
 
 export type JsonSchema = Record<string, unknown>
 
@@ -20,12 +31,20 @@ export interface VariableOptions<T> {
   codec?: VariableCodec<T>
   default: ResolveFunction<T> | T
   description?: string
+  templateInputsSchema?: JsonSchema
+}
+
+export type TemplateMismatchPolicy = 'error' | 'ignore' | 'warn'
+
+export class TemplateInputsMismatchError extends Error {
+  override name: string = 'TemplateInputsMismatchError'
 }
 
 export interface VariableDefinition {
   codec: Pick<VariableCodec<unknown>, 'parse'>
   description: string | undefined
   name: string
+  templateInputsSchema?: JsonSchema
   toConfig(): VariableConfig
 }
 
@@ -40,15 +59,19 @@ export interface VariableGetOptions {
 }
 
 export interface ResolvedVariableInit<T> {
+  composedFrom?: ComposedReference[]
+  deserializer?: (serializedValue: string) => T
   exception?: unknown
   label?: string
   name: string
   reason: VariableResolutionReason
+  serializedValue?: string
   value: T
   version?: number
 }
 
 export type VariableResolutionReason =
+  | 'code_default'
   | 'context_override'
   | 'missing_config'
   | 'no_provider'
@@ -58,20 +81,33 @@ export type VariableResolutionReason =
   | 'validation_error'
 
 export class ResolvedVariable<T> {
+  composedFrom: ComposedReference[]
+  private readonly deserializer: ((serializedValue: string) => T) | undefined
   exception: unknown
   label: string | undefined
   name: string
   reason: VariableResolutionReason
+  serializedValue: string | undefined
   value: T
   version: number | undefined
 
   constructor(init: ResolvedVariableInit<T>) {
+    this.composedFrom = init.composedFrom ?? []
+    this.deserializer = init.deserializer
     this.exception = init.exception
     this.label = init.label
     this.name = init.name
     this.reason = init.reason
+    this.serializedValue = init.serializedValue
     this.value = init.value
     this.version = init.version
+  }
+
+  render(inputs: Record<string, unknown> = {}): T {
+    if (this.serializedValue === undefined || this.deserializer === undefined) {
+      throw new VariableRenderError(`Resolved variable '${this.name}' does not have a serialized value to render`)
+    }
+    return this.deserializer(renderSerializedTemplate(this.serializedValue, inputs))
   }
 
   async withContext<R>(callback: () => Promise<R> | R): Promise<R> {
@@ -182,6 +218,7 @@ export interface VariableConfig {
   name: string
   overrides: RolloutOverride[]
   rollout: Rollout
+  template_inputs_schema?: JsonSchema | null
   type_name?: string | null
 }
 
@@ -212,9 +249,19 @@ export interface ValidationReport {
   descriptionDifferences: DescriptionDifference[]
   errors: LabelValidationError[]
   isValid: boolean
+  referenceCycles: string[]
+  referenceErrors: string[]
+  templateFieldIssues: TemplateFieldIssue[]
   variablesChecked: number
   variablesNotOnServer: string[]
 }
+
+export type VariablePushBlockReason =
+  | 'incompatible_labels'
+  | 'incompatible_type_labels'
+  | 'reference_cycles'
+  | 'reference_errors'
+  | 'template_field_issues'
 
 export type MaybePromise<T> = T | Promise<T>
 
@@ -250,6 +297,7 @@ export interface VariablesOptions {
   pollingInterval?: number
   sse?: boolean
   timeoutMs?: number
+  templateMismatchPolicy?: TemplateMismatchPolicy
 }
 
 export interface LocalVariablesOptions {
@@ -257,6 +305,7 @@ export interface LocalVariablesOptions {
   includeBaggageInContext?: boolean
   includeResourceAttributesInContext?: boolean
   instrument?: boolean
+  templateMismatchPolicy?: TemplateMismatchPolicy
 }
 
 export type VariablesConfigOptions = false | LocalVariablesOptions | VariablesOptions | undefined
@@ -268,6 +317,8 @@ export interface ConfigureVariablesRuntimeOptions {
 }
 
 export interface VariablePushResult {
+  blocked: boolean
+  blockedBy: VariablePushBlockReason[]
   changes: VariablePushChange[]
   dryRun: boolean
 }
@@ -323,7 +374,7 @@ export class LocalVariableProvider implements VariableProvider {
   }
 
   getAllVariablesConfig(): VariablesConfig {
-    return this.config
+    return cloneVariablesConfig(this.config)
   }
 
   createVariable(config: VariableConfig): VariableConfig {
@@ -524,7 +575,7 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
 
   async getAllVariablesConfig(): Promise<VariablesConfig> {
     await this.refresh(true)
-    return this.config ?? { variables: {} }
+    return cloneVariablesConfig(this.config ?? { variables: {} })
   }
 
   async createVariable(config: VariableConfig): Promise<VariableConfig> {
@@ -591,7 +642,12 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
   }
 
   async listVariableTypes(): Promise<Record<string, VariableTypeConfig>> {
-    const data = await this.transport.requestJson('/v1/variable-types/', { method: 'GET' })
+    let data: unknown
+    try {
+      data = await this.transport.requestJson('/v1/variable-types/', { method: 'GET' })
+    } catch (error) {
+      throw toVariableWriteError('Failed to list variable types', error)
+    }
     if (!Array.isArray(data)) {
       throw new VariableWriteError('Failed to list variable types: expected an array response')
     }
@@ -635,9 +691,17 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
         if (!response.ok || response.body === null) {
           throw new HttpStatusError(response.status, response.statusText)
         }
-        reconnectDelay = 1_000
         // eslint-disable-next-line no-await-in-loop -- the stream must be consumed before reconnecting.
-        await this.readSseStream(response.body)
+        const receivedValidData = await this.readSseStream(response.body)
+        if (receivedValidData) {
+          reconnectDelay = 1_000
+        }
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- shutdown can be requested while the stream is being read.
+        if (!this.shutdownRequested) {
+          // eslint-disable-next-line no-await-in-loop -- reconnect backoff is inherently sequential.
+          await delay(reconnectDelay)
+          reconnectDelay = Math.min(reconnectDelay * 2, 60_000)
+        }
       } catch {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- shutdown can be requested while fetch/read is pending.
         if (this.shutdownRequested) {
@@ -652,10 +716,11 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
     }
   }
 
-  private async readSseStream(stream: ReadableStream<Uint8Array>): Promise<void> {
+  private async readSseStream(stream: ReadableStream<Uint8Array>): Promise<boolean> {
     const reader = stream.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let receivedValidData = false
     try {
       while (!this.shutdownRequested) {
         // eslint-disable-next-line no-await-in-loop -- stream chunks must be read sequentially.
@@ -675,6 +740,7 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
           try {
             const event = JSON.parse(json) as { event?: string }
             if (event.event === 'created' || event.event === 'updated' || event.event === 'deleted') {
+              receivedValidData = true
               this.refresh(true).catch(ignoreBackgroundError)
             }
           } catch {
@@ -685,6 +751,7 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
     } finally {
       reader.releaseLock()
     }
+    return receivedValidData
   }
 }
 
@@ -699,11 +766,40 @@ class HttpStatusError extends Error {
   }
 }
 
+type ResolutionStage = 'composition' | 'template rendering' | 'validation' | ''
+
+interface DefaultCacheHit<T> {
+  ok: true
+  value: T
+}
+
+interface DefaultCacheMiss {
+  error: unknown
+  ok: false
+}
+
+type DefaultCacheEntry<T> = DefaultCacheHit<T> | DefaultCacheMiss
+
+interface ResolutionContext {
+  attributes: Record<string, unknown>
+  defaultCache: Map<object, DefaultCacheEntry<unknown>>
+  provider: VariableProvider
+  targetingKey: string | undefined
+}
+
+interface ResolveAttempt<T> {
+  composedFrom: ComposedReference[]
+  exception?: unknown
+  result?: ResolvedVariable<T>
+  stage: ResolutionStage
+}
+
 export class Variable<T> {
   codec: VariableCodec<T>
   defaultValue: ResolveFunction<T> | T
   description: string | undefined
   name: string
+  templateInputsSchema?: JsonSchema
 
   constructor(name: string, options: VariableOptions<T>) {
     validateVariableName(name)
@@ -711,6 +807,9 @@ export class Variable<T> {
     this.description = options.description
     this.defaultValue = options.default
     this.codec = options.codec ?? inferCodec(options.default)
+    if (options.templateInputsSchema !== undefined) {
+      this.templateInputsSchema = options.templateInputsSchema
+    }
   }
 
   async get(options: VariableGetOptions = {}): Promise<ResolvedVariable<T>> {
@@ -756,6 +855,9 @@ export class Variable<T> {
       if (result.version !== undefined) {
         span.setAttribute('version', result.version)
       }
+      if (result.composedFrom.length > 0) {
+        span.setAttribute('composed_from', JSON.stringify(result.composedFrom.map(toComposedFromAttribute)))
+      }
       try {
         span.setAttribute('value', serializeWithCodec(this.codec, result.value))
       } catch {
@@ -775,61 +877,521 @@ export class Variable<T> {
     attributes: Record<string, unknown>,
     label: string | undefined
   ): Promise<ResolvedVariable<T>> {
+    const context: ResolutionContext = {
+      attributes,
+      defaultCache: new Map(),
+      provider: getVariableProvider(),
+      targetingKey,
+    }
+    return await this.resolveInner(context, label)
+  }
+
+  private async resolveInner(context: ResolutionContext, label: string | undefined): Promise<ResolvedVariable<T>> {
+    let serialized: SerializedResolvedVariable | undefined
     try {
       const overrides = getOverrideContext()
       if (Object.hasOwn(overrides, this.name)) {
-        const overrideValue = overrides[this.name] as ResolveFunction<T> | T
-        return new ResolvedVariable({
-          name: this.name,
-          reason: 'context_override',
-          value: await resolveMaybeFunction(overrideValue, targetingKey, attributes),
-        })
+        return await this.resolveContextOverride(overrides[this.name] as ResolveFunction<T> | T, context)
       }
 
-      const provider = getVariableProvider()
-      let serialized =
-        label === undefined
-          ? await provider.getSerializedValue(this.name, targetingKey, attributes)
-          : await getSerializedValueForLabel(provider, this.name, label)
-
-      if (label !== undefined && serialized.value === undefined && serialized.label === undefined) {
-        serialized = await provider.getSerializedValue(this.name, targetingKey, attributes)
-      }
+      serialized = await this.lookupSerialized(this.name, context, label)
 
       if (serialized.value === undefined) {
-        return await resolvedWithDefault(this, serialized, targetingKey, attributes)
-      }
-
-      try {
-        const parsed = this.codec.parse(JSON.parse(serialized.value))
-        const init: ResolvedVariableInit<T> = {
-          name: serialized.name,
-          reason: 'resolved',
-          value: parsed,
-        }
+        const options: {
+          exception?: unknown
+          label?: string
+          reason: VariableResolutionReason
+          version?: number
+        } = { exception: serialized.exception, reason: 'code_default' }
         if (serialized.label !== undefined) {
-          init.label = serialized.label
+          options.label = serialized.label
         }
         if (serialized.version !== undefined) {
-          init.version = serialized.version
+          options.version = serialized.version
         }
-        return new ResolvedVariable(init)
-      } catch (error) {
-        return new ResolvedVariable({
-          exception: error,
-          name: this.name,
-          reason: isSyntaxOrValidationError(error) ? 'validation_error' : 'other_error',
-          value: await resolveMaybeFunction(this.defaultValue, targetingKey, attributes),
+        return await this.resolveRawCodeDefault(context, options)
+      }
+
+      if (serialized.reason === 'code_default') {
+        return await this.resolveCodeDefaultValue(serialized.value, context, {
+          providerException: serialized.exception,
         })
       }
+
+      const attempt = await this.tryResolveSerialized(serialized, context, true)
+      if (attempt.result !== undefined) {
+        return attempt.result
+      }
+      const options: {
+        label?: string
+        providerException?: unknown
+        triggerComposedFrom: ComposedReference[]
+        triggerException?: unknown
+        triggerStage: ResolutionStage
+        version?: number
+      } = {
+        providerException: serialized.exception,
+        triggerComposedFrom: attempt.composedFrom,
+        triggerException: attempt.exception,
+        triggerStage: attempt.stage,
+      }
+      if (serialized.label !== undefined) {
+        options.label = serialized.label
+      }
+      if (serialized.version !== undefined) {
+        options.version = serialized.version
+      }
+      return await this.resolveCodeDefaultValue(await this.getSerializedDefault(context), context, options)
     } catch (error) {
+      let value: T
+      try {
+        value = await this.getDefaultCached(context)
+      } catch (defaultError) {
+        emitResolutionWarning(
+          `Variable '${this.name}' could not be resolved and its code default raised; returning undefined: ${formatUnknown(defaultError)}`
+        )
+        value = undefined as T
+      }
       return new ResolvedVariable({
         exception: error,
         name: this.name,
         reason: 'other_error',
-        value: await resolveMaybeFunction(this.defaultValue, targetingKey, attributes),
+        value,
       })
     }
+  }
+
+  private async resolveContextOverride(value: ResolveFunction<T> | T, context: ResolutionContext): Promise<ResolvedVariable<T>> {
+    const overrideValue = await resolveMaybeFunction(value, context.targetingKey, context.attributes)
+    const serializedValue = trySerializeWithCodec(this.codec, overrideValue)
+    if (serializedValue === undefined) {
+      return new ResolvedVariable({ name: this.name, reason: 'context_override', value: overrideValue })
+    }
+
+    const serialized = new SerializedResolvedVariable({ name: this.name, reason: 'context_override', value: serializedValue })
+    const attempt = await this.tryResolveSerialized(serialized, context, true)
+    if (attempt.result !== undefined) {
+      return new ResolvedVariable({ ...resolvedVariableInit(attempt.result), reason: 'context_override' })
+    }
+    return await this.resolveCodeDefaultValue(await this.getSerializedDefault(context), context, {
+      triggerComposedFrom: attempt.composedFrom,
+      triggerException: attempt.exception,
+      triggerStage: attempt.stage,
+    })
+  }
+
+  private async lookupSerialized(name: string, context: ResolutionContext, label?: string): Promise<SerializedResolvedVariable> {
+    const registered = registeredVariables.get(name)
+    const overrides = getOverrideContext()
+    if (registered instanceof Variable && Object.hasOwn(overrides, name)) {
+      const overrideValue = await resolveMaybeFunction(overrides[name], context.targetingKey, context.attributes)
+      const serialized = trySerializeWithCodec(registered.codec, overrideValue)
+      if (serialized !== undefined) {
+        return new SerializedResolvedVariable({ name, reason: 'context_override', value: serialized })
+      }
+      emitResolutionWarning(
+        `Context override for variable '${name}' could not be serialized while resolving '${this.name}' composition; falling through to provider/code default.`
+      )
+    }
+
+    let providerResult =
+      label === undefined
+        ? await context.provider.getSerializedValue(name, context.targetingKey, context.attributes)
+        : await getSerializedValueForLabel(context.provider, name, label)
+
+    if (label !== undefined && providerResult.value === undefined && providerResult.label === undefined) {
+      providerResult = await context.provider.getSerializedValue(name, context.targetingKey, context.attributes)
+    }
+    if (providerResult.value !== undefined) {
+      return providerResult
+    }
+
+    if (registered instanceof Variable) {
+      const serializedDefault = await registered.getSerializedDefault(context)
+      if (serializedDefault !== undefined) {
+        return new SerializedResolvedVariable({
+          exception: providerResult.exception,
+          name,
+          reason: 'code_default',
+          value: serializedDefault,
+        })
+      }
+    }
+    return providerResult
+  }
+
+  private async tryResolveSerialized(
+    serialized: SerializedResolvedVariable,
+    context: ResolutionContext,
+    strict: boolean
+  ): Promise<ResolveAttempt<T>> {
+    if (serialized.value === undefined) {
+      return { composedFrom: [], stage: '' }
+    }
+
+    let serializedValue = serialized.value
+    let composedFrom: ComposedReference[] = []
+    try {
+      const expanded = await expandReferences(
+        serializedValue,
+        async (name): Promise<ResolvedReference> => serializedResolvedToReference(await this.lookupSerialized(name, context)),
+        { rootName: this.name, strict }
+      )
+      serializedValue = expanded.serializedValue
+      composedFrom = expanded.composedFrom
+      const compositionError = firstCompositionError(composedFrom, { includeSoft: strict })
+      if (compositionError !== undefined) {
+        return {
+          composedFrom,
+          exception: new VariableCompositionError(compositionError),
+          stage: 'composition',
+        }
+      }
+    } catch (error) {
+      return { composedFrom, exception: error, stage: 'composition' }
+    }
+
+    try {
+      const deserializer = (value: string): T => this.codec.parse(JSON.parse(value))
+      const value = deserializer(serializedValue)
+      const init: ResolvedVariableInit<T> = {
+        composedFrom,
+        deserializer,
+        name: serialized.name,
+        reason: 'resolved',
+        serializedValue,
+        value,
+      }
+      if (serialized.label !== undefined) {
+        init.label = serialized.label
+      }
+      if (serialized.version !== undefined) {
+        init.version = serialized.version
+      }
+      return { composedFrom, result: new ResolvedVariable(init), stage: '' }
+    } catch (error) {
+      return {
+        composedFrom,
+        exception: error,
+        stage: 'validation',
+      }
+    }
+  }
+
+  private async resolveCodeDefaultValue(
+    serializedDefault: string | undefined,
+    context: ResolutionContext,
+    options: {
+      label?: string | undefined
+      providerException?: unknown
+      triggerComposedFrom?: ComposedReference[] | undefined
+      triggerException?: unknown
+      triggerStage?: ResolutionStage | undefined
+      version?: number | undefined
+    } = {}
+  ): Promise<ResolvedVariable<T>> {
+    if (options.triggerException !== undefined) {
+      warnFallback(this.name, options.triggerStage ?? '', options.triggerException)
+    }
+
+    if (serializedDefault === undefined) {
+      const rawOptions: {
+        exception?: unknown
+        label?: string
+        reason: VariableResolutionReason
+        version?: number
+      } = {
+        exception: options.triggerException ?? options.providerException,
+        reason: options.triggerException === undefined ? 'code_default' : fallbackReason(options.triggerStage ?? ''),
+      }
+      if (options.label !== undefined) {
+        rawOptions.label = options.label
+      }
+      if (options.version !== undefined) {
+        rawOptions.version = options.version
+      }
+      return await this.resolveRawCodeDefault(context, rawOptions)
+    }
+
+    const defaultSerialized = new SerializedResolvedVariable({ name: this.name, reason: 'code_default', value: serializedDefault })
+    let attempt = await this.tryResolveSerialized(defaultSerialized, context, true)
+    if (attempt.result === undefined && attempt.stage === 'composition') {
+      attempt = await this.tryResolveSerialized(defaultSerialized, context, false)
+      if (attempt.result !== undefined) {
+        emitResolutionWarning(
+          `Variable '${this.name}' code default has unresolved composition reference(s); rendering them as empty strings.`
+        )
+      }
+    }
+
+    if (attempt.result !== undefined) {
+      const init = resolvedVariableInit(attempt.result)
+      init.reason = options.triggerException === undefined ? 'code_default' : fallbackReason(options.triggerStage ?? '')
+      if (options.triggerException === undefined) {
+        delete init.label
+        delete init.version
+      } else {
+        if (options.label !== undefined) {
+          init.label = options.label
+        } else {
+          delete init.label
+        }
+        if (options.version !== undefined) {
+          init.version = options.version
+        } else {
+          delete init.version
+        }
+      }
+      init.exception = options.triggerException ?? options.providerException
+      if (options.triggerComposedFrom !== undefined && options.triggerComposedFrom.length > 0) {
+        init.composedFrom = options.triggerComposedFrom
+      }
+      return new ResolvedVariable(init)
+    }
+
+    if (options.triggerException === undefined && attempt.exception !== undefined) {
+      warnFallback(this.name, attempt.stage, attempt.exception, true)
+    }
+    const rawOptions: {
+      composedFrom?: ComposedReference[]
+      exception?: unknown
+      label?: string
+      reason: VariableResolutionReason
+      version?: number
+    } = {
+      exception: options.triggerException ?? attempt.exception,
+      reason: fallbackReason(options.triggerException === undefined ? attempt.stage : (options.triggerStage ?? '')),
+    }
+    if (options.triggerComposedFrom !== undefined) {
+      rawOptions.composedFrom = options.triggerComposedFrom
+    }
+    if (options.label !== undefined) {
+      rawOptions.label = options.label
+    }
+    if (options.version !== undefined) {
+      rawOptions.version = options.version
+    }
+    return await this.resolveRawCodeDefault(context, rawOptions)
+  }
+
+  private async resolveRawCodeDefault(
+    context: ResolutionContext,
+    options: {
+      composedFrom?: ComposedReference[] | undefined
+      exception?: unknown
+      label?: string | undefined
+      reason?: VariableResolutionReason | undefined
+      version?: number | undefined
+    } = {}
+  ): Promise<ResolvedVariable<T>> {
+    try {
+      const init: ResolvedVariableInit<T> = {
+        name: this.name,
+        reason: options.reason ?? 'code_default',
+        value: await this.getDefaultCached(context),
+      }
+      if (options.composedFrom !== undefined) {
+        init.composedFrom = options.composedFrom
+      }
+      if (options.exception !== undefined) {
+        init.exception = options.exception
+      }
+      if (options.label !== undefined) {
+        init.label = options.label
+      }
+      if (options.version !== undefined) {
+        init.version = options.version
+      }
+      return new ResolvedVariable(init)
+    } catch (error) {
+      emitResolutionWarning(
+        `Variable '${this.name}' could not be resolved and its code default raised; returning undefined: ${formatUnknown(error)}`
+      )
+      const init: ResolvedVariableInit<T> = {
+        exception: error,
+        name: this.name,
+        reason: 'other_error',
+        value: undefined as T,
+      }
+      if (options.label !== undefined) {
+        init.label = options.label
+      }
+      if (options.version !== undefined) {
+        init.version = options.version
+      }
+      return new ResolvedVariable(init)
+    }
+  }
+
+  private async getDefaultCached(context: ResolutionContext): Promise<T> {
+    if (!context.defaultCache.has(this)) {
+      try {
+        context.defaultCache.set(this, {
+          ok: true,
+          value: await resolveMaybeFunction(this.defaultValue, context.targetingKey, context.attributes),
+        })
+      } catch (error) {
+        context.defaultCache.set(this, { error, ok: false })
+      }
+    }
+    const cached = context.defaultCache.get(this) as DefaultCacheEntry<T> | undefined
+    if (cached?.ok === true) {
+      return cached.value
+    }
+    if (cached?.error instanceof Error) {
+      throw cached.error
+    }
+    throw new Error(cached === undefined ? `Default value for variable '${this.name}' was not cached` : formatUnknown(cached.error))
+  }
+
+  private async getSerializedDefault(context: ResolutionContext): Promise<string | undefined> {
+    try {
+      return trySerializeWithCodec(this.codec, await this.getDefaultCached(context))
+    } catch {
+      return undefined
+    }
+  }
+}
+
+export type TemplateVariableOptions<T, InputsT extends Record<string, unknown>> =
+  InputsT extends Record<string, unknown> ? VariableOptions<T> & { templateMismatchPolicy?: TemplateMismatchPolicy } : never
+
+function resolvedVariableInit<T>(resolved: ResolvedVariable<T>): ResolvedVariableInit<T> {
+  const init: ResolvedVariableInit<T> = {
+    name: resolved.name,
+    reason: resolved.reason,
+    value: resolved.value,
+  }
+  if (resolved.composedFrom.length > 0) {
+    init.composedFrom = resolved.composedFrom
+  }
+  if (resolved.exception !== undefined) {
+    init.exception = resolved.exception
+  }
+  if (resolved.label !== undefined) {
+    init.label = resolved.label
+  }
+  if (resolved.serializedValue !== undefined) {
+    init.serializedValue = resolved.serializedValue
+  }
+  if (resolved.version !== undefined) {
+    init.version = resolved.version
+  }
+  return init
+}
+
+function trySerializeWithCodec<T>(codec: VariableCodec<T>, value: T): string | undefined {
+  try {
+    const serialized = serializeWithCodec(codec, value)
+    return typeof serialized === 'string' ? serialized : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function emitResolutionWarning(message: string): void {
+  try {
+    console.warn(message)
+  } catch {
+    // Warnings must not change resolution behavior.
+  }
+}
+
+function fallbackReason(stage: ResolutionStage): VariableResolutionReason {
+  return stage === 'validation' ? 'validation_error' : 'other_error'
+}
+
+function warnFallback(variableName: string, stage: ResolutionStage, exception: unknown, codeDefault: boolean = false): void {
+  if (stage === 'validation') {
+    emitResolutionWarning(`Variable '${variableName}' value failed validation; falling back to code default: ${formatUnknown(exception)}`)
+    return
+  }
+  if (codeDefault) {
+    emitResolutionWarning(`Variable '${variableName}' code default ${stage} failed; returning the raw default: ${formatUnknown(exception)}`)
+    return
+  }
+  emitResolutionWarning(`Variable '${variableName}' ${stage} failed; falling back to code default: ${formatUnknown(exception)}`)
+}
+
+export class TemplateVariable<T, InputsT extends Record<string, unknown>> extends Variable<T> {
+  private readonly templateMismatchPolicy: TemplateMismatchPolicy | undefined
+
+  constructor(name: string, options: TemplateVariableOptions<T, InputsT>) {
+    super(name, options)
+    this.templateMismatchPolicy = options.templateMismatchPolicy
+  }
+
+  override async get(inputs: InputsT, options: VariableGetOptions = {}): Promise<ResolvedVariable<T>> {
+    const resolved = await super.get(options)
+    try {
+      const serializedValue = resolved.serializedValue ?? serializeWithCodec(this.codec, resolved.value)
+      this.checkTemplateInputs(serializedValue, resolved.label)
+      const renderedSerializedValue = renderSerializedTemplate(serializedValue, inputs)
+      const renderedValue = this.codec.parse(JSON.parse(renderedSerializedValue))
+      const init: ResolvedVariableInit<T> = {
+        composedFrom: resolved.composedFrom,
+        deserializer: (value) => this.codec.parse(JSON.parse(value)),
+        name: resolved.name,
+        reason: resolved.reason,
+        serializedValue: renderedSerializedValue,
+        value: renderedValue,
+      }
+      if (resolved.exception !== undefined) {
+        init.exception = resolved.exception
+      }
+      if (resolved.label !== undefined) {
+        init.label = resolved.label
+      }
+      if (resolved.version !== undefined) {
+        init.version = resolved.version
+      }
+      return new ResolvedVariable(init)
+    } catch (error) {
+      if (error instanceof TemplateInputsMismatchError) {
+        throw error
+      }
+      const init: ResolvedVariableInit<T> = {
+        composedFrom: resolved.composedFrom,
+        exception: toVariableRenderError(error, this.name),
+        name: resolved.name,
+        reason: 'other_error',
+        value: await this.resolveRenderFallbackValue(resolved, options),
+      }
+      if (resolved.label !== undefined) {
+        init.label = resolved.label
+      }
+      if (resolved.version !== undefined) {
+        init.version = resolved.version
+      }
+      return new ResolvedVariable(init)
+    }
+  }
+
+  private async resolveRenderFallbackValue(resolved: ResolvedVariable<T>, options: VariableGetOptions): Promise<T> {
+    if (resolved.reason === 'code_default' || resolved.reason === 'validation_error' || resolved.reason === 'other_error') {
+      return resolved.value
+    }
+    return await resolveDefaultForVariable(this, options)
+  }
+
+  private effectiveTemplateMismatchPolicy(): TemplateMismatchPolicy {
+    return this.templateMismatchPolicy ?? runtimeState.templateMismatchPolicy
+  }
+
+  private checkTemplateInputs(serializedValue: string, label: string | undefined): void {
+    const policy = this.effectiveTemplateMismatchPolicy()
+    if (policy === 'ignore') {
+      return
+    }
+    const issues = validateTemplateInputs(serializedValue, this.templateInputsSchema, this.name, label)
+    if (issues.length === 0) {
+      return
+    }
+    const message = issues.map((issue) => issue.message).join('; ')
+    if (policy === 'error') {
+      throw new TemplateInputsMismatchError(message)
+    }
+    emitResolutionWarning(message)
   }
 }
 
@@ -845,6 +1407,7 @@ interface VariableRuntimeState {
   provider: VariableProvider
   remoteOptions: VariablesOptions | undefined
   resourceAttributes: Record<string, unknown>
+  templateMismatchPolicy: TemplateMismatchPolicy
 }
 
 const runtimeState: VariableRuntimeState = {
@@ -857,18 +1420,62 @@ const runtimeState: VariableRuntimeState = {
   provider: new NoOpVariableProvider(),
   remoteOptions: undefined,
   resourceAttributes: {},
+  templateMismatchPolicy: 'warn',
 }
 
 export function defineVar<T>(name: string, options: VariableOptions<T>): Variable<T> {
+  return registerVariable(name, new Variable(name, options))
+}
+
+export function defineTemplateVar<T, InputsT extends Record<string, unknown> = Record<string, unknown>>(
+  name: string,
+  options: TemplateVariableOptions<T, InputsT>
+): TemplateVariable<T, InputsT> {
+  return registerVariable(name, new TemplateVariable(name, options))
+}
+
+function registerVariable<T extends VariableDefinition>(name: string, variable: T): T {
   if (registeredVariables.has(name)) {
     throw new Error(`A variable with name '${name}' has already been registered`)
   }
-  const variable = new Variable(name, options)
+  warnOnTemplateInputsCompositionMismatch(variable)
   registeredVariables.set(name, variable)
   return variable
 }
 
+function warnOnTemplateInputsCompositionMismatch(variable: VariableDefinition): void {
+  if (variable instanceof TemplateVariable) {
+    for (const registered of registeredVariables.values()) {
+      if (!(registered instanceof TemplateVariable) && staticCompositionRefs(registered).includes(variable.name)) {
+        warnPlainComposesTemplate(registered.name, variable.name)
+      }
+    }
+    return
+  }
+
+  for (const ref of staticCompositionRefs(variable)) {
+    if (registeredVariables.get(ref) instanceof TemplateVariable) {
+      warnPlainComposesTemplate(variable.name, ref)
+    }
+  }
+}
+
+function staticCompositionRefs(variable: VariableDefinition): string[] {
+  if (!(variable instanceof Variable) || typeof variable.defaultValue === 'function') {
+    return []
+  }
+  const serialized = trySerializeWithCodec(variable.codec, variable.defaultValue)
+  return serialized === undefined ? [] : findReferences(serialized)
+}
+
+function warnPlainComposesTemplate(plainName: string, templateName: string): void {
+  emitResolutionWarning(
+    `plain variable '${plainName}' composes template variable '${templateName}', but '${plainName}' has no template inputs schema.`
+  )
+}
+
 export { defineVar as var }
+export { defineTemplateVar as templateVar }
 
 export function variablesClear(): void {
   registeredVariables.clear()
@@ -890,7 +1497,7 @@ export async function variablesValidate(variables: VariableDefinition[] = variab
   const provider = getVariableProvider()
   await provider.refresh?.(true)
   const config = (await provider.getAllVariablesConfig?.()) ?? { variables: {} }
-  return validateVariablesAgainstConfig(variables, config)
+  return await validateVariablesAgainstConfig(variables, config)
 }
 
 export async function variablesPush(
@@ -900,11 +1507,6 @@ export async function variablesPush(
   const provider = getWritableProvider()
   await provider.refresh?.(true)
   const serverConfig = (await provider.getAllVariablesConfig?.()) ?? { variables: {} }
-  const report = validateVariablesAgainstConfig(variables, serverConfig)
-  if (options.strict === true && !report.isValid) {
-    throw new VariableWriteError('Cannot push variables: provider values are incompatible with local variable codecs')
-  }
-
   const updates: Record<string, VariableConfig> = {}
   const changes: VariablePushChange[] = []
   for (const variable of variables) {
@@ -920,6 +1522,7 @@ export async function variablesPush(
       description: local.description ?? null,
       example: local.example ?? null,
       json_schema: local.json_schema ?? null,
+      template_inputs_schema: local.template_inputs_schema ?? null,
       type_name: local.type_name ?? null,
     }
     if (JSON.stringify(merged) !== JSON.stringify(existing)) {
@@ -928,10 +1531,17 @@ export async function variablesPush(
     }
   }
 
+  const report = await validateVariablesAgainstConfig(variables, serverConfig)
+  const blockedBy = getVariablePushBlockedBy(report, options.strict === true)
+  if (blockedBy.length > 0) {
+    return { blocked: true, blockedBy, changes, dryRun: options.dryRun === true }
+  }
+  warnForNonStrictVariablePush(report)
+
   if (options.dryRun !== true && Object.keys(updates).length > 0) {
     await provider.batchUpdate(updates)
   }
-  return { changes, dryRun: options.dryRun === true }
+  return { blocked: false, blockedBy: [], changes, dryRun: options.dryRun === true }
 }
 
 export async function variablesPushConfig(
@@ -963,7 +1573,7 @@ export async function variablesPushConfig(
   if (options.dryRun !== true && Object.keys(updates).length > 0) {
     await provider.batchUpdate(updates)
   }
-  return { changes, dryRun: options.dryRun === true }
+  return { blocked: false, blockedBy: [], changes, dryRun: options.dryRun === true }
 }
 
 export async function variablesPullConfig(): Promise<VariablesConfig> {
@@ -972,23 +1582,53 @@ export async function variablesPullConfig(): Promise<VariablesConfig> {
   return (await provider.getAllVariablesConfig?.()) ?? { variables: {} }
 }
 
-export async function variablesPushTypes(types: VariableTypeConfig[], options: { dryRun?: boolean } = {}): Promise<VariablePushResult> {
+export async function variablesPushTypes(
+  types: VariableTypeConfig[],
+  options: { dryRun?: boolean; strict?: boolean } = {}
+): Promise<VariablePushResult> {
   const provider = getWritableProvider()
   if (typeof provider.listVariableTypes !== 'function' || typeof provider.upsertVariableType !== 'function') {
     throw new VariableWriteError('Configured variable provider does not support variable types')
   }
+  const typeProvider = provider as Required<Pick<VariableProvider, 'listVariableTypes' | 'upsertVariableType'>> & VariableProvider
   const changes: VariablePushChange[] = []
-  const existing = await provider.listVariableTypes()
-  const upserts: Promise<VariableTypeConfig>[] = []
+  let existing: Record<string, VariableTypeConfig>
+  try {
+    existing = await typeProvider.listVariableTypes()
+  } catch (error) {
+    throw error instanceof VariableWriteError ? error : toVariableWriteError('Failed to list variable types', error)
+  }
+  const updates: VariableTypeConfig[] = []
+  const compatibilityUpdates: VariableTypeConfig[] = []
   for (const typeConfig of types) {
     const normalized = normalizeVariableTypeConfig(typeConfig)
-    changes.push({ action: Object.hasOwn(existing, normalized.name) ? 'update' : 'create', name: normalized.name })
-    if (options.dryRun !== true) {
-      upserts.push(Promise.resolve(provider.upsertVariableType(normalized)))
+    const existingType = existing[normalized.name]
+    if (existingType === undefined) {
+      changes.push({ action: 'create', name: normalized.name })
+      updates.push(normalized)
+    } else if (JSON.stringify(existingType) !== JSON.stringify(normalized)) {
+      changes.push({ action: 'update', name: normalized.name })
+      updates.push(normalized)
+      compatibilityUpdates.push(normalized)
     }
   }
-  await Promise.all(upserts)
-  return { changes, dryRun: options.dryRun === true }
+
+  const incompatibleTypeLabels = await collectTypeLabelCompatibilityErrors(provider, compatibilityUpdates)
+  if (options.strict === true && incompatibleTypeLabels.length > 0) {
+    return { blocked: true, blockedBy: ['incompatible_type_labels'], changes, dryRun: options.dryRun === true }
+  }
+  for (const error of incompatibleTypeLabels) {
+    emitResolutionWarning(`Variable type push label warning: ${error}`)
+  }
+
+  if (options.dryRun !== true) {
+    try {
+      await Promise.all(updates.map(async (typeConfig) => await typeProvider.upsertVariableType(typeConfig)))
+    } catch (error) {
+      throw error instanceof VariableWriteError ? error : toVariableWriteError('Failed to upsert variable type', error)
+    }
+  }
+  return { blocked: false, blockedBy: [], changes, dryRun: options.dryRun === true }
 }
 
 export function configureVariables(options?: VariablesConfigOptions, runtime: ConfigureVariablesRuntimeOptions = {}): void {
@@ -1001,6 +1641,7 @@ export function configureVariables(options?: VariablesConfigOptions, runtime: Co
     runtimeState.explicitProviderConfigured = true
     runtimeState.provider = new NoOpVariableProvider()
     runtimeState.remoteOptions = undefined
+    runtimeState.templateMismatchPolicy = 'warn'
     shutdownProvider(oldProvider)
     return
   }
@@ -1012,6 +1653,7 @@ export function configureVariables(options?: VariablesConfigOptions, runtime: Co
     runtimeState.instrument = options.instrument ?? true
     runtimeState.provider = new LocalVariableProvider(options.config)
     runtimeState.remoteOptions = undefined
+    runtimeState.templateMismatchPolicy = options.templateMismatchPolicy ?? 'warn'
     shutdownProvider(oldProvider)
     return
   }
@@ -1022,6 +1664,7 @@ export function configureVariables(options?: VariablesConfigOptions, runtime: Co
   runtimeState.includeResourceAttributesInContext = remoteOptions?.includeResourceAttributesInContext ?? true
   runtimeState.instrument = remoteOptions?.instrument ?? true
   runtimeState.remoteOptions = remoteOptions
+  runtimeState.templateMismatchPolicy = remoteOptions?.templateMismatchPolicy ?? 'warn'
 
   if (remoteOptions !== undefined) {
     const apiKey = remoteOptions.apiKey ?? runtime.apiKey
@@ -1039,6 +1682,7 @@ export function configureVariables(options?: VariablesConfigOptions, runtime: Co
   }
 
   runtimeState.provider = new NoOpVariableProvider()
+  runtimeState.templateMismatchPolicy = 'warn'
   shutdownProvider(oldProvider)
 }
 
@@ -1053,6 +1697,7 @@ export async function shutdownVariables(): Promise<void> {
   runtimeState.provider = new NoOpVariableProvider()
   runtimeState.remoteOptions = undefined
   runtimeState.resourceAttributes = {}
+  runtimeState.templateMismatchPolicy = 'warn'
 }
 
 export function getVariableProvider(): VariableProvider {
@@ -1095,50 +1740,536 @@ export async function targetingContext<R>(
   return withTargetingContext(next, callback)
 }
 
-function validateVariablesAgainstConfig(variables: VariableDefinition[], config: VariablesConfig): ValidationReport {
+async function validateVariablesAgainstConfig(variables: VariableDefinition[], config: VariablesConfig): Promise<ValidationReport> {
   const errors: LabelValidationError[] = []
   const variablesNotOnServer: string[] = []
   const descriptionDifferences: DescriptionDifference[] = []
+  const localByName = new Map(variables.map((variable) => [variable.name, variable]))
   for (const variable of variables) {
     const serverVariable = getVariableConfig(config, variable.name)
     if (serverVariable === undefined) {
       variablesNotOnServer.push(variable.name)
-      continue
-    }
-    const serverDescription = normalizeDescriptionForComparison(serverVariable.description)
-    const localDescription = normalizeDescriptionForComparison(variable.description)
-    if (serverDescription !== localDescription) {
-      descriptionDifferences.push({
-        localDescription,
-        serverDescription,
-        variableName: variable.name,
-      })
-    }
-    for (const [label, labeled] of Object.entries(serverVariable.labels)) {
-      if (!isLabeledValue(labeled)) {
-        continue
-      }
-      try {
-        variable.codec.parse(JSON.parse(labeled.serialized_value))
-      } catch (error) {
-        errors.push({ error, label, variableName: variable.name })
+    } else {
+      const serverDescription = normalizeDescriptionForComparison(serverVariable.description)
+      const localDescription = normalizeDescriptionForComparison(variable.description)
+      if (serverDescription !== localDescription) {
+        descriptionDifferences.push({
+          localDescription,
+          serverDescription,
+          variableName: variable.name,
+        })
       }
     }
-    if (serverVariable.latest_version !== null && serverVariable.latest_version !== undefined) {
-      try {
-        variable.codec.parse(JSON.parse(serverVariable.latest_version.serialized_value))
-      } catch (error) {
-        errors.push({ error, label: 'latest', variableName: variable.name })
-      }
+
+    for (const source of getValidationSourcesForVariable(variable.name, localByName, config)) {
+      // eslint-disable-next-line no-await-in-loop -- validation errors follow provider/static source order.
+      await validateSerializedVariableValue(variable, source.serializedValue, source.foundInLabel, localByName, config, errors)
     }
   }
+  const referenceDiagnostics = collectReferenceDiagnostics(variables, localByName, config)
+  const templateFieldIssues = collectTemplateFieldIssues(variables, localByName, config)
   return {
     descriptionDifferences,
     errors,
-    isValid: errors.length === 0 && variablesNotOnServer.length === 0,
+    isValid:
+      errors.length === 0 &&
+      variablesNotOnServer.length === 0 &&
+      referenceDiagnostics.referenceErrors.length === 0 &&
+      templateFieldIssues.length === 0,
+    referenceCycles: referenceDiagnostics.referenceCycles,
+    referenceErrors: referenceDiagnostics.referenceErrors,
+    templateFieldIssues,
     variablesChecked: variables.length,
     variablesNotOnServer,
   }
+}
+
+async function validateSerializedVariableValue(
+  variable: VariableDefinition,
+  serializedValue: string,
+  label: string | undefined,
+  localByName: Map<string, VariableDefinition>,
+  config: VariablesConfig,
+  errors: LabelValidationError[]
+): Promise<void> {
+  let valueToParse = serializedValue
+  if (serializedValue.includes('@{')) {
+    try {
+      const expanded = await expandReferences(
+        serializedValue,
+        (name) => serializedResolvedToReference(resolveFirstValidationSource(name, localByName, config)),
+        { rootName: variable.name, strict: false }
+      )
+      valueToParse = expanded.serializedValue
+    } catch {
+      // Reference graph diagnostics are collected separately; codec validation should not abort the full report.
+    }
+  }
+  try {
+    variable.codec.parse(JSON.parse(valueToParse))
+  } catch (error) {
+    errors.push({ error, label, variableName: variable.name })
+  }
+}
+
+interface ValidationSource {
+  foundInLabel?: string
+  foundInVariable: string
+  reason: VariableResolutionReason
+  serializedValue: string
+}
+
+interface ReferenceDiagnostics {
+  referenceCycles: string[]
+  referenceErrors: string[]
+}
+
+function getValidationSourcesForVariable(
+  variableName: string,
+  localByName: Map<string, VariableDefinition>,
+  config: VariablesConfig
+): ValidationSource[] {
+  const sources: ValidationSource[] = []
+  const localDefault = getStaticSerializedDefault(localByName.get(variableName))
+  if (localDefault !== undefined) {
+    sources.push({
+      foundInVariable: variableName,
+      reason: 'code_default',
+      serializedValue: localDefault,
+    })
+  }
+
+  const serverVariable = getVariableConfig(config, variableName)
+  if (serverVariable !== undefined) {
+    for (const [label, labeled] of Object.entries(serverVariable.labels)) {
+      const serializedValue = resolveLabelSourceForValidation(serverVariable, labeled, localDefault)
+      if (serializedValue !== undefined) {
+        sources.push({
+          foundInLabel: label,
+          foundInVariable: serverVariable.name,
+          reason: 'resolved',
+          serializedValue,
+        })
+      }
+    }
+    if (serverVariable.latest_version !== null && serverVariable.latest_version !== undefined) {
+      sources.push({
+        foundInLabel: 'latest',
+        foundInVariable: serverVariable.name,
+        reason: 'resolved',
+        serializedValue: serverVariable.latest_version.serialized_value,
+      })
+    }
+  }
+  return dedupeByJson(sources)
+}
+
+function getStaticSerializedDefault(variable: VariableDefinition | undefined): string | undefined {
+  if (!(variable instanceof Variable) || typeof variable.defaultValue === 'function') {
+    return undefined
+  }
+  return trySerializeWithCodec(variable.codec, variable.defaultValue)
+}
+
+function resolveLabelSourceForValidation(
+  config: VariableConfig,
+  labeled: LabelRef | LabeledValue,
+  localDefault: string | undefined,
+  visited: Set<string> = new Set<string>()
+): string | undefined {
+  if (isLabeledValue(labeled)) {
+    return labeled.serialized_value
+  }
+  if (labeled.ref === 'code_default') {
+    return localDefault
+  }
+  if (labeled.ref === 'latest') {
+    return config.latest_version?.serialized_value
+  }
+  if (visited.has(labeled.ref)) {
+    return undefined
+  }
+  visited.add(labeled.ref)
+  const next = config.labels[labeled.ref]
+  return next === undefined ? undefined : resolveLabelSourceForValidation(config, next, localDefault, visited)
+}
+
+function resolveFirstValidationSource(
+  variableName: string,
+  localByName: Map<string, VariableDefinition>,
+  config: VariablesConfig
+): SerializedResolvedVariable {
+  const source = getValidationSourcesForVariable(variableName, localByName, config)[0]
+  if (source === undefined) {
+    return new SerializedResolvedVariable({ name: variableName, reason: 'unrecognized_variable', value: undefined })
+  }
+  const init: SerializedResolvedVariableInit = {
+    name: source.foundInVariable,
+    reason: source.reason,
+    value: source.serializedValue,
+  }
+  if (source.foundInLabel !== undefined) {
+    init.label = source.foundInLabel
+  }
+  return new SerializedResolvedVariable(init)
+}
+
+function collectReferenceDiagnostics(
+  variables: VariableDefinition[],
+  localByName: Map<string, VariableDefinition>,
+  config: VariablesConfig
+): ReferenceDiagnostics {
+  const referenceErrors = new Set<string>()
+  const referenceCycles = new Set<string>()
+  for (const variable of variables) {
+    for (const source of getValidationSourcesForVariable(variable.name, localByName, config)) {
+      collectReferenceDiagnosticsFromSource(
+        variable.name,
+        source,
+        localByName,
+        config,
+        [variable.name],
+        referenceErrors,
+        referenceCycles,
+        0
+      )
+    }
+  }
+  return {
+    referenceCycles: [...referenceCycles],
+    referenceErrors: [...referenceErrors],
+  }
+}
+
+function collectReferenceDiagnosticsFromSource(
+  rootVariable: string,
+  source: ValidationSource,
+  localByName: Map<string, VariableDefinition>,
+  config: VariablesConfig,
+  referencePath: string[],
+  referenceErrors: Set<string>,
+  referenceCycles: Set<string>,
+  depth: number
+): void {
+  if (depth > MAX_COMPOSITION_DEPTH) {
+    referenceErrors.add(
+      `Variable '${rootVariable}' reference graph exceeded maximum depth of ${String(MAX_COMPOSITION_DEPTH)} via ${referencePath.join(' -> ')}`
+    )
+    return
+  }
+
+  const references = findReferencesAndErrors(source.serializedValue)
+  for (const error of references.errors) {
+    referenceErrors.add(`Variable '${rootVariable}' has invalid reference syntax in '${formatValidationSource(source)}': ${error.message}`)
+  }
+
+  for (const reference of references.references) {
+    const nextPath = [...referencePath, reference]
+    if (referencePath.includes(reference)) {
+      const cycle = `Circular variable reference: ${nextPath.join(' -> ')}`
+      referenceCycles.add(cycle)
+      referenceErrors.add(cycle)
+      continue
+    }
+
+    const sources = getValidationSourcesForVariable(reference, localByName, config)
+    if (sources.length === 0) {
+      referenceErrors.add(`Variable '${rootVariable}' references missing variable '${reference}' via ${nextPath.join(' -> ')}`)
+      continue
+    }
+    for (const nextSource of sources) {
+      collectReferenceDiagnosticsFromSource(
+        rootVariable,
+        nextSource,
+        localByName,
+        config,
+        nextPath,
+        referenceErrors,
+        referenceCycles,
+        depth + 1
+      )
+    }
+  }
+}
+
+function collectTemplateFieldIssues(
+  variables: VariableDefinition[],
+  localByName: Map<string, VariableDefinition>,
+  config: VariablesConfig
+): TemplateFieldIssue[] {
+  const issues: TemplateFieldIssue[] = []
+  for (const variable of variables) {
+    if (variable.templateInputsSchema === undefined) {
+      continue
+    }
+    const rootIssues: TemplateFieldIssue[] = []
+    for (const source of getValidationSourcesForVariable(variable.name, localByName, config)) {
+      collectTemplateFieldIssuesFromSource(
+        variable.name,
+        variable.templateInputsSchema,
+        source,
+        localByName,
+        config,
+        [variable.name],
+        rootIssues,
+        0
+      )
+    }
+    issues.push(...dedupeByJson(rootIssues))
+  }
+  return issues
+}
+
+function collectTemplateFieldIssuesFromSource(
+  rootVariable: string,
+  templateInputsSchema: JsonSchema,
+  source: ValidationSource,
+  localByName: Map<string, VariableDefinition>,
+  config: VariablesConfig,
+  referencePath: string[],
+  issues: TemplateFieldIssue[],
+  depth: number
+): void {
+  if (depth > MAX_COMPOSITION_DEPTH) {
+    return
+  }
+
+  for (const issue of validateTemplateInputs(source.serializedValue, templateInputsSchema, rootVariable, source.foundInLabel)) {
+    const templateIssue: TemplateFieldIssue = {
+      fieldName: issue.path,
+      foundInVariable: source.foundInVariable,
+      message: issue.message,
+      referencePath,
+      rootVariable,
+    }
+    if (source.foundInLabel !== undefined) {
+      templateIssue.foundInLabel = source.foundInLabel
+    }
+    issues.push(templateIssue)
+  }
+
+  for (const reference of findReferences(source.serializedValue)) {
+    if (referencePath.includes(reference)) {
+      continue
+    }
+    const sources = getValidationSourcesForVariable(reference, localByName, config)
+    for (const nextSource of sources) {
+      collectTemplateFieldIssuesFromSource(
+        rootVariable,
+        templateInputsSchema,
+        nextSource,
+        localByName,
+        config,
+        [...referencePath, reference],
+        issues,
+        depth + 1
+      )
+    }
+  }
+}
+
+function formatValidationSource(source: ValidationSource): string {
+  return source.foundInLabel === undefined ? source.foundInVariable : `${source.foundInVariable}:${source.foundInLabel}`
+}
+
+function getVariablePushBlockedBy(report: ValidationReport, strict: boolean): VariablePushBlockReason[] {
+  if (report.referenceCycles.length > 0) {
+    return ['reference_cycles']
+  }
+  if (!strict) {
+    return []
+  }
+  if (nonCycleReferenceErrors(report).length > 0) {
+    return ['reference_errors']
+  }
+  if (report.templateFieldIssues.length > 0) {
+    return ['template_field_issues']
+  }
+  if (report.errors.length > 0) {
+    return ['incompatible_labels']
+  }
+  return []
+}
+
+function warnForNonStrictVariablePush(report: ValidationReport): void {
+  for (const error of nonCycleReferenceErrors(report)) {
+    emitResolutionWarning(`Variable push reference warning: ${error}`)
+  }
+  for (const issue of report.templateFieldIssues) {
+    emitResolutionWarning(
+      `Variable push template warning: ${issue.message} in '${formatTemplateIssueLocation(issue)}' for root '${issue.rootVariable}'`
+    )
+  }
+  for (const error of report.errors) {
+    emitResolutionWarning(
+      `Variable push label warning: '${error.variableName}'${error.label === undefined ? '' : ` label '${error.label}'`} is incompatible: ${formatUnknown(error.error)}`
+    )
+  }
+}
+
+function nonCycleReferenceErrors(report: ValidationReport): string[] {
+  return report.referenceErrors.filter((error) => !report.referenceCycles.includes(error))
+}
+
+function formatTemplateIssueLocation(issue: TemplateFieldIssue): string {
+  return issue.foundInLabel === undefined ? issue.foundInVariable : `${issue.foundInVariable}:${issue.foundInLabel}`
+}
+
+async function collectTypeLabelCompatibilityErrors(provider: VariableProvider, updatedTypes: VariableTypeConfig[]): Promise<string[]> {
+  if (updatedTypes.length === 0) {
+    return []
+  }
+  if (typeof provider.getAllVariablesConfig !== 'function') {
+    return []
+  }
+
+  let config: VariablesConfig
+  try {
+    config = await provider.getAllVariablesConfig()
+  } catch (error) {
+    emitResolutionWarning(`Variable type push could not check existing labels: ${formatUnknown(error)}`)
+    return []
+  }
+
+  const updatedTypesByName = new Map(updatedTypes.map((typeConfig) => [typeConfig.name, typeConfig]))
+  const errors: string[] = []
+  for (const variableConfig of Object.values(config.variables)) {
+    if (variableConfig.type_name === null || variableConfig.type_name === undefined) {
+      continue
+    }
+    const typeConfig = updatedTypesByName.get(variableConfig.type_name)
+    if (typeConfig === undefined) {
+      continue
+    }
+    for (const source of getTypeValidationSources(variableConfig)) {
+      let value: unknown
+      try {
+        value = JSON.parse(source.serializedValue)
+      } catch (error) {
+        errors.push(
+          `Variable '${variableConfig.name}'${source.foundInLabel === undefined ? '' : ` label '${source.foundInLabel}'`} is not valid JSON for type '${typeConfig.name}': ${formatUnknown(error)}`
+        )
+        continue
+      }
+      const schemaError = validateJsonSchemaValue(value, typeConfig.json_schema)
+      if (schemaError !== undefined) {
+        errors.push(
+          `Variable '${variableConfig.name}'${source.foundInLabel === undefined ? '' : ` label '${source.foundInLabel}'`} is incompatible with type '${typeConfig.name}': ${schemaError}`
+        )
+      }
+    }
+  }
+  return [...new Set(errors)]
+}
+
+function getTypeValidationSources(variableConfig: VariableConfig): ValidationSource[] {
+  const sources: ValidationSource[] = []
+  for (const [label, labeled] of Object.entries(variableConfig.labels)) {
+    const serializedValue = resolveLabelSourceForValidation(variableConfig, labeled, undefined)
+    if (serializedValue !== undefined) {
+      sources.push({
+        foundInLabel: label,
+        foundInVariable: variableConfig.name,
+        reason: 'resolved',
+        serializedValue,
+      })
+    }
+  }
+  if (variableConfig.latest_version !== null && variableConfig.latest_version !== undefined) {
+    sources.push({
+      foundInLabel: 'latest',
+      foundInVariable: variableConfig.name,
+      reason: 'resolved',
+      serializedValue: variableConfig.latest_version.serialized_value,
+    })
+  }
+  return dedupeByJson(sources)
+}
+
+function validateJsonSchemaValue(value: unknown, schema: JsonSchema, path: string = '$'): string | undefined {
+  const schemaType = schema['type']
+  if (typeof schemaType === 'string') {
+    const error = validateJsonSchemaType(value, schemaType, path)
+    if (error !== undefined) {
+      return error
+    }
+  } else if (Array.isArray(schemaType)) {
+    const allowedTypes = schemaType.filter((item): item is string => typeof item === 'string')
+    if (allowedTypes.length > 0 && !allowedTypes.some((type) => jsonSchemaTypeMatches(value, type))) {
+      return `Expected ${allowedTypes.join(' or ')} at ${path}, got ${jsonTypeName(value)}`
+    }
+  }
+
+  if (isRecord(value)) {
+    const required = schema['required']
+    if (Array.isArray(required)) {
+      for (const key of required) {
+        if (typeof key === 'string' && !Object.hasOwn(value, key)) {
+          return `Missing required property '${key}' at ${path}`
+        }
+      }
+    }
+    const properties = schema['properties']
+    if (isRecord(properties)) {
+      for (const [key, propertySchema] of Object.entries(properties)) {
+        if (isRecord(propertySchema) && Object.hasOwn(value, key)) {
+          const error = validateJsonSchemaValue(value[key], propertySchema, `${path}.${key}`)
+          if (error !== undefined) {
+            return error
+          }
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(value) && isRecord(schema['items'])) {
+    const itemSchema = schema['items']
+    for (const [index, item] of value.entries()) {
+      const error = validateJsonSchemaValue(item, itemSchema, `${path}[${index.toString()}]`)
+      if (error !== undefined) {
+        return error
+      }
+    }
+  }
+  return undefined
+}
+
+function validateJsonSchemaType(value: unknown, expectedType: string, path: string): string | undefined {
+  if (jsonSchemaTypeMatches(value, expectedType)) {
+    return undefined
+  }
+  return `Expected ${expectedType} at ${path}, got ${jsonTypeName(value)}`
+}
+
+function jsonSchemaTypeMatches(value: unknown, expectedType: string): boolean {
+  switch (expectedType) {
+    case 'array':
+      return Array.isArray(value)
+    case 'boolean':
+      return typeof value === 'boolean'
+    case 'integer':
+      return typeof value === 'number' && Number.isInteger(value)
+    case 'null':
+      return value === null
+    case 'number':
+      return typeof value === 'number'
+    case 'object':
+      return isRecord(value)
+    case 'string':
+      return typeof value === 'string'
+    default:
+      return true
+  }
+}
+
+function jsonTypeName(value: unknown): string {
+  if (value === null) {
+    return 'null'
+  }
+  if (Array.isArray(value)) {
+    return 'array'
+  }
+  return typeof value
 }
 
 function getWritableProvider(): Required<Pick<VariableProvider, 'batchUpdate'>> & VariableProvider {
@@ -1164,27 +2295,29 @@ async function getSerializedValueForLabel(
   return resolveVariableConfigForLabel(config, label)
 }
 
-async function resolvedWithDefault<T>(
-  variable: Variable<T>,
-  serialized: SerializedResolvedVariable,
-  targetingKey: string | undefined,
-  attributes: Record<string, unknown>
-): Promise<ResolvedVariable<T>> {
-  const init: ResolvedVariableInit<T> = {
+function toComposedFromAttribute(reference: ComposedReference): Record<string, unknown> {
+  return {
+    name: reference.name,
+    version: reference.version ?? null,
+    label: reference.label ?? null,
+    reason: reference.reason,
+    error: reference.error ?? null,
+  }
+}
+
+function serializedResolvedToReference(serialized: SerializedResolvedVariable): ResolvedReference {
+  const reference: ResolvedReference = {
     name: serialized.name,
     reason: serialized.reason,
-    value: await resolveMaybeFunction(variable.defaultValue, targetingKey, attributes),
-  }
-  if (serialized.exception !== undefined) {
-    init.exception = serialized.exception
+    value: serialized.value,
   }
   if (serialized.label !== undefined) {
-    init.label = serialized.label
+    reference.label = serialized.label
   }
   if (serialized.version !== undefined) {
-    init.version = serialized.version
+    reference.version = serialized.version
   }
-  return new ResolvedVariable(init)
+  return reference
 }
 
 async function resolveMaybeFunction<T>(
@@ -1196,6 +2329,19 @@ async function resolveMaybeFunction<T>(
     return (value as ResolveFunction<T>)(targetingKey, attributes)
   }
   return value
+}
+
+async function resolveDefaultForVariable<T>(variable: Variable<T>, options: VariableGetOptions): Promise<T> {
+  const attributes = getMergedAttributes(options.attributes)
+  const targetingKey = options.targetingKey ?? getContextTargetingKey(variable.name) ?? getActiveTraceTargetingKey()
+  return await resolveMaybeFunction(variable.defaultValue, targetingKey, attributes)
+}
+
+function toVariableRenderError(error: unknown, variableName: string): VariableRenderError {
+  if (error instanceof VariableRenderError) {
+    return error
+  }
+  return new VariableRenderError(`Failed to render variable '${variableName}': ${formatUnknown(error)}`)
 }
 
 function inferCodec<T>(defaultValue: ResolveFunction<T> | T): VariableCodec<T> {
@@ -1282,6 +2428,7 @@ function variableToConfig<T>(variable: Variable<T>): VariableConfig {
     name: variable.name,
     overrides: [],
     rollout: { labels: {} },
+    template_inputs_schema: variable.templateInputsSchema ?? null,
     type_name: variable.codec.typeName ?? null,
   }
 }
@@ -1478,6 +2625,10 @@ function normalizeVariablesConfig(data: unknown): VariablesConfig {
   return { variables }
 }
 
+function cloneVariablesConfig(config: VariablesConfig): VariablesConfig {
+  return normalizeVariablesConfig(JSON.parse(JSON.stringify(config)))
+}
+
 function normalizeVariableConfig(data: unknown): VariableConfig {
   if (!isRecord(data)) {
     throw new Error('Variable config must be an object')
@@ -1499,6 +2650,7 @@ function normalizeVariableConfig(data: unknown): VariableConfig {
     name,
     overrides,
     rollout,
+    template_inputs_schema: isRecord(data['template_inputs_schema']) ? data['template_inputs_schema'] : null,
     type_name: optionalString(data['type_name']),
   }
   const aliases = data['aliases']
@@ -1667,6 +2819,7 @@ function configToApiBody(config: VariableConfig): Record<string, unknown> {
       rollout: { labels: override.rollout.labels },
     })),
     rollout: { labels: config.rollout.labels },
+    template_inputs_schema: config.template_inputs_schema ?? null,
   }
   if (Object.keys(config.labels).length > 0) {
     body['labels'] = Object.fromEntries(Object.entries(config.labels).map(([label, value]) => [label, labelToApiData(value)]))
@@ -1790,10 +2943,6 @@ function isLabeledValue(value: LabelRef | LabeledValue): value is LabeledValue {
   return 'serialized_value' in value
 }
 
-function isSyntaxOrValidationError(error: unknown): boolean {
-  return error instanceof SyntaxError || error instanceof TypeError
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -1850,6 +2999,19 @@ function toVariableWriteError(message: string, error: unknown): VariableWriteErr
 
 function withoutKey<T>(record: Record<string, T>, keyToRemove: string): Record<string, T> {
   return Object.fromEntries(Object.entries(record).filter(([key]) => key !== keyToRemove))
+}
+
+function dedupeByJson<T>(values: T[]): T[] {
+  const deduped: T[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    const key = JSON.stringify(value)
+    if (!seen.has(key)) {
+      seen.add(key)
+      deduped.push(value)
+    }
+  }
+  return deduped
 }
 
 function assertNever(value: never): never {
