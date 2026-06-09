@@ -374,7 +374,7 @@ export class LocalVariableProvider implements VariableProvider {
   }
 
   getAllVariablesConfig(): VariablesConfig {
-    return this.config
+    return cloneVariablesConfig(this.config)
   }
 
   createVariable(config: VariableConfig): VariableConfig {
@@ -575,7 +575,7 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
 
   async getAllVariablesConfig(): Promise<VariablesConfig> {
     await this.refresh(true)
-    return this.config ?? { variables: {} }
+    return cloneVariablesConfig(this.config ?? { variables: {} })
   }
 
   async createVariable(config: VariableConfig): Promise<VariableConfig> {
@@ -642,7 +642,12 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
   }
 
   async listVariableTypes(): Promise<Record<string, VariableTypeConfig>> {
-    const data = await this.transport.requestJson('/v1/variable-types/', { method: 'GET' })
+    let data: unknown
+    try {
+      data = await this.transport.requestJson('/v1/variable-types/', { method: 'GET' })
+    } catch (error) {
+      throw toVariableWriteError('Failed to list variable types', error)
+    }
     if (!Array.isArray(data)) {
       throw new VariableWriteError('Failed to list variable types: expected an array response')
     }
@@ -686,9 +691,17 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
         if (!response.ok || response.body === null) {
           throw new HttpStatusError(response.status, response.statusText)
         }
-        reconnectDelay = 1_000
         // eslint-disable-next-line no-await-in-loop -- the stream must be consumed before reconnecting.
-        await this.readSseStream(response.body)
+        const receivedValidData = await this.readSseStream(response.body)
+        if (receivedValidData) {
+          reconnectDelay = 1_000
+        }
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- shutdown can be requested while the stream is being read.
+        if (!this.shutdownRequested) {
+          // eslint-disable-next-line no-await-in-loop -- reconnect backoff is inherently sequential.
+          await delay(reconnectDelay)
+          reconnectDelay = Math.min(reconnectDelay * 2, 60_000)
+        }
       } catch {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- shutdown can be requested while fetch/read is pending.
         if (this.shutdownRequested) {
@@ -703,10 +716,11 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
     }
   }
 
-  private async readSseStream(stream: ReadableStream<Uint8Array>): Promise<void> {
+  private async readSseStream(stream: ReadableStream<Uint8Array>): Promise<boolean> {
     const reader = stream.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let receivedValidData = false
     try {
       while (!this.shutdownRequested) {
         // eslint-disable-next-line no-await-in-loop -- stream chunks must be read sequentially.
@@ -726,6 +740,7 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
           try {
             const event = JSON.parse(json) as { event?: string }
             if (event.event === 'created' || event.event === 'updated' || event.event === 'deleted') {
+              receivedValidData = true
               this.refresh(true).catch(ignoreBackgroundError)
             }
           } catch {
@@ -736,6 +751,7 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
     } finally {
       reader.releaseLock()
     }
+    return receivedValidData
   }
 }
 
@@ -1559,22 +1575,52 @@ export async function variablesPullConfig(): Promise<VariablesConfig> {
   return (await provider.getAllVariablesConfig?.()) ?? { variables: {} }
 }
 
-export async function variablesPushTypes(types: VariableTypeConfig[], options: { dryRun?: boolean } = {}): Promise<VariablePushResult> {
+export async function variablesPushTypes(
+  types: VariableTypeConfig[],
+  options: { dryRun?: boolean; strict?: boolean } = {}
+): Promise<VariablePushResult> {
   const provider = getWritableProvider()
   if (typeof provider.listVariableTypes !== 'function' || typeof provider.upsertVariableType !== 'function') {
     throw new VariableWriteError('Configured variable provider does not support variable types')
   }
+  const typeProvider = provider as Required<Pick<VariableProvider, 'listVariableTypes' | 'upsertVariableType'>> & VariableProvider
   const changes: VariablePushChange[] = []
-  const existing = await provider.listVariableTypes()
-  const upserts: Promise<VariableTypeConfig>[] = []
+  let existing: Record<string, VariableTypeConfig>
+  try {
+    existing = await typeProvider.listVariableTypes()
+  } catch (error) {
+    throw error instanceof VariableWriteError ? error : toVariableWriteError('Failed to list variable types', error)
+  }
+  const updates: VariableTypeConfig[] = []
+  const compatibilityUpdates: VariableTypeConfig[] = []
   for (const typeConfig of types) {
     const normalized = normalizeVariableTypeConfig(typeConfig)
-    changes.push({ action: Object.hasOwn(existing, normalized.name) ? 'update' : 'create', name: normalized.name })
-    if (options.dryRun !== true) {
-      upserts.push(Promise.resolve(provider.upsertVariableType(normalized)))
+    const existingType = existing[normalized.name]
+    if (existingType === undefined) {
+      changes.push({ action: 'create', name: normalized.name })
+      updates.push(normalized)
+    } else if (JSON.stringify(existingType) !== JSON.stringify(normalized)) {
+      changes.push({ action: 'update', name: normalized.name })
+      updates.push(normalized)
+      compatibilityUpdates.push(normalized)
     }
   }
-  await Promise.all(upserts)
+
+  const incompatibleTypeLabels = await collectTypeLabelCompatibilityErrors(provider, compatibilityUpdates)
+  if (options.strict === true && incompatibleTypeLabels.length > 0) {
+    return { blocked: true, blockedBy: ['incompatible_type_labels'], changes, dryRun: options.dryRun === true }
+  }
+  for (const error of incompatibleTypeLabels) {
+    emitResolutionWarning(`Variable type push label warning: ${error}`)
+  }
+
+  if (options.dryRun !== true) {
+    try {
+      await Promise.all(updates.map(async (typeConfig) => await typeProvider.upsertVariableType(typeConfig)))
+    } catch (error) {
+      throw error instanceof VariableWriteError ? error : toVariableWriteError('Failed to upsert variable type', error)
+    }
+  }
   return { blocked: false, blockedBy: [], changes, dryRun: options.dryRun === true }
 }
 
@@ -2058,6 +2104,163 @@ function formatTemplateIssueLocation(issue: TemplateFieldIssue): string {
   return issue.foundInLabel === undefined ? issue.foundInVariable : `${issue.foundInVariable}:${issue.foundInLabel}`
 }
 
+async function collectTypeLabelCompatibilityErrors(provider: VariableProvider, updatedTypes: VariableTypeConfig[]): Promise<string[]> {
+  if (updatedTypes.length === 0) {
+    return []
+  }
+  if (typeof provider.getAllVariablesConfig !== 'function') {
+    return []
+  }
+
+  let config: VariablesConfig
+  try {
+    config = await provider.getAllVariablesConfig()
+  } catch (error) {
+    emitResolutionWarning(`Variable type push could not check existing labels: ${formatUnknown(error)}`)
+    return []
+  }
+
+  const updatedTypesByName = new Map(updatedTypes.map((typeConfig) => [typeConfig.name, typeConfig]))
+  const errors: string[] = []
+  for (const variableConfig of Object.values(config.variables)) {
+    if (variableConfig.type_name === null || variableConfig.type_name === undefined) {
+      continue
+    }
+    const typeConfig = updatedTypesByName.get(variableConfig.type_name)
+    if (typeConfig === undefined) {
+      continue
+    }
+    for (const source of getTypeValidationSources(variableConfig)) {
+      let value: unknown
+      try {
+        value = JSON.parse(source.serializedValue)
+      } catch (error) {
+        errors.push(
+          `Variable '${variableConfig.name}'${source.foundInLabel === undefined ? '' : ` label '${source.foundInLabel}'`} is not valid JSON for type '${typeConfig.name}': ${formatUnknown(error)}`
+        )
+        continue
+      }
+      const schemaError = validateJsonSchemaValue(value, typeConfig.json_schema)
+      if (schemaError !== undefined) {
+        errors.push(
+          `Variable '${variableConfig.name}'${source.foundInLabel === undefined ? '' : ` label '${source.foundInLabel}'`} is incompatible with type '${typeConfig.name}': ${schemaError}`
+        )
+      }
+    }
+  }
+  return [...new Set(errors)]
+}
+
+function getTypeValidationSources(variableConfig: VariableConfig): ValidationSource[] {
+  const sources: ValidationSource[] = []
+  for (const [label, labeled] of Object.entries(variableConfig.labels)) {
+    const serializedValue = resolveLabelSourceForValidation(variableConfig, labeled, undefined)
+    if (serializedValue !== undefined) {
+      sources.push({
+        foundInLabel: label,
+        foundInVariable: variableConfig.name,
+        reason: 'resolved',
+        serializedValue,
+      })
+    }
+  }
+  if (variableConfig.latest_version !== null && variableConfig.latest_version !== undefined) {
+    sources.push({
+      foundInLabel: 'latest',
+      foundInVariable: variableConfig.name,
+      reason: 'resolved',
+      serializedValue: variableConfig.latest_version.serialized_value,
+    })
+  }
+  return dedupeByJson(sources)
+}
+
+function validateJsonSchemaValue(value: unknown, schema: JsonSchema, path: string = '$'): string | undefined {
+  const schemaType = schema['type']
+  if (typeof schemaType === 'string') {
+    const error = validateJsonSchemaType(value, schemaType, path)
+    if (error !== undefined) {
+      return error
+    }
+  } else if (Array.isArray(schemaType)) {
+    const allowedTypes = schemaType.filter((item): item is string => typeof item === 'string')
+    if (allowedTypes.length > 0 && !allowedTypes.some((type) => jsonSchemaTypeMatches(value, type))) {
+      return `Expected ${allowedTypes.join(' or ')} at ${path}, got ${jsonTypeName(value)}`
+    }
+  }
+
+  if (isRecord(value)) {
+    const required = schema['required']
+    if (Array.isArray(required)) {
+      for (const key of required) {
+        if (typeof key === 'string' && !Object.hasOwn(value, key)) {
+          return `Missing required property '${key}' at ${path}`
+        }
+      }
+    }
+    const properties = schema['properties']
+    if (isRecord(properties)) {
+      for (const [key, propertySchema] of Object.entries(properties)) {
+        if (isRecord(propertySchema) && Object.hasOwn(value, key)) {
+          const error = validateJsonSchemaValue(value[key], propertySchema, `${path}.${key}`)
+          if (error !== undefined) {
+            return error
+          }
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(value) && isRecord(schema['items'])) {
+    const itemSchema = schema['items']
+    for (const [index, item] of value.entries()) {
+      const error = validateJsonSchemaValue(item, itemSchema, `${path}[${index.toString()}]`)
+      if (error !== undefined) {
+        return error
+      }
+    }
+  }
+  return undefined
+}
+
+function validateJsonSchemaType(value: unknown, expectedType: string, path: string): string | undefined {
+  if (jsonSchemaTypeMatches(value, expectedType)) {
+    return undefined
+  }
+  return `Expected ${expectedType} at ${path}, got ${jsonTypeName(value)}`
+}
+
+function jsonSchemaTypeMatches(value: unknown, expectedType: string): boolean {
+  switch (expectedType) {
+    case 'array':
+      return Array.isArray(value)
+    case 'boolean':
+      return typeof value === 'boolean'
+    case 'integer':
+      return typeof value === 'number' && Number.isInteger(value)
+    case 'null':
+      return value === null
+    case 'number':
+      return typeof value === 'number'
+    case 'object':
+      return isRecord(value)
+    case 'string':
+      return typeof value === 'string'
+    default:
+      return true
+  }
+}
+
+function jsonTypeName(value: unknown): string {
+  if (value === null) {
+    return 'null'
+  }
+  if (Array.isArray(value)) {
+    return 'array'
+  }
+  return typeof value
+}
+
 function getWritableProvider(): Required<Pick<VariableProvider, 'batchUpdate'>> & VariableProvider {
   const provider = getVariableProvider()
   if (typeof provider.batchUpdate !== 'function') {
@@ -2409,6 +2612,10 @@ function normalizeVariablesConfig(data: unknown): VariablesConfig {
     variables[key] = variableConfig
   }
   return { variables }
+}
+
+function cloneVariablesConfig(config: VariablesConfig): VariablesConfig {
+  return normalizeVariablesConfig(JSON.parse(JSON.stringify(config)))
 }
 
 function normalizeVariableConfig(data: unknown): VariableConfig {

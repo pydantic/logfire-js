@@ -9,10 +9,12 @@ import {
   targetingContext,
   var as logfireVar,
   VariableNotFoundError,
+  VariableWriteError,
   variablesBuildConfig,
   variablesClear,
   variablesPullConfig,
   variablesPushConfig,
+  variablesPushTypes,
   variablesValidate,
 } from './vars'
 import type { VariablesConfig } from './vars'
@@ -27,6 +29,7 @@ describe('managed variables', () => {
 
   afterEach(async () => {
     await getVariableProvider().shutdown?.()
+    vi.restoreAllMocks()
     vi.useRealTimers()
     variablesClear()
     configureVariables(false)
@@ -529,6 +532,119 @@ describe('managed variables', () => {
     const error = await refresh
     expect(error).toBeInstanceOf(Error)
     expect(error instanceof Error ? error.message : String(error)).toContain('timed out')
+  })
+
+  it('strict variable type push blocks incompatible existing labels without mutating', async () => {
+    const posts: unknown[] = []
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      await Promise.resolve()
+      const url = requestInputToUrl(input)
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/v1/variable-types/') && method === 'GET') {
+        return new Response(JSON.stringify([{ json_schema: { type: 'number' }, name: 'answer_type' }]), { status: 200 })
+      }
+      if (url.endsWith('/v1/variables/') && method === 'GET') {
+        return new Response(
+          JSON.stringify(
+            config({
+              answer: {
+                labels: { prod: { serialized_value: '42', version: 1 } },
+                name: 'answer',
+                overrides: [],
+                rollout: { labels: { prod: 1 } },
+                type_name: 'answer_type',
+              },
+            })
+          ),
+          { status: 200 }
+        )
+      }
+      if (url.endsWith('/v1/variable-types/') && method === 'POST') {
+        posts.push(parseJsonBody(init?.body))
+        return new Response(JSON.stringify({}), { status: 200 })
+      }
+      return new Response(JSON.stringify(config({})), { status: 200 })
+    })
+    configureVariables({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: fetchImpl,
+      instrument: false,
+      polling: false,
+      sse: false,
+    })
+
+    await expect(variablesPushTypes([{ json_schema: { type: 'string' }, name: 'answer_type' }], { strict: true })).resolves.toEqual({
+      blocked: true,
+      blockedBy: ['incompatible_type_labels'],
+      changes: [{ action: 'update', name: 'answer_type' }],
+      dryRun: false,
+    })
+    expect(posts).toEqual([])
+  })
+
+  it('non-strict variable type push warns and applies incompatible existing labels', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const posts: unknown[] = []
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      await Promise.resolve()
+      const url = requestInputToUrl(input)
+      const method = init?.method ?? 'GET'
+      if (url.endsWith('/v1/variable-types/') && method === 'GET') {
+        return new Response(JSON.stringify([{ json_schema: { type: 'number' }, name: 'answer_type' }]), { status: 200 })
+      }
+      if (url.endsWith('/v1/variables/') && method === 'GET') {
+        return new Response(
+          JSON.stringify(
+            config({
+              answer: {
+                labels: { prod: { serialized_value: '42', version: 1 } },
+                name: 'answer',
+                overrides: [],
+                rollout: { labels: { prod: 1 } },
+                type_name: 'answer_type',
+              },
+            })
+          ),
+          { status: 200 }
+        )
+      }
+      if (url.endsWith('/v1/variable-types/') && method === 'POST') {
+        posts.push(parseJsonBody(init?.body))
+        return new Response(JSON.stringify({}), { status: 200 })
+      }
+      return new Response(JSON.stringify(config({})), { status: 200 })
+    })
+    configureVariables({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: fetchImpl,
+      instrument: false,
+      polling: false,
+      sse: false,
+    })
+
+    await expect(variablesPushTypes([{ json_schema: { type: 'string' }, name: 'answer_type' }])).resolves.toEqual({
+      blocked: false,
+      blockedBy: [],
+      changes: [{ action: 'update', name: 'answer_type' }],
+      dryRun: false,
+    })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Variable type push label warning'))
+    expect(posts).toEqual([{ description: null, json_schema: { type: 'string' }, name: 'answer_type', source_hint: null }])
+  })
+
+  it('wraps remote variable type listing failures as write errors', async () => {
+    const provider = new LogfireRemoteVariableProvider({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: async () => Promise.resolve(new Response(JSON.stringify({ detail: 'nope' }), { status: 503 })),
+      polling: false,
+      sse: false,
+    })
+
+    await expect(provider.listVariableTypes()).rejects.toBeInstanceOf(VariableWriteError)
+    await expect(provider.listVariableTypes()).rejects.toThrow('Failed to list variable types')
   })
 
   it('keeps SSE requests on the event-stream fetch path', async () => {
