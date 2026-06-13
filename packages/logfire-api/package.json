@@ -27,6 +27,9 @@
     "monitoring"
   ],
   "version": "0.20.0",
+  "bugs": {
+    "url": "https://github.com/pydantic/logfire-js/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
