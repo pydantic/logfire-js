@@ -13,6 +13,9 @@
   },
   "sideEffects": false,
   "homepage": "https://pydantic.dev/logfire",
+  "bugs": {
+    "url": "https://github.com/pydantic/logfire-js/issues"
+  },
   "license": "MIT",
   "publishConfig": {
     "access": "public"
