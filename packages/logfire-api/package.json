@@ -127,5 +127,8 @@
   "files": [
     "dist",
     "LICENSE"
-  ]
+  ],
+  "bugs": {
+    "url": "https://github.com/pydantic/logfire-js/issues"
+  }
 }
