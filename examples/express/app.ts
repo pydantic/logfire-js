@@ -58,6 +58,7 @@ app.use((err: Error, _req: Request, res: Response, _next: () => unknown) => {
   })
   res.status(500)
   res.send('An error occurred')
+})
 
 app.listen(PORT, () => {
   console.log(`Listening for requests on http://localhost:${PORT}/rolldice`)
