@@ -586,6 +586,69 @@ describe('span', () => {
     expect(spanMock.end).toHaveBeenCalledOnce()
   })
 
+  test('sync callback throws Error with cause - records cause chain in exception stacktrace', () => {
+    const cause = Object.assign(new TypeError('database unavailable'), {
+      details: { retryable: true },
+      statusCode: 503,
+    })
+    cause.stack = 'TypeError: database unavailable\n    at query (db.ts:12:3)'
+    const error = new Error('request failed', { cause })
+    error.stack = 'Error: request failed\n    at handler (app.ts:8:1)'
+    const expectedStack = `${error.stack}\nCaused by: ${cause.stack}`
+
+    expect(() =>
+      span('test', {
+        attributes: { payload: { id: '123' } },
+        callback: () => {
+          throw error
+        },
+      })
+    ).toThrow(error)
+
+    expect(spanMock.recordException).toHaveBeenCalledWith({
+      message: 'request failed',
+      name: 'Error',
+      stack: expectedStack,
+    })
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: request failed' })
+    const causeAttribute = spanMock.setAttribute.mock.calls.find(([key]) => key === 'exception.cause')?.[1]
+    expect(JSON.parse(causeAttribute as string)).toEqual({
+      details: { retryable: true },
+      message: 'database unavailable',
+      stacktrace: cause.stack,
+      statusCode: 503,
+      type: 'TypeError',
+    })
+    const schemaAttribute = spanMock.setAttribute.mock.calls.find(([key]) => key === JSON_SCHEMA_KEY)?.[1]
+    expect(JSON.parse(schemaAttribute as string)).toMatchObject({
+      properties: {
+        'exception.cause': {
+          properties: {
+            details: {
+              properties: {
+                retryable: { type: 'boolean' },
+              },
+              type: 'object',
+            },
+            message: { type: 'string' },
+            stacktrace: { type: 'string' },
+            statusCode: { type: 'number' },
+            type: { type: 'string' },
+          },
+          type: 'object',
+        },
+        payload: {
+          properties: {
+            id: { type: 'string' },
+          },
+          type: 'object',
+        },
+      },
+      type: 'object',
+    })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
   test('sync callback throws string - records exception without fingerprint', () => {
     expect(() =>
       span('test', {
@@ -675,6 +738,56 @@ describe('reportError', () => {
     expect(attributes['path']).toBe('/users')
     expect(spanMock.recordException).toHaveBeenCalledWith(error)
     expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: legacy' })
+  })
+
+  test('records Error cause chain in reportError stacktrace', () => {
+    const cause = Object.assign(new TypeError('database unavailable'), {
+      details: { retryable: true },
+      statusCode: 503,
+    })
+    cause.stack = 'TypeError: database unavailable\n    at query (db.ts:12:3)'
+    const error = new Error('request failed', { cause })
+    error.stack = 'Error: request failed\n    at handler (app.ts:8:1)'
+    const expectedStack = `${error.stack}\nCaused by: ${cause.stack}`
+
+    reportError('Caught error', error)
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTR_EXCEPTION_MESSAGE]).toBe('request failed')
+    expect(attributes[ATTR_EXCEPTION_STACKTRACE]).toBe(expectedStack)
+    expect(JSON.parse(attributes['exception.cause'] as string)).toEqual({
+      details: { retryable: true },
+      message: 'database unavailable',
+      stacktrace: cause.stack,
+      statusCode: 503,
+      type: 'TypeError',
+    })
+    expect(JSON.parse(attributes[JSON_SCHEMA_KEY] as string)).toMatchObject({
+      properties: {
+        'exception.cause': {
+          properties: {
+            details: {
+              properties: {
+                retryable: { type: 'boolean' },
+              },
+              type: 'object',
+            },
+            message: { type: 'string' },
+            stacktrace: { type: 'string' },
+            statusCode: { type: 'number' },
+            type: { type: 'string' },
+          },
+          type: 'object',
+        },
+      },
+      type: 'object',
+    })
+    expect(spanMock.recordException).toHaveBeenCalledWith({
+      message: 'request failed',
+      name: 'Error',
+      stack: expectedStack,
+    })
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: request failed' })
   })
 
   test('applies fourth-argument tags', () => {

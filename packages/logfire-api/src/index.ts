@@ -1,4 +1,4 @@
-import type { Attributes, Context, HrTime, Span } from '@opentelemetry/api'
+import type { Attributes, Context, Exception, HrTime, Span } from '@opentelemetry/api'
 import {
   INVALID_SPAN_CONTEXT,
   SpanStatusCode,
@@ -269,16 +269,19 @@ function buildSerializedLogfireAttributes(
 ): {
   formattedMessage: string
   newTemplate: string
+  serializationAttributes: Record<string, unknown>
   serializedAttributes: Attributes
 } {
   const { formattedMessage, extraAttributes, newTemplate } = logfireFormatWithExtras(msgTemplate, attributes, logfireApiConfig.scrubber)
   const userAttributes = { ...attributes, ...extraAttributes }
+  const serializationAttributes = { ...getBaggageSpanAttributes(userAttributes), ...userAttributes }
 
   return {
     formattedMessage,
     newTemplate,
+    serializationAttributes,
     serializedAttributes: {
-      ...serializeAttributes({ ...getBaggageSpanAttributes(userAttributes), ...userAttributes }),
+      ...serializeAttributes(serializationAttributes),
       [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
       [ATTRIBUTES_MESSAGE_KEY]: formattedMessage,
       [ATTRIBUTES_LEVEL_KEY]: level,
@@ -371,7 +374,7 @@ function safeSetSpanAttribute(span: Span, key: string, value: SerializedAttribut
   try {
     span.setAttribute(key, value)
   } catch {
-    // Return recording is best-effort and must never change function outcome.
+    // Late-added metadata is best-effort and must never change function outcome.
   }
 }
 
@@ -386,6 +389,20 @@ function recordReturnAttributes(span: Span, spanSerializationAttributes: Record<
     }
   } catch {
     safeSetSpanAttribute(span, 'return', '[unserializable]')
+  }
+}
+
+function recordSerializedAttributes(span: Span, attributes: Record<string, unknown>, keys: readonly string[]): void {
+  try {
+    const serializedAttributes = serializeAttributes(attributes)
+    for (const key of keys) {
+      const serializedValue = serializedAttributes[key]
+      if (serializedValue !== undefined) {
+        safeSetSpanAttribute(span, key, serializedValue)
+      }
+    }
+  } catch {
+    // Exception metadata is best-effort and must never change error propagation.
   }
 }
 
@@ -538,7 +555,7 @@ function spanWithSettings<R>(
     return withNoopSpan(callback)
   }
 
-  const { serializedAttributes } = buildSerializedLogfireAttributes(msgTemplate, attributes, { tags, level })
+  const { serializationAttributes, serializedAttributes } = buildSerializedLogfireAttributes(msgTemplate, attributes, { tags, level })
 
   const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : TheContextAPI.active()
   return logfireApiConfig.tracer.startActiveSpan(
@@ -552,7 +569,7 @@ function spanWithSettings<R>(
       try {
         result = callback(span)
       } catch (thrown) {
-        recordSpanException(span, thrown)
+        recordSpanException(span, thrown, serializationAttributes)
         span.end()
         throw thrown
       }
@@ -563,7 +580,7 @@ function spanWithSettings<R>(
             span.end()
           },
           (reason: unknown) => {
-            recordSpanException(span, reason)
+            recordSpanException(span, reason, serializationAttributes)
             span.end()
           }
         )
@@ -675,26 +692,37 @@ export function instrument<F extends InstrumentableFunction>(fn: F, options: Ins
   return instrumentWithSettings(ROOT_CLIENT_SETTINGS, fn, options)
 }
 
-function recordSpanException(span: Span, thrown: unknown): void {
+function recordSpanException(span: Span, thrown: unknown, spanSerializationAttributes: Record<string, unknown> = {}): void {
   const isError = thrown instanceof Error
   const errorMessage = isError ? thrown.message : String(thrown)
   const errorName = isError ? thrown.name : 'Error'
 
-  span.recordException(isError ? thrown : String(thrown))
+  span.recordException(isError ? normalizeRecordException(thrown) : String(thrown))
   span.setStatus({ code: SpanStatusCode.ERROR, message: `${errorName}: ${errorMessage}` })
   span.setAttribute(ATTRIBUTES_LEVEL_KEY, Level.Error)
 
   if (isError && logfireApiConfig.enableErrorFingerprinting) {
     span.setAttribute(ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY, computeFingerprint(thrown))
   }
+
+  if (isError && thrown.cause !== undefined) {
+    recordSerializedAttributes(span, { ...spanSerializationAttributes, [ATTR_EXCEPTION_CAUSE]: normalizeErrorCause(thrown) }, [
+      ATTR_EXCEPTION_CAUSE,
+      JSON_SCHEMA_KEY,
+      JSON_NULL_FIELDS_KEY,
+      ATTRIBUTES_SCRUBBED_KEY,
+    ])
+  }
 }
 
 interface NormalizedReportError {
   attributes: Record<string, unknown>
   fingerprintSource?: Error
-  recordExceptionValue: Error | string
+  recordExceptionValue: Exception
   statusMessage: string
 }
+
+const ATTR_EXCEPTION_CAUSE = 'exception.cause' as const
 
 function stringifyThrownValue(thrown: unknown): string {
   try {
@@ -704,15 +732,93 @@ function stringifyThrownValue(thrown: unknown): string {
   }
 }
 
+function formatErrorStackWithCauses(error: Error, seen: WeakSet<Error> = new WeakSet<Error>()): string {
+  if (seen.has(error)) {
+    return `[Circular cause: ${error.name}: ${error.message}]`
+  }
+  seen.add(error)
+
+  const stack = error.stack ?? `${error.name}: ${error.message}`
+  if (error.cause === undefined) {
+    return stack
+  }
+
+  const cause = error.cause instanceof Error ? formatErrorStackWithCauses(error.cause, seen) : stringifyThrownValue(error.cause)
+  return `${stack}\nCaused by: ${cause}`
+}
+
+function getErrorCode(error: Error): string | number | undefined {
+  const code = (error as { code?: unknown }).code
+  return typeof code === 'string' || typeof code === 'number' ? code : undefined
+}
+
+function normalizeRecordException(error: Error): Exception {
+  if (error.cause === undefined) {
+    return error
+  }
+
+  const code = getErrorCode(error)
+  return {
+    ...(code !== undefined ? { code } : {}),
+    message: error.message,
+    name: error.name,
+    stack: formatErrorStackWithCauses(error),
+  }
+}
+
+function normalizeErrorCause(error: Error): unknown {
+  const seen = new WeakSet<Error>()
+  seen.add(error)
+  return normalizeExceptionCause(error.cause, seen)
+}
+
+function normalizeExceptionCause(cause: unknown, seen: WeakSet<Error> = new WeakSet<Error>()): unknown {
+  if (!(cause instanceof Error)) {
+    return { value: cause }
+  }
+
+  if (seen.has(cause)) {
+    return {
+      circular: true,
+      message: cause.message,
+      type: cause.name,
+    }
+  }
+  seen.add(cause)
+
+  const code = getErrorCode(cause)
+  const normalized: Record<string, unknown> = {
+    message: cause.message,
+    stacktrace: cause.stack,
+    type: cause.name,
+    ...(code !== undefined ? { code } : {}),
+  }
+
+  for (const [key, value] of Object.entries(cause)) {
+    if (['cause', 'code', 'message', 'name', 'stack'].includes(key)) {
+      continue
+    }
+    normalized[key] = value
+  }
+
+  if (cause.cause !== undefined) {
+    normalized['cause'] = normalizeExceptionCause(cause.cause, seen)
+  }
+
+  seen.delete(cause)
+  return normalized
+}
+
 function normalizeReportError(error: unknown): NormalizedReportError {
   if (error instanceof Error) {
     return {
       attributes: {
+        ...(error.cause !== undefined ? { [ATTR_EXCEPTION_CAUSE]: normalizeErrorCause(error) } : {}),
         [ATTR_EXCEPTION_MESSAGE]: error.message,
-        [ATTR_EXCEPTION_STACKTRACE]: error.stack,
+        [ATTR_EXCEPTION_STACKTRACE]: error.cause === undefined ? error.stack : formatErrorStackWithCauses(error),
       },
       fingerprintSource: error,
-      recordExceptionValue: error,
+      recordExceptionValue: normalizeRecordException(error),
       statusMessage: `${error.name}: ${error.message}`,
     }
   }
