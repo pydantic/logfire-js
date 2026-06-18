@@ -67,6 +67,7 @@ allowBuilds:
   sharp: false
   workerd: true
 
+minimumReleaseAge: 1d
 minimumReleaseAgeExclude:
   - '@voidzero-dev/vite-plus-core@0.2.1'
   - '@voidzero-dev/vite-plus-darwin-arm64@0.2.1'
