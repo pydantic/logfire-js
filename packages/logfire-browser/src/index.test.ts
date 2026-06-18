@@ -390,14 +390,17 @@ describe('browser cleanup', () => {
   })
 
   it('memoizes cleanup failure from unregister without retrying later', async () => {
+    expect.hasAssertions()
     await expectCleanupFailureIsMemoized('unregister')
   })
 
   it('memoizes cleanup failure from forceFlush without retrying later', async () => {
+    expect.hasAssertions()
     await expectCleanupFailureIsMemoized('forceFlush')
   })
 
   it('memoizes cleanup failure from shutdown without retrying later', async () => {
+    expect.hasAssertions()
     await expectCleanupFailureIsMemoized('shutdown')
   })
 })
