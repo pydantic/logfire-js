@@ -199,6 +199,21 @@ function getStartActiveSpanAttributes(callIndex = 0): Record<string, unknown> {
   return (mocks.tracerMock.startActiveSpan.mock.calls[callIndex]?.[1] as { attributes: Record<string, unknown> }).attributes
 }
 
+function errorWithThrowingCauseStack(): Error {
+  const normalizationFailure = new Error('cause stack getter failed')
+  const cause = new Error('cause failed')
+  Object.defineProperty(cause, 'stack', {
+    configurable: true,
+    get() {
+      throw normalizationFailure
+    },
+  })
+
+  const error = new Error('original failure', { cause })
+  error.stack = 'Error: original failure\n    at handler (app.ts:8:1)'
+  return error
+}
+
 describe('info', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -586,6 +601,183 @@ describe('span', () => {
     expect(spanMock.end).toHaveBeenCalledOnce()
   })
 
+  test('sync callback throws Error with cause - records cause chain in exception stacktrace', () => {
+    const cause = Object.assign(new TypeError('database unavailable'), {
+      details: { retryable: true },
+      statusCode: 503,
+    })
+    cause.stack = 'TypeError: database unavailable\n    at query (db.ts:12:3)'
+    const error = new Error('request failed', { cause })
+    error.stack = 'Error: request failed\n    at handler (app.ts:8:1)'
+    const expectedStack = `${error.stack}\nCaused by: ${cause.stack}`
+
+    expect(() =>
+      span('test', {
+        attributes: { payload: { id: '123' } },
+        callback: () => {
+          throw error
+        },
+      })
+    ).toThrow(error)
+
+    expect(spanMock.recordException).toHaveBeenCalledWith({
+      message: 'request failed',
+      name: 'Error',
+      stack: expectedStack,
+    })
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: request failed' })
+    const causeAttribute = spanMock.setAttribute.mock.calls.find(([key]) => key === 'exception.cause')?.[1]
+    expect(JSON.parse(causeAttribute as string)).toEqual({
+      details: { retryable: true },
+      message: 'database unavailable',
+      stacktrace: cause.stack,
+      statusCode: 503,
+      type: 'TypeError',
+    })
+    const schemaAttribute = spanMock.setAttribute.mock.calls.find(([key]) => key === JSON_SCHEMA_KEY)?.[1]
+    expect(JSON.parse(schemaAttribute as string)).toMatchObject({
+      properties: {
+        'exception.cause': {
+          properties: {
+            details: {
+              properties: {
+                retryable: { type: 'boolean' },
+              },
+              type: 'object',
+            },
+            message: { type: 'string' },
+            stacktrace: { type: 'string' },
+            statusCode: { type: 'number' },
+            type: { type: 'string' },
+          },
+          type: 'object',
+        },
+        payload: {
+          properties: {
+            id: { type: 'string' },
+          },
+          type: 'object',
+        },
+      },
+      type: 'object',
+    })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
+  test('sync callback throws Error with nested causes - records full cause chain', () => {
+    const databaseCause = Object.assign(new Error('database unavailable'), {
+      details: { host: 'primary-db', retryable: true },
+      statusCode: 503,
+    })
+    databaseCause.stack = 'Error: database unavailable\n    at query (db.ts:12:3)'
+    const serviceCause = Object.assign(new TypeError('checkout storage failed', { cause: databaseCause }), {
+      operation: 'checkout.create_order',
+      requestId: 'req_nested_span',
+    })
+    serviceCause.stack = 'TypeError: checkout storage failed\n    at saveOrder (checkout.ts:8:1)'
+    const error = new Error('request failed', { cause: serviceCause })
+    error.stack = 'Error: request failed\n    at handler (app.ts:4:1)'
+    const expectedStack = `${error.stack}\nCaused by: ${serviceCause.stack}\nCaused by: ${databaseCause.stack}`
+
+    expect(() =>
+      span('test', {
+        callback: () => {
+          throw error
+        },
+      })
+    ).toThrow(error)
+
+    expect(spanMock.recordException).toHaveBeenCalledWith({
+      message: 'request failed',
+      name: 'Error',
+      stack: expectedStack,
+    })
+    const causeAttribute = spanMock.setAttribute.mock.calls.find(([key]) => key === 'exception.cause')?.[1]
+    expect(JSON.parse(causeAttribute as string)).toEqual({
+      cause: {
+        details: { host: 'primary-db', retryable: true },
+        message: 'database unavailable',
+        stacktrace: databaseCause.stack,
+        statusCode: 503,
+        type: 'Error',
+      },
+      message: 'checkout storage failed',
+      operation: 'checkout.create_order',
+      requestId: 'req_nested_span',
+      stacktrace: serviceCause.stack,
+      type: 'TypeError',
+    })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
+  test('sync callback throws Error with circular causes - records circular marker', () => {
+    const databaseCause = Object.assign(new Error('database unavailable'), {
+      details: { host: 'primary-db' },
+    })
+    databaseCause.stack = 'Error: database unavailable\n    at query (db.ts:12:3)'
+    const serviceCause = Object.assign(new Error('checkout storage failed', { cause: databaseCause }), {
+      operation: 'checkout.create_order',
+    })
+    serviceCause.stack = 'Error: checkout storage failed\n    at saveOrder (checkout.ts:8:1)'
+    const error = new Error('request failed', { cause: serviceCause })
+    error.stack = 'Error: request failed\n    at handler (app.ts:4:1)'
+    ;(databaseCause as Error & { cause: Error }).cause = error
+    const expectedStack = `${error.stack}\nCaused by: ${serviceCause.stack}\nCaused by: ${databaseCause.stack}\nCaused by: [Circular cause: Error: request failed]`
+
+    expect(() =>
+      span('test', {
+        callback: () => {
+          throw error
+        },
+      })
+    ).toThrow(error)
+
+    expect(spanMock.recordException).toHaveBeenCalledWith({
+      message: 'request failed',
+      name: 'Error',
+      stack: expectedStack,
+    })
+    const causeAttribute = spanMock.setAttribute.mock.calls.find(([key]) => key === 'exception.cause')?.[1]
+    expect(JSON.parse(causeAttribute as string)).toEqual({
+      cause: {
+        cause: {
+          circular: true,
+          message: 'request failed',
+          type: 'Error',
+        },
+        details: { host: 'primary-db' },
+        message: 'database unavailable',
+        stacktrace: databaseCause.stack,
+        type: 'Error',
+      },
+      message: 'checkout storage failed',
+      operation: 'checkout.create_order',
+      stacktrace: serviceCause.stack,
+      type: 'Error',
+    })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
+  test('sync callback preserves original Error when cause normalization throws', () => {
+    const error = errorWithThrowingCauseStack()
+    let caught: unknown
+
+    try {
+      span('test', {
+        callback: () => {
+          throw error
+        },
+      })
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBe(error)
+    expect(spanMock.recordException).toHaveBeenCalledWith(error)
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: original failure' })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
   test('sync callback throws string - records exception without fingerprint', () => {
     expect(() =>
       span('test', {
@@ -675,6 +867,150 @@ describe('reportError', () => {
     expect(attributes['path']).toBe('/users')
     expect(spanMock.recordException).toHaveBeenCalledWith(error)
     expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: legacy' })
+  })
+
+  test('records Error cause chain in reportError stacktrace', () => {
+    const cause = Object.assign(new TypeError('database unavailable'), {
+      details: { retryable: true },
+      statusCode: 503,
+    })
+    cause.stack = 'TypeError: database unavailable\n    at query (db.ts:12:3)'
+    const error = new Error('request failed', { cause })
+    error.stack = 'Error: request failed\n    at handler (app.ts:8:1)'
+    const expectedStack = `${error.stack}\nCaused by: ${cause.stack}`
+
+    reportError('Caught error', error)
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTR_EXCEPTION_MESSAGE]).toBe('request failed')
+    expect(attributes[ATTR_EXCEPTION_STACKTRACE]).toBe(expectedStack)
+    expect(JSON.parse(attributes['exception.cause'] as string)).toEqual({
+      details: { retryable: true },
+      message: 'database unavailable',
+      stacktrace: cause.stack,
+      statusCode: 503,
+      type: 'TypeError',
+    })
+    expect(JSON.parse(attributes[JSON_SCHEMA_KEY] as string)).toMatchObject({
+      properties: {
+        'exception.cause': {
+          properties: {
+            details: {
+              properties: {
+                retryable: { type: 'boolean' },
+              },
+              type: 'object',
+            },
+            message: { type: 'string' },
+            stacktrace: { type: 'string' },
+            statusCode: { type: 'number' },
+            type: { type: 'string' },
+          },
+          type: 'object',
+        },
+      },
+      type: 'object',
+    })
+    expect(spanMock.recordException).toHaveBeenCalledWith({
+      message: 'request failed',
+      name: 'Error',
+      stack: expectedStack,
+    })
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: request failed' })
+  })
+
+  test('records nested Error cause chain in reportError stacktrace', () => {
+    const databaseCause = Object.assign(new Error('database unavailable'), {
+      details: { host: 'primary-db', retryable: true },
+      statusCode: 503,
+    })
+    databaseCause.stack = 'Error: database unavailable\n    at query (db.ts:12:3)'
+    const serviceCause = Object.assign(new TypeError('checkout storage failed', { cause: databaseCause }), {
+      operation: 'checkout.create_order',
+      requestId: 'req_nested_report_error',
+    })
+    serviceCause.stack = 'TypeError: checkout storage failed\n    at saveOrder (checkout.ts:8:1)'
+    const error = new Error('request failed', { cause: serviceCause })
+    error.stack = 'Error: request failed\n    at handler (app.ts:4:1)'
+    const expectedStack = `${error.stack}\nCaused by: ${serviceCause.stack}\nCaused by: ${databaseCause.stack}`
+
+    reportError('Caught error', error)
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTR_EXCEPTION_STACKTRACE]).toBe(expectedStack)
+    expect(JSON.parse(attributes['exception.cause'] as string)).toEqual({
+      cause: {
+        details: { host: 'primary-db', retryable: true },
+        message: 'database unavailable',
+        stacktrace: databaseCause.stack,
+        statusCode: 503,
+        type: 'Error',
+      },
+      message: 'checkout storage failed',
+      operation: 'checkout.create_order',
+      requestId: 'req_nested_report_error',
+      stacktrace: serviceCause.stack,
+      type: 'TypeError',
+    })
+    expect(spanMock.recordException).toHaveBeenCalledWith({
+      message: 'request failed',
+      name: 'Error',
+      stack: expectedStack,
+    })
+  })
+
+  test('records circular Error cause chain in reportError stacktrace', () => {
+    const databaseCause = Object.assign(new Error('database unavailable'), {
+      details: { host: 'primary-db' },
+    })
+    databaseCause.stack = 'Error: database unavailable\n    at query (db.ts:12:3)'
+    const serviceCause = Object.assign(new Error('checkout storage failed', { cause: databaseCause }), {
+      operation: 'checkout.create_order',
+    })
+    serviceCause.stack = 'Error: checkout storage failed\n    at saveOrder (checkout.ts:8:1)'
+    const error = new Error('request failed', { cause: serviceCause })
+    error.stack = 'Error: request failed\n    at handler (app.ts:4:1)'
+    ;(databaseCause as Error & { cause: Error }).cause = error
+    const expectedStack = `${error.stack}\nCaused by: ${serviceCause.stack}\nCaused by: ${databaseCause.stack}\nCaused by: [Circular cause: Error: request failed]`
+
+    reportError('Caught error', error)
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTR_EXCEPTION_STACKTRACE]).toBe(expectedStack)
+    expect(JSON.parse(attributes['exception.cause'] as string)).toEqual({
+      cause: {
+        cause: {
+          circular: true,
+          message: 'request failed',
+          type: 'Error',
+        },
+        details: { host: 'primary-db' },
+        message: 'database unavailable',
+        stacktrace: databaseCause.stack,
+        type: 'Error',
+      },
+      message: 'checkout storage failed',
+      operation: 'checkout.create_order',
+      stacktrace: serviceCause.stack,
+      type: 'Error',
+    })
+    expect(spanMock.recordException).toHaveBeenCalledWith({
+      message: 'request failed',
+      name: 'Error',
+      stack: expectedStack,
+    })
+  })
+
+  test('does not throw when cause normalization fails', () => {
+    const error = errorWithThrowingCauseStack()
+
+    expect(() => {
+      reportError('Caught error', error)
+    }).not.toThrow()
+
+    expect(spanMock.recordException).toHaveBeenCalledWith(error)
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: original failure' })
+    expect(spanMock.end).toHaveBeenCalledOnce()
   })
 
   test('applies fourth-argument tags', () => {
