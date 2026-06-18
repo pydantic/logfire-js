@@ -694,19 +694,32 @@ export function instrument<F extends InstrumentableFunction>(fn: F, options: Ins
 
 function recordSpanException(span: Span, thrown: unknown, spanSerializationAttributes: Record<string, unknown> = {}): void {
   const isError = thrown instanceof Error
-  const errorMessage = isError ? thrown.message : String(thrown)
-  const errorName = isError ? thrown.name : 'Error'
+  const errorMessage = isError ? getSafeErrorMessage(thrown) : stringifyThrownValue(thrown)
+  const errorName = isError ? getSafeErrorName(thrown) : 'Error'
+  let recordExceptionValue: Error | Exception | string = isError ? thrown : errorMessage
+  let causeValue: unknown
 
-  span.recordException(isError ? normalizeRecordException(thrown) : String(thrown))
+  if (isError) {
+    try {
+      recordExceptionValue = normalizeRecordException(thrown)
+      if (thrown.cause !== undefined) {
+        causeValue = normalizeErrorCause(thrown)
+      }
+    } catch {
+      recordExceptionValue = thrown
+    }
+  }
+
+  span.recordException(recordExceptionValue)
   span.setStatus({ code: SpanStatusCode.ERROR, message: `${errorName}: ${errorMessage}` })
   span.setAttribute(ATTRIBUTES_LEVEL_KEY, Level.Error)
 
   if (isError && logfireApiConfig.enableErrorFingerprinting) {
-    span.setAttribute(ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY, computeFingerprint(thrown))
+    recordErrorFingerprint(span, thrown)
   }
 
-  if (isError && thrown.cause !== undefined) {
-    recordSerializedAttributes(span, { ...spanSerializationAttributes, [ATTR_EXCEPTION_CAUSE]: normalizeErrorCause(thrown) }, [
+  if (causeValue !== undefined) {
+    recordSerializedAttributes(span, { ...spanSerializationAttributes, [ATTR_EXCEPTION_CAUSE]: causeValue }, [
       ATTR_EXCEPTION_CAUSE,
       JSON_SCHEMA_KEY,
       JSON_NULL_FIELDS_KEY,
@@ -729,6 +742,56 @@ function stringifyThrownValue(thrown: unknown): string {
     return String(thrown)
   } catch {
     return 'Unknown error'
+  }
+}
+
+function getSafeErrorMessage(error: Error): string {
+  try {
+    return typeof error.message === 'string' ? error.message : ''
+  } catch {
+    return 'Unknown error'
+  }
+}
+
+function getSafeErrorName(error: Error): string {
+  try {
+    return typeof error.name === 'string' && error.name !== '' ? error.name : 'Error'
+  } catch {
+    return 'Error'
+  }
+}
+
+function getSafeErrorStack(error: Error): string | undefined {
+  try {
+    return typeof error.stack === 'string' ? error.stack : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function recordErrorFingerprint(span: Span, error: Error): void {
+  try {
+    safeSetSpanAttribute(span, ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY, computeFingerprint(error))
+  } catch {
+    // Error fingerprinting is best-effort and should not affect user errors.
+  }
+}
+
+function getReportErrorFallback(error: Error): NormalizedReportError {
+  const errorMessage = getSafeErrorMessage(error)
+  const attributes: Record<string, unknown> = {
+    [ATTR_EXCEPTION_MESSAGE]: errorMessage,
+  }
+  const stack = getSafeErrorStack(error)
+  if (stack !== undefined) {
+    attributes[ATTR_EXCEPTION_STACKTRACE] = stack
+  }
+
+  return {
+    attributes,
+    fingerprintSource: error,
+    recordExceptionValue: error,
+    statusMessage: `${getSafeErrorName(error)}: ${errorMessage}`,
   }
 }
 
@@ -811,15 +874,21 @@ function normalizeExceptionCause(cause: unknown, seen: WeakSet<Error> = new Weak
 
 function normalizeReportError(error: unknown): NormalizedReportError {
   if (error instanceof Error) {
-    return {
-      attributes: {
-        ...(error.cause !== undefined ? { [ATTR_EXCEPTION_CAUSE]: normalizeErrorCause(error) } : {}),
-        [ATTR_EXCEPTION_MESSAGE]: error.message,
-        [ATTR_EXCEPTION_STACKTRACE]: error.cause === undefined ? error.stack : formatErrorStackWithCauses(error),
-      },
-      fingerprintSource: error,
-      recordExceptionValue: normalizeRecordException(error),
-      statusMessage: `${error.name}: ${error.message}`,
+    try {
+      const errorMessage = getSafeErrorMessage(error)
+      const cause = error.cause
+      return {
+        attributes: {
+          ...(cause !== undefined ? { [ATTR_EXCEPTION_CAUSE]: normalizeErrorCause(error) } : {}),
+          [ATTR_EXCEPTION_MESSAGE]: errorMessage,
+          [ATTR_EXCEPTION_STACKTRACE]: cause === undefined ? getSafeErrorStack(error) : formatErrorStackWithCauses(error),
+        },
+        fingerprintSource: error,
+        recordExceptionValue: normalizeRecordException(error),
+        statusMessage: `${getSafeErrorName(error)}: ${errorMessage}`,
+      }
+    } catch {
+      return getReportErrorFallback(error)
     }
   }
 
@@ -863,7 +932,11 @@ function reportErrorWithSettings(
   }
 
   if (logfireApiConfig.enableErrorFingerprinting && normalized.fingerprintSource !== undefined) {
-    attributes[ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY] = computeFingerprint(normalized.fingerprintSource)
+    try {
+      attributes[ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY] = computeFingerprint(normalized.fingerprintSource)
+    } catch {
+      // Error fingerprinting is best-effort and should not prevent reporting.
+    }
   }
 
   const span = startSpanWithSettings(settings, message, attributes, reportErrorOptionsToLogOptions(options))

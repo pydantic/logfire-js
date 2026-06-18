@@ -199,6 +199,21 @@ function getStartActiveSpanAttributes(callIndex = 0): Record<string, unknown> {
   return (mocks.tracerMock.startActiveSpan.mock.calls[callIndex]?.[1] as { attributes: Record<string, unknown> }).attributes
 }
 
+function errorWithThrowingCauseStack(): Error {
+  const normalizationFailure = new Error('cause stack getter failed')
+  const cause = new Error('cause failed')
+  Object.defineProperty(cause, 'stack', {
+    configurable: true,
+    get() {
+      throw normalizationFailure
+    },
+  })
+
+  const error = new Error('original failure', { cause })
+  error.stack = 'Error: original failure\n    at handler (app.ts:8:1)'
+  return error
+}
+
 describe('info', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -743,6 +758,26 @@ describe('span', () => {
     expect(spanMock.end).toHaveBeenCalledOnce()
   })
 
+  test('sync callback preserves original Error when cause normalization throws', () => {
+    const error = errorWithThrowingCauseStack()
+    let caught: unknown
+
+    try {
+      span('test', {
+        callback: () => {
+          throw error
+        },
+      })
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBe(error)
+    expect(spanMock.recordException).toHaveBeenCalledWith(error)
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: original failure' })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
   test('sync callback throws string - records exception without fingerprint', () => {
     expect(() =>
       span('test', {
@@ -964,6 +999,18 @@ describe('reportError', () => {
       name: 'Error',
       stack: expectedStack,
     })
+  })
+
+  test('does not throw when cause normalization fails', () => {
+    const error = errorWithThrowingCauseStack()
+
+    expect(() => {
+      reportError('Caught error', error)
+    }).not.toThrow()
+
+    expect(spanMock.recordException).toHaveBeenCalledWith(error)
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: original failure' })
+    expect(spanMock.end).toHaveBeenCalledOnce()
   })
 
   test('applies fourth-argument tags', () => {
