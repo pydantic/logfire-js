@@ -1,5 +1,15 @@
 # logfire
 
+## 0.18.2
+
+### Patch Changes
+
+- ed748fb: Update OpenTelemetry dependency floors to 2.8.0 / 0.219.0 across published packages.
+- Updated dependencies [22bd8ec]
+- Updated dependencies [22bd8ec]
+- Updated dependencies [ed748fb]
+  - logfire@0.20.1
+
 ## 0.18.1
 
 ### Patch Changes

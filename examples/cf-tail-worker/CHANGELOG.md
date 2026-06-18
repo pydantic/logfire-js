@@ -1,5 +1,12 @@
 # @pydantic/cf-tail-worker
 
+## 0.0.15
+
+### Patch Changes
+
+- Updated dependencies [ed748fb]
+  - @pydantic/logfire-cf-workers@0.12.4
+
 ## 0.0.14
 
 ### Patch Changes

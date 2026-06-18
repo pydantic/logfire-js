@@ -1,5 +1,15 @@
 # @pydantic/logfire-browser
 
+## 0.16.4
+
+### Patch Changes
+
+- ed748fb: Update OpenTelemetry dependency floors to 2.8.0 / 0.219.0 across published packages.
+- Updated dependencies [22bd8ec]
+- Updated dependencies [22bd8ec]
+- Updated dependencies [ed748fb]
+  - logfire@0.20.1
+
 ## 0.16.3
 
 ### Patch Changes

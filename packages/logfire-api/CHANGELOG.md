@@ -1,5 +1,13 @@
 # @pydantic/logfire-api
 
+## 0.20.1
+
+### Patch Changes
+
+- 22bd8ec: Add npm bugs metadata for the Logfire package.
+- 22bd8ec: Include `Error.cause` chains in recorded exception stacktraces and as structured `exception.cause` attributes.
+- ed748fb: Update OpenTelemetry dependency floors to 2.8.0 / 0.219.0 across published packages.
+
 ## 0.20.0
 
 ### Minor Changes
