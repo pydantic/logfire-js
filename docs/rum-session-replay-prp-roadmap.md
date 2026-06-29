@@ -5,7 +5,8 @@ description: PRP decomposition for moving Logfire browser RUM and rrweb session 
 
 # RUM and Session Replay PRP Roadmap
 
-Status: planning. Created 2026-06-29.
+Status: PRPs 020-023 implemented in this branch; 024 and Platform migration
+remain pending. Created 2026-06-29.
 
 This document scopes the overall Product Requirements Prompt (PRP) sequence for
 Logfire JavaScript browser Real User Monitoring (RUM) and rrweb session replay.
@@ -111,6 +112,10 @@ Key decisions:
 
 ### 023 - Standalone Session Replay Package
 
+File: `plans/023-standalone-session-replay-package.md`
+
+Status: implemented in this branch.
+
 Scope:
 
 - Create `packages/logfire-session-replay`.
@@ -129,7 +134,7 @@ correlation.
 
 Key decisions:
 
-- Exact `rrweb` version pin.
+- Latest `rrweb` is used; as of implementation this is `2.1.0`.
 - Public transport API naming and backwards compatibility with Platform POC.
 - Awaitable `stop()`/cleanup semantics.
 
