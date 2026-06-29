@@ -57,9 +57,19 @@ import {
   withTags,
 } from 'logfire'
 
+import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
+import { clearConfiguredBrowserSession, configureBrowserSession, getBrowserSessionId } from './browserSession'
+import type { BrowserSessionManager, RUMOptions } from './browserSession'
+import type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
+import { assertBrowserWebVitalsMetricsCanStart, startBrowserWebVitals } from './webVitals'
+import type { BrowserWebVitalsOptions } from './webVitals'
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from 'logfire'
+export { getBrowserSessionId } from './browserSession'
+export type { BrowserSessionOptions, BrowserSessionUrlAttributes, RUMOptions } from './browserSession'
+export type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
+export type { BrowserWebVitalsOptions } from './webVitals'
 
 type TraceExporterConfig = NonNullable<typeof OTLPTraceExporter extends new (config: infer T) => unknown ? T : never>
 
@@ -114,6 +124,11 @@ export interface LogfireConfigOptions {
    */
   minLevel?: MinLevel | null
   /**
+   * Browser OpenTelemetry metrics transport options. Metrics are disabled
+   * unless this is configured.
+   */
+  metrics?: false | BrowserMetricsOptions
+  /**
    * Sampling options for controlling which traces are exported.
    * `head` sets a probabilistic sample rate (0.0-1.0) at trace creation time.
    * `tail` provides a callback evaluated on every span to decide whether to keep the trace.
@@ -124,6 +139,16 @@ export interface LogfireConfigOptions {
    * ensure tail callbacks accept traces quickly (e.g., on the first error-level span).
    */
   sampling?: SamplingOptions
+  /**
+   * Advanced OpenTelemetry span processors to register with the browser tracer provider.
+   *
+   * Processors are registered before Logfire's built-in exporting processor.
+   */
+  spanProcessors?: SpanProcessor[]
+  /**
+   * Browser real-user monitoring options. RUM capture is opt-in.
+   */
+  rum?: RUMOptions
   /**
    * Options for scrubbing sensitive data. Set to False to disable.
    */
@@ -166,6 +191,85 @@ function defaultTraceExporterHeaders() {
   return {}
 }
 
+function resolveBrowserWebVitalsOptions(webVitals: RUMOptions['webVitals'] | undefined): BrowserWebVitalsOptions | undefined {
+  if (webVitals === undefined || webVitals === false) {
+    return undefined
+  }
+
+  return webVitals === true ? {} : webVitals
+}
+
+function resolveBrowserMetricsOptions(metrics: LogfireConfigOptions['metrics']): BrowserMetricsOptions | undefined {
+  if (metrics === undefined || metrics === false) {
+    return undefined
+  }
+
+  if (metrics.metricUrl === '') {
+    throw new Error('logfire-browser: metrics.metricUrl must be a non-empty browser-safe metrics proxy URL')
+  }
+
+  return metrics
+}
+
+function resolveBrowserWebVitalsMetricOptions(
+  webVitalsOptions: BrowserWebVitalsOptions | undefined
+): BrowserWebVitalsMetricOptions | undefined {
+  if (webVitalsOptions?.metrics === undefined || webVitalsOptions.metrics === false) {
+    return undefined
+  }
+
+  return webVitalsOptions.metrics === true ? {} : webVitalsOptions.metrics
+}
+
+function resolveBrowserSessionOptions(rum: RUMOptions | undefined): RUMOptions['session'] | undefined {
+  const webVitalsOptions = resolveBrowserWebVitalsOptions(rum?.webVitals)
+  if (webVitalsOptions === undefined) {
+    return rum?.session
+  }
+
+  if (rum?.session === false) {
+    throw new Error(
+      'logfire-browser: rum.webVitals requires browser session attributes; remove rum.session: false or disable rum.webVitals'
+    )
+  }
+
+  return rum?.session ?? true
+}
+
+function getCurrentBrowserUrl(): URL | undefined {
+  const location = (globalThis as { location?: Location }).location
+  if (location === undefined) {
+    return undefined
+  }
+
+  try {
+    return new URL(location.href)
+  } catch {
+    return undefined
+  }
+}
+
+function createWebVitalsMetricDefaultAttributes(browserSessionManager: BrowserSessionManager | undefined) {
+  return () => {
+    const attributes: Attributes = {}
+    if (browserSessionManager === undefined) {
+      return attributes
+    }
+
+    const url = getCurrentBrowserUrl()
+    if (url === undefined) {
+      return attributes
+    }
+
+    const urlAttributes = browserSessionManager.getUrlAttributes(url)
+    if (typeof urlAttributes?.path === 'string' && urlAttributes.path !== '') {
+      attributes['url.path'] = urlAttributes.path
+    }
+
+    return attributes
+  }
+}
+
 async function resolveTraceExporterHeaders(configHeaders: TraceExporterConfig['headers'], dynamicHeaders: () => Record<string, string>) {
   const resolvedConfigHeaders = typeof configHeaders === 'function' ? await configHeaders() : (configHeaders ?? {})
 
@@ -179,6 +283,17 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   if (options.diagLogLevel !== undefined) {
     diag.setLogger(new DiagConsoleLogger(), options.diagLogLevel)
   }
+
+  const webVitalsOptions = resolveBrowserWebVitalsOptions(options.rum?.webVitals)
+  const browserMetricsOptions = resolveBrowserMetricsOptions(options.metrics)
+  const webVitalsMetricOptions = resolveBrowserWebVitalsMetricOptions(webVitalsOptions)
+  if (webVitalsMetricOptions !== undefined && browserMetricsOptions === undefined) {
+    throw new Error('logfire-browser: rum.webVitals.metrics requires top-level metrics.metricUrl')
+  }
+  if (webVitalsMetricOptions !== undefined) {
+    assertBrowserWebVitalsMetricsCanStart()
+  }
+  const browserSessionOptions = resolveBrowserSessionOptions(options.rum)
 
   const apiConfig: LogfireApiConfigOptions = {
     errorFingerprinting: options.errorFingerprinting ?? false,
@@ -245,16 +360,59 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
     spanProcessor = new TailSamplingProcessor(spanProcessor, options.sampling.tail) as unknown as SpanProcessor
   }
 
+  const browserSessionManager = configureBrowserSession(browserSessionOptions)
+  const spanProcessors: SpanProcessor[] = []
+  if (browserSessionManager !== undefined) {
+    spanProcessors.push(new BrowserSessionSpanProcessor(browserSessionManager))
+  }
+  spanProcessors.push(...(options.spanProcessors ?? []), spanProcessor)
+
   const tracerProvider = new WebTracerProvider({
     idGenerator: new ULIDGenerator(),
     resource,
     ...(sampler ? { sampler } : {}),
-    spanProcessors: [spanProcessor],
+    spanProcessors,
   })
 
   tracerProvider.register({
     contextManager: options.contextManager ?? new StackContextManager(),
   })
+
+  const browserMetricsStartupPromise =
+    browserMetricsOptions === undefined
+      ? undefined
+      : import('./browserMetrics')
+          .then(async ({ startBrowserMetrics }) => startBrowserMetrics(browserMetricsOptions, resource))
+          .catch((error: unknown) => {
+            diag.error('logfire-browser: failed to start browser metrics', error)
+            return undefined
+          })
+
+  const webVitalsStartupPromise =
+    webVitalsOptions === undefined
+      ? undefined
+      : webVitalsMetricOptions === undefined
+        ? startBrowserWebVitals(webVitalsOptions).catch((error: unknown) => {
+            diag.error('logfire-browser: failed to start Web Vitals reporting', error)
+            return undefined
+          })
+        : (async () => {
+            const browserMetrics = await browserMetricsStartupPromise
+            if (browserMetrics === undefined) {
+              throw new Error('logfire-browser: failed to start Web Vitals metrics because browser metrics transport did not start')
+            }
+
+            return startBrowserWebVitals({
+              ...webVitalsOptions,
+              metricRecorder: browserMetrics.createWebVitalsMetricRecorder({
+                ...webVitalsMetricOptions,
+                defaultAttributes: createWebVitalsMetricDefaultAttributes(browserSessionManager),
+              }),
+            })
+          })().catch((error: unknown) => {
+            diag.error('logfire-browser: failed to start Web Vitals reporting', error)
+            return undefined
+          })
 
   const unregister = registerInstrumentations({
     instrumentations: options.instrumentations ?? [],
@@ -284,8 +442,29 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
 
       diag.info('logfire-browser: shutting down')
       await runCleanupStep('instrumentation unregister', unregister)
+      if (webVitalsStartupPromise !== undefined) {
+        await runCleanupStep('web vitals shutdown', async () => {
+          const webVitalsHandle = await webVitalsStartupPromise
+          await webVitalsHandle?.shutdown()
+        })
+      }
+      if (browserMetricsStartupPromise !== undefined) {
+        await runCleanupStep('metric provider force flush', async () => {
+          const browserMetrics = await browserMetricsStartupPromise
+          await browserMetrics?.forceFlush()
+        })
+        await runCleanupStep('metric provider shutdown', async () => {
+          const browserMetrics = await browserMetricsStartupPromise
+          await browserMetrics?.shutdown()
+        })
+      }
       await runCleanupStep('force flush', async () => tracerProvider.forceFlush())
       await runCleanupStep('tracer provider shutdown', async () => tracerProvider.shutdown())
+      if (browserSessionManager !== undefined) {
+        await runCleanupStep('browser session cleanup', () => {
+          clearConfiguredBrowserSession(browserSessionManager)
+        })
+      }
 
       if (firstCleanupError !== undefined) {
         throw new Error(firstCleanupError.message, { cause: firstCleanupError })
@@ -311,6 +490,7 @@ const defaultExport: {
   fatal: typeof fatal
   info: typeof info
   instrument: typeof instrument
+  getBrowserSessionId: typeof getBrowserSessionId
   log: typeof log
   logfireApiConfig: typeof logfireApiConfig
   notice: typeof notice
@@ -332,6 +512,7 @@ const defaultExport: {
   DiagLogLevel,
   error,
   fatal,
+  getBrowserSessionId,
   info,
   instrument,
   // Re-export all from logfire
