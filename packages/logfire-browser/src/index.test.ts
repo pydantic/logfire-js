@@ -1,11 +1,32 @@
 /* eslint-disable import/first */
+import type { SpanProcessor } from '@opentelemetry/sdk-trace-web'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
 const mocks = vi.hoisted(() => {
   const cleanupStepCalls: string[] = []
   const failures = new Map<string, unknown>()
+  const browserMetricsRecorderCreateCalls: unknown[] = []
+  const browserMetricsStartCalls: { options: unknown; resource: unknown }[] = []
+  const browserMetricsRecorders: unknown[] = []
+  const lifecycleEvents: string[] = []
+  const webVitalsStartCalls: unknown[] = []
   const webTracerProviderInstances: MockWebTracerProvider[] = []
+  let browserMetricsForceFlushCalls = 0
+  let browserMetricsShutdownCalls = 0
+  let browserMetricsStartupPromise:
+    | Promise<{
+        createWebVitalsMetricRecorder: (options: unknown) => unknown
+        forceFlush: () => Promise<void>
+        shutdown: () => Promise<void>
+      }>
+    | undefined
   let unregisterCalls = 0
+  let webVitalsShutdownCalls = 0
+  let webVitalsStartupPromise:
+    | Promise<{
+        shutdown: () => Promise<void>
+      }>
+    | undefined
 
   class MockWebTracerProvider {
     options: unknown
@@ -19,6 +40,7 @@ const mocks = vi.hoisted(() => {
     }
 
     register(): void {
+      lifecycleEvents.push('providerRegister')
       this.registerCalls++
     }
 
@@ -41,20 +63,114 @@ const mocks = vi.hoisted(() => {
     }
   }
 
+  function createWebVitalsHandle(): { shutdown: () => Promise<void> } {
+    return {
+      async shutdown() {
+        cleanupStepCalls.push('webVitalsShutdown')
+        webVitalsShutdownCalls++
+        return Promise.resolve()
+      },
+    }
+  }
+
+  function createBrowserMetricsRuntime(): {
+    createWebVitalsMetricRecorder: (options: unknown) => unknown
+    forceFlush: () => Promise<void>
+    shutdown: () => Promise<void>
+  } {
+    return {
+      createWebVitalsMetricRecorder(options: unknown) {
+        browserMetricsRecorderCreateCalls.push(options)
+        const recorder = {
+          record() {
+            return undefined
+          },
+          shutdown() {
+            return undefined
+          },
+        }
+        browserMetricsRecorders.push(recorder)
+        return recorder
+      },
+      async forceFlush() {
+        cleanupStepCalls.push('metricForceFlush')
+        browserMetricsForceFlushCalls++
+        if (failures.has('metricForceFlush')) {
+          throw failures.get('metricForceFlush')
+        }
+        return Promise.resolve()
+      },
+      async shutdown() {
+        cleanupStepCalls.push('metricShutdown')
+        browserMetricsShutdownCalls++
+        if (failures.has('metricShutdown')) {
+          throw failures.get('metricShutdown')
+        }
+        return Promise.resolve()
+      },
+    }
+  }
+
   return {
     MockWebTracerProvider,
+    browserMetricsRecorderCreateCalls,
+    browserMetricsRecorders,
+    browserMetricsStartCalls,
     cleanupStepCalls,
-    failStep(step: 'unregister' | 'forceFlush' | 'shutdown', error: unknown) {
+    createBrowserMetricsRuntime,
+    createWebVitalsHandle,
+    failStep(step: 'metricForceFlush' | 'metricShutdown' | 'unregister' | 'forceFlush' | 'shutdown', error: unknown) {
       failures.set(step, error)
+    },
+    get browserMetricsForceFlushCalls() {
+      return browserMetricsForceFlushCalls
+    },
+    get browserMetricsShutdownCalls() {
+      return browserMetricsShutdownCalls
+    },
+    get lifecycleEvents() {
+      return lifecycleEvents
     },
     get unregisterCalls() {
       return unregisterCalls
     },
+    get webVitalsShutdownCalls() {
+      return webVitalsShutdownCalls
+    },
+    get webVitalsStartCalls() {
+      return webVitalsStartCalls
+    },
     reset() {
+      browserMetricsForceFlushCalls = 0
+      browserMetricsRecorderCreateCalls.length = 0
+      browserMetricsRecorders.length = 0
+      browserMetricsShutdownCalls = 0
+      browserMetricsStartCalls.length = 0
+      browserMetricsStartupPromise = undefined
       cleanupStepCalls.length = 0
       failures.clear()
+      lifecycleEvents.length = 0
       unregisterCalls = 0
+      webVitalsShutdownCalls = 0
+      webVitalsStartCalls.length = 0
+      webVitalsStartupPromise = undefined
       webTracerProviderInstances.length = 0
+    },
+    setBrowserMetricsStartupPromise(
+      promise: Promise<{
+        createWebVitalsMetricRecorder: (options: unknown) => unknown
+        forceFlush: () => Promise<void>
+        shutdown: () => Promise<void>
+      }>
+    ) {
+      browserMetricsStartupPromise = promise
+    },
+    setWebVitalsStartupPromise(
+      promise: Promise<{
+        shutdown: () => Promise<void>
+      }>
+    ) {
+      webVitalsStartupPromise = promise
     },
     unregister() {
       cleanupStepCalls.push('unregister')
@@ -62,6 +178,16 @@ const mocks = vi.hoisted(() => {
       if (failures.has('unregister')) {
         throw failures.get('unregister')
       }
+    },
+    async startBrowserMetrics(options: unknown, resource: unknown) {
+      lifecycleEvents.push('browserMetricsStart')
+      browserMetricsStartCalls.push({ options, resource })
+      return browserMetricsStartupPromise ?? Promise.resolve(createBrowserMetricsRuntime())
+    },
+    async startBrowserWebVitals(options: unknown) {
+      lifecycleEvents.push('webVitalsStart')
+      webVitalsStartCalls.push(options)
+      return webVitalsStartupPromise ?? Promise.resolve(createWebVitalsHandle())
     },
     webTracerProviderInstances,
   }
@@ -113,11 +239,23 @@ vi.mock('@opentelemetry/sdk-trace-web', () => ({
   WebTracerProvider: mocks.MockWebTracerProvider,
 }))
 
+vi.mock('./webVitals', () => ({
+  assertBrowserWebVitalsMetricsCanStart: () => undefined,
+  startBrowserWebVitals: async (options: unknown) => mocks.startBrowserWebVitals(options),
+}))
+
+vi.mock('./browserMetrics', () => ({
+  startBrowserMetrics: async (options: unknown, resource: unknown) => mocks.startBrowserMetrics(options, resource),
+}))
+
 import { configureLogfireApi, Level, logfireApiConfig, PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
 
-import logfireBrowser, { configure, instrument, startPendingSpan, withSettings, withTags } from './index'
+import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
+import { clearConfiguredBrowserSessionForTests } from './browserSession'
+import logfireBrowser, { configure, getBrowserSessionId, instrument, startPendingSpan, withSettings, withTags } from './index'
 
 const originalNavigator = globalThis.navigator
+const originalLocation = globalThis.location
 let cleanup: (() => Promise<void>) | undefined
 type CleanupStep = 'unregister' | 'forceFlush' | 'shutdown'
 
@@ -142,6 +280,28 @@ function getLatestWebTracerProvider() {
 function getLatestSpanProcessors(): unknown[] {
   const provider = getLatestWebTracerProvider()
   return (provider.options as { spanProcessors: unknown[] }).spanProcessors
+}
+
+function noopSpanProcessorCallback(): void {
+  return undefined
+}
+
+function createTestSpanProcessor(): SpanProcessor {
+  return {
+    forceFlush: async () => Promise.resolve(),
+    onEnd: noopSpanProcessorCallback,
+    onStart: noopSpanProcessorCallback,
+    shutdown: async () => Promise.resolve(),
+  }
+}
+
+async function waitForConfigureMicrotasks(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+  await new Promise((resolve) => {
+    setTimeout(resolve, 0)
+  })
 }
 
 async function expectCleanupFailureIsMemoized(failingStep: CleanupStep) {
@@ -184,6 +344,7 @@ describe('browser configure resource attributes', () => {
 
   afterEach(async () => {
     await cleanup?.()
+    clearConfiguredBrowserSessionForTests()
     configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,
@@ -276,6 +437,7 @@ describe('browser pending spans', () => {
 
   afterEach(async () => {
     await cleanup?.()
+    clearConfiguredBrowserSessionForTests()
     configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,
@@ -320,6 +482,10 @@ describe('browser pending spans', () => {
     expect(logfireBrowser.startPendingSpan).toBe(startPendingSpan)
   })
 
+  it('re-exports getBrowserSessionId from the browser session API', () => {
+    expect(typeof getBrowserSessionId).toBe('function')
+  })
+
   it('re-exports instrument from the shared API', () => {
     expect(logfireBrowser.instrument).toBe(instrument)
   })
@@ -327,6 +493,373 @@ describe('browser pending spans', () => {
   it('re-exports scoped client helpers from the shared API', () => {
     expect(logfireBrowser.withSettings).toBe(withSettings)
     expect(logfireBrowser.withTags).toBe(withTags)
+  })
+})
+
+describe('browser span processors', () => {
+  beforeEach(() => {
+    mocks.reset()
+    cleanup = undefined
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        language: 'en-US',
+        userAgent: 'test-browser',
+        userAgentData: undefined,
+      },
+    })
+  })
+
+  afterEach(async () => {
+    await cleanup?.()
+    clearConfiguredBrowserSessionForTests()
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('passes custom span processors before the built-in Logfire processor', () => {
+    const customProcessor = createTestSpanProcessor()
+    cleanup = configure({
+      spanProcessors: [customProcessor],
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    const spanProcessors = getLatestSpanProcessors()
+    expect(spanProcessors[0]).toBe(customProcessor)
+    expect(spanProcessors).toHaveLength(2)
+  })
+
+  it('keeps tail sampling scoped to the built-in Logfire processor', () => {
+    const customProcessor = createTestSpanProcessor()
+    cleanup = configure({
+      sampling: { tail: () => 0.0 },
+      spanProcessors: [customProcessor],
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    const spanProcessors = getLatestSpanProcessors()
+    expect(spanProcessors[0]).toBe(customProcessor)
+    expect(spanProcessors[1]).toBeInstanceOf(TailSamplingProcessor)
+  })
+
+  it('does not install the browser session processor by default', () => {
+    cleanup = configure({
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    const spanProcessors = getLatestSpanProcessors()
+    expect(spanProcessors.some((processor) => processor instanceof BrowserSessionSpanProcessor)).toBe(false)
+  })
+
+  it('does not install the browser session processor when rum.session is false', () => {
+    cleanup = configure({
+      rum: { session: false },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    const spanProcessors = getLatestSpanProcessors()
+    expect(spanProcessors.some((processor) => processor instanceof BrowserSessionSpanProcessor)).toBe(false)
+  })
+
+  it('installs the browser session processor before custom processors', () => {
+    const customProcessor = createTestSpanProcessor()
+    cleanup = configure({
+      rum: { session: true },
+      spanProcessors: [customProcessor],
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    const spanProcessors = getLatestSpanProcessors()
+    expect(spanProcessors[0]).toBeInstanceOf(BrowserSessionSpanProcessor)
+    expect(spanProcessors[1]).toBe(customProcessor)
+    expect(spanProcessors).toHaveLength(3)
+  })
+
+  it('lazily creates a configured browser session id before the first span', () => {
+    cleanup = configure({
+      rum: { session: true },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(getBrowserSessionId()).toEqual(expect.any(String))
+  })
+})
+
+describe('browser Web Vitals config', () => {
+  beforeEach(() => {
+    mocks.reset()
+    cleanup = undefined
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        language: 'en-US',
+        userAgent: 'test-browser',
+        userAgentData: undefined,
+      },
+    })
+  })
+
+  afterEach(async () => {
+    await cleanup?.()
+    clearConfiguredBrowserSessionForTests()
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('does not start Web Vitals by default', () => {
+    cleanup = configure({
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(mocks.webVitalsStartCalls).toEqual([])
+  })
+
+  it('does not start Web Vitals when rum.webVitals is false', () => {
+    cleanup = configure({
+      rum: { webVitals: false },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(mocks.webVitalsStartCalls).toEqual([])
+  })
+
+  it('starts Web Vitals after tracer provider registration when enabled', () => {
+    cleanup = configure({
+      rum: { webVitals: true },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(mocks.webVitalsStartCalls).toEqual([{}])
+    expect(mocks.lifecycleEvents).toEqual(['providerRegister', 'webVitalsStart'])
+  })
+
+  it('passes Web Vitals options through to startup', () => {
+    const generateTarget = () => 'target'
+    cleanup = configure({
+      rum: {
+        webVitals: {
+          generateTarget,
+          includeProcessedEventEntries: true,
+          reportAllChanges: true,
+        },
+      },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(mocks.webVitalsStartCalls).toEqual([
+      {
+        generateTarget,
+        includeProcessedEventEntries: true,
+        reportAllChanges: true,
+      },
+    ])
+  })
+
+  it('implies browser session attributes when Web Vitals are enabled', () => {
+    cleanup = configure({
+      rum: { webVitals: true },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    const spanProcessors = getLatestSpanProcessors()
+    expect(spanProcessors[0]).toBeInstanceOf(BrowserSessionSpanProcessor)
+  })
+
+  it('rejects Web Vitals when session attributes are explicitly disabled', () => {
+    expect(() => {
+      configure({
+        rum: { session: false, webVitals: true },
+        traceUrl: 'http://localhost:8989/client-traces',
+      })
+    }).toThrow('rum.webVitals requires browser session attributes')
+    expect(mocks.webVitalsStartCalls).toEqual([])
+  })
+
+  it('waits for Web Vitals startup and shutdown during cleanup', async () => {
+    let resolveStartup: ((handle: { shutdown: () => Promise<void> }) => void) | undefined
+    mocks.setWebVitalsStartupPromise(
+      new Promise((resolve) => {
+        resolveStartup = resolve
+      })
+    )
+    cleanup = configure({
+      rum: { webVitals: true },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    const cleanupPromise = cleanup()
+    await Promise.resolve()
+
+    expect(mocks.cleanupStepCalls).toEqual(['unregister'])
+    expect(mocks.webVitalsShutdownCalls).toBe(0)
+
+    resolveStartup?.(mocks.createWebVitalsHandle())
+    await cleanupPromise
+
+    expect(mocks.webVitalsShutdownCalls).toBe(1)
+    expect(mocks.cleanupStepCalls).toEqual(['unregister', 'webVitalsShutdown', 'forceFlush', 'shutdown'])
+    expect(cleanup()).toBe(cleanupPromise)
+  })
+})
+
+describe('browser metrics config', () => {
+  beforeEach(() => {
+    mocks.reset()
+    cleanup = undefined
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        language: 'en-US',
+        userAgent: 'test-browser',
+        userAgentData: undefined,
+      },
+    })
+  })
+
+  afterEach(async () => {
+    await cleanup?.()
+    clearConfiguredBrowserSessionForTests()
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    })
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      value: originalLocation,
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('does not start browser metrics by default', async () => {
+    cleanup = configure({
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    expect(mocks.browserMetricsStartCalls).toEqual([])
+  })
+
+  it('does not start browser metrics when metrics is false', async () => {
+    cleanup = configure({
+      metrics: false,
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    expect(mocks.browserMetricsStartCalls).toEqual([])
+  })
+
+  it('starts browser metrics after tracer provider registration when configured', async () => {
+    const metricExporterHeaders = () => ({ authorization: 'test-token' })
+    const metricReader = { forceFlush: async () => Promise.resolve(), shutdown: async () => Promise.resolve() }
+
+    cleanup = configure({
+      metrics: {
+        metricExporterConfig: { timeoutMillis: 12_000 },
+        metricExporterHeaders,
+        metricReaderConfig: { exportIntervalMillis: 5_000 },
+        metricReaders: [metricReader as never],
+        metricUrl: 'http://localhost:8989/client-metrics',
+      },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    expect(mocks.browserMetricsStartCalls).toHaveLength(1)
+    expect(mocks.browserMetricsStartCalls[0]?.options).toMatchObject({
+      metricExporterConfig: { timeoutMillis: 12_000 },
+      metricReaderConfig: { exportIntervalMillis: 5_000 },
+      metricUrl: 'http://localhost:8989/client-metrics',
+    })
+    expect((mocks.browserMetricsStartCalls[0]?.options as { metricExporterHeaders?: unknown }).metricExporterHeaders).toBe(
+      metricExporterHeaders
+    )
+    expect((mocks.browserMetricsStartCalls[0]?.options as { metricReaders?: unknown[] }).metricReaders).toEqual([metricReader])
+    expect(mocks.lifecycleEvents).toEqual(['providerRegister', 'browserMetricsStart'])
+  })
+
+  it('rejects empty metric URLs', () => {
+    expect(() => {
+      configure({
+        metrics: { metricUrl: '' },
+        traceUrl: 'http://localhost:8989/client-traces',
+      })
+    }).toThrow('metrics.metricUrl must be a non-empty')
+  })
+
+  it('rejects Web Vitals metrics without browser metric transport', () => {
+    expect(() => {
+      configure({
+        rum: { webVitals: { metrics: true } },
+        traceUrl: 'http://localhost:8989/client-traces',
+      })
+    }).toThrow('rum.webVitals.metrics requires top-level metrics.metricUrl')
+    expect(mocks.browserMetricsStartCalls).toEqual([])
+    expect(mocks.webVitalsStartCalls).toEqual([])
+  })
+
+  it('passes a metric recorder to Web Vitals startup and preserves session URL sanitization', async () => {
+    const webVitalAttributes = () => ({ 'app.route': '/products/:id' })
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      value: {
+        href: 'https://example.com/products/123?token=secret',
+      },
+    })
+
+    cleanup = configure({
+      metrics: { metricUrl: 'http://localhost:8989/client-metrics' },
+      rum: {
+        session: {
+          urlAttributes: () => ({
+            full: 'https://example.com/redacted',
+            path: '/products/:id',
+          }),
+        },
+        webVitals: {
+          metrics: {
+            attributes: webVitalAttributes,
+          },
+        },
+      },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    expect(mocks.browserMetricsRecorderCreateCalls).toHaveLength(1)
+    expect((mocks.browserMetricsRecorderCreateCalls[0] as { attributes?: unknown }).attributes).toBe(webVitalAttributes)
+    expect((mocks.browserMetricsRecorderCreateCalls[0] as { defaultAttributes?: () => unknown }).defaultAttributes?.()).toEqual({
+      'url.path': '/products/:id',
+    })
+    expect(mocks.webVitalsStartCalls).toHaveLength(1)
+    expect((mocks.webVitalsStartCalls[0] as { metricRecorder?: unknown }).metricRecorder).toBe(mocks.browserMetricsRecorders[0])
+    const spanProcessors = getLatestSpanProcessors()
+    expect(spanProcessors[0]).toBeInstanceOf(BrowserSessionSpanProcessor)
+  })
+
+  it('force-flushes and shuts down browser metrics before trace cleanup', async () => {
+    cleanup = configure({
+      metrics: { metricUrl: 'http://localhost:8989/client-metrics' },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    const cleanupPromise = cleanup()
+    await cleanupPromise
+
+    expect(cleanup()).toBe(cleanupPromise)
+    expect(mocks.browserMetricsForceFlushCalls).toBe(1)
+    expect(mocks.browserMetricsShutdownCalls).toBe(1)
+    expect(mocks.cleanupStepCalls).toEqual(['unregister', 'metricForceFlush', 'metricShutdown', 'forceFlush', 'shutdown'])
   })
 })
 
@@ -346,6 +879,7 @@ describe('browser cleanup', () => {
 
   afterEach(async () => {
     await cleanup?.()
+    clearConfiguredBrowserSessionForTests()
     configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,

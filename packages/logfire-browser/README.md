@@ -49,6 +49,169 @@ Do not use resource attributes for per-request values or sensitive user data.
 First-class options such as `serviceName`, `serviceVersion`, and `environment`
 take precedence over conflicting `resourceAttributes` keys.
 
+## RUM session identity
+
+Enable `rum.session` to add a browser session id to every span started by the
+configured browser provider:
+
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+logfire.configure({
+  traceUrl: '/client-traces',
+  serviceName: 'browser-app',
+  rum: { session: true },
+})
+```
+
+The SDK stores the session in `sessionStorage`, so it is scoped to the browser
+tab and survives page reloads. Sessions rotate after 30 minutes of inactivity
+or 4 hours of total duration by default. Spans get `session.id` and
+`browser.session.id`; `session.id` is the OpenTelemetry semantic attribute and
+`browser.session.id` is emitted for Logfire Platform compatibility.
+
+By default, session-enabled spans also get `url.full` and `url.path` from the
+current page URL. If your app has sensitive query strings or fragments, provide
+a sanitizer or suppress URL attributes:
+
+```js
+logfire.configure({
+  traceUrl: '/client-traces',
+  serviceName: 'browser-app',
+  rum: {
+    session: {
+      urlAttributes: (url) => ({
+        full: `${url.origin}${url.pathname}`,
+        path: url.pathname,
+      }),
+    },
+  },
+})
+
+logfire.configure({
+  traceUrl: '/client-traces',
+  serviceName: 'browser-app',
+  rum: {
+    session: {
+      urlAttributes: false,
+    },
+  },
+})
+```
+
+Use `getBrowserSessionId()` after `configure({ rum: { session: true } })` when
+another browser integration needs the SDK-owned session id before the first
+span is created.
+
+## RUM Web Vitals
+
+Enable `rum.webVitals` to report Core Web Vitals from real browser sessions:
+
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+logfire.configure({
+  traceUrl: '/client-traces',
+  serviceName: 'browser-app',
+  rum: { webVitals: true },
+})
+```
+
+The SDK dynamically loads `web-vitals/attribution` only when `rum.webVitals` is
+enabled. It records LCP, INP, CLS, FCP, and TTFB as short spans named
+`web_vital.lcp`, `web_vital.inp`, `web_vital.cls`, `web_vital.fcp`, and
+`web_vital.ttfb`.
+
+Each span includes base attributes such as `web_vital.name`,
+`web_vital.value`, `web_vital.delta`, `web_vital.id`, `web_vital.rating`, and
+`web_vital.navigation_type`. Attribution fields include values such as
+`web_vital.lcp.target`, `web_vital.inp.target`, and
+`web_vital.cls.largest_shift_target`.
+
+`rum.webVitals` implies default `rum.session` behavior so Web Vital spans get
+session and URL attributes. If you need to sanitize URLs, pass session options
+alongside Web Vitals:
+
+```js
+logfire.configure({
+  traceUrl: '/client-traces',
+  serviceName: 'browser-app',
+  rum: {
+    session: {
+      urlAttributes: (url) => ({
+        full: `${url.origin}${url.pathname}`,
+        path: url.pathname,
+      }),
+    },
+    webVitals: {
+      reportAllChanges: true,
+    },
+  },
+})
+```
+
+To emit native OpenTelemetry histogram metrics in parallel with those spans,
+configure a browser-safe metrics proxy and opt Web Vitals into metrics:
+
+```js
+logfire.configure({
+  traceUrl: '/client-traces',
+  metrics: {
+    metricUrl: '/client-metrics',
+  },
+  serviceName: 'browser-app',
+  rum: {
+    webVitals: {
+      metrics: true,
+    },
+  },
+})
+```
+
+Metric export is disabled unless top-level `metrics.metricUrl` is configured,
+and `rum.webVitals.metrics` requires that transport. The SDK uses a local
+OpenTelemetry `MeterProvider`; it does not replace the application's global
+meter provider.
+
+Web Vitals metrics are histograms named
+`logfire.browser.web_vital.lcp`, `logfire.browser.web_vital.inp`,
+`logfire.browser.web_vital.cls`, `logfire.browser.web_vital.fcp`, and
+`logfire.browser.web_vital.ttfb`. LCP, INP, FCP, and TTFB use unit `ms`; CLS
+uses unit `1`.
+
+Metric data point attributes are intentionally low-cardinality:
+`web_vital.name`, `web_vital.rating`, and sanitized `url.path` when session URL
+attributes are enabled. They do not include `session.id`,
+`browser.session.id`, `url.full`, Web Vital ids/deltas, DOM selectors,
+attribution fields, or raw PerformanceEntry data. Use spans for raw-sample
+drilldown, session/replay correlation, exact URL context, and attribution
+selectors.
+
+For modern single-page apps, these are standard document-level Web Vitals, not
+route-level soft-navigation metrics. Span URL attributes and the optional
+metric `url.path` dimension describe the browser URL when the callback fires;
+route-specific Core Web Vitals need separate route or soft-navigation
+instrumentation. If paths contain IDs, prefer a session `urlAttributes`
+sanitizer that emits route templates such as `/products/:id`.
+
+## Custom span processors
+
+Use `spanProcessors` to register additional OpenTelemetry span processors with
+the browser tracer provider:
+
+```js
+logfire.configure({
+  traceUrl: '/client-traces',
+  serviceName: 'browser-app',
+  spanProcessors: [customProcessor],
+})
+```
+
+Custom processors are advanced OpenTelemetry extension points. They are
+registered before Logfire's built-in exporting processor and before Logfire
+tail sampling, so use them for enrichment or integration hooks rather than
+duplicate exporting unless that is intentional.
+
 ## Baggage span attributes
 
 Use `baggage.spanAttributes` to copy selected active OpenTelemetry baggage
@@ -103,8 +266,10 @@ idempotent: repeated or concurrent calls share one promise and run the lifecycle
 once in this order:
 
 1. unregister configured instrumentations
-2. force-flush spans
-3. shut down the tracer provider
+2. await Web Vitals startup and shutdown when enabled
+3. force-flush and shut down metrics when configured
+4. force-flush spans
+5. shut down the tracer provider
 
 If any cleanup step fails, Logfire still attempts the later steps before
 returning the first failure. Later calls return the same settled cleanup promise

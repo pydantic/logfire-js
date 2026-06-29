@@ -48,6 +48,164 @@ Only enable verbose diagnostic logging in development.
 
 `@pydantic/logfire-browser` is published as an ESM package for modern browsers and frameworks. If your app uses SSR or SSG, run `configure()` only in browser runtime code.
 
+## RUM Session Identity
+
+Enable `rum.session` to attach an SDK-owned browser session id to every span
+created by the configured browser provider:
+
+```ts
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'web-app',
+  rum: { session: true },
+})
+```
+
+The session is stored in `sessionStorage`, so it is scoped to the current tab
+and survives page reloads. It rotates after 30 minutes of inactivity or 4 hours
+of total duration by default. Each span gets `session.id` and
+`browser.session.id`; `session.id` is the OpenTelemetry semantic attribute and
+`browser.session.id` is emitted for Logfire Platform compatibility.
+
+Session-enabled spans also get `url.full` and `url.path` by default. If your
+URLs may contain sensitive query strings or fragments, sanitize or suppress
+these attributes:
+
+```ts
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'web-app',
+  rum: {
+    session: {
+      urlAttributes: (url) => ({
+        full: `${url.origin}${url.pathname}`,
+        path: url.pathname,
+      }),
+    },
+  },
+})
+
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'web-app',
+  rum: {
+    session: {
+      urlAttributes: false,
+    },
+  },
+})
+```
+
+Call `getBrowserSessionId()` after configuring `rum.session` when another
+browser integration needs the SDK-owned session id before the first span.
+
+## RUM Web Vitals
+
+Enable `rum.webVitals` to record Core Web Vitals from real browser sessions:
+
+```ts
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'web-app',
+  rum: { webVitals: true },
+})
+```
+
+The browser SDK dynamically loads `web-vitals/attribution` only when
+`rum.webVitals` is enabled. It records LCP, INP, CLS, FCP, and TTFB as short
+OpenTelemetry spans named `web_vital.lcp`, `web_vital.inp`, `web_vital.cls`,
+`web_vital.fcp`, and `web_vital.ttfb`.
+
+Every Web Vital span includes `web_vital.name`, `web_vital.value`,
+`web_vital.delta`, `web_vital.id`, `web_vital.rating`, and
+`web_vital.navigation_type`. Attribution fields include values such as
+`web_vital.lcp.target`, `web_vital.inp.target`, and
+`web_vital.cls.largest_shift_target`.
+
+`rum.webVitals` implies default `rum.session` behavior so Web Vital spans get
+session and URL attributes. To sanitize URLs while reporting Web Vitals, pass
+session options alongside Web Vitals:
+
+```ts
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'web-app',
+  rum: {
+    session: {
+      urlAttributes: (url) => ({
+        full: `${url.origin}${url.pathname}`,
+        path: url.pathname,
+      }),
+    },
+    webVitals: {
+      reportAllChanges: true,
+    },
+  },
+})
+```
+
+To emit native OpenTelemetry histogram metrics in parallel with those spans,
+configure a browser-safe metrics proxy and opt Web Vitals into metrics:
+
+```ts
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  metrics: {
+    metricUrl: '/logfire-proxy/v1/metrics',
+  },
+  serviceName: 'web-app',
+  rum: {
+    webVitals: {
+      metrics: true,
+    },
+  },
+})
+```
+
+Metric export is disabled unless top-level `metrics.metricUrl` is configured,
+and `rum.webVitals.metrics` requires that transport. The SDK uses a local
+OpenTelemetry `MeterProvider`; it does not replace the application's global
+meter provider.
+
+Web Vitals metrics are histograms named
+`logfire.browser.web_vital.lcp`, `logfire.browser.web_vital.inp`,
+`logfire.browser.web_vital.cls`, `logfire.browser.web_vital.fcp`, and
+`logfire.browser.web_vital.ttfb`. LCP, INP, FCP, and TTFB use unit `ms`; CLS
+uses unit `1`.
+
+Metric data point attributes are intentionally low-cardinality:
+`web_vital.name`, `web_vital.rating`, and sanitized `url.path` when session URL
+attributes are enabled. They do not include `session.id`,
+`browser.session.id`, `url.full`, Web Vital ids/deltas, DOM selectors,
+attribution fields, or raw PerformanceEntry data. Use spans for raw-sample
+drilldown, session/replay correlation, exact URL context, and attribution
+selectors.
+
+For modern single-page apps, these are standard document-level Web Vitals, not
+route-level soft-navigation metrics. Span URL attributes and the optional
+metric `url.path` dimension describe the browser URL when the callback fires;
+route-specific Core Web Vitals need separate route or soft-navigation
+instrumentation. If paths contain IDs, prefer a session `urlAttributes`
+sanitizer that emits route templates such as `/products/:id`.
+
+## Custom Span Processors
+
+Use `spanProcessors` to register additional OpenTelemetry span processors with
+the browser tracer provider:
+
+```ts
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'web-app',
+  spanProcessors: [customProcessor],
+})
+```
+
+Custom processors are advanced extension points. They are registered before
+Logfire's built-in exporting processor and before Logfire tail sampling, so use
+them for enrichment or integration hooks rather than duplicate exporting unless
+that is intentional.
+
 ## Manual Client Events
 
 ```ts
@@ -115,7 +273,8 @@ A browser proxy should:
 
 - accept requests from your frontend only
 - add `Authorization: <write-token>` server-side
-- forward to the Logfire OTLP trace endpoint
+- forward traces to the Logfire OTLP trace endpoint and metrics to the OTLP
+  metrics endpoint
 - apply authentication, rate limiting, or origin checks for production apps
 
 For Next.js, see [Next.js](../frameworks/nextjs.md). For a standalone browser example, see the `examples/browser` project in this repository.
@@ -186,8 +345,9 @@ idempotent: repeated or concurrent calls share one promise and run the lifecycle
 once in this order:
 
 1. unregister configured instrumentations
-2. force-flush spans
-3. shut down the tracer provider
+2. await Web Vitals startup and shutdown when enabled
+3. force-flush spans
+4. shut down the tracer provider
 
 If any cleanup step fails, Logfire still attempts the later steps before
 returning the first failure. Later calls return the same settled cleanup promise

@@ -17,11 +17,11 @@ app.use(
 app.use(express.json())
 
 const logfireUrl = process.env.LOGFIRE_URL || 'http://localhost:4318/v1/traces'
+const logfireMetricsUrl = process.env.LOGFIRE_METRICS_URL || logfireUrl.replace(/\/v1\/traces$/, '/v1/metrics')
 const token = process.env.LOGFIRE_TOKEN || ''
 
-// Single endpoint: POST /client-traces
-app.post('/client-traces', async (req, res) => {
-  const response = await fetch(logfireUrl, {
+async function proxyTelemetry(req: express.Request, res: express.Response, url: string): Promise<void> {
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -29,12 +29,20 @@ app.post('/client-traces', async (req, res) => {
     },
     body: JSON.stringify(req.body),
   })
-  res.status(response.status).send(response.body)
+  res.status(response.status).send(await response.text())
+}
+
+app.post('/client-traces', async (req, res) => {
+  await proxyTelemetry(req, res, logfireUrl)
+})
+
+app.post('/client-metrics', async (req, res) => {
+  await proxyTelemetry(req, res, logfireMetricsUrl)
 })
 
 // Start the server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}, proxying to ${logfireUrl}`)
+  console.log(`Server running on port ${PORT}, proxying traces to ${logfireUrl} and metrics to ${logfireMetricsUrl}`)
 })
 
 export default app
