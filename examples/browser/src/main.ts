@@ -8,6 +8,14 @@ logfire.configure({
   },
   serviceName: 'browser-rum-smoke',
   serviceVersion: '0.1.0',
+  sessionReplay:
+    import.meta.env['VITE_LOGFIRE_REPLAY'] === 'true'
+      ? {
+          load: () => import('@pydantic/logfire-session-replay'),
+          maskAllInputs: true,
+          replayUrl: 'http://localhost:8989/client-replay',
+        }
+      : false,
   rum: {
     session: {
       urlAttributes: (url) => ({

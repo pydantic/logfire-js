@@ -40,6 +40,21 @@ class ThrowingStorage extends MemoryStorage {
   }
 }
 
+class CountingStorage extends MemoryStorage {
+  getItemCalls = 0
+  setItemCalls = 0
+
+  override getItem(key: string): string | null {
+    this.getItemCalls += 1
+    return super.getItem(key)
+  }
+
+  override setItem(key: string, value: string): void {
+    this.setItemCalls += 1
+    super.setItem(key, value)
+  }
+}
+
 function createIdGenerator(): () => string {
   let counter = 0
   return () => {
@@ -82,6 +97,33 @@ describe('BrowserSessionManager', () => {
     const secondSession = manager.touch()
 
     expect(secondSession.id).toBe(firstSession.id)
+  })
+
+  it('peeks only at the in-memory session id', () => {
+    let now = 1_000
+    const storage = new CountingStorage()
+    const manager = new BrowserSessionManager({
+      generateId: createIdGenerator(),
+      idleTimeoutMs: 100,
+      maxDurationMs: 1_000,
+      now: () => now,
+      storage,
+      storageKey: 'test-session',
+    })
+
+    expect(manager.peekSessionId()).toBeUndefined()
+    expect(storage.getItemCalls).toBe(0)
+    expect(storage.setItemCalls).toBe(0)
+
+    const session = manager.touch()
+    const getItemCallsAfterTouch = storage.getItemCalls
+    const setItemCallsAfterTouch = storage.setItemCalls
+    now = 1_151
+
+    expect(manager.peekSessionId()).toBe(session.id)
+    expect(storage.getItemCalls).toBe(getItemCallsAfterTouch)
+    expect(storage.setItemCalls).toBe(setItemCallsAfterTouch)
+    expect(manager.getSession().id).not.toBe(session.id)
   })
 
   it('rotates after the idle timeout', () => {

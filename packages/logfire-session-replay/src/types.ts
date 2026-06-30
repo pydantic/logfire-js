@@ -130,6 +130,7 @@ export interface SessionReplayConfig {
   captureConsole?: boolean
   captureNetwork?: boolean
   captureNavigation?: boolean
+  ignoreUrlPatterns?: RegExp[]
   redactUrlPatterns?: RegExp[]
 
   onError?: (error: unknown) => void
@@ -158,6 +159,7 @@ export interface ResolvedSessionReplayConfig {
   captureConsole: boolean
   captureNetwork: boolean
   captureNavigation: boolean
+  ignoreUrlPatterns: RegExp[]
   redactUrlPatterns: RegExp[]
   onError: ((error: unknown) => void) | undefined
   fetchImpl: typeof fetch

@@ -21,12 +21,14 @@ export { CHUNK_ENVELOPE_VERSION, CustomTag, EventType, IncrementalSource, MouseI
 
 export interface SessionReplay {
   readonly recording: boolean
+  readonly mode: 'full' | 'buffer' | 'off'
   getSessionId(): string
   flush(): Promise<void>
   stop(): Promise<void>
 }
 
 const NOOP: SessionReplay = {
+  mode: 'off',
   recording: false,
   getSessionId: () => '',
   flush: async () => Promise.resolve(),
@@ -121,7 +123,11 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
   }
   const stopConsole = resolvedConfig.captureConsole ? captureConsole(addCustomEvent) : noop
   const stopNetwork = resolvedConfig.captureNetwork
-    ? captureNetwork(addCustomEvent, { redactUrlPatterns: resolvedConfig.redactUrlPatterns, now: resolvedConfig.now })
+    ? captureNetwork(addCustomEvent, {
+        ignoreUrlPatterns: resolvedConfig.ignoreUrlPatterns,
+        now: resolvedConfig.now,
+        redactUrlPatterns: resolvedConfig.redactUrlPatterns,
+      })
     : noop
   const stopNavigation = resolvedConfig.captureNavigation ? captureNavigation(addCustomEvent) : noop
 
@@ -129,6 +135,9 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
 
   let stopPromise: Promise<void> | undefined
   return {
+    get mode() {
+      return transport.getMode()
+    },
     recording: true,
     getSessionId: () => getSessionId(false),
     flush: async () => transport.flush(),
@@ -181,6 +190,7 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     captureConsole: config.captureConsole ?? DEFAULTS.captureConsole,
     captureNetwork: config.captureNetwork ?? DEFAULTS.captureNetwork,
     captureNavigation: config.captureNavigation ?? DEFAULTS.captureNavigation,
+    ignoreUrlPatterns: config.ignoreUrlPatterns ?? [],
     redactUrlPatterns: config.redactUrlPatterns ?? [],
     onError: config.onError,
     fetchImpl,

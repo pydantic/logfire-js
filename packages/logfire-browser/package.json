@@ -64,12 +64,19 @@
     "web-vitals": "catalog:"
   },
   "peerDependencies": {
+    "@pydantic/logfire-session-replay": "workspace:*",
     "@opentelemetry/sdk-trace-web": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@pydantic/logfire-session-replay": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@opentelemetry/sdk-trace-web": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
+    "@pydantic/logfire-session-replay": "workspace:*",
     "user-agent-data-types": "^0.4.2"
   },
   "files": [

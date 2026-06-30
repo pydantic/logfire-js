@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it } from 'vite-plus/test'
 
 import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
 import { BrowserSessionManager } from './browserSession'
+import { BrowserSessionReplayState } from './sessionReplay'
+import type { BrowserSessionReplayRuntime } from './sessionReplay'
 
 class TestSpan {
   readonly attributes: Record<string, unknown> = {}
@@ -44,7 +46,10 @@ class MemoryStorage implements Storage {
 
 const originalLocationDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'location')
 
-function createProcessor(options: ConstructorParameters<typeof BrowserSessionManager>[0] = {}): BrowserSessionSpanProcessor {
+function createProcessor(
+  options: ConstructorParameters<typeof BrowserSessionManager>[0] = {},
+  replayState?: BrowserSessionReplayState
+): BrowserSessionSpanProcessor {
   return new BrowserSessionSpanProcessor(
     new BrowserSessionManager({
       generateId: () => 'session-1',
@@ -52,7 +57,8 @@ function createProcessor(options: ConstructorParameters<typeof BrowserSessionMan
       storage: new MemoryStorage(),
       storageKey: 'test-session',
       ...options,
-    })
+    }),
+    replayState
   )
 }
 
@@ -69,6 +75,16 @@ function setLocation(location: { href: string } | undefined): void {
 
 function startSpan(processor: BrowserSessionSpanProcessor, span: TestSpan): void {
   processor.onStart(span as unknown as Span, {} as Context)
+}
+
+function createReplayRuntime(mode: BrowserSessionReplayRuntime['mode']): BrowserSessionReplayRuntime {
+  return {
+    mode,
+    recording: true,
+    flush: async () => Promise.resolve(),
+    getSessionId: () => 'session-1',
+    stop: async () => Promise.resolve(),
+  }
 }
 
 describe('BrowserSessionSpanProcessor', () => {
@@ -159,5 +175,60 @@ describe('BrowserSessionSpanProcessor', () => {
       'browser.session.id': 'session-1',
       'session.id': 'session-1',
     })
+  })
+
+  it('stamps active replay state attributes', () => {
+    const replayState = new BrowserSessionReplayState()
+    replayState.setReplay(createReplayRuntime('full'))
+    const span = createSpan()
+
+    startSpan(createProcessor({}, replayState), span)
+
+    expect(span.attributes).toMatchObject({
+      'logfire.session_replay.active': true,
+      'logfire.session_replay.mode': 'full',
+    })
+  })
+
+  it('reads live replay mode on each span start', () => {
+    let mode: BrowserSessionReplayRuntime['mode'] = 'buffer'
+    const replayState = new BrowserSessionReplayState()
+    replayState.setReplay({
+      get mode() {
+        return mode
+      },
+      recording: true,
+      flush: async () => Promise.resolve(),
+      getSessionId: () => 'session-1',
+      stop: async () => Promise.resolve(),
+    })
+    const processor = createProcessor({}, replayState)
+    const firstSpan = createSpan()
+    const secondSpan = createSpan()
+
+    startSpan(processor, firstSpan)
+    mode = 'full'
+    startSpan(processor, secondSpan)
+
+    expect(firstSpan.attributes['logfire.session_replay.mode']).toBe('buffer')
+    expect(secondSpan.attributes['logfire.session_replay.mode']).toBe('full')
+  })
+
+  it('does not stamp replay state when replay is absent, stopped, or off', () => {
+    const replayState = new BrowserSessionReplayState()
+    const beforeReplay = createSpan()
+    startSpan(createProcessor({}, replayState), beforeReplay)
+    expect(beforeReplay.attributes).not.toHaveProperty('logfire.session_replay.active')
+
+    replayState.setReplay(createReplayRuntime('off'))
+    const sampledOff = createSpan()
+    startSpan(createProcessor({}, replayState), sampledOff)
+    expect(sampledOff.attributes).not.toHaveProperty('logfire.session_replay.active')
+
+    replayState.setReplay(createReplayRuntime('full'))
+    replayState.clear()
+    const afterStop = createSpan()
+    startSpan(createProcessor({}, replayState), afterStop)
+    expect(afterStop.attributes).not.toHaveProperty('logfire.session_replay.active')
   })
 })

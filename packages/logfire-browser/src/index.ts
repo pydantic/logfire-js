@@ -61,6 +61,8 @@ import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
 import { clearConfiguredBrowserSession, configureBrowserSession, getBrowserSessionId } from './browserSession'
 import type { BrowserSessionManager, RUMOptions } from './browserSession'
 import type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
+import { BrowserSessionReplayState, startBrowserSessionReplay } from './sessionReplay'
+import type { BrowserSessionReplayOptions } from './sessionReplay'
 import { assertBrowserWebVitalsMetricsCanStart, startBrowserWebVitals } from './webVitals'
 import type { BrowserWebVitalsOptions } from './webVitals'
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
@@ -69,6 +71,7 @@ export * from 'logfire'
 export { getBrowserSessionId } from './browserSession'
 export type { BrowserSessionOptions, BrowserSessionUrlAttributes, RUMOptions } from './browserSession'
 export type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
+export type { BrowserSessionReplayOptions } from './sessionReplay'
 export type { BrowserWebVitalsOptions } from './webVitals'
 
 type TraceExporterConfig = NonNullable<typeof OTLPTraceExporter extends new (config: infer T) => unknown ? T : never>
@@ -150,6 +153,10 @@ export interface LogfireConfigOptions {
    */
   rum?: RUMOptions
   /**
+   * Browser session replay options. Replay is disabled unless this is configured.
+   */
+  sessionReplay?: false | BrowserSessionReplayOptions
+  /**
    * Options for scrubbing sensitive data. Set to False to disable.
    */
   scrubbing?: false | ScrubbingOptions
@@ -221,13 +228,30 @@ function resolveBrowserWebVitalsMetricOptions(
   return webVitalsOptions.metrics === true ? {} : webVitalsOptions.metrics
 }
 
-function resolveBrowserSessionOptions(rum: RUMOptions | undefined): RUMOptions['session'] | undefined {
+function resolveBrowserSessionReplayOptions(sessionReplay: LogfireConfigOptions['sessionReplay']): BrowserSessionReplayOptions | undefined {
+  if (sessionReplay === undefined || sessionReplay === false) {
+    return undefined
+  }
+
+  return sessionReplay
+}
+
+function resolveBrowserSessionOptions(
+  rum: RUMOptions | undefined,
+  sessionReplayOptions: BrowserSessionReplayOptions | undefined
+): RUMOptions['session'] | undefined {
   const webVitalsOptions = resolveBrowserWebVitalsOptions(rum?.webVitals)
-  if (webVitalsOptions === undefined) {
+  const sessionReplayRequiresSession = sessionReplayOptions !== undefined
+  if (webVitalsOptions === undefined && !sessionReplayRequiresSession) {
     return rum?.session
   }
 
   if (rum?.session === false) {
+    if (sessionReplayRequiresSession) {
+      throw new Error(
+        'logfire-browser: sessionReplay requires browser session attributes; remove rum.session: false or disable sessionReplay'
+      )
+    }
     throw new Error(
       'logfire-browser: rum.webVitals requires browser session attributes; remove rum.session: false or disable rum.webVitals'
     )
@@ -285,6 +309,7 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   }
 
   const webVitalsOptions = resolveBrowserWebVitalsOptions(options.rum?.webVitals)
+  const sessionReplayOptions = resolveBrowserSessionReplayOptions(options.sessionReplay)
   const browserMetricsOptions = resolveBrowserMetricsOptions(options.metrics)
   const webVitalsMetricOptions = resolveBrowserWebVitalsMetricOptions(webVitalsOptions)
   if (webVitalsMetricOptions !== undefined && browserMetricsOptions === undefined) {
@@ -293,7 +318,7 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   if (webVitalsMetricOptions !== undefined) {
     assertBrowserWebVitalsMetricsCanStart()
   }
-  const browserSessionOptions = resolveBrowserSessionOptions(options.rum)
+  const browserSessionOptions = resolveBrowserSessionOptions(options.rum, sessionReplayOptions)
 
   const apiConfig: LogfireApiConfigOptions = {
     errorFingerprinting: options.errorFingerprinting ?? false,
@@ -361,9 +386,10 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   }
 
   const browserSessionManager = configureBrowserSession(browserSessionOptions)
+  const browserSessionReplayState = new BrowserSessionReplayState()
   const spanProcessors: SpanProcessor[] = []
   if (browserSessionManager !== undefined) {
-    spanProcessors.push(new BrowserSessionSpanProcessor(browserSessionManager))
+    spanProcessors.push(new BrowserSessionSpanProcessor(browserSessionManager, browserSessionReplayState))
   }
   spanProcessors.push(...(options.spanProcessors ?? []), spanProcessor)
 
@@ -377,6 +403,19 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   tracerProvider.register({
     contextManager: options.contextManager ?? new StackContextManager(),
   })
+
+  const unregister = registerInstrumentations({
+    instrumentations: options.instrumentations ?? [],
+    tracerProvider,
+  })
+
+  const sessionReplayStartupPromise =
+    sessionReplayOptions === undefined || browserSessionManager === undefined
+      ? undefined
+      : startBrowserSessionReplay(sessionReplayOptions, browserSessionManager, browserSessionReplayState, {
+          metricUrl: browserMetricsOptions?.metricUrl,
+          traceUrl: options.traceUrl,
+        })
 
   const browserMetricsStartupPromise =
     browserMetricsOptions === undefined
@@ -414,11 +453,6 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
             return undefined
           })
 
-  const unregister = registerInstrumentations({
-    instrumentations: options.instrumentations ?? [],
-    tracerProvider,
-  })
-
   let cleanupPromise: Promise<void> | undefined
 
   // Return the stored promise directly so repeated cleanup calls preserve identity.
@@ -441,6 +475,13 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
       }
 
       diag.info('logfire-browser: shutting down')
+      if (sessionReplayStartupPromise !== undefined) {
+        browserSessionReplayState.clear()
+        await runCleanupStep('session replay shutdown', async () => {
+          const sessionReplay = await sessionReplayStartupPromise
+          await sessionReplay?.stop()
+        })
+      }
       await runCleanupStep('instrumentation unregister', unregister)
       if (webVitalsStartupPromise !== undefined) {
         await runCleanupStep('web vitals shutdown', async () => {

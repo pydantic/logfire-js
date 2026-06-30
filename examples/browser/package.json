@@ -16,6 +16,7 @@
   },
   "devDependencies": {
     "@pydantic/logfire-browser": "workspace:*",
+    "@pydantic/logfire-session-replay": "workspace:*",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "logfire": "workspace:*",

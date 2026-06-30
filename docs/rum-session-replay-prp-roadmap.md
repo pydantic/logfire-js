@@ -5,8 +5,8 @@ description: PRP decomposition for moving Logfire browser RUM and rrweb session 
 
 # RUM and Session Replay PRP Roadmap
 
-Status: PRPs 020-023 implemented in this branch; 024 and Platform migration
-remain pending. Created 2026-06-29.
+Status: PRPs 020-024 implemented in this branch; Platform migration remains
+pending. Created 2026-06-29.
 
 This document scopes the overall Product Requirements Prompt (PRP) sequence for
 Logfire JavaScript browser Real User Monitoring (RUM) and rrweb session replay.
@@ -140,12 +140,16 @@ Key decisions:
 
 ### 024 - Browser Session Replay Integration
 
+File: `plans/024-browser-session-replay-integration.md`
+
 Scope:
 
 - Add optional `sessionReplay` config to `@pydantic/logfire-browser`.
 - Add optional peer dependency on `@pydantic/logfire-session-replay`.
 - Dynamically import replay only when configured.
-- Pass SDK-owned session id and active trace context into replay.
+- Pass SDK-owned session id into replay.
+- Publish replay active/mode state back to browser spans instead of populating
+  replay trace ids through active-span polling.
 - Stop/flush replay during browser SDK cleanup before shutting down the tracer
   provider.
 
@@ -156,8 +160,14 @@ Depends on:
 
 Key decisions:
 
-- Exact `sessionReplay` config shape.
-- How to surface missing optional peer dependency errors.
+- Public config is top-level `sessionReplay`.
+- Replay users provide `sessionReplay.load` so no-replay applications do not
+  need bundlers to resolve the optional replay peer.
+- Missing optional replay package is a best-effort startup failure: tracing
+  continues, replay is disabled, and errors are reported through diagnostics and
+  `sessionReplay.onError`.
+- Authoritative replay correlation is shared session id plus timestamps; replay
+  `traceIds` from polling are not the browser SDK integration model.
 
 ### Platform Migration PRP
 

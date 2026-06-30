@@ -2,9 +2,12 @@ import type { Context } from '@opentelemetry/api'
 import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-web'
 
 import type { BrowserSessionManager } from './browserSession'
+import type { BrowserSessionReplayState } from './sessionReplay'
 
 const ATTR_SESSION_ID = 'session.id'
 const ATTR_BROWSER_SESSION_ID = 'browser.session.id'
+const ATTR_SESSION_REPLAY_ACTIVE = 'logfire.session_replay.active'
+const ATTR_SESSION_REPLAY_MODE = 'logfire.session_replay.mode'
 const ATTR_URL_FULL = 'url.full'
 const ATTR_URL_PATH = 'url.path'
 
@@ -27,10 +30,12 @@ function getCurrentUrl(): URL | undefined {
 }
 
 export class BrowserSessionSpanProcessor implements SpanProcessor {
+  private readonly replayState: BrowserSessionReplayState | undefined
   private readonly sessionManager: BrowserSessionManager
 
-  constructor(sessionManager: BrowserSessionManager) {
+  constructor(sessionManager: BrowserSessionManager, replayState?: BrowserSessionReplayState) {
     this.sessionManager = sessionManager
+    this.replayState = replayState
   }
 
   async forceFlush(): Promise<void> {
@@ -45,6 +50,12 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
     const session = this.sessionManager.touch()
     span.setAttribute(ATTR_SESSION_ID, session.id)
     span.setAttribute(ATTR_BROWSER_SESSION_ID, session.id)
+
+    const replayState = this.replayState?.getState()
+    if (replayState !== undefined) {
+      span.setAttribute(ATTR_SESSION_REPLAY_ACTIVE, replayState.active)
+      span.setAttribute(ATTR_SESSION_REPLAY_MODE, replayState.mode)
+    }
 
     const url = getCurrentUrl()
     if (url === undefined) {

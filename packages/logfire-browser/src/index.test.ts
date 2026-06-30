@@ -253,6 +253,7 @@ import { configureLogfireApi, Level, logfireApiConfig, PendingSpanProcessor, Tai
 import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
 import { clearConfiguredBrowserSessionForTests } from './browserSession'
 import logfireBrowser, { configure, getBrowserSessionId, instrument, startPendingSpan, withSettings, withTags } from './index'
+import type { BrowserSessionReplayRuntime } from './sessionReplay'
 
 const originalNavigator = globalThis.navigator
 const originalLocation = globalThis.location
@@ -707,6 +708,148 @@ describe('browser Web Vitals config', () => {
     expect(mocks.webVitalsShutdownCalls).toBe(1)
     expect(mocks.cleanupStepCalls).toEqual(['unregister', 'webVitalsShutdown', 'forceFlush', 'shutdown'])
     expect(cleanup()).toBe(cleanupPromise)
+  })
+})
+
+describe('browser session replay config', () => {
+  beforeEach(() => {
+    mocks.reset()
+    cleanup = undefined
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        language: 'en-US',
+        userAgent: 'test-browser',
+        userAgentData: undefined,
+      },
+    })
+  })
+
+  afterEach(async () => {
+    await cleanup?.()
+    clearConfiguredBrowserSessionForTests()
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('does not load replay by default or when disabled', async () => {
+    const load = vi.fn<() => void>()
+
+    cleanup = configure({
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+    expect(load).not.toHaveBeenCalled()
+    await cleanup()
+
+    cleanup = configure({
+      sessionReplay: false,
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+    expect(load).not.toHaveBeenCalled()
+  })
+
+  it('starts replay after provider registration and implies browser session attributes', async () => {
+    const startSessionReplay = vi.fn<() => BrowserSessionReplayRuntime>(() => ({
+      mode: 'full' as const,
+      recording: true,
+      flush: async () => Promise.resolve(),
+      getSessionId: () => 'browser-session',
+      stop: async () => Promise.resolve(),
+    }))
+    const load = vi.fn<() => { startSessionReplay: () => BrowserSessionReplayRuntime }>(() => {
+      mocks.lifecycleEvents.push('sessionReplayLoad')
+      return { startSessionReplay }
+    })
+
+    cleanup = configure({
+      sessionReplay: {
+        load,
+        replayUrl: '/logfire/replay',
+      },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(startSessionReplay).toHaveBeenCalledTimes(1)
+    expect(mocks.lifecycleEvents).toEqual(['providerRegister', 'sessionReplayLoad'])
+    const spanProcessors = getLatestSpanProcessors()
+    expect(spanProcessors[0]).toBeInstanceOf(BrowserSessionSpanProcessor)
+  })
+
+  it('rejects replay when session attributes are explicitly disabled', () => {
+    expect(() => {
+      configure({
+        rum: { session: false },
+        sessionReplay: {
+          load: () => ({ startSessionReplay: vi.fn<() => BrowserSessionReplayRuntime>() }),
+          replayUrl: '/logfire/replay',
+        },
+        traceUrl: 'http://localhost:8989/client-traces',
+      })
+    }).toThrow('sessionReplay requires browser session attributes')
+  })
+
+  it('keeps tracing setup alive when replay startup fails', async () => {
+    const onError = vi.fn<(error: unknown) => void>()
+
+    cleanup = configure({
+      sessionReplay: {
+        load: async () => Promise.reject(new Error('missing replay package')),
+        onError,
+        replayUrl: '/logfire/replay',
+      },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    expect(getLatestWebTracerProvider().registerCalls).toBe(1)
+    expect(onError).toHaveBeenCalledWith(expect.any(Error))
+  })
+
+  it('stops replay before unregister and exporter shutdown during cleanup', async () => {
+    const stop = vi.fn<() => Promise<void>>(async () => {
+      mocks.cleanupStepCalls.push('sessionReplayStop')
+      return Promise.resolve()
+    })
+
+    cleanup = configure({
+      metrics: { metricUrl: 'http://localhost:8989/client-metrics' },
+      sessionReplay: {
+        load: () => ({
+          startSessionReplay: () => ({
+            mode: 'full',
+            recording: true,
+            flush: async () => Promise.resolve(),
+            getSessionId: () => 'browser-session',
+            stop,
+          }),
+        }),
+        replayUrl: '/logfire/replay',
+      },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    const cleanupPromise = cleanup()
+    await cleanupPromise
+
+    expect(cleanup()).toBe(cleanupPromise)
+    expect(stop).toHaveBeenCalledTimes(1)
+    expect(mocks.cleanupStepCalls).toEqual([
+      'sessionReplayStop',
+      'unregister',
+      'metricForceFlush',
+      'metricShutdown',
+      'forceFlush',
+      'shutdown',
+    ])
   })
 })
 

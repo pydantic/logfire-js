@@ -194,6 +194,61 @@ route-specific Core Web Vitals need separate route or soft-navigation
 instrumentation. If paths contain IDs, prefer a session `urlAttributes`
 sanitizer that emits route templates such as `/products/:id`.
 
+## Session replay
+
+Install the optional replay package and configure `sessionReplay` when you want
+rrweb session recording:
+
+```bash
+npm install @pydantic/logfire-session-replay
+```
+
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'browser-app',
+  sessionReplay: {
+    load: () => import('@pydantic/logfire-session-replay'),
+    replayUrl: '/logfire-proxy/v1/replay',
+    headers: async () => ({
+      'X-CSRF': await getCsrfToken(),
+    }),
+    maskAllInputs: true,
+  },
+})
+```
+
+`sessionReplay` implies default browser session attributes. Replay chunks and
+browser spans share `session.id` / `browser.session.id`, and spans started
+while replay is active get `logfire.session_replay.active` and
+`logfire.session_replay.mode`. The browser integration intentionally does not
+poll active trace context into replay chunks.
+
+Use a backend proxy for browser replay uploads. The proxy should authenticate
+the browser request with your application session or CSRF mechanism and add the
+Logfire write token server-side. Direct token configuration is available as an
+advanced escape hatch:
+
+```js
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'browser-app',
+  sessionReplay: {
+    load: () => import('@pydantic/logfire-session-replay'),
+    replayUrl: 'https://logfire-api.pydantic.dev/v1/replay',
+    token: '<write-token>',
+  },
+})
+```
+
+Do not use direct tokens in normal browser applications. Replay may capture
+console, fetch/XHR, navigation, and DOM events. Keep the default input masking
+enabled, use `blockSelector` or `maskTextSelector` for sensitive page regions,
+and set `captureConsole`, `captureNetwork`, or `captureNavigation` to `false`
+when those side channels are not appropriate.
+
 ## Custom span processors
 
 Use `spanProcessors` to register additional OpenTelemetry span processors with
