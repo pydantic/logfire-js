@@ -26,6 +26,9 @@ This PRP deliberately does not publish packages, migrate Platform to consume the
 new SDK APIs, change replay backend/player contracts, or add a Logfire UI replay
 link. Those belong to the release and Platform migration follow-up.
 
+Session replay should remain documented as experimental until Logfire Platform
+replay ingest and playback are no longer gated by the Platform feature flag.
+
 ## Why
 
 - PRP 023 created a supported standalone replay package, but callers still need
@@ -86,6 +89,8 @@ link. Those belong to the release and Platform migration follow-up.
       unchanged when replay is not configured.
 - [x] Browser docs and examples show the proxy-first replay setup and explain
       that direct token usage is an advanced escape hatch.
+- [x] Browser docs and examples mark session replay as experimental while
+      Platform replay ingest/playback are feature-flagged.
 - [x] Browser replay config defaults suppress Logfire telemetry endpoint network
       events, not merely redact their URLs, so replay does not record the
       browser SDK's own trace, metrics, or replay upload traffic.
@@ -208,6 +213,13 @@ link. Those belong to the release and Platform migration follow-up.
 - Replay side-channel capture may record console, fetch/XHR, and navigation
   events. The browser integration must preserve the standalone package defaults
   and let callers disable these capture classes.
+- Local development can fail before replay startup if a browser privacy
+  extension blocks dev URLs containing `session-replay`. Examples should prefer
+  a neutral import URL when loading local workspace replay output.
+- When Vite examples import unpublished replay package output directly from
+  `dist`, ensure rrweb resolves to its browser ESM build
+  (`rrweb/dist/rrweb.js`). Resolving to `rrweb.cjs` breaks the named `record`
+  import at runtime.
 
 ## Implementation Blueprint
 

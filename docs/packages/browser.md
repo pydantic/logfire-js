@@ -174,21 +174,25 @@ Web Vitals metrics are histograms named
 uses unit `1`.
 
 Metric data point attributes are intentionally low-cardinality:
-`web_vital.name`, `web_vital.rating`, and sanitized `url.path` when session URL
-attributes are enabled. They do not include `session.id`,
-`browser.session.id`, `url.full`, Web Vital ids/deltas, DOM selectors,
-attribution fields, or raw PerformanceEntry data. Use spans for raw-sample
-drilldown, session/replay correlation, exact URL context, and attribution
-selectors.
+`web_vital.name` and `web_vital.rating` by default. They do not include
+`session.id`, `browser.session.id`, `url.full`, `url.path`, Web Vital
+ids/deltas, DOM selectors, attribution fields, or raw PerformanceEntry data. Use
+spans for raw-sample drilldown, session/replay correlation, exact URL context,
+and attribution selectors.
 
 For modern single-page apps, these are standard document-level Web Vitals, not
-route-level soft-navigation metrics. Span URL attributes and the optional
-metric `url.path` dimension describe the browser URL when the callback fires;
-route-specific Core Web Vitals need separate route or soft-navigation
-instrumentation. If paths contain IDs, prefer a session `urlAttributes`
-sanitizer that emits route templates such as `/products/:id`.
+route-level soft-navigation metrics. Span URL attributes describe the browser
+URL when the callback fires; route-specific Core Web Vitals need separate route
+or soft-navigation instrumentation. To add a route dimension to metrics, pass a
+low-cardinality template such as `/products/:id` through
+`rum.webVitals.metrics.attributes`.
 
 ## Session Replay
+
+Session replay is experimental in the JavaScript SDK while Logfire Platform
+replay ingest and playback are still behind a feature flag. Keep replay behind
+your own application flag and expect minor API, ingest, and UI behavior changes
+before general availability.
 
 Install the optional replay package when you want rrweb session recording:
 
@@ -239,6 +243,13 @@ Replay can capture console, fetch/XHR, navigation, and DOM events. Keep input
 masking enabled by default, use `blockSelector` or `maskTextSelector` for
 sensitive regions, and disable capture classes that are not appropriate for
 your application.
+
+When testing replay locally, browser privacy extensions or ad blockers may block
+requests or dynamic imports whose URLs contain terms such as `session-replay`.
+If replay fails to start with `ERR_BLOCKED_BY_CLIENT`, test in a clean profile
+or disable the extension for the local app. Vite workspace examples may also
+need to load rrweb's browser ESM build (`rrweb/dist/rrweb.js`) rather than its
+CommonJS build when importing unpublished workspace output directly.
 
 ## Custom Span Processors
 
@@ -396,10 +407,13 @@ single-page app shells that replace the whole telemetry setup. Cleanup is
 idempotent: repeated or concurrent calls share one promise and run the lifecycle
 once in this order:
 
-1. unregister configured instrumentations
-2. await Web Vitals startup and shutdown when enabled
-3. force-flush spans
-4. shut down the tracer provider
+1. await session replay startup and stop replay when enabled
+2. unregister configured instrumentations
+3. await Web Vitals startup and shutdown when enabled
+4. force-flush and shut down metrics when configured
+5. force-flush spans
+6. shut down the tracer provider
+7. clear SDK-owned browser session state
 
 If any cleanup step fails, Logfire still attempts the later steps before
 returning the first failure. Later calls return the same settled cleanup promise

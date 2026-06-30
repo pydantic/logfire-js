@@ -11,7 +11,7 @@ logfire.configure({
   sessionReplay:
     import.meta.env['VITE_LOGFIRE_REPLAY'] === 'true'
       ? {
-          load: () => import('@pydantic/logfire-session-replay'),
+          load: () => import('lf-browser-recorder'),
           maskAllInputs: true,
           replayUrl: 'http://localhost:8989/client-replay',
         }

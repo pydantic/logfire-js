@@ -42,6 +42,12 @@ export interface BrowserSessionReplayModule {
   startSessionReplay(config: BrowserSessionReplayPackageConfig): BrowserSessionReplayRuntime
 }
 
+/**
+ * Experimental browser session replay options.
+ *
+ * Logfire Platform replay ingest and playback are still feature-flagged, so
+ * keep browser replay rollout behind an application flag.
+ */
 export interface BrowserSessionReplayOptions {
   /**
    * Loads @pydantic/logfire-session-replay. Applications that do not enable

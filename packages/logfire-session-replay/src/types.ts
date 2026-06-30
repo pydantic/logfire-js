@@ -86,6 +86,12 @@ export interface ChunkEnvelope {
   events: RrwebEvent[]
 }
 
+/**
+ * Experimental session replay recorder configuration.
+ *
+ * Logfire Platform replay ingest and playback are still feature-flagged, so
+ * keep browser replay rollout behind an application flag.
+ */
 export interface SessionReplayConfig {
   /**
    * Replay upload endpoint. For normal browser applications this should be a

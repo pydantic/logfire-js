@@ -1,5 +1,6 @@
 interface ImportMetaEnv {
-  readonly VITE_LOGFIRE_REPLAY?: string
+  readonly VITE_LOGFIRE_PROXY_ORIGIN?: string
+  readonly VITE_LOGFIRE_DIAG?: string
 }
 
 interface ImportMeta {

@@ -178,6 +178,29 @@ describe('ReplayTransport retries', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(onError).toHaveBeenCalledTimes(1)
   })
+
+  it('splits large keepalive flushes into ordered chunks', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-large', 'full', null)
+    const largeEvent = {
+      type: EventType.IncrementalSnapshot,
+      data: { text: 'x'.repeat(50_000) },
+      timestamp: 10,
+    } satisfies RrwebEvent
+    transport.add({ ...largeEvent, timestamp: 10 })
+    transport.add({ ...largeEvent, timestamp: 20 })
+    transport.add({ ...largeEvent, timestamp: 30 })
+
+    await transport.flush({ keepalive: true })
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://app.example.com/replay-proxy/sess-large?seq=0',
+      'https://app.example.com/replay-proxy/sess-large?seq=1',
+      'https://app.example.com/replay-proxy/sess-large?seq=2',
+    ])
+    expect(calls.map((call) => call.init.keepalive)).toEqual([true, true, true])
+    expect(calls.map((call) => decodeBody(call.init.body).events.map((event) => event.timestamp))).toEqual([[10], [20], [30]])
+  })
 })
 
 describe('ReplayTransport buffer mode', () => {

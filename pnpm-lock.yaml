@@ -183,6 +183,40 @@ importers:
         specifier: 'catalog:'
         version: 6.0.3
 
+  examples/browser-rum-replay:
+    dependencies:
+      '@opentelemetry/auto-instrumentations-web':
+        specifier: 'catalog:'
+        version: 0.64.0(@opentelemetry/api@1.9.1)(zone.js@0.15.1)
+      cors:
+        specifier: ^2.8.5
+        version: 2.8.5
+      express:
+        specifier: ^4.21.2
+        version: 4.22.1
+    devDependencies:
+      '@pydantic/logfire-browser':
+        specifier: workspace:*
+        version: link:../../packages/logfire-browser
+      '@pydantic/logfire-session-replay':
+        specifier: workspace:*
+        version: link:../../packages/logfire-session-replay
+      '@types/cors':
+        specifier: ^2.8.17
+        version: 2.8.19
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.25
+      logfire:
+        specifier: workspace:*
+        version: link:../../packages/logfire-api
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
   examples/cf-producer-worker:
     dependencies:
       '@pydantic/logfire-cf-workers':
