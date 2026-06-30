@@ -188,6 +188,58 @@ route-specific Core Web Vitals need separate route or soft-navigation
 instrumentation. If paths contain IDs, prefer a session `urlAttributes`
 sanitizer that emits route templates such as `/products/:id`.
 
+## Session Replay
+
+Install the optional replay package when you want rrweb session recording:
+
+```bash
+npm install @pydantic/logfire-session-replay
+```
+
+Configure replay with a browser-safe proxy endpoint:
+
+```ts
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'web-app',
+  sessionReplay: {
+    load: () => import('@pydantic/logfire-session-replay'),
+    replayUrl: '/logfire-proxy/v1/replay',
+    headers: async () => ({
+      'X-CSRF': await getCsrfToken(),
+    }),
+    maskAllInputs: true,
+  },
+})
+```
+
+`sessionReplay` implies default RUM session behavior. Replay chunks and browser
+spans share `session.id` / `browser.session.id`, and spans started while replay
+is active include `logfire.session_replay.active` and
+`logfire.session_replay.mode`. The browser SDK does not populate replay
+`traceIds` from active-span polling.
+
+Direct token usage is available as an advanced escape hatch, but it exposes the
+write token to browser code and should not be the default browser deployment
+model:
+
+```ts
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'web-app',
+  sessionReplay: {
+    load: () => import('@pydantic/logfire-session-replay'),
+    replayUrl: 'https://logfire-api.pydantic.dev/v1/replay',
+    token: '<write-token>',
+  },
+})
+```
+
+Replay can capture console, fetch/XHR, navigation, and DOM events. Keep input
+masking enabled by default, use `blockSelector` or `maskTextSelector` for
+sensitive regions, and disable capture classes that are not appropriate for
+your application.
+
 ## Custom Span Processors
 
 Use `spanProcessors` to register additional OpenTelemetry span processors with

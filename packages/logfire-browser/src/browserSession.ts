@@ -132,6 +132,10 @@ export class BrowserSessionManager {
     return this.getSessionAt(this.now())
   }
 
+  peekSessionId(): string | undefined {
+    return this.memorySession?.id
+  }
+
   touch(): BrowserSessionState {
     const now = this.now()
     const session = this.getSessionAt(now)

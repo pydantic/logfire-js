@@ -79,7 +79,7 @@ describe('captureNetwork', () => {
     Object.defineProperty(window, 'fetch', { value: originalFetch, writable: true, configurable: true })
     const emit = vi.fn()
     let now = 1_000
-    const stop = captureNetwork(emit, { redactUrlPatterns: [], now: () => now })
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => now })
 
     const promise = window.fetch('/api/things', { method: 'POST', body: '{"a":1}' })
     now = 1_125
@@ -109,7 +109,7 @@ describe('captureNetwork', () => {
       configurable: true,
     })
     const emit = vi.fn()
-    const stop = captureNetwork(emit, { redactUrlPatterns: [], now: () => 0 })
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0 })
 
     await expect(window.fetch('/api/fail')).rejects.toThrow('network down')
     expect(emit).toHaveBeenCalledWith(
@@ -126,7 +126,7 @@ describe('captureNetwork', () => {
       configurable: true,
     })
     const emit = vi.fn()
-    const stop = captureNetwork(emit, { redactUrlPatterns: [/\/secrets/u], now: () => 0 })
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [/\/secrets/u], now: () => 0 })
     await window.fetch('https://api.example.com/secrets/abc?token=xyz#section')
     const payload = emit.mock.calls[0]![1] as NetworkPayload
     expect(payload.url).toBe('https://api.example.com/secrets/abc')
@@ -139,7 +139,7 @@ describe('captureNetwork', () => {
     installFakeXhr()
     const emit = vi.fn()
     let now = 10
-    const stop = captureNetwork(emit, { redactUrlPatterns: [/\/secrets/u], now: () => now })
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [/\/secrets/u], now: () => now })
     const xhr = new window.XMLHttpRequest() as unknown as FakeXhr
 
     xhr.open('post', 'https://api.example.com/secrets/abc?token=xyz')
@@ -171,7 +171,7 @@ describe('captureNetwork', () => {
     const OriginalXhr = window.XMLHttpRequest
     installFakeXhr()
     const emit = vi.fn()
-    const stop = captureNetwork(emit, { redactUrlPatterns: [], now: () => 0 })
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0 })
     const xhr = new window.XMLHttpRequest() as unknown as FakeXhr
 
     xhr.open('GET', '/api/fail')
@@ -181,6 +181,35 @@ describe('captureNetwork', () => {
     const payload = emit.mock.calls[0]![1] as NetworkPayload
     expect(payload).toMatchObject({ method: 'GET', url: '/api/fail', status: 0, failed: true })
     expect(payload).not.toHaveProperty('body')
+    stop()
+    Object.defineProperty(window, 'XMLHttpRequest', { value: OriginalXhr, writable: true, configurable: true })
+  })
+
+  it('suppresses ignored fetch URLs entirely', async () => {
+    const originalFetch = vi.fn(async () => new Response(null, { status: 204 }))
+    Object.defineProperty(window, 'fetch', { value: originalFetch, writable: true, configurable: true })
+    const emit = vi.fn()
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [/\/client-traces/u], redactUrlPatterns: [], now: () => 0 })
+
+    await window.fetch('https://api.example.com/client-traces?token=secret')
+
+    expect(originalFetch).toHaveBeenCalledTimes(1)
+    expect(emit).not.toHaveBeenCalled()
+    stop()
+  })
+
+  it('suppresses ignored XHR URLs entirely', () => {
+    const OriginalXhr = window.XMLHttpRequest
+    installFakeXhr()
+    const emit = vi.fn()
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [/\/client-metrics/u], redactUrlPatterns: [], now: () => 0 })
+    const xhr = new window.XMLHttpRequest() as unknown as FakeXhr
+
+    xhr.open('POST', 'https://api.example.com/client-metrics?token=secret')
+    xhr.send('payload')
+    xhr.complete(202)
+
+    expect(emit).not.toHaveBeenCalled()
     stop()
     Object.defineProperty(window, 'XMLHttpRequest', { value: OriginalXhr, writable: true, configurable: true })
   })

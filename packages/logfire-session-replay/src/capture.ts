@@ -3,6 +3,11 @@ import type { ConsoleLevel, ConsolePayload, NavigationPayload, NetworkPayload } 
 
 type Emit = (tag: string, payload: unknown) => void
 type Stop = () => void
+interface NetworkCaptureOptions {
+  ignoreUrlPatterns: RegExp[]
+  now: () => number
+  redactUrlPatterns: RegExp[]
+}
 
 const CONSOLE_LEVELS: readonly ConsoleLevel[] = ['log', 'info', 'warn', 'error', 'debug']
 const MAX_ARG_LENGTH = 1024
@@ -44,7 +49,7 @@ export function captureConsole(emit: Emit): Stop {
   }
 }
 
-export function captureNetwork(emit: Emit, options: { redactUrlPatterns: RegExp[]; now: () => number }): Stop {
+export function captureNetwork(emit: Emit, options: NetworkCaptureOptions): Stop {
   const stopFetch = captureFetch(emit, options)
   const stopXhr = captureXhr(emit, options)
   let stopped = false
@@ -92,7 +97,7 @@ export function captureNavigation(emit: Emit): Stop {
   }
 }
 
-function captureFetch(emit: Emit, options: { redactUrlPatterns: RegExp[]; now: () => number }): Stop {
+function captureFetch(emit: Emit, options: NetworkCaptureOptions): Stop {
   const original = window.fetch
   if (typeof original !== 'function') {
     return noop
@@ -102,7 +107,11 @@ function captureFetch(emit: Emit, options: { redactUrlPatterns: RegExp[]; now: (
   const wrapped: typeof window.fetch = async (input, init) => {
     const startedAt = options.now()
     const method = getFetchMethod(input, init)
-    const url = redactUrl(getFetchUrl(input), options.redactUrlPatterns)
+    const rawUrl = getFetchUrl(input)
+    if (shouldIgnoreUrl(rawUrl, options.ignoreUrlPatterns)) {
+      return original(input, init)
+    }
+    const url = redactUrl(rawUrl, options.redactUrlPatterns)
     const reqBytes = sizeOfBody(init?.body)
 
     try {
@@ -146,7 +155,7 @@ function captureFetch(emit: Emit, options: { redactUrlPatterns: RegExp[]; now: (
   }
 }
 
-function captureXhr(emit: Emit, options: { redactUrlPatterns: RegExp[]; now: () => number }): Stop {
+function captureXhr(emit: Emit, options: NetworkCaptureOptions): Stop {
   const prototype = window.XMLHttpRequest.prototype
   // eslint-disable-next-line @typescript-eslint/unbound-method -- keep exact original so stop() restores identity.
   const originalOpen = prototype.open
@@ -156,9 +165,15 @@ function captureXhr(emit: Emit, options: { redactUrlPatterns: RegExp[]; now: () 
   let stopped = false
 
   prototype.open = function (method: string, url: string | URL, async?: boolean, username?: string | null, password?: string | null): void {
+    const rawUrl = url.toString()
+    if (shouldIgnoreUrl(rawUrl, options.ignoreUrlPatterns)) {
+      states.delete(this)
+      originalOpen.call(this, method, url, async ?? true, username ?? null, password ?? null)
+      return
+    }
     states.set(this, {
       method: method.toUpperCase(),
-      url: redactUrl(url.toString(), options.redactUrlPatterns),
+      url: redactUrl(rawUrl, options.redactUrlPatterns),
       startedAt: 0,
       reqBytes: 0,
       failed: false,
@@ -360,4 +375,8 @@ function redactUrl(url: string, patterns: RegExp[]): string {
     const [withoutHash = withoutQuery] = withoutQuery.split('#')
     return withoutHash
   }
+}
+
+function shouldIgnoreUrl(url: string, patterns: RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(url))
 }

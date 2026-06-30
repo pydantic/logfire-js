@@ -1,0 +1,204 @@
+import { diag } from '@opentelemetry/api'
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
+
+import { BrowserSessionManager } from './browserSession'
+import { BrowserSessionReplayState, startBrowserSessionReplay } from './sessionReplay'
+import type { BrowserSessionReplayModule, BrowserSessionReplayPackageConfig, BrowserSessionReplayRuntime } from './sessionReplay'
+
+class MemoryStorage implements Storage {
+  private readonly items = new Map<string, string>()
+
+  get length(): number {
+    return this.items.size
+  }
+
+  clear(): void {
+    this.items.clear()
+  }
+
+  getItem(key: string): string | null {
+    return this.items.get(key) ?? null
+  }
+
+  key(index: number): string | null {
+    return Array.from(this.items.keys())[index] ?? null
+  }
+
+  removeItem(key: string): void {
+    this.items.delete(key)
+  }
+
+  setItem(key: string, value: string): void {
+    this.items.set(key, value)
+  }
+}
+
+function createManager(): BrowserSessionManager {
+  return new BrowserSessionManager({
+    generateId: () => 'browser-session-1',
+    now: () => 1_000,
+    storage: new MemoryStorage(),
+    storageKey: 'test-session',
+  })
+}
+
+function createReplayRuntime(overrides: Partial<BrowserSessionReplayRuntime> = {}): BrowserSessionReplayRuntime {
+  let stopCalls = 0
+  return {
+    mode: 'full',
+    recording: true,
+    flush: async () => Promise.resolve(),
+    getSessionId: () => 'browser-session-1',
+    stop: async () => {
+      stopCalls += 1
+      await Promise.resolve()
+    },
+    ...overrides,
+    get stopCalls() {
+      return stopCalls
+    },
+  } as BrowserSessionReplayRuntime & { readonly stopCalls: number }
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('startBrowserSessionReplay', () => {
+  it('loads replay, passes browser-owned config, and uses peekSessionId on the hot path', async () => {
+    const manager = createManager()
+    const touchSpy = vi.spyOn(manager, 'touch')
+    const getSessionSpy = vi.spyOn(manager, 'getSession')
+    let replayConfig: BrowserSessionReplayPackageConfig | undefined
+    const replayRuntime = createReplayRuntime()
+    const replayModule: BrowserSessionReplayModule = {
+      startSessionReplay: vi.fn<(config: BrowserSessionReplayPackageConfig) => BrowserSessionReplayRuntime>((config) => {
+        replayConfig = config
+        return replayRuntime
+      }),
+    }
+    const headers = () => ({ 'X-CSRF': 'csrf-token' })
+    const getDistinctId = () => 'user-1'
+    const fetchImpl = vi.fn<typeof fetch>()
+    const onError = vi.fn<(error: unknown) => void>()
+    const replayState = new BrowserSessionReplayState()
+
+    const replay = await startBrowserSessionReplay(
+      {
+        blockSelector: '.private',
+        captureConsole: false,
+        captureNavigation: false,
+        captureNetwork: true,
+        distinctId: 'static-user',
+        fetchImpl,
+        flushIntervalMs: 2_000,
+        getDistinctId,
+        headers,
+        ignoreUrlPatterns: [/\/custom-ignore/u],
+        load: () => replayModule,
+        maskAllInputs: false,
+        maskTextSelector: '.secret',
+        maxBufferBytes: 123_456,
+        onError,
+        onErrorSampleRate: 0.5,
+        redactUrlPatterns: [/\/redact/u],
+        replayUrl: '/logfire/replay',
+        sessionSampleRate: 0.25,
+        token: 'direct-token',
+      },
+      manager,
+      replayState,
+      {
+        metricUrl: '/logfire/metrics',
+        traceUrl: '/logfire/traces',
+      }
+    )
+
+    expect(replay).toBeDefined()
+    expect(replayState.getState()).toEqual({ active: true, mode: 'full' })
+    expect(replayConfig).toMatchObject({
+      blockSelector: '.private',
+      captureConsole: false,
+      captureNavigation: false,
+      captureNetwork: true,
+      distinctId: 'static-user',
+      fetchImpl,
+      flushIntervalMs: 2_000,
+      getDistinctId,
+      headers,
+      maskAllInputs: false,
+      maskTextSelector: '.secret',
+      maxBufferBytes: 123_456,
+      onError,
+      onErrorSampleRate: 0.5,
+      redactUrlPatterns: [/\/redact/u],
+      replayUrl: '/logfire/replay',
+      sessionSampleRate: 0.25,
+      token: 'direct-token',
+    })
+    expect(replayConfig).not.toHaveProperty('getTraceContext')
+    expect(replayConfig).not.toHaveProperty('sessionIdleTimeoutMs')
+    expect(replayConfig).not.toHaveProperty('maxSessionDurationMs')
+    expect(replayConfig?.ignoreUrlPatterns?.some((pattern) => pattern.test('/logfire/traces'))).toBe(true)
+    expect(replayConfig?.ignoreUrlPatterns?.some((pattern) => pattern.test('/logfire/metrics'))).toBe(true)
+    expect(replayConfig?.ignoreUrlPatterns?.some((pattern) => pattern.test('/logfire/replay/browser-session-1?seq=0'))).toBe(true)
+    expect(replayConfig?.ignoreUrlPatterns?.some((pattern) => pattern.test('/custom-ignore'))).toBe(true)
+
+    expect(touchSpy).toHaveBeenCalledTimes(1)
+    expect(replayConfig?.getSessionId?.()).toBe('browser-session-1')
+    expect(replayConfig?.getSessionId?.()).toBe('browser-session-1')
+    expect(touchSpy).toHaveBeenCalledTimes(1)
+    expect(getSessionSpy).not.toHaveBeenCalled()
+  })
+
+  it('clears replay state when the wrapped replay is stopped once', async () => {
+    const replayState = new BrowserSessionReplayState()
+    let stopCalls = 0
+    const replayModule: BrowserSessionReplayModule = {
+      startSessionReplay: () =>
+        createReplayRuntime({
+          stop: async () => {
+            stopCalls += 1
+            return Promise.resolve()
+          },
+        }),
+    }
+
+    const replay = await startBrowserSessionReplay(
+      { load: () => replayModule, replayUrl: '/logfire/replay' },
+      createManager(),
+      replayState,
+      { traceUrl: '/logfire/traces' }
+    )
+
+    expect(replayState.getState()).toEqual({ active: true, mode: 'full' })
+    await replay?.stop()
+    await replay?.stop()
+    expect(stopCalls).toBe(1)
+    expect(replayState.getState()).toBeUndefined()
+  })
+
+  it('reports startup failures without throwing', async () => {
+    const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
+    const onError = vi.fn<(error: unknown) => void>()
+    const replayState = new BrowserSessionReplayState()
+    replayState.setReplay(createReplayRuntime())
+    const error = new Error('missing peer')
+
+    const replay = await startBrowserSessionReplay(
+      {
+        load: async () => Promise.reject(error),
+        onError,
+        replayUrl: '/logfire/replay',
+      },
+      createManager(),
+      replayState,
+      { traceUrl: '/logfire/traces' }
+    )
+
+    expect(replay).toBeUndefined()
+    expect(replayState.getState()).toBeUndefined()
+    expect(diagError).toHaveBeenCalledWith(expect.stringContaining('failed to start session replay'), error)
+    expect(onError).toHaveBeenCalledWith(error)
+  })
+})

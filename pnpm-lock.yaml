@@ -167,6 +167,9 @@ importers:
       '@pydantic/logfire-browser':
         specifier: workspace:*
         version: link:../../packages/logfire-browser
+      '@pydantic/logfire-session-replay':
+        specifier: workspace:*
+        version: link:../../packages/logfire-session-replay
       '@types/cors':
         specifier: ^2.8.17
         version: 2.8.19
@@ -485,6 +488,9 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: 'catalog:'
         version: 1.41.1
+      '@pydantic/logfire-session-replay':
+        specifier: workspace:*
+        version: link:../logfire-session-replay
       user-agent-data-types:
         specifier: ^0.4.2
         version: 0.4.2

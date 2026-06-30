@@ -59,6 +59,7 @@ describe('startSessionReplay environment and sampling gates', () => {
     const replay = startSessionReplay(baseConfig(fetchImpl))
 
     expect(replay.recording).toBe(false)
+    expect(replay.mode).toBe('off')
     expect(replay.getSessionId()).toBe('')
     expect(start).not.toHaveBeenCalled()
     expect(calls).toHaveLength(0)
@@ -69,6 +70,7 @@ describe('startSessionReplay environment and sampling gates', () => {
     const start = vi.spyOn(recorderMod, 'startRecording')
     const replay = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 0, random: () => 0.99 }))
     expect(replay.recording).toBe(false)
+    expect(replay.mode).toBe('off')
     expect(start).not.toHaveBeenCalled()
   })
 })
@@ -77,6 +79,7 @@ describe('startSessionReplay full mode', () => {
   it('flushes a chunk through the proxy URL and returns an internal session id', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl))
+    expect(replay.mode).toBe('full')
     emit(fullSnapshot)
     emit(click)
     await replay.flush()
@@ -179,6 +182,7 @@ describe('startSessionReplay buffer mode', () => {
   it('buffers until an error triggers upload', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 1, random: rng([0.9, 0.1]) }))
+    expect(replay.mode).toBe('buffer')
     expect(captured.checkoutEveryNms).toBe(120_000)
     emit(fullSnapshot)
     await replay.flush()
@@ -186,6 +190,7 @@ describe('startSessionReplay buffer mode', () => {
 
     window.dispatchEvent(new ErrorEvent('error', { message: 'boom' }))
     await settle()
+    expect(replay.mode).toBe('full')
     expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${replay.getSessionId()}?seq=0`])
     await replay.stop()
   })
