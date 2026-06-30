@@ -174,13 +174,12 @@ describe('startSessionReplay full mode', () => {
     emit(click)
     expect(handle.takeFullSnapshot).toHaveBeenCalledTimes(1)
     await replay.flush()
-    await settle()
+    await replay.stop()
 
     expect(calls.map((call) => call.url)).toEqual([
       'https://app.example.com/replay/external-1?seq=0',
       'https://app.example.com/replay/external-2?seq=0',
     ])
-    await replay.stop()
   })
 
   it('starts interval flushing in full mode', async () => {
@@ -243,10 +242,9 @@ describe('startSessionReplay buffer mode', () => {
     expect(calls).toHaveLength(0)
 
     window.dispatchEvent(new ErrorEvent('error', { message: 'boom' }))
-    await settle()
     expect(replay.mode).toBe('full')
-    expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${replay.getSessionId()}?seq=0`])
     await replay.stop()
+    expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${replay.getSessionId()}?seq=0`])
   })
 
   it('persists full mode after an error promotes a buffered replay', async () => {
@@ -263,10 +261,9 @@ describe('startSessionReplay buffer mode', () => {
     emit(fullSnapshot)
 
     window.dispatchEvent(new ErrorEvent('error', { message: 'boom' }))
-    await settle()
     expect(replay.mode).toBe('full')
-    expect(calls).toHaveLength(1)
     await replay.stop()
+    expect(calls).toHaveLength(1)
 
     const random = vi.fn(() => 0.99)
     const nextReplay = startSessionReplay(
@@ -392,13 +389,6 @@ function recordingFetch() {
 
 function decodeBody(body: BodyInit | null | undefined): ChunkEnvelope {
   return JSON.parse(strFromU8(gunzipSync(body as Uint8Array))) as ChunkEnvelope
-}
-
-async function settle(): Promise<void> {
-  await new Promise((resolve) => {
-    setTimeout(resolve, 50)
-  })
-  await Promise.resolve()
 }
 
 async function drainMicrotasks(): Promise<void> {
