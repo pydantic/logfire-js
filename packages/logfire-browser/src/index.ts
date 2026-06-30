@@ -59,7 +59,7 @@ import {
 
 import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
 import { clearConfiguredBrowserSession, configureBrowserSession, getBrowserSessionId } from './browserSession'
-import type { BrowserSessionManager, RUMOptions } from './browserSession'
+import type { RUMOptions } from './browserSession'
 import type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
 import { BrowserSessionReplayState, startBrowserSessionReplay } from './sessionReplay'
 import type { BrowserSessionReplayOptions } from './sessionReplay'
@@ -153,7 +153,11 @@ export interface LogfireConfigOptions {
    */
   rum?: RUMOptions
   /**
-   * Browser session replay options. Replay is disabled unless this is configured.
+   * Experimental browser session replay options. Replay is disabled unless this
+   * is configured.
+   *
+   * Logfire Platform replay ingest and playback are still feature-flagged, so
+   * keep browser replay rollout behind an application flag.
    */
   sessionReplay?: false | BrowserSessionReplayOptions
   /**
@@ -258,40 +262,6 @@ function resolveBrowserSessionOptions(
   }
 
   return rum?.session ?? true
-}
-
-function getCurrentBrowserUrl(): URL | undefined {
-  const location = (globalThis as { location?: Location }).location
-  if (location === undefined) {
-    return undefined
-  }
-
-  try {
-    return new URL(location.href)
-  } catch {
-    return undefined
-  }
-}
-
-function createWebVitalsMetricDefaultAttributes(browserSessionManager: BrowserSessionManager | undefined) {
-  return () => {
-    const attributes: Attributes = {}
-    if (browserSessionManager === undefined) {
-      return attributes
-    }
-
-    const url = getCurrentBrowserUrl()
-    if (url === undefined) {
-      return attributes
-    }
-
-    const urlAttributes = browserSessionManager.getUrlAttributes(url)
-    if (typeof urlAttributes?.path === 'string' && urlAttributes.path !== '') {
-      attributes['url.path'] = urlAttributes.path
-    }
-
-    return attributes
-  }
 }
 
 async function resolveTraceExporterHeaders(configHeaders: TraceExporterConfig['headers'], dynamicHeaders: () => Record<string, string>) {
@@ -443,10 +413,7 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
 
             return startBrowserWebVitals({
               ...webVitalsOptions,
-              metricRecorder: browserMetrics.createWebVitalsMetricRecorder({
-                ...webVitalsMetricOptions,
-                defaultAttributes: createWebVitalsMetricDefaultAttributes(browserSessionManager),
-              }),
+              metricRecorder: browserMetrics.createWebVitalsMetricRecorder(webVitalsMetricOptions),
             })
           })().catch((error: unknown) => {
             diag.error('logfire-browser: failed to start Web Vitals reporting', error)

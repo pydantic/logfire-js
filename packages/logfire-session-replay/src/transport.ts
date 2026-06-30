@@ -9,6 +9,8 @@ export const SEQ_STORAGE_KEY = 'lf_session_replay_seq'
 
 const MAX_SEND_ATTEMPTS = 3
 const SEND_BACKOFF_MS = 500
+const MAX_KEEPALIVE_BODY_BYTES = 60_000
+const MAX_KEEPALIVE_CHUNK_BYTES = 48_000
 
 export class ReplayTransport {
   private buffer: RrwebEvent[] = []
@@ -73,13 +75,23 @@ export class ReplayTransport {
     const events = this.buffer
     this.buffer = []
     this.pendingBytes = 0
+    const eventChunks = options.keepalive === true ? splitKeepaliveEventChunks(events) : [events]
     const seq = this.seq
-    this.seq += 1
+    this.seq += eventChunks.length
     const sessionId = this.sessionId
     this.saveSeq(sessionId, this.seq)
 
     const prior = this.flushing ?? Promise.resolve()
-    const run = prior.then(async () => this.deliver(events, seq, sessionId, options.keepalive ?? false))
+    const run = prior.then(async () => {
+      for (let index = 0; index < eventChunks.length; index++) {
+        const eventChunk = eventChunks[index]
+        if (eventChunk === undefined) {
+          continue
+        }
+        // eslint-disable-next-line no-await-in-loop -- chunks must preserve replay sequence order.
+        await this.deliver(eventChunk, seq + index, sessionId, options.keepalive ?? false)
+      }
+    })
     this.flushing = run.catch(() => undefined)
     await run
   }
@@ -131,7 +143,8 @@ export class ReplayTransport {
     try {
       const json = JSON.stringify(envelope)
       const body = keepalive ? gzipSync(strToU8(json)) : await gzipAsync(json)
-      await this.sendWithRetry(sessionId, seq, body, keepalive)
+      const useKeepalive = keepalive && body.byteLength <= MAX_KEEPALIVE_BODY_BYTES
+      await this.sendWithRetry(sessionId, seq, body, useKeepalive)
     } catch (error) {
       this.config.onError?.(error)
     }
@@ -242,6 +255,29 @@ function estimateBytes(event: RrwebEvent): number {
   } catch {
     return 0
   }
+}
+
+function splitKeepaliveEventChunks(events: RrwebEvent[]): RrwebEvent[][] {
+  const chunks: RrwebEvent[][] = []
+  let chunk: RrwebEvent[] = []
+  let chunkBytes = 0
+
+  for (const event of events) {
+    const eventBytes = estimateBytes(event)
+    if (chunk.length > 0 && chunkBytes + eventBytes > MAX_KEEPALIVE_CHUNK_BYTES) {
+      chunks.push(chunk)
+      chunk = []
+      chunkBytes = 0
+    }
+    chunk.push(event)
+    chunkBytes += eventBytes
+  }
+
+  if (chunk.length > 0) {
+    chunks.push(chunk)
+  }
+
+  return chunks
 }
 
 async function gzipAsync(json: string): Promise<Uint8Array> {

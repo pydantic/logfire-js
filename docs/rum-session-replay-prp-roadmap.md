@@ -163,11 +163,17 @@ Key decisions:
 - Public config is top-level `sessionReplay`.
 - Replay users provide `sessionReplay.load` so no-replay applications do not
   need bundlers to resolve the optional replay peer.
+- Session replay remains experimental while Platform replay ingest/playback are
+  behind a feature flag. SDK docs and examples should keep marking it as such
+  until the Platform migration removes that gate.
 - Missing optional replay package is a best-effort startup failure: tracing
   continues, replay is disabled, and errors are reported through diagnostics and
   `sessionReplay.onError`.
 - Authoritative replay correlation is shared session id plus timestamps; replay
   `traceIds` from polling are not the browser SDK integration model.
+- Local Vite examples may need a neutral replay module id and rrweb browser ESM
+  alias. Privacy extensions can block dev URLs containing `session-replay`, and
+  importing unpublished workspace output can otherwise resolve rrweb to CJS.
 
 ### Platform Migration PRP
 

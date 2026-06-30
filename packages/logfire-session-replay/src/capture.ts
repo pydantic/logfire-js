@@ -2,8 +2,14 @@ import { CustomTag } from './types'
 import type { ConsoleLevel, ConsolePayload, NavigationPayload, NetworkPayload } from './types'
 
 type Emit = (tag: string, payload: unknown) => void
+type OnError = (error: unknown) => void
 type Stop = () => void
-interface NetworkCaptureOptions {
+
+interface CaptureOptions {
+  onError?: OnError | undefined
+}
+
+interface NetworkCaptureOptions extends CaptureOptions {
   ignoreUrlPatterns: RegExp[]
   now: () => number
   redactUrlPatterns: RegExp[]
@@ -14,7 +20,7 @@ const MAX_ARG_LENGTH = 1024
 const MAX_ARGS = 10
 const noop: Stop = () => undefined
 
-export function captureConsole(emit: Emit): Stop {
+export function captureConsole(emit: Emit, options: CaptureOptions = {}): Stop {
   const originals = new Map<ConsoleLevel, (...args: unknown[]) => void>()
   let stopped = false
 
@@ -26,14 +32,15 @@ export function captureConsole(emit: Emit): Stop {
     const originalConsoleMethod = original as (...args: unknown[]) => void
     originals.set(level, originalConsoleMethod)
     ;(console as Record<ConsoleLevel, (...args: unknown[]) => void>)[level] = (...args: unknown[]) => {
-      try {
-        emit(CustomTag.Console, {
+      safeEmit(
+        emit,
+        CustomTag.Console,
+        {
           level,
           args: args.slice(0, MAX_ARGS).map(stringifyArg),
-        } satisfies ConsolePayload)
-      } catch {
-        // Never let capture break host logging.
-      }
+        } satisfies ConsolePayload,
+        options.onError
+      )
       originalConsoleMethod.apply(console, args)
     }
   }
@@ -50,8 +57,9 @@ export function captureConsole(emit: Emit): Stop {
 }
 
 export function captureNetwork(emit: Emit, options: NetworkCaptureOptions): Stop {
-  const stopFetch = captureFetch(emit, options)
-  const stopXhr = captureXhr(emit, options)
+  const normalizedOptions = normalizeNetworkCaptureOptions(options)
+  const stopFetch = captureFetch(emit, normalizedOptions)
+  const stopXhr = captureXhr(emit, normalizedOptions)
   let stopped = false
   return () => {
     if (stopped) {
@@ -63,14 +71,14 @@ export function captureNetwork(emit: Emit, options: NetworkCaptureOptions): Stop
   }
 }
 
-export function captureNavigation(emit: Emit): Stop {
+export function captureNavigation(emit: Emit, options: CaptureOptions = {}): Stop {
   // eslint-disable-next-line @typescript-eslint/unbound-method -- keep exact original so stop() restores identity.
   const originalPush = history.pushState
   // eslint-disable-next-line @typescript-eslint/unbound-method -- keep exact original so stop() restores identity.
   const originalReplace = history.replaceState
   let stopped = false
   const emitNavigation = (kind: NavigationPayload['kind']) => {
-    emit(CustomTag.Navigation, { url: window.location.href, kind } satisfies NavigationPayload)
+    safeEmit(emit, CustomTag.Navigation, { url: window.location.href, kind } satisfies NavigationPayload, options.onError)
   }
 
   history.pushState = function (...args) {
@@ -116,7 +124,8 @@ function captureFetch(emit: Emit, options: NetworkCaptureOptions): Stop {
 
     try {
       const response = await original(input, init)
-      emit(
+      safeEmit(
+        emit,
         CustomTag.Network,
         createNetworkPayload({
           method,
@@ -125,11 +134,13 @@ function captureFetch(emit: Emit, options: NetworkCaptureOptions): Stop {
           durationMs: Math.max(0, options.now() - startedAt),
           reqBytes,
           resBytes: contentLength(response.headers),
-        })
+        }),
+        options.onError
       )
       return response
     } catch (error) {
-      emit(
+      safeEmit(
+        emit,
         CustomTag.Network,
         createNetworkPayload({
           method,
@@ -138,7 +149,8 @@ function captureFetch(emit: Emit, options: NetworkCaptureOptions): Stop {
           durationMs: Math.max(0, options.now() - startedAt),
           failed: true,
           reqBytes,
-        })
+        }),
+        options.onError
       )
       throw error
     }
@@ -203,7 +215,8 @@ function captureXhr(emit: Emit, options: NetworkCaptureOptions): Stop {
       this.removeEventListener('error', markFailed)
       this.removeEventListener('abort', markFailed)
       this.removeEventListener('timeout', markFailed)
-      emit(
+      safeEmit(
+        emit,
         CustomTag.Network,
         createNetworkPayload({
           method: state.method,
@@ -213,7 +226,8 @@ function captureXhr(emit: Emit, options: NetworkCaptureOptions): Stop {
           failed: state.failed || this.status === 0,
           reqBytes: state.reqBytes,
           resBytes: xhrContentLength(this),
-        })
+        }),
+        options.onError
       )
     }
 
@@ -229,7 +243,8 @@ function captureXhr(emit: Emit, options: NetworkCaptureOptions): Stop {
       this.removeEventListener('abort', markFailed)
       this.removeEventListener('timeout', markFailed)
       this.removeEventListener('loadend', finalize)
-      emit(
+      safeEmit(
+        emit,
         CustomTag.Network,
         createNetworkPayload({
           method: state.method,
@@ -238,7 +253,8 @@ function captureXhr(emit: Emit, options: NetworkCaptureOptions): Stop {
           durationMs: Math.max(0, options.now() - state.startedAt),
           failed: true,
           reqBytes: state.reqBytes,
-        })
+        }),
+        options.onError
       )
       throw error
     }
@@ -261,6 +277,33 @@ interface XhrState {
   reqBytes: number | undefined
   failed: boolean
   emitted: boolean
+}
+
+function normalizeNetworkCaptureOptions(options: NetworkCaptureOptions): NetworkCaptureOptions {
+  return {
+    ...options,
+    ignoreUrlPatterns: normalizeUrlPatterns(options.ignoreUrlPatterns),
+    redactUrlPatterns: normalizeUrlPatterns(options.redactUrlPatterns),
+  }
+}
+
+function normalizeUrlPatterns(patterns: RegExp[]): RegExp[] {
+  return patterns.map((pattern) => {
+    const flags = pattern.flags.replace(/[gy]/gu, '')
+    return flags === pattern.flags ? pattern : new RegExp(pattern.source, flags)
+  })
+}
+
+function safeEmit(emit: Emit, tag: string, payload: unknown, onError: OnError | undefined): void {
+  try {
+    emit(tag, payload)
+  } catch (error) {
+    try {
+      onError?.(error)
+    } catch {
+      // Never let capture break host application behavior.
+    }
+  }
 }
 
 function stringifyArg(value: unknown): string {

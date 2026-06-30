@@ -2,10 +2,10 @@ import { captureConsole, captureNavigation, captureNetwork } from './capture'
 import { startRecording } from './recorder'
 import type { RecorderHandle } from './recorder'
 import { decideSamplingMode } from './sampling'
-import { SessionManager } from './session'
+import { safeSessionStorage, SessionManager } from './session'
 import { ReplayTransport } from './transport'
 import { CustomTag, DEFAULTS } from './types'
-import type { ResolvedSessionReplayConfig, SessionReplayConfig } from './types'
+import type { ResolvedSessionReplayConfig, SamplingMode, SessionReplayConfig } from './types'
 
 export type {
   ChunkEnvelope,
@@ -35,22 +35,14 @@ const NOOP: SessionReplay = {
   stop: async () => Promise.resolve(),
 }
 
+const SAMPLING_MODE_STORAGE_KEY = 'lf_session_replay_mode'
+
 export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     return NOOP
   }
 
   const resolvedConfig = resolveConfig(config)
-  const mode = decideSamplingMode({
-    sessionSampleRate: resolvedConfig.sessionSampleRate,
-    onErrorSampleRate: resolvedConfig.onErrorSampleRate,
-    random: resolvedConfig.random,
-  })
-
-  if (mode === 'off') {
-    return NOOP
-  }
-
   const internalSessions = new SessionManager({
     idleTimeoutMs: resolvedConfig.sessionIdleTimeoutMs,
     maxDurationMs: resolvedConfig.maxSessionDurationMs,
@@ -63,8 +55,15 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
     }
     return touch ? internalSessions.touch().id : internalSessions.getSession().id
   }
+  const initialSessionId = getSessionId(false)
+  const samplingModeStorage = safeSessionStorage()
+  const mode = resolveSamplingMode(resolvedConfig, initialSessionId, samplingModeStorage)
 
-  const transport = new ReplayTransport(resolvedConfig, getSessionId(false), mode)
+  if (mode === 'off') {
+    return NOOP
+  }
+
+  const transport = new ReplayTransport(resolvedConfig, initialSessionId, mode)
   const recorderRef: { current?: RecorderHandle } = {}
   const recorder = startRecording({
     emit: (event) => {
@@ -97,6 +96,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
   const handleError = (payload: { message: string; source?: string; stack?: string }) => {
     recorder.addCustomEvent(CustomTag.Error, payload)
     if (transport.getMode() === 'buffer') {
+      saveSamplingMode(samplingModeStorage, getSessionId(false), 'full')
       ignorePromise(transport.triggerFlush(), resolvedConfig.onError)
     }
   }
@@ -121,15 +121,16 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
   const addCustomEvent = (tag: string, payload: unknown) => {
     recorder.addCustomEvent(tag, payload)
   }
-  const stopConsole = resolvedConfig.captureConsole ? captureConsole(addCustomEvent) : noop
+  const stopConsole = resolvedConfig.captureConsole ? captureConsole(addCustomEvent, { onError: resolvedConfig.onError }) : noop
   const stopNetwork = resolvedConfig.captureNetwork
     ? captureNetwork(addCustomEvent, {
         ignoreUrlPatterns: resolvedConfig.ignoreUrlPatterns,
         now: resolvedConfig.now,
+        onError: resolvedConfig.onError,
         redactUrlPatterns: resolvedConfig.redactUrlPatterns,
       })
     : noop
-  const stopNavigation = resolvedConfig.captureNavigation ? captureNavigation(addCustomEvent) : noop
+  const stopNavigation = resolvedConfig.captureNavigation ? captureNavigation(addCustomEvent, { onError: resolvedConfig.onError }) : noop
 
   transport.start()
 
@@ -154,7 +155,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
         stopNetwork()
         stopNavigation()
         recorder.stop()
-        await transport.shutdown({ keepalive: true })
+        await transport.shutdown({ keepalive: false })
       })()
       return stopPromise
     },
@@ -197,6 +198,61 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     now: config.now ?? Date.now,
     random: config.random ?? Math.random,
   }
+}
+
+function resolveSamplingMode(config: ResolvedSessionReplayConfig, sessionId: string, storage: Storage | null): SamplingMode {
+  const persistedMode = loadSamplingMode(storage, sessionId)
+  if (persistedMode !== undefined) {
+    return persistedMode
+  }
+
+  const mode = decideSamplingMode({
+    sessionSampleRate: config.sessionSampleRate,
+    onErrorSampleRate: config.onErrorSampleRate,
+    random: config.random,
+  })
+  saveSamplingMode(storage, sessionId, mode)
+  return mode
+}
+
+function loadSamplingMode(storage: Storage | null, sessionId: string): SamplingMode | undefined {
+  if (storage === null) {
+    return undefined
+  }
+
+  try {
+    const raw = storage.getItem(SAMPLING_MODE_STORAGE_KEY)
+    if (raw === null) {
+      return undefined
+    }
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null) {
+      return undefined
+    }
+    const state = parsed as { id?: unknown; mode?: unknown }
+    if (state.id !== sessionId || !isSamplingMode(state.mode)) {
+      return undefined
+    }
+    return state.mode
+  } catch {
+    return undefined
+  }
+}
+
+function saveSamplingMode(storage: Storage | null, sessionId: string, mode: SamplingMode): void {
+  if (storage === null) {
+    return
+  }
+
+  try {
+    storage.setItem(SAMPLING_MODE_STORAGE_KEY, JSON.stringify({ id: sessionId, mode }))
+  } catch {
+    // Cross-page sampling consistency is best-effort.
+  }
+}
+
+function isSamplingMode(value: unknown): value is SamplingMode {
+  return value === 'full' || value === 'buffer' || value === 'off'
 }
 
 function errorStack(error: unknown): string | undefined {

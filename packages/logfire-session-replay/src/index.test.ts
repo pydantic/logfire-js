@@ -73,6 +73,60 @@ describe('startSessionReplay environment and sampling gates', () => {
     expect(replay.mode).toBe('off')
     expect(start).not.toHaveBeenCalled()
   })
+
+  it('keeps sampling mode stable across page loads for the same session id', async () => {
+    const { fetchImpl } = recordingFetch()
+    const firstReplay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        getSessionId: () => 'external-session',
+        onErrorSampleRate: 0,
+        random: () => 0.1,
+        sessionSampleRate: 0.5,
+      })
+    )
+    expect(firstReplay.mode).toBe('full')
+    await firstReplay.stop()
+
+    const random = vi.fn(() => 0.99)
+    const secondReplay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        getSessionId: () => 'external-session',
+        onErrorSampleRate: 0,
+        random,
+        sessionSampleRate: 0.5,
+      })
+    )
+
+    expect(secondReplay.mode).toBe('full')
+    expect(random).not.toHaveBeenCalled()
+    await secondReplay.stop()
+  })
+
+  it('persists off sampling decisions for the same session id', () => {
+    const { fetchImpl } = recordingFetch()
+    const firstReplay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        getSessionId: () => 'sampled-out-session',
+        onErrorSampleRate: 0,
+        random: () => 0.99,
+        sessionSampleRate: 0.5,
+      })
+    )
+    expect(firstReplay.mode).toBe('off')
+
+    const random = vi.fn(() => 0)
+    const secondReplay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        getSessionId: () => 'sampled-out-session',
+        onErrorSampleRate: 0,
+        random,
+        sessionSampleRate: 0.5,
+      })
+    )
+
+    expect(secondReplay.mode).toBe('off')
+    expect(random).not.toHaveBeenCalled()
+  })
 })
 
 describe('startSessionReplay full mode', () => {
@@ -194,6 +248,39 @@ describe('startSessionReplay buffer mode', () => {
     expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${replay.getSessionId()}?seq=0`])
     await replay.stop()
   })
+
+  it('persists full mode after an error promotes a buffered replay', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        getSessionId: () => 'buffered-session',
+        onErrorSampleRate: 1,
+        random: rng([0.9, 0.1]),
+        sessionSampleRate: 0,
+      })
+    )
+    expect(replay.mode).toBe('buffer')
+    emit(fullSnapshot)
+
+    window.dispatchEvent(new ErrorEvent('error', { message: 'boom' }))
+    await settle()
+    expect(replay.mode).toBe('full')
+    expect(calls).toHaveLength(1)
+    await replay.stop()
+
+    const random = vi.fn(() => 0.99)
+    const nextReplay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        getSessionId: () => 'buffered-session',
+        onErrorSampleRate: 1,
+        random,
+        sessionSampleRate: 0,
+      })
+    )
+    expect(nextReplay.mode).toBe('full')
+    expect(random).not.toHaveBeenCalled()
+    await nextReplay.stop()
+  })
 })
 
 describe('startSessionReplay lifecycle', () => {
@@ -219,7 +306,7 @@ describe('startSessionReplay lifecycle', () => {
 
     expect(handle.stop).toHaveBeenCalledTimes(1)
     expect(calls).toHaveLength(1)
-    expect(calls[0]!.init.keepalive).toBe(true)
+    expect(calls[0]!.init.keepalive).toBe(false)
 
     const callsAfterStop = calls.length
     window.dispatchEvent(new ErrorEvent('error', { message: 'late' }))

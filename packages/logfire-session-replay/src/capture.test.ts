@@ -19,20 +19,21 @@ describe('captureConsole', () => {
     console.warn = originalSpy
     const emit = vi.fn()
     const stop = captureConsole(emit)
+    try {
+      console.warn('something happened', 42, { nested: 'value' })
 
-    console.warn('something happened', 42, { nested: 'value' })
-
-    expect(originalSpy).toHaveBeenCalledWith('something happened', 42, { nested: 'value' })
-    expect(emit).toHaveBeenCalledTimes(1)
-    const [tag, payload] = emit.mock.calls[0]!
-    expect(tag).toBe(CustomTag.Console)
-    expect(payload).toMatchObject({
-      level: 'warn',
-      args: ['something happened', '42', '{"nested":"value"}'],
-    } satisfies ConsolePayload)
-
-    stop()
-    console.warn = originalWarn
+      expect(originalSpy).toHaveBeenCalledWith('something happened', 42, { nested: 'value' })
+      expect(emit).toHaveBeenCalledTimes(1)
+      const [tag, payload] = emit.mock.calls[0]!
+      expect(tag).toBe(CustomTag.Console)
+      expect(payload).toMatchObject({
+        level: 'warn',
+        args: ['something happened', '42', '{"nested":"value"}'],
+      } satisfies ConsolePayload)
+    } finally {
+      stop()
+      console.warn = originalWarn
+    }
   })
 
   it('truncates long strings and caps argument count', () => {
@@ -119,6 +120,45 @@ describe('captureNetwork', () => {
     stop()
   })
 
+  it('does not reject successful fetches when emit throws', async () => {
+    Object.defineProperty(window, 'fetch', {
+      value: async () => new Response('ok', { status: 200 }),
+      writable: true,
+      configurable: true,
+    })
+    const emitError = new Error('emit failed')
+    const emit = vi.fn(() => {
+      throw emitError
+    })
+    const onError = vi.fn()
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0, onError })
+
+    await expect(window.fetch('/api/ok')).resolves.toBeInstanceOf(Response)
+    expect(onError).toHaveBeenCalledWith(emitError)
+    stop()
+  })
+
+  it('preserves the original fetch failure when failure emit throws', async () => {
+    const hostError = new TypeError('network down')
+    Object.defineProperty(window, 'fetch', {
+      value: async () => {
+        throw hostError
+      },
+      writable: true,
+      configurable: true,
+    })
+    const emitError = new Error('emit failed')
+    const emit = vi.fn(() => {
+      throw emitError
+    })
+    const onError = vi.fn()
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0, onError })
+
+    await expect(window.fetch('/api/fail')).rejects.toBe(hostError)
+    expect(onError).toHaveBeenCalledWith(emitError)
+    stop()
+  })
+
   it('redacts matching fetch URLs without recording bodies', async () => {
     Object.defineProperty(window, 'fetch', {
       value: async () => new Response('', { status: 200 }),
@@ -131,6 +171,25 @@ describe('captureNetwork', () => {
     const payload = emit.mock.calls[0]![1] as NetworkPayload
     expect(payload.url).toBe('https://api.example.com/secrets/abc')
     expect(payload).not.toHaveProperty('body')
+    stop()
+  })
+
+  it('normalizes stateful redact URL patterns for repeated fetch decisions', async () => {
+    Object.defineProperty(window, 'fetch', {
+      value: async () => new Response('', { status: 200 }),
+      writable: true,
+      configurable: true,
+    })
+    const emit = vi.fn()
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [/token=/gu], now: () => 0 })
+
+    await window.fetch('https://api.example.com/items?token=one')
+    await window.fetch('https://api.example.com/items?token=two')
+
+    expect(emit.mock.calls.map((call) => (call[1] as NetworkPayload).url)).toEqual([
+      'https://api.example.com/items',
+      'https://api.example.com/items',
+    ])
     stop()
   })
 
@@ -185,6 +244,27 @@ describe('captureNetwork', () => {
     Object.defineProperty(window, 'XMLHttpRequest', { value: OriginalXhr, writable: true, configurable: true })
   })
 
+  it('does not throw from XHR completion when emit throws', () => {
+    const OriginalXhr = window.XMLHttpRequest
+    installFakeXhr()
+    const emitError = new Error('emit failed')
+    const emit = vi.fn(() => {
+      throw emitError
+    })
+    const onError = vi.fn()
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0, onError })
+    const xhr = new window.XMLHttpRequest() as unknown as FakeXhr
+
+    xhr.open('GET', '/api/ok')
+    xhr.send()
+    expect(() => {
+      xhr.complete(200)
+    }).not.toThrow()
+    expect(onError).toHaveBeenCalledWith(emitError)
+    stop()
+    Object.defineProperty(window, 'XMLHttpRequest', { value: OriginalXhr, writable: true, configurable: true })
+  })
+
   it('suppresses ignored fetch URLs entirely', async () => {
     const originalFetch = vi.fn(async () => new Response(null, { status: 204 }))
     Object.defineProperty(window, 'fetch', { value: originalFetch, writable: true, configurable: true })
@@ -194,6 +274,20 @@ describe('captureNetwork', () => {
     await window.fetch('https://api.example.com/client-traces?token=secret')
 
     expect(originalFetch).toHaveBeenCalledTimes(1)
+    expect(emit).not.toHaveBeenCalled()
+    stop()
+  })
+
+  it('normalizes stateful ignore URL patterns for repeated fetch decisions', async () => {
+    const originalFetch = vi.fn(async () => new Response(null, { status: 204 }))
+    Object.defineProperty(window, 'fetch', { value: originalFetch, writable: true, configurable: true })
+    const emit = vi.fn()
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [/\/client-traces/gu], redactUrlPatterns: [], now: () => 0 })
+
+    await window.fetch('https://api.example.com/client-traces?token=one')
+    await window.fetch('https://api.example.com/client-traces?token=two')
+
+    expect(originalFetch).toHaveBeenCalledTimes(2)
     expect(emit).not.toHaveBeenCalled()
     stop()
   })
@@ -228,6 +322,23 @@ describe('captureNavigation', () => {
 
     expect(emit.mock.calls.map(([_tag, payload]) => (payload as NavigationPayload).kind)).toEqual(['push', 'replace', 'pop'])
     expect(history.pushState).toBe(originalPush)
+  })
+
+  it('does not throw from navigation capture when emit throws', () => {
+    const emitError = new Error('emit failed')
+    const onError = vi.fn()
+    const stop = captureNavigation(
+      () => {
+        throw emitError
+      },
+      { onError }
+    )
+
+    expect(() => {
+      history.pushState({}, '', '/safe-navigation')
+    }).not.toThrow()
+    expect(onError).toHaveBeenCalledWith(emitError)
+    stop()
   })
 })
 

@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Logfire Browser RUM + Replay</title>
+    <style>
+      :root {
+        background: #f4f6f8;
+        color: #17202a;
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      main {
+        display: grid;
+        gap: 20px;
+        margin: 0 auto;
+        max-width: 1120px;
+        padding: 28px 20px 40px;
+      }
+
+      header {
+        align-items: end;
+        border-bottom: 1px solid #d5dde7;
+        display: grid;
+        gap: 16px;
+        grid-template-columns: minmax(0, 1fr) auto;
+        padding-bottom: 20px;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 30px;
+        line-height: 1.1;
+      }
+
+      h2 {
+        font-size: 16px;
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      button {
+        align-items: center;
+        background: #1f6feb;
+        border: 0;
+        border-radius: 6px;
+        color: #ffffff;
+        cursor: pointer;
+        display: inline-flex;
+        font-weight: 650;
+        justify-content: center;
+        min-height: 38px;
+        padding: 8px 12px;
+      }
+
+      button.secondary {
+        background: #526579;
+      }
+
+      button.danger {
+        background: #b42318;
+      }
+
+      input,
+      select {
+        background: #ffffff;
+        border: 1px solid #c7d0dc;
+        border-radius: 6px;
+        min-height: 38px;
+        padding: 8px 10px;
+        width: 100%;
+      }
+
+      label {
+        color: #465466;
+        display: grid;
+        font-size: 13px;
+        font-weight: 650;
+        gap: 6px;
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.7fr);
+      }
+
+      .panel {
+        background: #ffffff;
+        border: 1px solid #d5dde7;
+        border-radius: 8px;
+        display: grid;
+        gap: 16px;
+        padding: 18px;
+      }
+
+      .actions {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .form-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .status-grid {
+        display: grid;
+        gap: 10px 16px;
+        grid-template-columns: max-content minmax(0, 1fr);
+      }
+
+      .status-grid dt {
+        color: #526579;
+        font-weight: 700;
+      }
+
+      .status-grid dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .results {
+        display: grid;
+        gap: 10px;
+        min-height: 150px;
+      }
+
+      .result-row {
+        align-items: center;
+        border: 1px solid #d5dde7;
+        border-radius: 6px;
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 64px minmax(0, 1fr) auto;
+        padding: 10px;
+      }
+
+      .sku {
+        color: #526579;
+        font-size: 12px;
+        font-weight: 750;
+      }
+
+      .pill {
+        background: #edf2f7;
+        border-radius: 999px;
+        color: #36485c;
+        font-size: 12px;
+        font-weight: 750;
+        padding: 4px 8px;
+      }
+
+      .log {
+        background: #111827;
+        border-radius: 8px;
+        color: #dbeafe;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        max-height: 260px;
+        min-height: 180px;
+        overflow: auto;
+        padding: 12px;
+        white-space: pre-wrap;
+      }
+
+      .shift-banner {
+        background: #fff4cc;
+        border: 1px solid #d8a800;
+        border-radius: 8px;
+        color: #493900;
+        font-weight: 700;
+        padding: 18px;
+      }
+
+      .private-box {
+        background: #f9fafb;
+        border: 1px dashed #aab6c4;
+        border-radius: 8px;
+        color: #526579;
+        padding: 12px;
+      }
+
+      @media (max-width: 860px) {
+        header,
+        .grid,
+        .actions,
+        .form-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="app">
+      <header>
+        <div>
+          <h1>Browser RUM + replay workbench</h1>
+          <p>Service: <strong>browser-rum-replay-example</strong></p>
+        </div>
+        <button type="button" class="secondary" data-action="route">Change route</button>
+      </header>
+
+      <section class="grid">
+        <div class="panel">
+          <h2>Workflow</h2>
+          <div class="form-grid">
+            <label>
+              User
+              <input id="user-id" value="demo-user-42" autocomplete="off" />
+            </label>
+            <label>
+              Region
+              <select id="region">
+                <option value="us">United States</option>
+                <option value="eu">Europe</option>
+                <option value="apac">Asia Pacific</option>
+              </select>
+            </label>
+            <label>
+              Private note
+              <input data-logfire-mask id="private-note" value="masked replay text" autocomplete="off" />
+            </label>
+          </div>
+
+          <div class="actions">
+            <button type="button" data-action="catalog">Load catalog</button>
+            <button type="button" data-action="xhr">XHR inventory</button>
+            <button type="button" data-action="checkout">Checkout span</button>
+            <button type="button" class="secondary" data-action="shift">Layout shift</button>
+            <button type="button" class="secondary" data-action="console">Console event</button>
+            <button type="button" class="danger" data-action="error">Report error</button>
+          </div>
+
+          <div id="dynamic-region"></div>
+          <div class="results" id="results"></div>
+        </div>
+
+        <aside class="panel">
+          <h2>Runtime state</h2>
+          <dl class="status-grid">
+            <dt>Session</dt>
+            <dd id="session-id">pending</dd>
+            <dt>Replay</dt>
+            <dd id="replay-state">enabled</dd>
+            <dt>Route</dt>
+            <dd id="route-state">/</dd>
+            <dt>Status</dt>
+            <dd id="status">ready</dd>
+          </dl>
+
+          <div class="private-box" data-logfire-block>Blocked replay region: api-key-1234567890 and session-cookie-value</div>
+
+          <pre class="log" id="event-log"></pre>
+        </aside>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

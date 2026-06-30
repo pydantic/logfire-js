@@ -950,24 +950,12 @@ describe('browser metrics config', () => {
     expect(mocks.webVitalsStartCalls).toEqual([])
   })
 
-  it('passes a metric recorder to Web Vitals startup and preserves session URL sanitization', async () => {
+  it('passes a metric recorder to Web Vitals startup without adding a default URL path dimension', async () => {
     const webVitalAttributes = () => ({ 'app.route': '/products/:id' })
-    Object.defineProperty(globalThis, 'location', {
-      configurable: true,
-      value: {
-        href: 'https://example.com/products/123?token=secret',
-      },
-    })
 
     cleanup = configure({
       metrics: { metricUrl: 'http://localhost:8989/client-metrics' },
       rum: {
-        session: {
-          urlAttributes: () => ({
-            full: 'https://example.com/redacted',
-            path: '/products/:id',
-          }),
-        },
         webVitals: {
           metrics: {
             attributes: webVitalAttributes,
@@ -980,9 +968,7 @@ describe('browser metrics config', () => {
 
     expect(mocks.browserMetricsRecorderCreateCalls).toHaveLength(1)
     expect((mocks.browserMetricsRecorderCreateCalls[0] as { attributes?: unknown }).attributes).toBe(webVitalAttributes)
-    expect((mocks.browserMetricsRecorderCreateCalls[0] as { defaultAttributes?: () => unknown }).defaultAttributes?.()).toEqual({
-      'url.path': '/products/:id',
-    })
+    expect((mocks.browserMetricsRecorderCreateCalls[0] as { defaultAttributes?: unknown }).defaultAttributes).toBeUndefined()
     expect(mocks.webVitalsStartCalls).toHaveLength(1)
     expect((mocks.webVitalsStartCalls[0] as { metricRecorder?: unknown }).metricRecorder).toBe(mocks.browserMetricsRecorders[0])
     const spanProcessors = getLatestSpanProcessors()
