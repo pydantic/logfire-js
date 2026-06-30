@@ -28,6 +28,7 @@ describe('variable runtime composition parity', () => {
   })
 
   it('falls back to the variable code default when a provider value has a missing reference', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     configureVariables({
       config: config({
         main: {
@@ -45,6 +46,7 @@ describe('variable runtime composition parity', () => {
 
     expect(resolved).toMatchObject({ label: 'prod', reason: 'other_error', value: 'fallback', version: 1 })
     expect(resolved.exception).toBeInstanceOf(Error)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Variable 'main' composition failed; falling back to code default"))
   })
 
   it('composes a serializable code default when the provider has no selected value', async () => {

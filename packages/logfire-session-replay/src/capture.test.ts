@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 /* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/require-await, @typescript-eslint/strict-void-return, @typescript-eslint/unbound-method, no-empty-function, vitest/require-mock-type-parameters */
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
 
 import { captureConsole, captureNavigation, captureNetwork } from './capture'
 import { CustomTag } from './types'
@@ -36,25 +36,40 @@ describe('captureConsole', () => {
   })
 
   it('truncates long strings and caps argument count', () => {
+    const originalLog = console.log
+    const passthroughLog = vi.fn()
+    console.log = passthroughLog
     const emit = vi.fn()
     const stop = captureConsole(emit)
-    console.log(...Array.from({ length: 15 }, (_value, index) => (index === 0 ? 'x'.repeat(5_000) : index)))
-    const payload = emit.mock.calls[0]![1] as ConsolePayload
-    expect(payload.args).toHaveLength(10)
-    expect(payload.args[0]!.length).toBeLessThan(2_000)
-    expect(payload.args[0]).toMatch(/\(\+\d+ chars\)$/u)
-    stop()
+    try {
+      console.log(...Array.from({ length: 15 }, (_value, index) => (index === 0 ? 'x'.repeat(5_000) : index)))
+      const payload = emit.mock.calls[0]![1] as ConsolePayload
+      expect(payload.args).toHaveLength(10)
+      expect(payload.args[0]!.length).toBeLessThan(2_000)
+      expect(payload.args[0]).toMatch(/\(\+\d+ chars\)$/u)
+      expect(passthroughLog).toHaveBeenCalledTimes(1)
+    } finally {
+      stop()
+      console.log = originalLog
+    }
   })
 
   it('restores console methods idempotently', () => {
-    const originalLog = console.log
+    const realLog = console.log
+    const originalLog = vi.fn()
+    console.log = originalLog
     const emit = vi.fn()
     const stop = captureConsole(emit)
-    stop()
-    stop()
-    expect(console.log).toBe(originalLog)
-    console.log('after stop')
-    expect(emit).not.toHaveBeenCalled()
+    try {
+      stop()
+      stop()
+      expect(console.log).toBe(originalLog)
+      console.log('after stop')
+      expect(originalLog).toHaveBeenCalledWith('after stop')
+      expect(emit).not.toHaveBeenCalled()
+    } finally {
+      console.log = realLog
+    }
   })
 })
 
