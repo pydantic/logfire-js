@@ -56,13 +56,6 @@ function decodeBody(body: BodyInit | null | undefined): ChunkEnvelope {
   return JSON.parse(strFromU8(gunzipSync(body as Uint8Array))) as ChunkEnvelope
 }
 
-async function settle(): Promise<void> {
-  await new Promise((resolve) => {
-    setTimeout(resolve, 50)
-  })
-  await Promise.resolve()
-}
-
 describe('ReplayTransport full mode', () => {
   it('uploads one gzipped envelope to the proxy URL with seq=0', async () => {
     const { calls, fetchImpl } = recordingFetch()
@@ -119,7 +112,7 @@ describe('ReplayTransport full mode', () => {
     transport.add(fullSnapshot)
     expect(calls).toHaveLength(0)
     transport.add(click)
-    await settle()
+    await transport.shutdown()
     expect(calls).toHaveLength(1)
     expect(decodeBody(calls[0]!.init.body).events.map((event) => event.timestamp)).toEqual([1, 2])
   })
@@ -238,7 +231,7 @@ describe('ReplayTransport session rotation and sequence persistence', () => {
     expect(transport.rotate('new')).toBe(true)
     transport.add({ ...fullSnapshot, timestamp: 20 })
     await transport.flush()
-    await settle()
+    await transport.shutdown()
 
     expect(calls.map((call) => call.url)).toEqual([
       'https://app.example.com/replay-proxy/old?seq=0',
