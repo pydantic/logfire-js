@@ -59,6 +59,7 @@ describe('managed variables', () => {
   })
 
   it('falls back to defaults for missing config and invalid values', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     configureVariables({
       config: config({
         count: {
@@ -76,6 +77,7 @@ describe('managed variables', () => {
 
     await expect(count.get()).resolves.toMatchObject({ label: 'bad', reason: 'validation_error', value: 3, version: 1 })
     await expect(missing.get()).resolves.toMatchObject({ reason: 'code_default', value: 'fallback' })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Variable 'count' value failed validation; falling back to code default"))
   })
 
   it('parses inferred object codecs', async () => {
