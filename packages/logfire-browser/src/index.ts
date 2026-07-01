@@ -63,7 +63,7 @@ import type { RUMOptions } from './browserSession'
 import type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
 import { BrowserSessionReplayState, startBrowserSessionReplay } from './sessionReplay'
 import type { BrowserSessionReplayOptions } from './sessionReplay'
-import { assertBrowserWebVitalsMetricsCanStart, startBrowserWebVitals } from './webVitals'
+import { startBrowserWebVitals } from './webVitals'
 import type { BrowserWebVitalsOptions } from './webVitals'
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
 export { DiagLogLevel } from '@opentelemetry/api'
@@ -284,9 +284,6 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   const webVitalsMetricOptions = resolveBrowserWebVitalsMetricOptions(webVitalsOptions)
   if (webVitalsMetricOptions !== undefined && browserMetricsOptions === undefined) {
     throw new Error('logfire-browser: rum.webVitals.metrics requires top-level metrics.metricUrl')
-  }
-  if (webVitalsMetricOptions !== undefined) {
-    assertBrowserWebVitalsMetricsCanStart()
   }
   const browserSessionOptions = resolveBrowserSessionOptions(options.rum, sessionReplayOptions)
 

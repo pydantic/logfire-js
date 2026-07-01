@@ -240,7 +240,6 @@ vi.mock('@opentelemetry/sdk-trace-web', () => ({
 }))
 
 vi.mock('./webVitals', () => ({
-  assertBrowserWebVitalsMetricsCanStart: () => undefined,
   startBrowserWebVitals: async (options: unknown) => mocks.startBrowserWebVitals(options),
 }))
 

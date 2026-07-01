@@ -50,12 +50,12 @@ page URLs, so custom-event redaction alone does not fully solve URL privacy.
 
 ## Web Vitals Reconfiguration Lifecycle
 
-`webVitals.ts` intentionally uses module-level startup state because the
-`web-vitals` library registers page-lifecycle observers without a public
-unregister API. After shutdown, a second `configure()` call in the same page can
-reuse the original startup promise and fail to attach a new metrics recorder.
-Decide whether to support HMR/reconfigure by introducing a mutable recorder
-reference, or document Web Vitals startup as one-shot per page lifecycle.
+Addressed in this branch: `webVitals.ts` still uses module-level startup state
+because the `web-vitals` library registers page-lifecycle observers without a
+public unregister API, but the callbacks now read a mutable metric recorder
+reference. A later `configure()` call can attach or replace the active recorder
+without duplicate observers. Metrics emitted before a recorder exists are not
+backfilled.
 
 ## Replay Session Expiry During Replay-only Activity
 

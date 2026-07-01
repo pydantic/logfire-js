@@ -52,19 +52,25 @@ interface BrowserWebVitalsStartOptions extends BrowserWebVitalsOptions {
   metricRecorder?: BrowserWebVitalsMetricRecorder
 }
 
+let startupPromise: Promise<void> | undefined
+let currentMetricRecorder: BrowserWebVitalsMetricRecorder | undefined
+
 function createHandle(metricRecorder: BrowserWebVitalsMetricRecorder | undefined): BrowserWebVitalsHandle {
+  let shutdownCalled = false
   return {
     async shutdown() {
+      if (shutdownCalled) {
+        return Promise.resolve()
+      }
+      shutdownCalled = true
       metricRecorder?.shutdown()
+      if (currentMetricRecorder === metricRecorder) {
+        currentMetricRecorder = undefined
+      }
       return Promise.resolve()
     },
   }
 }
-
-const noopHandle = createHandle(undefined)
-
-let startupPromise: Promise<BrowserWebVitalsHandle> | undefined
-let startupHasMetricRecorder = false
 
 function setPrimitiveAttribute(attributes: Attributes, key: string, value: unknown): void {
   if (typeof value === 'string' || typeof value === 'boolean') {
@@ -194,44 +200,36 @@ function reportWebVital(metric: MetricWithAttribution, metricRecorder: BrowserWe
   reportWebVitalMetric(metric, metricRecorder)
 }
 
-function registerWebVitals(webVitals: WebVitalsAttributionModule, options: BrowserWebVitalsStartOptions = {}): BrowserWebVitalsHandle {
+function registerWebVitals(webVitals: WebVitalsAttributionModule, options: BrowserWebVitalsStartOptions = {}): void {
   const reportOptions = createBaseReportOptions(options)
   const report = (metric: MetricWithAttribution) => {
-    reportWebVital(metric, options.metricRecorder)
+    reportWebVital(metric, currentMetricRecorder)
   }
   webVitals.onLCP(report, reportOptions)
   webVitals.onINP(report, createInpReportOptions(options))
   webVitals.onCLS(report, reportOptions)
   webVitals.onFCP(report, reportOptions)
   webVitals.onTTFB(report, reportOptions)
-  return createHandle(options.metricRecorder)
-}
-
-export function assertBrowserWebVitalsMetricsCanStart(): void {
-  if (startupPromise !== undefined && !startupHasMetricRecorder) {
-    throw new Error(
-      'logfire-browser: Web Vitals were already started without metrics in this page lifecycle; configure rum.webVitals.metrics before the first Web Vitals startup'
-    )
-  }
 }
 
 export async function startBrowserWebVitals(options: BrowserWebVitalsStartOptions = {}): Promise<BrowserWebVitalsHandle> {
   if (options.metricRecorder !== undefined) {
-    assertBrowserWebVitalsMetricsCanStart()
+    currentMetricRecorder = options.metricRecorder
   }
 
   startupPromise ??= import('web-vitals/attribution')
-    .then((webVitals) => registerWebVitals(webVitals, options))
+    .then((webVitals) => {
+      registerWebVitals(webVitals, options)
+    })
     .catch((error: unknown) => {
       diag.error('logfire-browser: failed to start Web Vitals reporting', error)
-      return noopHandle
     })
-  startupHasMetricRecorder ||= options.metricRecorder !== undefined
 
-  return startupPromise
+  await startupPromise
+  return createHandle(options.metricRecorder)
 }
 
 export function resetBrowserWebVitalsForTests(): void {
   startupPromise = undefined
-  startupHasMetricRecorder = false
+  currentMetricRecorder = undefined
 }

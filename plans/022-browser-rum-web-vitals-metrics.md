@@ -133,11 +133,10 @@ automatic route-template extraction, or per-route soft-navigation Web Vitals.
 - Web Vitals callbacks cannot be unregistered and should not be registered more
   than once per page lifecycle. Metric recording must reuse PRP 021 callback
   registration rather than calling `onLCP()`, `onINP()`, etc. again.
-- The current `startBrowserWebVitals()` implementation is guarded by a
-  module-level startup promise. If a page first configures Web Vitals without
-  metrics and later reconfigures with metrics, later metric enablement cannot
-  add new observers. Either reject this transition clearly or design the module
-  to register sinks before first startup and keep later cleanup no-op.
+- `startBrowserWebVitals()` is guarded by a module-level startup promise because
+  Web Vitals observers are page-lifetime callbacks. Do not add duplicate
+  observers on reconfigure; keep metric recording behind a mutable recorder
+  reference so later configure calls can attach or replace the active sink.
 - Browser metrics should use a local `MeterProvider`. Do not set the global
   OpenTelemetry meter provider from `@pydantic/logfire-browser` unless a future
   explicit option asks for that. Replacing the global provider can break app
@@ -442,8 +441,8 @@ environment issue in the execution summary.
 - [x] Metric attributes are low-cardinality and exclude session/exact
       URL/selector/raw entry attributes.
 - [x] Existing Web Vital spans still include PRP 021 attributes.
-- [x] Duplicate Web Vitals startup does not duplicate observers or metric
-      records.
+- [x] Duplicate Web Vitals startup does not duplicate observers, and later
+      metric startup can attach or replace the active metric recorder.
 - [x] Browser example builds after metric config/docs changes.
 
 ## Clarifications
@@ -473,8 +472,9 @@ environment issue in the execution summary.
   proxy/example in this PRP so user-perspective metric testing is possible.
 - Q: What happens if Web Vitals were already started without metrics and a
   later configure call tries to enable Web Vitals metrics in the same page
-  lifecycle? -> A: Reject this transition clearly. Web Vitals observers are
-  page-lifetime callbacks and should not be re-registered.
+  lifecycle? -> A: Do not re-register Web Vitals observers. Attach the later
+  metric recorder through the module-level mutable recorder reference; metrics
+  emitted before the recorder exists are not backfilled.
 - Q: What metric instrument shape should be used? -> A: Use one histogram per
   Web Vital, with unit `ms` for LCP, INP, FCP, and TTFB, and unit `1` for CLS.
 
