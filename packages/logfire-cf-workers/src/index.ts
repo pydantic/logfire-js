@@ -1,7 +1,7 @@
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import type { TraceConfig } from '@pydantic/otel-cf-workers'
-import { instrument as baseInstrument } from '@pydantic/otel-cf-workers'
+import { instrument as baseInstrument, instrumentDO as baseInstrumentDO } from '@pydantic/otel-cf-workers'
 import type { ScrubbingOptions } from 'logfire'
 import {
   configureLogfireApi,
@@ -34,7 +34,10 @@ import { LogfireCloudflareConsoleSpanExporter } from './LogfireCloudflareConsole
 import { TailWorkerExporter } from './TailWorkerExporter'
 export * from './exportTailEventsToLogfire'
 
-type Env = Record<string, string | undefined>
+type Env = unknown
+type LogfireEnv = Record<string, string | undefined>
+type WorkerHandler = ExportedHandler
+type DOClass<Env = unknown> = new (state: DurableObjectState, env: Env) => DurableObject
 
 type ConfigOptionsBase = Pick<
   TraceConfig,
@@ -60,11 +63,26 @@ export interface InProcessConfigOptions extends ConfigOptionsBase {
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface TailConfigOptions extends ConfigOptionsBase {}
 
+function envString(env: Env, key: string): string | undefined {
+  if (typeof env !== 'object' || env === null) {
+    return undefined
+  }
+  const value = (env as Record<string, unknown>)[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+function configureScrubbing(config: InProcessConfigOptions): void {
+  if (config.scrubbing !== undefined) {
+    configureLogfireApi({ scrubbing: config.scrubbing })
+  }
+}
+
 function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => TraceConfig {
   return (env: Env): TraceConfig => {
-    const { LOGFIRE_ENVIRONMENT: envDeploymentEnvironment, LOGFIRE_TOKEN: token = '' } = env
+    const token = envString(env, 'LOGFIRE_TOKEN') ?? ''
+    const envDeploymentEnvironment = envString(env, 'LOGFIRE_ENVIRONMENT')
 
-    const baseUrl = resolveBaseUrl(env, config.baseUrl, token)
+    const baseUrl = resolveBaseUrl(env as LogfireEnv, config.baseUrl, token)
     const resolvedEnvironment = config.environment ?? envDeploymentEnvironment
 
     const additionalSpanProcessors = config.additionalSpanProcessors ?? []
@@ -98,14 +116,17 @@ export function getTailConfig(config: TailConfigOptions): (env: Env) => TraceCon
 }
 
 export function instrumentInProcess<T>(handler: T, config: InProcessConfigOptions): T {
-  if (config.scrubbing !== undefined) {
-    configureLogfireApi({ scrubbing: config.scrubbing })
-  }
-  return baseInstrument(handler, getInProcessConfig(config)) as T
+  configureScrubbing(config)
+  return baseInstrument(handler as WorkerHandler, getInProcessConfig(config)) as T
+}
+
+export function instrumentDO<Env = unknown, T extends DOClass<Env> = DOClass<Env>>(doClass: T, config: InProcessConfigOptions): T {
+  configureScrubbing(config)
+  return baseInstrumentDO(doClass, getInProcessConfig(config)) as T
 }
 
 export function instrumentTail<T>(handler: T, config: TailConfigOptions): T {
-  return baseInstrument(handler, getTailConfig(config)) as T
+  return baseInstrument(handler as WorkerHandler, getTailConfig(config)) as T
 }
 
 /**
@@ -140,6 +161,7 @@ const defaultExport: {
   getTailConfig: typeof getTailConfig
   info: typeof info
   instrument: typeof instrument
+  instrumentDO: typeof instrumentDO
   instrumentInProcess: typeof instrumentInProcess
   instrumentTail: typeof instrumentTail
   log: typeof log
@@ -165,6 +187,7 @@ const defaultExport: {
   getTailConfig,
   info,
   instrument,
+  instrumentDO,
   instrumentInProcess,
   instrumentTail,
   // Re-export all from logfire

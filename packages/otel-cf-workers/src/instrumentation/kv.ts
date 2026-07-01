@@ -1,5 +1,5 @@
-import type { Attributes, SpanOptions } from '@opentelemetry/api'
-import { SpanKind, trace } from '@opentelemetry/api'
+import type { Attributes, Exception, SpanOptions } from '@opentelemetry/api'
+import { SpanKind, SpanStatusCode, trace } from '@opentelemetry/api'
 import { ATTR_DB_NAMESPACE, ATTR_DB_OPERATION_NAME, ATTR_DB_QUERY_TEXT, ATTR_DB_SYSTEM_NAME } from '@opentelemetry/semantic-conventions'
 import { wrap } from '../wrap.js'
 
@@ -83,26 +83,33 @@ function instrumentKVFn(fn: Function, name: string, operation: string) {
         attributes,
       }
       return tracer.startActiveSpan(`KV ${name} ${operation}`, options, async (span) => {
-        const result = await Reflect.apply(target, thisArg, argArray)
-        const extraAttrsFn = KVAttributes[operation]
-        const extraAttrs = extraAttrsFn ? extraAttrsFn(argArray, result) : {}
-        span.setAttributes(extraAttrs)
-        if (operation === 'list') {
-          const opts: KVNamespaceListOptions = argArray[0] || {}
-          const { prefix } = opts
-          span.setAttribute(ATTR_DB_QUERY_TEXT, `${operation} ${prefix || undefined}`)
-        } else {
-          span.setAttribute(ATTR_DB_QUERY_TEXT, `${operation} ${argArray[0]}`)
-          span.setAttribute('db.cf.kv.key', argArray[0])
+        try {
+          const result = await Reflect.apply(target, thisArg, argArray)
+          const extraAttrsFn = KVAttributes[operation]
+          const extraAttrs = extraAttrsFn ? extraAttrsFn(argArray, result) : {}
+          span.setAttributes(extraAttrs)
+          if (operation === 'list') {
+            const opts: KVNamespaceListOptions = argArray[0] || {}
+            const { prefix } = opts
+            span.setAttribute(ATTR_DB_QUERY_TEXT, `${operation} ${prefix || undefined}`)
+          } else {
+            span.setAttribute(ATTR_DB_QUERY_TEXT, `${operation} ${argArray[0]}`)
+            span.setAttribute('db.cf.kv.key', argArray[0])
+          }
+          if (operation === 'getWithMetadata') {
+            const hasResults = !!result && !!(result as KVNamespaceGetWithMetadataResult<string, unknown>).value
+            span.setAttribute('db.cf.kv.has_result', hasResults)
+          } else {
+            span.setAttribute('db.cf.kv.has_result', !!result)
+          }
+          return result
+        } catch (error) {
+          span.recordException(error as Exception)
+          span.setStatus({ code: SpanStatusCode.ERROR })
+          throw error
+        } finally {
+          span.end()
         }
-        if (operation === 'getWithMetadata') {
-          const hasResults = !!result && !!(result as KVNamespaceGetWithMetadataResult<string, unknown>).value
-          span.setAttribute('db.cf.kv.has_result', hasResults)
-        } else {
-          span.setAttribute('db.cf.kv.has_result', !!result)
-        }
-        span.end()
-        return result
       })
     },
   }

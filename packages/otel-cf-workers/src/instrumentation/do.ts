@@ -5,7 +5,7 @@ import { setConfig } from '../config.js'
 import { ATTR_FAAS_COLDSTART, ATTR_FAAS_TRIGGER } from '../semconv.js'
 import type { DOConstructorTrigger } from '../types.js'
 import { passthroughGet, unwrap, wrap } from '../wrap.js'
-import { exportSpans } from './common.js'
+import { exportSpans, PromiseTracker } from './common.js'
 import { instrumentStorage } from './do-storage.js'
 import { instrumentEnv } from './env.js'
 import {
@@ -64,12 +64,18 @@ export function instrumentDOBinding(ns: DurableObjectNamespace, nsName: string):
   return wrap(ns, nsHandler)
 }
 
-export function instrumentState(state: DurableObjectState): DurableObjectState {
+export function instrumentState(state: DurableObjectState, tracker: PromiseTracker = new PromiseTracker()): DurableObjectState {
   const stateHandler: ProxyHandler<DurableObjectState> = {
     get(target, prop, receiver) {
       const result = Reflect.get(target, prop, unwrap(receiver))
       if (prop === 'storage') {
         return instrumentStorage(result)
+      } else if (prop === 'waitUntil') {
+        const waitUntil = result as DurableObjectState['waitUntil']
+        return (promise: Promise<unknown>) => {
+          tracker.track(promise)
+          return waitUntil.call(target, promise)
+        }
       } else if (typeof result === 'function') {
         return result.bind(target)
       } else {
@@ -144,7 +150,14 @@ export async function executeDOAlarm(alarmFn: NonNullable<AlarmFn>, id: DurableO
   return promise
 }
 
-function instrumentFetchFn(fetchFn: FetchFn, initialiser: Initialiser, env: Env, state: DurableObjectState): FetchFn {
+function instrumentFetchFn(
+  fetchFn: FetchFn,
+  initialiser: Initialiser,
+  env: Env,
+  state: DurableObjectState,
+  rawState: DurableObjectState,
+  tracker: PromiseTracker
+): FetchFn {
   const fetchHandler: ProxyHandler<FetchFn> = {
     async apply(target, thisArg, argArray: Parameters<FetchFn>) {
       const request = argArray[0]
@@ -154,8 +167,8 @@ function instrumentFetchFn(fetchFn: FetchFn, initialiser: Initialiser, env: Env,
         const bound = target.bind(unwrap(thisArg))
         return await api_context.with(context, executeDOFetch, undefined, bound, request, state.id)
       } finally {
-        state.waitUntil(
-          exportSpans().catch((error: unknown) => {
+        rawState.waitUntil(
+          exportSpans(tracker).catch((error: unknown) => {
             console.error('Error exporting Durable Object fetch spans:', error)
           })
         )
@@ -165,7 +178,14 @@ function instrumentFetchFn(fetchFn: FetchFn, initialiser: Initialiser, env: Env,
   return wrap(fetchFn, fetchHandler)
 }
 
-function instrumentAlarmFn(alarmFn: AlarmFn, initialiser: Initialiser, env: Env, state: DurableObjectState) {
+function instrumentAlarmFn(
+  alarmFn: AlarmFn,
+  initialiser: Initialiser,
+  env: Env,
+  state: DurableObjectState,
+  rawState: DurableObjectState,
+  tracker: PromiseTracker
+) {
   if (!alarmFn) {
     return undefined
   }
@@ -178,8 +198,8 @@ function instrumentAlarmFn(alarmFn: AlarmFn, initialiser: Initialiser, env: Env,
         const bound = target.bind(unwrap(thisArg))
         await api_context.with(context, executeDOAlarm, undefined, bound, state.id)
       } finally {
-        state.waitUntil(
-          exportSpans().catch((error: unknown) => {
+        rawState.waitUntil(
+          exportSpans(tracker).catch((error: unknown) => {
             console.error('Error exporting Durable Object alarm spans:', error)
           })
         )
@@ -189,19 +209,26 @@ function instrumentAlarmFn(alarmFn: AlarmFn, initialiser: Initialiser, env: Env,
   return wrap(alarmFn, alarmHandler)
 }
 
-function instrumentDurableObject(doObj: DurableObject, initialiser: Initialiser, env: Env, state: DurableObjectState) {
+function instrumentDurableObject(
+  doObj: DurableObject,
+  initialiser: Initialiser,
+  env: Env,
+  state: DurableObjectState,
+  rawState: DurableObjectState,
+  tracker: PromiseTracker
+) {
   const objHandler: ProxyHandler<DurableObject> = {
-    get(target, prop) {
+    get(target, prop, receiver) {
       if (prop === 'fetch') {
         const fetchFn = Reflect.get(target, prop)
-        return instrumentFetchFn(fetchFn, initialiser, env, state)
+        return instrumentFetchFn(fetchFn, initialiser, env, state, rawState, tracker)
       } else if (prop === 'alarm') {
         const alarmFn = Reflect.get(target, prop)
-        return instrumentAlarmFn(alarmFn, initialiser, env, state)
+        return instrumentAlarmFn(alarmFn, initialiser, env, state, rawState, tracker)
       } else {
         const result = Reflect.get(target, prop)
         if (typeof result === 'function') {
-          return result.bind(doObj)
+          return result.bind(receiver)
         }
         return result
       }
@@ -219,7 +246,8 @@ export function instrumentDOClass<Env = Record<string, unknown>>(doClass: DOClas
       }
       const constructorConfig = initialiser(orig_env as Record<string, unknown>, trigger)
       const context = setConfig(constructorConfig)
-      const state = instrumentState(orig_state)
+      const tracker = new PromiseTracker()
+      const state = instrumentState(orig_state, tracker)
       const env = instrumentEnv(orig_env as Record<string, unknown>)
       const DOClassTarget = target
       const createDO = (): DurableObject => {
@@ -227,7 +255,7 @@ export function instrumentDOClass<Env = Record<string, unknown>>(doClass: DOClas
       }
       const doObj = api_context.with(context, createDO)
 
-      return instrumentDurableObject(doObj, initialiser, env, state)
+      return instrumentDurableObject(doObj, initialiser, env, state, orig_state, tracker)
     },
   }
   return wrap(doClass, classHandler)

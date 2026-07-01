@@ -73,6 +73,50 @@ import { instrument as instrumentFunction } from 'logfire'
 import { instrument as instrumentWorker } from '@pydantic/logfire-cf-workers'
 ```
 
+## Durable Objects
+
+Use `instrumentDO()` for Durable Object classes. It uses the same Logfire
+configuration path as `instrument()`, including `LOGFIRE_TOKEN`,
+`LOGFIRE_ENVIRONMENT`, `LOGFIRE_BASE_URL`, and scrubbing configuration.
+
+```ts
+import { instrument, instrumentDO } from '@pydantic/logfire-cf-workers'
+
+class CounterDurableObject implements DurableObject {
+  constructor(private state: DurableObjectState) {}
+
+  async fetch(): Promise<Response> {
+    const value = (await this.state.storage.get<number>('value')) ?? 0
+    await this.state.storage.put('value', value + 1)
+    return Response.json({ value })
+  }
+}
+
+export const Counter = instrumentDO(CounterDurableObject, {
+  service: {
+    name: 'counter-do',
+    namespace: '',
+    version: '1.0.0',
+  },
+})
+
+export default instrument(
+  {
+    async fetch(request, env): Promise<Response> {
+      const id = env.Counter.idFromName('global')
+      return env.Counter.get(id).fetch(request)
+    },
+  },
+  {
+    service: {
+      name: 'checkout-worker',
+      namespace: '',
+      version: '1.0.0',
+    },
+  }
+)
+```
+
 ## Tail Workers
 
 The package also supports Cloudflare Tail Worker flows:

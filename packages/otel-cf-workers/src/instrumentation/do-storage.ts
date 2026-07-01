@@ -1,5 +1,5 @@
-import type { Attributes, SpanOptions } from '@opentelemetry/api'
-import { SpanKind, trace } from '@opentelemetry/api'
+import type { Attributes, Exception, SpanOptions } from '@opentelemetry/api'
+import { SpanKind, SpanStatusCode, trace } from '@opentelemetry/api'
 import { ATTR_DB_OPERATION_NAME, ATTR_DB_QUERY_TEXT, ATTR_DB_SYSTEM_NAME } from '@opentelemetry/semantic-conventions'
 import { wrap } from '../wrap.js'
 import type { Overloads } from './common.js'
@@ -175,13 +175,20 @@ function instrumentStorageFn(fn: Function, operation: string) {
         },
       }
       return tracer.startActiveSpan(`Durable Object Storage ${operation}`, options, async (span) => {
-        const result = await Reflect.apply(target, thisArg, argArray)
-        const extraAttrsFn = StorageAttributes[operation]
-        const extraAttrs = extraAttrsFn ? extraAttrsFn(argArray, result) : {}
-        span.setAttributes(extraAttrs)
-        span.setAttribute('db.cf.do.has_result', !!result)
-        span.end()
-        return result
+        try {
+          const result = await Reflect.apply(target, thisArg, argArray)
+          const extraAttrsFn = StorageAttributes[operation]
+          const extraAttrs = extraAttrsFn ? extraAttrsFn(argArray, result) : {}
+          span.setAttributes(extraAttrs)
+          span.setAttribute('db.cf.do.has_result', !!result)
+          return result
+        } catch (error) {
+          span.recordException(error as Exception)
+          span.setStatus({ code: SpanStatusCode.ERROR })
+          throw error
+        } finally {
+          span.end()
+        }
       })
     },
   }

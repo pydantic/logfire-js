@@ -1,5 +1,5 @@
-import type { SpanOptions } from '@opentelemetry/api'
-import { SpanKind, trace } from '@opentelemetry/api'
+import type { Exception, SpanOptions } from '@opentelemetry/api'
+import { SpanKind, SpanStatusCode, trace } from '@opentelemetry/api'
 import { wrap } from '../wrap.js'
 
 type CacheFns = Cache[keyof Cache]
@@ -21,12 +21,19 @@ function instrumentFunction<T extends CacheFns>(fn: T, cacheName: string, op: st
       }
       const options: SpanOptions = { kind: SpanKind.CLIENT, attributes }
       return tracer.startActiveSpan(`Cache ${cacheName} ${op}`, options, async (span) => {
-        const result = await Reflect.apply(target, thisArg, argArray)
-        if (op === 'match') {
-          span.setAttribute('cache.hit', !!result)
+        try {
+          const result = await Reflect.apply(target, thisArg, argArray)
+          if (op === 'match') {
+            span.setAttribute('cache.hit', !!result)
+          }
+          return result
+        } catch (error) {
+          span.recordException(error as Exception)
+          span.setStatus({ code: SpanStatusCode.ERROR })
+          throw error
+        } finally {
+          span.end()
         }
-        span.end()
-        return result
       })
     },
   }

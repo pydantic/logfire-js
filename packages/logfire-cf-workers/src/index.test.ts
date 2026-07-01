@@ -28,7 +28,9 @@ describe('cf-workers default export', () => {
     }
 
     expect(packageRoot.instrument).toBeTypeOf('function')
+    expect(packageRoot.instrumentDO).toBeTypeOf('function')
     expect(packageRoot.default.instrument).toBe(packageRoot.instrument)
+    expect(packageRoot.default.instrumentDO).toBe(packageRoot.instrumentDO)
     expect(packageJson.exports['.']).not.toHaveProperty('require')
     expect(packageJson.exports['.']?.['default']).toBe('./dist/index.js')
     expect(packageJson.exports['.']?.['types']).toBe('./dist/index.d.ts')

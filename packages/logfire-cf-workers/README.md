@@ -30,6 +30,28 @@ import { instrument as instrumentFunction } from 'logfire'
 import { instrument as instrumentWorker } from '@pydantic/logfire-cf-workers'
 ```
 
+Durable Object classes can be wrapped with `instrumentDO()` from this package so
+they use the same Logfire token, base URL, environment, and scrubbing
+configuration as Worker handlers.
+
+```ts
+import { instrumentDO } from '@pydantic/logfire-cf-workers'
+
+class CounterDurableObject implements DurableObject {
+  async fetch(): Promise<Response> {
+    return new Response('ok')
+  }
+}
+
+export const Counter = instrumentDO(CounterDurableObject, {
+  service: {
+    name: 'counter-do',
+    namespace: '',
+    version: '1.0.0',
+  },
+})
+```
+
 ## Runtime lifecycle
 
 Cloudflare Workers do not have a process-style shutdown hook. Logfire relies on

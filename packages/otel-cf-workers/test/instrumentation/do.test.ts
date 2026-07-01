@@ -4,6 +4,8 @@ import { describe, expect, it, vitest } from 'vitest'
 import type { ResolvedTraceConfig } from '../../src/types'
 import { instrumentDOClass } from '../../src/instrumentation/do'
 
+type FetchWithRequest = (request: Request) => Response | Promise<Response>
+
 const durableObjectId = {
   toString: () => 'test-durable-object-id',
   equals: () => false,
@@ -58,7 +60,10 @@ const resolvedConfig = {} as ResolvedTraceConfig
 class CustomMethodDurableObject implements DurableObject {
   count = 0
 
+  constructor(private readonly state: DurableObjectState) {}
+
   fetch(): Response {
+    this.state.waitUntil(Promise.resolve())
     return new Response()
   }
 
@@ -66,10 +71,17 @@ class CustomMethodDurableObject implements DurableObject {
     this.count += delta
     return this.count
   }
+
+  callFetch(): Response | Promise<Response> {
+    return (this.fetch as FetchWithRequest)(new Request('https://example.com'))
+  }
 }
 
 class LifecycleDurableObject implements DurableObject {
+  constructor(private readonly state: DurableObjectState) {}
+
   fetch(): Response {
+    this.state.waitUntil(Promise.resolve())
     return new Response()
   }
 
@@ -80,18 +92,28 @@ class LifecycleDurableObject implements DurableObject {
 
 interface CustomMethodDurableObjectInstance extends DurableObject {
   increment(delta: number): number
+  callFetch(): Response | Promise<Response>
 }
 
 describe('instrumentDOClass', () => {
-  it('binds custom Durable Object methods to the original object', () => {
+  it('binds custom Durable Object methods to the instrumented object', async () => {
+    const consoleError = vitest.spyOn(console, 'error').mockImplementation(() => undefined)
     const durableObjectState = createDurableObjectState()
     const InstrumentedDurableObject = instrumentDOClass(CustomMethodDurableObject, () => resolvedConfig)
     const durableObject = new InstrumentedDurableObject(durableObjectState, {}) as unknown as CustomMethodDurableObjectInstance
 
-    const increment = Reflect.get(durableObject, 'increment') as (delta: number) => number
+    try {
+      const increment = Reflect.get(durableObject, 'increment') as (delta: number) => number
 
-    expect(increment(2)).toBe(2)
-    expect(durableObject.increment(3)).toBe(5)
+      expect(increment(2)).toBe(2)
+      expect(durableObject.increment(3)).toBe(5)
+
+      await durableObject.callFetch()
+      expect(durableObjectState.waitUntilPromises).toHaveLength(2)
+      await Promise.allSettled(durableObjectState.waitUntilPromises)
+    } finally {
+      consoleError.mockRestore()
+    }
   })
 
   it('schedules fetch and alarm span export with Durable Object state waitUntil', async () => {
@@ -105,7 +127,7 @@ describe('instrumentDOClass', () => {
       const alarm = Reflect.get(durableObject, 'alarm') as () => Promise<void>
       await alarm()
 
-      expect(durableObjectState.waitUntilPromises).toHaveLength(2)
+      expect(durableObjectState.waitUntilPromises).toHaveLength(3)
       await Promise.allSettled(durableObjectState.waitUntilPromises)
     } finally {
       consoleError.mockRestore()

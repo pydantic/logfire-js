@@ -42,10 +42,14 @@ export default defineConfig({
       '.changeset/**',
       // Imported BSD-licensed vendored source; keep lint out of the provenance-preserving copy.
       'packages/otel-cf-workers/src/vendor/**',
+      // Scoped package lint runs from packages/otel-cf-workers, so this package-local
+      // copy is required in addition to the monorepo-root path above.
       'src/vendor/**',
       // Existing upstream DO storage tests cover runtime behavior but rely on experimental
       // Cloudflare storage types that drift under type-aware lint.
       'packages/otel-cf-workers/test/instrumentation/do-storage.test.ts',
+      // Scoped package lint runs from packages/otel-cf-workers, so this package-local
+      // copy is required in addition to the monorepo-root path above.
       'test/instrumentation/do-storage.test.ts',
       // The previous root lint only covered packages. Keep examples/scripts as
       // follow-up work because several are Next, Wrangler, or Deno projects
@@ -70,9 +74,6 @@ export default defineConfig({
           'packages/otel-cf-workers/src/instrumentation/do-storage.ts',
           'packages/otel-cf-workers/src/instrumentation/kv.ts',
           'packages/otel-cf-workers/src/instrumentation/*.ts',
-          'src/context.ts',
-          'src/wrap.ts',
-          'src/instrumentation/*.ts',
         ],
         rules: {
           'no-useless-assignment': 'off',
@@ -102,14 +103,7 @@ export default defineConfig({
         },
       },
       {
-        files: [
-          'packages/otel-cf-workers/src/sdk.ts',
-          'packages/otel-cf-workers/src/span.ts',
-          'packages/otel-cf-workers/src/tracer.ts',
-          'src/sdk.ts',
-          'src/span.ts',
-          'src/tracer.ts',
-        ],
+        files: ['packages/otel-cf-workers/src/sdk.ts', 'packages/otel-cf-workers/src/span.ts', 'packages/otel-cf-workers/src/tracer.ts'],
         rules: {
           'no-underscore-dangle': 'off',
         },
