@@ -1,5 +1,11 @@
 # @pydantic/logfire-session-replay
 
+## 0.1.0-alpha.1
+
+### Patch Changes
+
+- Publish with package-manager dependency rewriting so npm consumers receive concrete `fflate` and `rrweb` dependency ranges instead of workspace catalog protocol references.
+
 ## 0.1.0-alpha.0
 
 ### Minor Changes

@@ -54,11 +54,7 @@ jobs:
               npm dist-tag add "${package_name}@${version}" alpha
             else
               echo "Publishing ${package_name}@${version} with alpha dist-tag"
-              if [ "${package_name}" = "@pydantic/logfire-session-replay" ]; then
-                (cd packages/logfire-session-replay && npm publish --access public --tag alpha)
-              else
-                vp pm publish -r --filter "${package_name}" --access public --tag alpha --no-git-checks
-              fi
+              vp pm publish -r --filter "${package_name}" --access public --tag alpha --no-git-checks
             fi
           }
 
@@ -67,8 +63,9 @@ jobs:
 
           replay_version="$(node -p "require('./packages/logfire-session-replay/package.json').version")"
           replay_latest="$(npm view @pydantic/logfire-session-replay dist-tags.latest --json 2>/dev/null | tr -d '"')"
-          if [ "$replay_latest" = "$replay_version" ]; then
-            echo "@pydantic/logfire-session-replay is a first publish; npm keeps latest on the only published version"
+          if [ "$replay_latest" != "$replay_version" ]; then
+            echo "Moving @pydantic/logfire-session-replay latest dist-tag to the fixed alpha package; npm keeps latest on first-published packages"
+            npm dist-tag add "@pydantic/logfire-session-replay@${replay_version}" latest
           fi
         env:
           NPM_CONFIG_PROVENANCE: false
