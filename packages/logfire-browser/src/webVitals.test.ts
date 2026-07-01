@@ -221,7 +221,7 @@ describe('browser Web Vitals reporting', () => {
     expect(metricRecorder.shutdown).toHaveBeenCalledTimes(1)
   })
 
-  it('uses the first metric recorder when duplicate startup is requested', async () => {
+  it('uses the latest metric recorder when duplicate startup is requested', async () => {
     const firstMetricRecorder = createMetricRecorder()
     const secondMetricRecorder = createMetricRecorder()
     const metric = createMetric('FCP', { firstByteToFCP: 85, loadState: 'dom-interactive', timeToFirstByte: 42 })
@@ -233,16 +233,53 @@ describe('browser Web Vitals reporting', () => {
     for (const name of webVitalNames) {
       expect(mocks.registrations[name]).toHaveLength(1)
     }
-    expect(firstMetricRecorder.record).toHaveBeenCalledWith(metric)
-    expect(secondMetricRecorder.record).not.toHaveBeenCalled()
+    expect(firstMetricRecorder.record).not.toHaveBeenCalled()
+    expect(secondMetricRecorder.record).toHaveBeenCalledWith(metric)
   })
 
-  it('rejects enabling metrics after Web Vitals already started without metrics', async () => {
-    await startBrowserWebVitals()
+  it('attaches a metric recorder after Web Vitals already started without metrics', async () => {
+    const metricRecorder = createMetricRecorder()
+    const beforeRecorder = createMetric('FCP', { firstByteToFCP: 85, loadState: 'dom-interactive', timeToFirstByte: 42 })
+    const afterRecorder = createMetric('TTFB', { waitingDuration: 1 })
 
-    await expect(startBrowserWebVitals({ metricRecorder: createMetricRecorder() })).rejects.toThrow(
-      'Web Vitals were already started without metrics'
-    )
+    await startBrowserWebVitals()
+    report('FCP', beforeRecorder)
+
+    await startBrowserWebVitals({ metricRecorder })
+    report('TTFB', afterRecorder)
+
+    for (const name of webVitalNames) {
+      expect(mocks.registrations[name]).toHaveLength(1)
+    }
+    expect(metricRecorder.record).toHaveBeenCalledTimes(1)
+    expect(metricRecorder.record).toHaveBeenCalledWith(afterRecorder)
+  })
+
+  it('does not let an older handle shutdown clear a newer metric recorder', async () => {
+    const firstMetricRecorder = createMetricRecorder()
+    const secondMetricRecorder = createMetricRecorder()
+    const metric = createMetric('LCP', {
+      resourceLoadDelay: 10,
+      resourceLoadDuration: 20,
+      target: '#hero img',
+      timeToFirstByte: 40,
+    })
+
+    const firstHandle = await startBrowserWebVitals({ metricRecorder: firstMetricRecorder })
+    const secondHandle = await startBrowserWebVitals({ metricRecorder: secondMetricRecorder })
+
+    await firstHandle.shutdown()
+    report('LCP', metric)
+
+    expect(firstMetricRecorder.shutdown).toHaveBeenCalledTimes(1)
+    expect(firstMetricRecorder.record).not.toHaveBeenCalled()
+    expect(secondMetricRecorder.record).toHaveBeenCalledWith(metric)
+
+    await secondHandle.shutdown()
+    report('LCP', metric)
+
+    expect(secondMetricRecorder.shutdown).toHaveBeenCalledTimes(1)
+    expect(secondMetricRecorder.record).toHaveBeenCalledTimes(1)
   })
 
   it('creates a span with base attributes for each report', async () => {
