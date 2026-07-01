@@ -144,7 +144,7 @@ export async function executeDOAlarm(alarmFn: NonNullable<AlarmFn>, id: DurableO
   return promise
 }
 
-function instrumentFetchFn(fetchFn: FetchFn, initialiser: Initialiser, env: Env, id: DurableObjectId): FetchFn {
+function instrumentFetchFn(fetchFn: FetchFn, initialiser: Initialiser, env: Env, state: DurableObjectState): FetchFn {
   const fetchHandler: ProxyHandler<FetchFn> = {
     async apply(target, thisArg, argArray: Parameters<FetchFn>) {
       const request = argArray[0]
@@ -152,18 +152,20 @@ function instrumentFetchFn(fetchFn: FetchFn, initialiser: Initialiser, env: Env,
       const context = setConfig(config)
       try {
         const bound = target.bind(unwrap(thisArg))
-        return await api_context.with(context, executeDOFetch, undefined, bound, request, id)
+        return await api_context.with(context, executeDOFetch, undefined, bound, request, state.id)
       } finally {
-        exportSpans().catch((error: unknown) => {
-          console.error('Error exporting Durable Object fetch spans:', error)
-        })
+        state.waitUntil(
+          exportSpans().catch((error: unknown) => {
+            console.error('Error exporting Durable Object fetch spans:', error)
+          })
+        )
       }
     },
   }
   return wrap(fetchFn, fetchHandler)
 }
 
-function instrumentAlarmFn(alarmFn: AlarmFn, initialiser: Initialiser, env: Env, id: DurableObjectId) {
+function instrumentAlarmFn(alarmFn: AlarmFn, initialiser: Initialiser, env: Env, state: DurableObjectState) {
   if (!alarmFn) {
     return undefined
   }
@@ -174,11 +176,13 @@ function instrumentAlarmFn(alarmFn: AlarmFn, initialiser: Initialiser, env: Env,
       const context = setConfig(config)
       try {
         const bound = target.bind(unwrap(thisArg))
-        await api_context.with(context, executeDOAlarm, undefined, bound, id)
+        await api_context.with(context, executeDOAlarm, undefined, bound, state.id)
       } finally {
-        exportSpans().catch((error: unknown) => {
-          console.error('Error exporting Durable Object alarm spans:', error)
-        })
+        state.waitUntil(
+          exportSpans().catch((error: unknown) => {
+            console.error('Error exporting Durable Object alarm spans:', error)
+          })
+        )
       }
     },
   }
@@ -190,10 +194,10 @@ function instrumentDurableObject(doObj: DurableObject, initialiser: Initialiser,
     get(target, prop) {
       if (prop === 'fetch') {
         const fetchFn = Reflect.get(target, prop)
-        return instrumentFetchFn(fetchFn, initialiser, env, state.id)
+        return instrumentFetchFn(fetchFn, initialiser, env, state)
       } else if (prop === 'alarm') {
         const alarmFn = Reflect.get(target, prop)
-        return instrumentAlarmFn(alarmFn, initialiser, env, state.id)
+        return instrumentAlarmFn(alarmFn, initialiser, env, state)
       } else {
         const result = Reflect.get(target, prop)
         if (typeof result === 'function') {

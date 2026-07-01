@@ -13,7 +13,7 @@ let withNextSpanAttributes: Attributes
 
 export class WorkerTracer implements Tracer {
   private readonly _spanProcessors: SpanProcessor[]
-  private readonly resource: Resource
+  private resource: Resource
   private readonly scope: InstrumentationScope
   private readonly idGenerator: IdGenerator
   constructor(spanProcessors: SpanProcessor[], resource: Resource, scope: InstrumentationScope, idGenerator: IdGenerator) {
@@ -28,7 +28,7 @@ export class WorkerTracer implements Tracer {
   }
 
   addToResource(extra: Resource): void {
-    this.resource.merge(extra)
+    this.resource = this.resource.merge(extra)
   }
 
   startSpan(name: string, options: SpanOptions = {}, context: Context = api_context.active()): Span {

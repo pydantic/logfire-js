@@ -7,7 +7,7 @@ type ExtraAttributeFn = (argArray: any[], result: any) => Attributes
 
 const dbSystem = 'Cloudflare KV'
 
-const KVAttributes: Record<string | symbol, ExtraAttributeFn> = {
+export const KVAttributes: Record<string | symbol, ExtraAttributeFn> = {
   delete(_argArray) {
     return {}
   },
@@ -45,10 +45,11 @@ const KVAttributes: Record<string | symbol, ExtraAttributeFn> = {
     const { cursor, limit } = opts
     attrs['db.cf.kv.list_request_cursor'] = cursor || undefined
     attrs['db.cf.kv.list_limit'] = limit || undefined
-    const { list_complete, cacheStatus } = result as KVNamespaceListResult<any, any>
+    const listResult = result as KVNamespaceListResult<any, any>
+    const { list_complete, cacheStatus } = listResult
     attrs['db.cf.kv.list_complete'] = list_complete || undefined
     if (!list_complete) {
-      attrs['db.cf.kv.list_response_cursor'] = cursor || undefined
+      attrs['db.cf.kv.list_response_cursor'] = listResult.cursor || undefined
     }
     if (typeof cacheStatus === 'string') {
       attrs['db.cf.kv.cache_status'] = cacheStatus

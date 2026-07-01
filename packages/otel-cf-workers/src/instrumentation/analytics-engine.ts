@@ -7,15 +7,18 @@ type ExtraAttributeFn = (argArray: any[], result: any) => Attributes
 
 const dbSystem = 'Cloudflare Analytics Engine'
 
-const AEAttributes: Record<string | symbol, ExtraAttributeFn> = {
+export const AEAttributes: Record<string | symbol, ExtraAttributeFn> = {
   writeDataPoint(argArray) {
     const attrs: Attributes = {}
-    const opts = argArray[0]
-    if (typeof opts === 'object') {
-      attrs['db.cf.ae.indexes'] = opts.indexes.length
-      attrs['db.cf.ae.index'] = (opts.indexes[0] as ArrayBuffer | string).toString()
-      attrs['db.cf.ae.doubles'] = opts.doubles.length
-      attrs['db.cf.ae.blobs'] = opts.blobs.length
+    const opts = argArray[0] as AnalyticsEngineDataPoint | undefined
+    if (typeof opts === 'object' && opts !== null) {
+      const firstIndex = opts.indexes?.[0]
+      attrs['db.cf.ae.indexes'] = opts.indexes?.length ?? 0
+      if (firstIndex !== undefined && firstIndex !== null) {
+        attrs['db.cf.ae.index'] = firstIndex.toString()
+      }
+      attrs['db.cf.ae.doubles'] = opts.doubles?.length ?? 0
+      attrs['db.cf.ae.blobs'] = opts.blobs?.length ?? 0
     }
     return attrs
   },
