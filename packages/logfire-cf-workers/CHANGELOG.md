@@ -1,5 +1,18 @@
 # @pydantic/logfire-cf-workers
 
+## 1.0.0
+
+### Major Changes
+
+- 7378d2b: Move the Cloudflare Worker OpenTelemetry implementation into the monorepo and publish Cloudflare packages as stable ESM-only packages.
+
+  `@pydantic/logfire-cf-workers` now depends on the workspace `@pydantic/otel-cf-workers` package and no longer publishes CommonJS exports or `.d.cts` declarations. `@pydantic/otel-cf-workers` is published from this repository with unified OpenTelemetry catalog dependencies and ESM-only package exports.
+
+### Patch Changes
+
+- Updated dependencies [7378d2b]
+  - @pydantic/otel-cf-workers@1.0.0
+
 ## 0.12.4
 
 ### Patch Changes
