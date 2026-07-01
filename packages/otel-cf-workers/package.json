@@ -24,7 +24,7 @@
     "tracing",
     "instrumentation"
   ],
-  "version": "1.0.0-rc.56",
+  "version": "1.0.0",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
