@@ -146,8 +146,11 @@ function getParentContextFromRequest(request: Request): Context {
 export async function waitUntilTrace(fn: () => Promise<unknown>): Promise<void> {
   const tracer = trace.getTracer('waitUntil')
   return tracer.startActiveSpan('waitUntil', async (span) => {
-    await fn()
-    span.end()
+    try {
+      await fn()
+    } finally {
+      span.end()
+    }
   })
 }
 
