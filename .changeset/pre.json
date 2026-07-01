@@ -1,0 +1,26 @@
+{
+  "mode": "pre",
+  "tag": "alpha",
+  "initialVersions": {
+    "browser": "0.0.0",
+    "browser-rum-replay": "0.0.0",
+    "@pydantic/logfire-cloudflare-worker-example": "0.0.15",
+    "@pydantic/cf-tail-worker": "0.0.15",
+    "@pydantic/cf-worker": "0.0.15",
+    "@pydantic/logfire-express-example": "1.0.18",
+    "@pydantic/nextjs-client-side-instrumentation": "0.1.15",
+    "@pydantic/logfire-node-example": "1.0.18",
+    "logfire": "0.20.1",
+    "@pydantic/logfire-browser": "0.16.4",
+    "@pydantic/logfire-cf-workers": "0.12.4",
+    "@pydantic/logfire-node": "0.18.2",
+    "@pydantic/logfire-session-replay": "0.0.0"
+  },
+  "changesets": [
+    "browser-rum-session",
+    "browser-rum-web-vitals-metrics",
+    "browser-rum-web-vitals",
+    "browser-session-replay-integration",
+    "session-replay-package"
+  ]
+}

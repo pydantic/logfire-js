@@ -1,5 +1,20 @@
 # @pydantic/logfire-browser
 
+## 0.17.0-alpha.0
+
+### Minor Changes
+
+- fc8277f: Add opt-in browser RUM session identity and custom span processor configuration.
+- fc8277f: Add opt-in native OpenTelemetry histogram metrics for browser Web Vitals. Configure top-level `metrics.metricUrl` and `rum.webVitals.metrics` to emit LCP, INP, CLS, FCP, and TTFB metrics in parallel with existing Web Vital spans.
+- fc8277f: Add opt-in browser RUM Web Vitals reporting with `rum.webVitals`, emitting LCP, INP, CLS, FCP, and TTFB as Logfire spans with attribution fields.
+- 63ccc9d: Add opt-in browser `sessionReplay` integration with SDK-owned session correlation, replay state span attributes, optional peer loading, telemetry endpoint suppression, and live replay mode reporting.
+
+### Patch Changes
+
+- Updated dependencies [63ccc9d]
+- Updated dependencies [98118c3]
+  - @pydantic/logfire-session-replay@0.1.0-alpha.0
+
 ## 0.16.4
 
 ### Patch Changes
