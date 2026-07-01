@@ -1,5 +1,6 @@
-import { expect, it } from 'vitest'
+import { expect, it, vitest } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
+import { Buffer } from 'node:buffer'
 
 import * as packageRoot from '@pydantic/otel-cf-workers'
 import * as otelCfWorkers from '../src/index'
@@ -38,4 +39,25 @@ it('publishes esm-only package metadata', () => {
   expect(packageJson.exports['.']?.default).toBe('./dist/index.js')
   expect(packageJson.exports['.']?.types).toBe('./dist/index.d.ts')
   expect(readdirSync(new URL('../dist', import.meta.url)).sort()).toEqual(['index.d.ts', 'index.js'])
+})
+
+it('keeps the Buffer polyfill as an entrypoint side effect', async () => {
+  const globals = globalThis as unknown as { Buffer?: typeof Buffer }
+  const originalBuffer = globals.Buffer
+
+  vitest.resetModules()
+  Reflect.deleteProperty(globals, 'Buffer')
+
+  try {
+    await import('../src/index')
+    expect(globals.Buffer).toBe(Buffer)
+  } finally {
+    if (originalBuffer === undefined) {
+      Reflect.deleteProperty(globals, 'Buffer')
+    } else {
+      globals.Buffer = originalBuffer
+    }
+  }
+
+  expect(readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')).toContain("import './buffer.js'")
 })

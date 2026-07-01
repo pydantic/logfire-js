@@ -1,4 +1,6 @@
-export type * from './buffer.js'
+// oxlint-disable-next-line import/no-unassigned-import -- installs global Buffer for OpenTelemetry serialization in Workers
+import './buffer.js'
+
 export * from './sampling.js'
 export * from './sdk.js'
 export * from './span.js'

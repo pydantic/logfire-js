@@ -197,7 +197,7 @@ function instrumentDurableObject(doObj: DurableObject, initialiser: Initialiser,
       } else {
         const result = Reflect.get(target, prop)
         if (typeof result === 'function') {
-          result.bind(doObj)
+          return result.bind(doObj)
         }
         return result
       }
