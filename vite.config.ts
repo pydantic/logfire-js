@@ -40,6 +40,17 @@ export default defineConfig({
     ignorePatterns: [
       'coverage/**',
       '.changeset/**',
+      // Imported BSD-licensed vendored source; keep lint out of the provenance-preserving copy.
+      'packages/otel-cf-workers/src/vendor/**',
+      // Scoped package lint runs from packages/otel-cf-workers, so this package-local
+      // copy is required in addition to the monorepo-root path above.
+      'src/vendor/**',
+      // Existing upstream DO storage tests cover runtime behavior but rely on experimental
+      // Cloudflare storage types that drift under type-aware lint.
+      'packages/otel-cf-workers/test/instrumentation/do-storage.test.ts',
+      // Scoped package lint runs from packages/otel-cf-workers, so this package-local
+      // copy is required in addition to the monorepo-root path above.
+      'test/instrumentation/do-storage.test.ts',
       // The previous root lint only covered packages. Keep examples/scripts as
       // follow-up work because several are Next, Wrangler, or Deno projects
       // with their own runtime-specific globals and generated files.
@@ -52,6 +63,52 @@ export default defineConfig({
       typeAware: true,
       typeCheck: true,
     },
+    overrides: [
+      {
+        files: [
+          'packages/otel-cf-workers/src/context.ts',
+          'packages/otel-cf-workers/src/wrap.ts',
+          'packages/otel-cf-workers/src/instrumentation/analytics-engine.ts',
+          'packages/otel-cf-workers/src/instrumentation/cache.ts',
+          'packages/otel-cf-workers/src/instrumentation/d1.ts',
+          'packages/otel-cf-workers/src/instrumentation/do-storage.ts',
+          'packages/otel-cf-workers/src/instrumentation/kv.ts',
+          'packages/otel-cf-workers/src/instrumentation/*.ts',
+        ],
+        rules: {
+          'no-useless-assignment': 'off',
+          'no-underscore-dangle': 'off',
+          'prefer-rest-params': 'off',
+          'typescript/ban-types': 'off',
+          'typescript/explicit-module-boundary-types': 'off',
+          'typescript/no-dynamic-delete': 'off',
+          'typescript/no-explicit-any': 'off',
+          'typescript/no-base-to-string': 'off',
+          'typescript/no-confusing-void-expression': 'off',
+          'typescript/no-this-alias': 'off',
+          'typescript/no-unnecessary-condition': 'off',
+          'typescript/no-unsafe-argument': 'off',
+          'typescript/no-unsafe-assignment': 'off',
+          'typescript/no-unsafe-call': 'off',
+          'typescript/no-unsafe-function-type': 'off',
+          'typescript/no-unsafe-member-access': 'off',
+          'typescript/no-unsafe-return': 'off',
+          'typescript/prefer-nullish-coalescing': 'off',
+          'typescript/promise-function-async': 'off',
+          'typescript/restrict-plus-operands': 'off',
+          'typescript/restrict-template-expressions': 'off',
+          'typescript/strict-boolean-expressions': 'off',
+          'typescript/strict-void-return': 'off',
+          'typescript/unbound-method': 'off',
+        },
+      },
+      {
+        files: ['packages/otel-cf-workers/src/sdk.ts', 'packages/otel-cf-workers/src/span.ts', 'packages/otel-cf-workers/src/tracer.ts'],
+        rules: {
+          'no-underscore-dangle': 'off',
+        },
+      },
+    ],
     plugins: ['typescript', 'import', 'node', 'vitest'],
     rules: {
       // Project-specific options for category-enabled rules.

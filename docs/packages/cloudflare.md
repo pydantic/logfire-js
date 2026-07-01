@@ -73,6 +73,50 @@ import { instrument as instrumentFunction } from 'logfire'
 import { instrument as instrumentWorker } from '@pydantic/logfire-cf-workers'
 ```
 
+## Durable Objects
+
+Use `instrumentDO()` for Durable Object classes. It uses the same Logfire
+configuration path as `instrument()`, including `LOGFIRE_TOKEN`,
+`LOGFIRE_ENVIRONMENT`, `LOGFIRE_BASE_URL`, and scrubbing configuration.
+
+```ts
+import { instrument, instrumentDO } from '@pydantic/logfire-cf-workers'
+
+class CounterDurableObject implements DurableObject {
+  constructor(private state: DurableObjectState) {}
+
+  async fetch(): Promise<Response> {
+    const value = (await this.state.storage.get<number>('value')) ?? 0
+    await this.state.storage.put('value', value + 1)
+    return Response.json({ value })
+  }
+}
+
+export const Counter = instrumentDO(CounterDurableObject, {
+  service: {
+    name: 'counter-do',
+    namespace: '',
+    version: '1.0.0',
+  },
+})
+
+export default instrument(
+  {
+    async fetch(request, env): Promise<Response> {
+      const id = env.Counter.idFromName('global')
+      return env.Counter.get(id).fetch(request)
+    },
+  },
+  {
+    service: {
+      name: 'checkout-worker',
+      namespace: '',
+      version: '1.0.0',
+    },
+  }
+)
+```
+
 ## Tail Workers
 
 The package also supports Cloudflare Tail Worker flows:
@@ -94,12 +138,12 @@ This applies to both Logfire entrypoints:
   export.
 - `instrumentTail()` configures tail Worker export.
 
-Both entrypoints delegate to the underlying `@pydantic/otel-cf-workers`
-`instrument()` helper. That helper proxies the Worker execution context, tracks
-promises passed to `ctx.waitUntil()` inside the user handler, then schedules span
-export on the original context with `ctx.waitUntil()`. Export waits for a
-scheduler tick and the tracked promises before force-flushing the configured
-span processors.
+Both entrypoints use this repository's Cloudflare Worker OpenTelemetry
+instrumentation internally. The instrumentation proxies the Worker execution
+context, tracks promises passed to `ctx.waitUntil()` inside the user handler,
+then schedules span export on the original context with `ctx.waitUntil()`.
+Export waits for a scheduler tick and the tracked promises before force-flushing
+the configured span processors.
 
 Because export is tied to each Worker event, there is no long-lived Logfire
 runtime to shut down after deployment. Use `ctx.waitUntil()` for any asynchronous
