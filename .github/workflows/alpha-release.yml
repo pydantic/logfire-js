@@ -64,5 +64,12 @@ jobs:
 
           publish_alpha "@pydantic/logfire-session-replay" "packages/logfire-session-replay/package.json"
           publish_alpha "@pydantic/logfire-browser" "packages/logfire-browser/package.json"
+
+          replay_version="$(node -p "require('./packages/logfire-session-replay/package.json').version")"
+          replay_latest="$(npm view @pydantic/logfire-session-replay dist-tags.latest --json 2>/dev/null | tr -d '"')"
+          if [ "$replay_latest" = "$replay_version" ]; then
+            echo "Removing latest dist-tag from @pydantic/logfire-session-replay; alpha is the intended install tag"
+            npm dist-tag rm @pydantic/logfire-session-replay latest
+          fi
         env:
           NPM_CONFIG_PROVENANCE: false
