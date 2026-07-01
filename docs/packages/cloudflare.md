@@ -94,12 +94,12 @@ This applies to both Logfire entrypoints:
   export.
 - `instrumentTail()` configures tail Worker export.
 
-Both entrypoints delegate to the underlying `@pydantic/otel-cf-workers`
-`instrument()` helper. That helper proxies the Worker execution context, tracks
-promises passed to `ctx.waitUntil()` inside the user handler, then schedules span
-export on the original context with `ctx.waitUntil()`. Export waits for a
-scheduler tick and the tracked promises before force-flushing the configured
-span processors.
+Both entrypoints use this repository's Cloudflare Worker OpenTelemetry
+instrumentation internally. The instrumentation proxies the Worker execution
+context, tracks promises passed to `ctx.waitUntil()` inside the user handler,
+then schedules span export on the original context with `ctx.waitUntil()`.
+Export waits for a scheduler tick and the tracked promises before force-flushing
+the configured span processors.
 
 Because export is tied to each Worker event, there is no long-lived Logfire
 runtime to shut down after deployment. Use `ctx.waitUntil()` for any asynchronous
