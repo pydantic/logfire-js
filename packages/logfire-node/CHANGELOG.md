@@ -1,5 +1,11 @@
 # logfire
 
+## 0.18.3
+
+### Patch Changes
+
+- ce8c66f: Support both legacy and options-object BatchLogRecordProcessor constructor shapes across OpenTelemetry SDK logs releases.
+
 ## 0.18.2
 
 ### Patch Changes
