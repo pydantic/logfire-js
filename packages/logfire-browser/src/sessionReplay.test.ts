@@ -178,6 +178,23 @@ describe('startBrowserSessionReplay', () => {
     expect(replayState.getState()).toBeUndefined()
   })
 
+  it('does not mark replay active when sampling resolves to off', async () => {
+    const replayState = new BrowserSessionReplayState()
+    const replayModule: BrowserSessionReplayModule = {
+      startSessionReplay: () => createReplayRuntime({ mode: 'off', recording: false }),
+    }
+
+    const replay = await startBrowserSessionReplay(
+      { load: () => replayModule, replayUrl: '/logfire/replay' },
+      createManager(),
+      replayState,
+      { traceUrl: '/logfire/traces' }
+    )
+
+    expect(replay?.mode).toBe('off')
+    expect(replayState.getState()).toBeUndefined()
+  })
+
   it('reports startup failures without throwing', async () => {
     const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
     const onError = vi.fn<(error: unknown) => void>()

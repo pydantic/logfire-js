@@ -1,4 +1,5 @@
 /* eslint-disable import/first */
+import type { Instrumentation } from '@opentelemetry/instrumentation'
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-web'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
@@ -9,6 +10,9 @@ const mocks = vi.hoisted(() => {
   const browserMetricsStartCalls: { options: unknown; resource: unknown }[] = []
   const browserMetricsRecorders: unknown[] = []
   const lifecycleEvents: string[] = []
+  const autoInstrumentationConfigs: unknown[] = []
+  const autoInstrumentations: unknown[] = []
+  const registerInstrumentationCalls: { instrumentations: unknown; tracerProvider: unknown }[] = []
   const webVitalsStartCalls: unknown[] = []
   const webTracerProviderInstances: MockWebTracerProvider[] = []
   let browserMetricsForceFlushCalls = 0
@@ -42,6 +46,10 @@ const mocks = vi.hoisted(() => {
     register(): void {
       lifecycleEvents.push('providerRegister')
       this.registerCalls++
+    }
+
+    getTracer(name: string): { name: string; provider: MockWebTracerProvider } {
+      return { name, provider: this }
     }
 
     async forceFlush(): Promise<void> {
@@ -115,6 +123,8 @@ const mocks = vi.hoisted(() => {
     MockWebTracerProvider,
     browserMetricsRecorderCreateCalls,
     browserMetricsRecorders,
+    autoInstrumentationConfigs,
+    autoInstrumentations,
     browserMetricsStartCalls,
     cleanupStepCalls,
     createBrowserMetricsRuntime,
@@ -140,7 +150,18 @@ const mocks = vi.hoisted(() => {
     get webVitalsStartCalls() {
       return webVitalsStartCalls
     },
+    getWebAutoInstrumentations(config: unknown) {
+      lifecycleEvents.push('getWebAutoInstrumentations')
+      autoInstrumentationConfigs.push(config)
+      const instrumentation = { name: 'auto-instrumentation', config }
+      autoInstrumentations.push(instrumentation)
+      return [instrumentation]
+    },
+    registerInstrumentationCalls,
     reset() {
+      autoInstrumentationConfigs.length = 0
+      autoInstrumentations.length = 0
+      registerInstrumentationCalls.length = 0
       browserMetricsForceFlushCalls = 0
       browserMetricsRecorderCreateCalls.length = 0
       browserMetricsRecorders.length = 0
@@ -204,9 +225,16 @@ vi.mock('@opentelemetry/exporter-trace-otlp-http', () => ({
 }))
 
 vi.mock('@opentelemetry/instrumentation', () => ({
-  registerInstrumentations: () => () => {
-    mocks.unregister()
+  registerInstrumentations: (options: { instrumentations: unknown; tracerProvider: unknown }) => {
+    mocks.registerInstrumentationCalls.push(options)
+    return () => {
+      mocks.unregister()
+    }
   },
+}))
+
+vi.mock('@opentelemetry/auto-instrumentations-web', () => ({
+  getWebAutoInstrumentations: (config: unknown) => mocks.getWebAutoInstrumentations(config),
 }))
 
 vi.mock('@opentelemetry/sdk-trace-web', () => ({
@@ -587,6 +615,63 @@ describe('browser span processors', () => {
 
     expect(getBrowserSessionId()).toEqual(expect.any(String))
   })
+
+  it('resolves instrumentation factories after provider registration', () => {
+    const preconstructedInstrumentation = { name: 'preconstructed' } as unknown as Instrumentation
+    const factoryInstrumentation = { name: 'factory' } as unknown as Instrumentation
+    const factory = vi.fn<() => Instrumentation[]>(() => {
+      mocks.lifecycleEvents.push('instrumentationFactory')
+      return [factoryInstrumentation]
+    })
+
+    cleanup = configure({
+      instrumentations: [preconstructedInstrumentation, factory],
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(factory).toHaveBeenCalledTimes(1)
+    expect(mocks.lifecycleEvents).toEqual(['providerRegister', 'instrumentationFactory'])
+    expect(mocks.registerInstrumentationCalls[0]).toMatchObject({
+      instrumentations: [preconstructedInstrumentation, factoryInstrumentation],
+      tracerProvider: getLatestWebTracerProvider(),
+    })
+  })
+
+  it('lazily loads first-class browser auto-instrumentations after provider registration', async () => {
+    cleanup = configure({
+      autoInstrumentations: {
+        '@opentelemetry/instrumentation-fetch': { enabled: true },
+      },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(mocks.lifecycleEvents).toEqual(['providerRegister'])
+    expect(mocks.autoInstrumentationConfigs).toEqual([])
+
+    await waitForConfigureMicrotasks()
+
+    expect(mocks.lifecycleEvents).toEqual(['providerRegister', 'getWebAutoInstrumentations'])
+    expect(mocks.autoInstrumentationConfigs).toEqual([
+      {
+        '@opentelemetry/instrumentation-fetch': { enabled: true },
+      },
+    ])
+    expect(mocks.registerInstrumentationCalls[1]).toMatchObject({
+      instrumentations: mocks.autoInstrumentations,
+      tracerProvider: getLatestWebTracerProvider(),
+    })
+  })
+
+  it('does not load first-class browser auto-instrumentations when disabled', async () => {
+    cleanup = configure({
+      autoInstrumentations: { enabled: false },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    expect(mocks.autoInstrumentationConfigs).toEqual([])
+    expect(mocks.registerInstrumentationCalls).toHaveLength(1)
+  })
 })
 
 describe('browser Web Vitals config', () => {
@@ -637,7 +722,8 @@ describe('browser Web Vitals config', () => {
       traceUrl: 'http://localhost:8989/client-traces',
     })
 
-    expect(mocks.webVitalsStartCalls).toEqual([{}])
+    expect(mocks.webVitalsStartCalls).toHaveLength(1)
+    expect(mocks.webVitalsStartCalls[0]).toMatchObject({ tracer: { name: 'logfire-web-vitals' } })
     expect(mocks.lifecycleEvents).toEqual(['providerRegister', 'webVitalsStart'])
   })
 
@@ -654,13 +740,13 @@ describe('browser Web Vitals config', () => {
       traceUrl: 'http://localhost:8989/client-traces',
     })
 
-    expect(mocks.webVitalsStartCalls).toEqual([
-      {
-        generateTarget,
-        includeProcessedEventEntries: true,
-        reportAllChanges: true,
-      },
-    ])
+    expect(mocks.webVitalsStartCalls).toHaveLength(1)
+    expect(mocks.webVitalsStartCalls[0]).toMatchObject({
+      generateTarget,
+      includeProcessedEventEntries: true,
+      reportAllChanges: true,
+      tracer: { name: 'logfire-web-vitals' },
+    })
   })
 
   it('implies browser session attributes when Web Vitals are enabled', () => {

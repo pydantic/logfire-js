@@ -10,7 +10,6 @@
     "preview": "vp preview --host 127.0.0.1 --port 4174"
   },
   "dependencies": {
-    "@opentelemetry/auto-instrumentations-web": "catalog:",
     "cors": "^2.8.5",
     "express": "^4.21.2"
   },

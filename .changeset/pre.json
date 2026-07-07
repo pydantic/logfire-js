@@ -14,9 +14,11 @@
     "@pydantic/logfire-browser": "0.16.4",
     "@pydantic/logfire-cf-workers": "0.12.4",
     "@pydantic/logfire-node": "0.18.2",
-    "@pydantic/logfire-session-replay": "0.0.0"
+    "@pydantic/logfire-session-replay": "0.0.0",
+    "@pydantic/otel-cf-workers": "1.0.0"
   },
   "changesets": [
+    "browser-rum-lifecycle",
     "browser-rum-session",
     "browser-rum-web-vitals-metrics",
     "browser-rum-web-vitals",

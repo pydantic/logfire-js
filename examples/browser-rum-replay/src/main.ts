@@ -1,4 +1,3 @@
-import { getWebAutoInstrumentations } from '@opentelemetry/auto-instrumentations-web'
 import * as logfire from '@pydantic/logfire-browser'
 
 interface CatalogProduct {
@@ -76,20 +75,18 @@ logfire.configure({
       },
     },
   },
-  instrumentations: [
-    getWebAutoInstrumentations({
-      '@opentelemetry/instrumentation-document-load': { enabled: true },
-      '@opentelemetry/instrumentation-fetch': {
-        enabled: true,
-        clearTimingResources: true,
-      },
-      '@opentelemetry/instrumentation-user-interaction': {
-        enabled: true,
-        eventNames: ['click', 'change'],
-      },
-      '@opentelemetry/instrumentation-xml-http-request': { enabled: true },
-    }),
-  ],
+  autoInstrumentations: {
+    '@opentelemetry/instrumentation-document-load': { enabled: true },
+    '@opentelemetry/instrumentation-fetch': {
+      enabled: true,
+      clearTimingResources: true,
+    },
+    '@opentelemetry/instrumentation-user-interaction': {
+      enabled: true,
+      eventNames: ['click', 'change'],
+    },
+    '@opentelemetry/instrumentation-xml-http-request': { enabled: true },
+  },
   diagLogLevel: import.meta.env.VITE_LOGFIRE_DIAG === 'true' ? logfire.DiagLogLevel.ALL : logfire.DiagLogLevel.ERROR,
   batchSpanProcessorConfig: {
     maxExportBatchSize: 8,

@@ -1,4 +1,5 @@
 import type { Attributes, ContextManager } from '@opentelemetry/api'
+import type { InstrumentationConfigMap as WebAutoInstrumentationConfigMap } from '@opentelemetry/auto-instrumentations-web'
 import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import type { Instrumentation } from '@opentelemetry/instrumentation'
@@ -75,6 +76,8 @@ export type { BrowserSessionReplayOptions } from './sessionReplay'
 export type { BrowserWebVitalsOptions } from './webVitals'
 
 type TraceExporterConfig = NonNullable<typeof OTLPTraceExporter extends new (config: infer T) => unknown ? T : never>
+export type BrowserInstrumentationInput = Instrumentation | Instrumentation[] | (() => Instrumentation | Instrumentation[])
+export type AutoInstrumentationsConfig = WebAutoInstrumentationConfigMap & { enabled?: boolean }
 
 export interface LogfireConfigOptions {
   /**
@@ -116,9 +119,16 @@ export interface LogfireConfigOptions {
    */
   jsonSchema?: JsonSchemaMode
   /**
-   * The instrumentations to register - a common one [is the fetch instrumentation](https://www.npmjs.com/package/@opentelemetry/instrumentation-fetch).
+   * Lazily register OpenTelemetry browser auto-instrumentations after the
+   * Logfire browser provider and session span processor are ready. Disabled by
+   * default. Pass an object to configure `getWebAutoInstrumentations()`.
    */
-  instrumentations?: (Instrumentation | Instrumentation[])[]
+  autoInstrumentations?: boolean | AutoInstrumentationsConfig
+  /**
+   * The instrumentations to register. Pass factories when construction should
+   * happen after the Logfire browser provider is registered.
+   */
+  instrumentations?: BrowserInstrumentationInput[]
   /**
    * Minimum Logfire level to emit for manual log-like spans.
    *
@@ -273,6 +283,72 @@ async function resolveTraceExporterHeaders(configHeaders: TraceExporterConfig['h
   }
 }
 
+function flattenInstrumentations(instrumentations: Instrumentation | Instrumentation[]): Instrumentation[] {
+  return Array.isArray(instrumentations) ? instrumentations : [instrumentations]
+}
+
+function resolveConfiguredInstrumentations(instrumentations: BrowserInstrumentationInput[] | undefined): Instrumentation[] {
+  return (instrumentations ?? []).flatMap((instrumentation) =>
+    flattenInstrumentations(typeof instrumentation === 'function' ? instrumentation() : instrumentation)
+  )
+}
+
+function resolveAutoInstrumentationsConfig(
+  autoInstrumentations: LogfireConfigOptions['autoInstrumentations']
+): WebAutoInstrumentationConfigMap | undefined {
+  if (autoInstrumentations === undefined || autoInstrumentations === false) {
+    return undefined
+  }
+
+  if (autoInstrumentations === true) {
+    return {}
+  }
+
+  const { enabled, ...config } = autoInstrumentations
+  return enabled === false ? undefined : config
+}
+
+function noopUnregister(): void {
+  return undefined
+}
+
+function startBrowserInstrumentations(options: {
+  autoInstrumentations: LogfireConfigOptions['autoInstrumentations']
+  instrumentations: LogfireConfigOptions['instrumentations']
+  tracerProvider: WebTracerProvider
+}): () => Promise<void> {
+  const configuredInstrumentations = resolveConfiguredInstrumentations(options.instrumentations)
+  const unregisterConfigured = registerInstrumentations({
+    instrumentations: configuredInstrumentations,
+    tracerProvider: options.tracerProvider,
+  })
+  const autoInstrumentationsConfig = resolveAutoInstrumentationsConfig(options.autoInstrumentations)
+  const unregisterAutoInstrumentationsPromise =
+    autoInstrumentationsConfig === undefined
+      ? undefined
+      : import('@opentelemetry/auto-instrumentations-web')
+          .then(({ getWebAutoInstrumentations }) =>
+            registerInstrumentations({
+              instrumentations: getWebAutoInstrumentations(autoInstrumentationsConfig),
+              tracerProvider: options.tracerProvider,
+            })
+          )
+          .catch((error: unknown) => {
+            diag.error('logfire-browser: failed to start browser auto-instrumentations', error)
+            return noopUnregister
+          })
+
+  let cleanupPromise: Promise<void> | undefined
+  return async () => {
+    cleanupPromise ??= (async () => {
+      const unregisterAutoInstrumentations = await unregisterAutoInstrumentationsPromise
+      unregisterAutoInstrumentations?.()
+      unregisterConfigured()
+    })()
+    return cleanupPromise
+  }
+}
+
 export function configure(options: LogfireConfigOptions): () => Promise<void> {
   if (options.diagLogLevel !== undefined) {
     diag.setLogger(new DiagConsoleLogger(), options.diagLogLevel)
@@ -371,8 +447,9 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
     contextManager: options.contextManager ?? new StackContextManager(),
   })
 
-  const unregister = registerInstrumentations({
-    instrumentations: options.instrumentations ?? [],
+  const unregisterInstrumentations = startBrowserInstrumentations({
+    autoInstrumentations: options.autoInstrumentations,
+    instrumentations: options.instrumentations,
     tracerProvider,
   })
 
@@ -398,7 +475,10 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
     webVitalsOptions === undefined
       ? undefined
       : webVitalsMetricOptions === undefined
-        ? startBrowserWebVitals(webVitalsOptions).catch((error: unknown) => {
+        ? startBrowserWebVitals({
+            ...webVitalsOptions,
+            tracer: tracerProvider.getTracer('logfire-web-vitals'),
+          }).catch((error: unknown) => {
             diag.error('logfire-browser: failed to start Web Vitals reporting', error)
             return undefined
           })
@@ -411,6 +491,7 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
             return startBrowserWebVitals({
               ...webVitalsOptions,
               metricRecorder: browserMetrics.createWebVitalsMetricRecorder(webVitalsMetricOptions),
+              tracer: tracerProvider.getTracer('logfire-web-vitals'),
             })
           })().catch((error: unknown) => {
             diag.error('logfire-browser: failed to start Web Vitals reporting', error)
@@ -446,7 +527,7 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
           await sessionReplay?.stop()
         })
       }
-      await runCleanupStep('instrumentation unregister', unregister)
+      await runCleanupStep('instrumentation unregister', unregisterInstrumentations)
       if (webVitalsStartupPromise !== undefined) {
         await runCleanupStep('web vitals shutdown', async () => {
           const webVitalsHandle = await webVitalsStartupPromise

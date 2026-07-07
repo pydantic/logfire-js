@@ -82,14 +82,6 @@ vi.mock('@opentelemetry/api', () => ({
       mocks.diagErrors.push(args)
     },
   },
-  trace: {
-    getTracer: (name: string) => {
-      mocks.tracerNames.push(name)
-      return {
-        startSpan: (spanName: string) => mocks.startSpan(spanName),
-      }
-    },
-  },
 }))
 
 vi.mock('web-vitals/attribution', () => ({
@@ -146,6 +138,22 @@ function createMetricRecorder() {
   }
 }
 
+function createTracer(name = 'logfire-web-vitals') {
+  return {
+    startSpan: (spanName: string) => {
+      mocks.tracerNames.push(name)
+      return mocks.startSpan(spanName)
+    },
+  }
+}
+
+async function startWebVitals(options: Omit<Parameters<typeof startBrowserWebVitals>[0], 'tracer'> = {}, tracer = createTracer()) {
+  return startBrowserWebVitals({
+    ...options,
+    tracer: tracer as never,
+  })
+}
+
 describe('browser Web Vitals reporting', () => {
   beforeEach(() => {
     mocks.reset()
@@ -159,7 +167,7 @@ describe('browser Web Vitals reporting', () => {
   it('registers all Web Vitals callbacks with shared options', async () => {
     const generateTarget = () => 'custom-target'
 
-    await startBrowserWebVitals({
+    await startWebVitals({
       generateTarget,
       includeProcessedEventEntries: true,
       reportAllChanges: true,
@@ -180,7 +188,7 @@ describe('browser Web Vitals reporting', () => {
   })
 
   it('defaults INP processed event entries to false', async () => {
-    await startBrowserWebVitals()
+    await startWebVitals()
 
     expect(getRegistration('INP').options).toEqual({
       includeProcessedEventEntries: false,
@@ -188,8 +196,8 @@ describe('browser Web Vitals reporting', () => {
   })
 
   it('does not register duplicate observers in one page lifecycle', async () => {
-    await startBrowserWebVitals({ reportAllChanges: true })
-    await startBrowserWebVitals({ reportAllChanges: false })
+    await startWebVitals({ reportAllChanges: true })
+    await startWebVitals({ reportAllChanges: false })
 
     for (const name of webVitalNames) {
       expect(mocks.registrations[name]).toHaveLength(1)
@@ -206,7 +214,7 @@ describe('browser Web Vitals reporting', () => {
       timeToFirstByte: 40,
     })
 
-    const handle = await startBrowserWebVitals({ metricRecorder })
+    const handle = await startWebVitals({ metricRecorder })
 
     report('LCP', metric)
 
@@ -226,8 +234,8 @@ describe('browser Web Vitals reporting', () => {
     const secondMetricRecorder = createMetricRecorder()
     const metric = createMetric('FCP', { firstByteToFCP: 85, loadState: 'dom-interactive', timeToFirstByte: 42 })
 
-    await startBrowserWebVitals({ metricRecorder: firstMetricRecorder })
-    await startBrowserWebVitals({ metricRecorder: secondMetricRecorder })
+    await startWebVitals({ metricRecorder: firstMetricRecorder }, createTracer('first-tracer'))
+    await startWebVitals({ metricRecorder: secondMetricRecorder }, createTracer('second-tracer'))
     report('FCP', metric)
 
     for (const name of webVitalNames) {
@@ -235,6 +243,7 @@ describe('browser Web Vitals reporting', () => {
     }
     expect(firstMetricRecorder.record).not.toHaveBeenCalled()
     expect(secondMetricRecorder.record).toHaveBeenCalledWith(metric)
+    expect(mocks.tracerNames).toContain('second-tracer')
   })
 
   it('attaches a metric recorder after Web Vitals already started without metrics', async () => {
@@ -242,10 +251,10 @@ describe('browser Web Vitals reporting', () => {
     const beforeRecorder = createMetric('FCP', { firstByteToFCP: 85, loadState: 'dom-interactive', timeToFirstByte: 42 })
     const afterRecorder = createMetric('TTFB', { waitingDuration: 1 })
 
-    await startBrowserWebVitals()
+    await startWebVitals()
     report('FCP', beforeRecorder)
 
-    await startBrowserWebVitals({ metricRecorder })
+    await startWebVitals({ metricRecorder })
     report('TTFB', afterRecorder)
 
     for (const name of webVitalNames) {
@@ -265,8 +274,8 @@ describe('browser Web Vitals reporting', () => {
       timeToFirstByte: 40,
     })
 
-    const firstHandle = await startBrowserWebVitals({ metricRecorder: firstMetricRecorder })
-    const secondHandle = await startBrowserWebVitals({ metricRecorder: secondMetricRecorder })
+    const firstHandle = await startWebVitals({ metricRecorder: firstMetricRecorder }, createTracer('first-tracer'))
+    const secondHandle = await startWebVitals({ metricRecorder: secondMetricRecorder }, createTracer('second-tracer'))
 
     await firstHandle.shutdown()
     report('LCP', metric)
@@ -274,6 +283,7 @@ describe('browser Web Vitals reporting', () => {
     expect(firstMetricRecorder.shutdown).toHaveBeenCalledTimes(1)
     expect(firstMetricRecorder.record).not.toHaveBeenCalled()
     expect(secondMetricRecorder.record).toHaveBeenCalledWith(metric)
+    expect(mocks.tracerNames).toContain('second-tracer')
 
     await secondHandle.shutdown()
     report('LCP', metric)
@@ -283,7 +293,7 @@ describe('browser Web Vitals reporting', () => {
   })
 
   it('creates a span with base attributes for each report', async () => {
-    await startBrowserWebVitals()
+    await startWebVitals()
 
     report('FCP', createMetric('FCP', { firstByteToFCP: 85, loadState: 'dom-interactive', timeToFirstByte: 42 }))
 
@@ -302,7 +312,7 @@ describe('browser Web Vitals reporting', () => {
   })
 
   it('maps LCP attribution from target and emits the compatibility element alias', async () => {
-    await startBrowserWebVitals()
+    await startWebVitals()
 
     report(
       'LCP',
@@ -333,7 +343,7 @@ describe('browser Web Vitals reporting', () => {
   })
 
   it('maps INP, CLS, FCP, and TTFB attribution primitives', async () => {
-    await startBrowserWebVitals()
+    await startWebVitals()
 
     report(
       'INP',
@@ -404,7 +414,7 @@ describe('browser Web Vitals reporting', () => {
   })
 
   it('skips undefined attribution values', async () => {
-    await startBrowserWebVitals()
+    await startWebVitals()
 
     report(
       'LCP',
@@ -426,7 +436,7 @@ describe('browser Web Vitals reporting', () => {
 
   it('reports callback errors through diagnostics', async () => {
     mocks.startSpanErrorMessage = 'cannot start span'
-    await startBrowserWebVitals()
+    await startWebVitals()
 
     expect(() => {
       report('TTFB', createMetric('TTFB', { waitingDuration: 1 }))
@@ -445,7 +455,7 @@ describe('browser Web Vitals reporting', () => {
       }),
       shutdown: vi.fn<() => void>(),
     }
-    await startBrowserWebVitals({ metricRecorder })
+    await startWebVitals({ metricRecorder })
 
     expect(() => {
       report('TTFB', createMetric('TTFB', { waitingDuration: 1 }))

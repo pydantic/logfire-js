@@ -70,9 +70,13 @@ or 4 hours of total duration by default. Spans get `session.id` and
 `browser.session.id`; `session.id` is the OpenTelemetry semantic attribute and
 `browser.session.id` is emitted for Logfire Platform compatibility.
 
-By default, session-enabled spans also get `url.full` and `url.path` from the
-current page URL. If your app has sensitive query strings or fragments, provide
-a sanitizer or suppress URL attributes:
+By default, session-enabled spans also get `logfire.page.url.full` and
+`logfire.page.url.path` from the current page URL. During the alpha, the SDK
+also emits compatibility `url.full` and `url.path` values with the same
+sanitized page URL. Prefer `logfire.page.url.*` for page grouping because
+OpenTelemetry fetch/resource spans may use `url.*` for the network target URL.
+If your app has sensitive query strings or fragments, provide a sanitizer or
+suppress URL attributes:
 
 ```js
 logfire.configure({
@@ -183,13 +187,14 @@ Metric data point attributes are intentionally low-cardinality:
 `web_vital.name` and `web_vital.rating` by default. They do not include
 `session.id`, `browser.session.id`, `url.full`, `url.path`, Web Vital
 ids/deltas, DOM selectors, attribution fields, or raw PerformanceEntry data. Use
-spans for raw-sample drilldown, session/replay correlation, exact URL context,
-and attribution selectors.
+spans for raw-sample drilldown, session/replay correlation, exact page context,
+and attribution selectors. When metrics are configured, Logfire Platform should
+treat these histograms as the aggregate Web Vitals surface.
 
 For modern single-page apps, these are standard document-level Web Vitals, not
-route-level soft-navigation metrics. Span URL attributes describe the browser
-URL when the callback fires; route-specific Core Web Vitals need separate route
-or soft-navigation instrumentation. To add a route dimension to metrics, pass a
+route-level soft-navigation metrics. Span page URL attributes describe the
+browser URL when the callback fires; route-specific Core Web Vitals need
+separate route or soft-navigation instrumentation. To add a route dimension to metrics, pass a
 low-cardinality template such as `/products/:id` through
 `rum.webVitals.metrics.attributes`.
 
@@ -225,10 +230,13 @@ logfire.configure({
 ```
 
 `sessionReplay` implies default browser session attributes. Replay chunks and
-browser spans share `session.id` / `browser.session.id`, and spans started
-while replay is active get `logfire.session_replay.active` and
-`logfire.session_replay.mode`. The browser integration intentionally does not
-poll active trace context into replay chunks.
+browser spans share `session.id` / `browser.session.id`. Spans started after
+replay has loaded and sampled into `full` or `buffer` mode get
+`logfire.session_replay.active` and `logfire.session_replay.mode`. Those active
+attributes are truthful best-effort annotations, not the primary correlation
+key; early spans should be correlated to replay by browser session id and replay
+time bounds. The browser integration intentionally does not poll active trace
+context into replay chunks.
 
 Use a backend proxy for browser replay uploads. The proxy should authenticate
 the browser request with your application session or CSRF mechanism and add the

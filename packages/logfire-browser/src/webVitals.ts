@@ -1,5 +1,5 @@
-import type { Attributes } from '@opentelemetry/api'
-import { diag, trace } from '@opentelemetry/api'
+import type { Attributes, Tracer } from '@opentelemetry/api'
+import { diag } from '@opentelemetry/api'
 import type {
   AttributionReportOpts,
   INPAttributionReportOpts,
@@ -50,12 +50,14 @@ interface WebVitalsAttributionModule {
 
 interface BrowserWebVitalsStartOptions extends BrowserWebVitalsOptions {
   metricRecorder?: BrowserWebVitalsMetricRecorder
+  tracer: Tracer
 }
 
 let startupPromise: Promise<void> | undefined
 let currentMetricRecorder: BrowserWebVitalsMetricRecorder | undefined
+let currentTracer: Tracer | undefined
 
-function createHandle(metricRecorder: BrowserWebVitalsMetricRecorder | undefined): BrowserWebVitalsHandle {
+function createHandle(metricRecorder: BrowserWebVitalsMetricRecorder | undefined, tracer: Tracer): BrowserWebVitalsHandle {
   let shutdownCalled = false
   return {
     async shutdown() {
@@ -66,6 +68,9 @@ function createHandle(metricRecorder: BrowserWebVitalsMetricRecorder | undefined
       metricRecorder?.shutdown()
       if (currentMetricRecorder === metricRecorder) {
         currentMetricRecorder = undefined
+      }
+      if (currentTracer === tracer) {
+        currentTracer = undefined
       }
       return Promise.resolve()
     },
@@ -169,9 +174,13 @@ function createMetricAttributes(metric: MetricWithAttribution): Attributes {
   return attributes
 }
 
-function reportWebVitalSpan(metric: MetricWithAttribution): void {
+function reportWebVitalSpan(metric: MetricWithAttribution, tracer: Tracer | undefined): void {
+  if (tracer === undefined) {
+    diag.error('logfire-browser: failed to report Web Vital', new Error('missing Web Vitals tracer'))
+    return
+  }
+
   try {
-    const tracer = trace.getTracer('logfire-web-vitals')
     const span = tracer.startSpan(`web_vital.${metric.name.toLowerCase()}`)
     try {
       span.setAttributes(createMetricAttributes(metric))
@@ -195,15 +204,19 @@ function reportWebVitalMetric(metric: MetricWithAttribution, metricRecorder: Bro
   }
 }
 
-function reportWebVital(metric: MetricWithAttribution, metricRecorder: BrowserWebVitalsMetricRecorder | undefined): void {
-  reportWebVitalSpan(metric)
+function reportWebVital(
+  metric: MetricWithAttribution,
+  metricRecorder: BrowserWebVitalsMetricRecorder | undefined,
+  tracer: Tracer | undefined
+): void {
+  reportWebVitalSpan(metric, tracer)
   reportWebVitalMetric(metric, metricRecorder)
 }
 
-function registerWebVitals(webVitals: WebVitalsAttributionModule, options: BrowserWebVitalsStartOptions = {}): void {
+function registerWebVitals(webVitals: WebVitalsAttributionModule, options: BrowserWebVitalsStartOptions): void {
   const reportOptions = createBaseReportOptions(options)
   const report = (metric: MetricWithAttribution) => {
-    reportWebVital(metric, currentMetricRecorder)
+    reportWebVital(metric, currentMetricRecorder, currentTracer)
   }
   webVitals.onLCP(report, reportOptions)
   webVitals.onINP(report, createInpReportOptions(options))
@@ -212,10 +225,11 @@ function registerWebVitals(webVitals: WebVitalsAttributionModule, options: Brows
   webVitals.onTTFB(report, reportOptions)
 }
 
-export async function startBrowserWebVitals(options: BrowserWebVitalsStartOptions = {}): Promise<BrowserWebVitalsHandle> {
+export async function startBrowserWebVitals(options: BrowserWebVitalsStartOptions): Promise<BrowserWebVitalsHandle> {
   if (options.metricRecorder !== undefined) {
     currentMetricRecorder = options.metricRecorder
   }
+  currentTracer = options.tracer
 
   startupPromise ??= import('web-vitals/attribution')
     .then((webVitals) => {
@@ -226,10 +240,11 @@ export async function startBrowserWebVitals(options: BrowserWebVitalsStartOption
     })
 
   await startupPromise
-  return createHandle(options.metricRecorder)
+  return createHandle(options.metricRecorder, options.tracer)
 }
 
 export function resetBrowserWebVitalsForTests(): void {
   startupPromise = undefined
   currentMetricRecorder = undefined
+  currentTracer = undefined
 }

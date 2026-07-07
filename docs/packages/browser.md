@@ -12,13 +12,12 @@ Browser telemetry must be sent through your own backend proxy. Do not put a Logf
 ## Install
 
 ```bash
-npm install @pydantic/logfire-browser @opentelemetry/auto-instrumentations-web
+npm install @pydantic/logfire-browser
 ```
 
 ## Configure
 
 ```ts
-import { getWebAutoInstrumentations } from '@opentelemetry/auto-instrumentations-web'
 import * as logfire from '@pydantic/logfire-browser'
 
 const url = new URL('/logfire-proxy/v1/traces', window.location.origin)
@@ -27,11 +26,13 @@ logfire.configure({
   traceUrl: url.toString(),
   serviceName: 'web-app',
   serviceVersion: '1.0.0',
-  instrumentations: [getWebAutoInstrumentations()],
+  autoInstrumentations: true,
 })
 ```
 
 `traceUrl` should point to a server-side endpoint that accepts OTLP trace requests from your browser instrumentation, forwards them to Logfire, and adds the `Authorization` header on the server.
+
+`autoInstrumentations` is opt-in and lazily loads OpenTelemetry browser auto-instrumentations after the Logfire browser provider is ready. For advanced integrations, `instrumentations` also accepts factories, so custom instrumentation construction can be deferred until `configure()` has registered the provider.
 
 Use `diagLogLevel` while troubleshooting local browser instrumentation:
 
@@ -39,7 +40,7 @@ Use `diagLogLevel` while troubleshooting local browser instrumentation:
 logfire.configure({
   traceUrl: '/logfire-proxy/v1/traces',
   serviceName: 'web-app',
-  instrumentations: [getWebAutoInstrumentations()],
+  autoInstrumentations: true,
   diagLogLevel: logfire.DiagLogLevel.ALL,
 })
 ```
@@ -67,9 +68,13 @@ of total duration by default. Each span gets `session.id` and
 `browser.session.id`; `session.id` is the OpenTelemetry semantic attribute and
 `browser.session.id` is emitted for Logfire Platform compatibility.
 
-Session-enabled spans also get `url.full` and `url.path` by default. If your
-URLs may contain sensitive query strings or fragments, sanitize or suppress
-these attributes:
+Session-enabled spans also get `logfire.page.url.full` and
+`logfire.page.url.path` by default for current page context. During the alpha,
+the SDK also emits compatibility `url.full` and `url.path` values with the same
+sanitized page URL. Prefer `logfire.page.url.*` for page grouping because
+OpenTelemetry fetch/resource spans may use `url.*` for the network target URL.
+If your URLs may contain sensitive query strings or fragments, sanitize or
+suppress these attributes:
 
 ```ts
 logfire.configure({
@@ -177,13 +182,14 @@ Metric data point attributes are intentionally low-cardinality:
 `web_vital.name` and `web_vital.rating` by default. They do not include
 `session.id`, `browser.session.id`, `url.full`, `url.path`, Web Vital
 ids/deltas, DOM selectors, attribution fields, or raw PerformanceEntry data. Use
-spans for raw-sample drilldown, session/replay correlation, exact URL context,
-and attribution selectors.
+spans for raw-sample drilldown, session/replay correlation, exact page context,
+and attribution selectors. When metrics are configured, Logfire Platform should
+treat these histograms as the aggregate Web Vitals surface.
 
 For modern single-page apps, these are standard document-level Web Vitals, not
-route-level soft-navigation metrics. Span URL attributes describe the browser
-URL when the callback fires; route-specific Core Web Vitals need separate route
-or soft-navigation instrumentation. To add a route dimension to metrics, pass a
+route-level soft-navigation metrics. Span page URL attributes describe the
+browser URL when the callback fires; route-specific Core Web Vitals need
+separate route or soft-navigation instrumentation. To add a route dimension to metrics, pass a
 low-cardinality template such as `/products/:id` through
 `rum.webVitals.metrics.attributes`.
 
@@ -218,10 +224,13 @@ logfire.configure({
 ```
 
 `sessionReplay` implies default RUM session behavior. Replay chunks and browser
-spans share `session.id` / `browser.session.id`, and spans started while replay
-is active include `logfire.session_replay.active` and
-`logfire.session_replay.mode`. The browser SDK does not populate replay
-`traceIds` from active-span polling.
+spans share `session.id` / `browser.session.id`. Spans started after replay has
+loaded and sampled into `full` or `buffer` mode include
+`logfire.session_replay.active` and `logfire.session_replay.mode`. Those active
+attributes are truthful best-effort annotations, not the primary correlation
+key; early spans should be correlated to replay by browser session id and replay
+time bounds. The browser SDK does not populate replay `traceIds` from
+active-span polling.
 
 Direct token usage is available as an advanced escape hatch, but it exposes the
 write token to browser code and should not be the default browser deployment

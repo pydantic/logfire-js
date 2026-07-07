@@ -104,6 +104,8 @@ describe('BrowserSessionSpanProcessor', () => {
 
     expect(span.attributes).toEqual({
       'browser.session.id': 'session-1',
+      'logfire.page.url.full': 'https://example.com/dashboard?tab=activity#recent',
+      'logfire.page.url.path': '/dashboard',
       'session.id': 'session-1',
       'url.full': 'https://example.com/dashboard?tab=activity#recent',
       'url.path': '/dashboard',
@@ -138,9 +140,25 @@ describe('BrowserSessionSpanProcessor', () => {
 
     expect(span.attributes).toEqual({
       'browser.session.id': 'session-1',
+      'logfire.page.url.full': 'https://example.com/dashboard',
+      'logfire.page.url.path': '/sanitized',
       'session.id': 'session-1',
       'url.full': 'https://example.com/dashboard',
       'url.path': '/sanitized',
+    })
+  })
+
+  it('keeps explicit page URL attributes alongside compatibility URL attributes', () => {
+    setLocation({ href: 'https://example.com/products/123?token=secret' })
+    const span = createSpan()
+
+    startSpan(createProcessor(), span)
+
+    expect(span.attributes).toMatchObject({
+      'logfire.page.url.full': 'https://example.com/products/123?token=secret',
+      'logfire.page.url.path': '/products/123',
+      'url.full': 'https://example.com/products/123?token=secret',
+      'url.path': '/products/123',
     })
   })
 
