@@ -11,7 +11,7 @@ The implementation should:
 - Add a first-class config surface for explicitly captured request and response
   headers on Worker inbound fetch, outbound fetch, and Durable Object fetch spans.
 - Emit captured header attributes in the OpenTelemetry semantic convention value
-  shape: a string array, usually `[value]` with the Fetch `Headers` API.
+  shape: a string array.
 - Keep existing non-header HTTP semantic attributes such as method, body size,
   status code, content type, user agent, URL, and Cloudflare metadata.
 - Document the behavior change and migration path for users who intentionally
@@ -134,10 +134,9 @@ The implementation should:
 - `Headers.entries()` returns lower-case names in standard Fetch implementations,
   but the implementation should normalize names defensively so config matching is
   case-insensitive and emitted attribute keys are lower-case.
-- Fetch `Headers` exposes combined header values as strings. Emit `[value]` for
-  captured values rather than trying to split comma-separated values; the
-  semantic convention allows either a single-item array containing the combined
-  string or multiple values depending on the library.
+- Fetch `Headers` often exposes combined header values as strings. Preserve those
+  strings rather than splitting comma-separated values, but accumulate repeated
+  entries from `headers.entries()` into the same attribute array.
 - Keep trace-context propagation separate from header capture. `traceparent`,
   `tracestate`, and `baggage` may be injected/extracted without being recorded
   as span attributes unless the user explicitly opts into capturing those header
@@ -200,7 +199,8 @@ Task 1: Header capture helpers
     - Add a helper that copies matching Headers entries into attributes under a
       supplied prefix.
     - Normalize emitted header names to lower-case.
-    - Emit captured header values as [value].
+    - Emit captured header values as arrays, appending repeated header entries to
+      the same array.
   PATTERN:
     - Keep helper functions small and local to fetch instrumentation unless tests
       show reuse pressure.

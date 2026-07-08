@@ -1,3 +1,5 @@
+/// <reference types="@cloudflare/workers-types" />
+
 import type { Span, SpanOptions, Tracer } from '@opentelemetry/api'
 import { context as apiContext, SpanStatusCode, trace } from '@opentelemetry/api'
 import { describe, expect, it, vitest } from 'vitest'
@@ -151,6 +153,19 @@ describe('gatherResponseAttributes', () => {
 
     expect(attrs['http.response.header.x-response-id']).toEqual(['res-1'])
     expect(attrs).not.toHaveProperty('http.response.header.set-cookie')
+  })
+
+  it('appends repeated response header entries to the captured value array', () => {
+    const headers = new Headers()
+    headers.append('Set-Cookie', 'session=secret')
+    headers.append('Set-Cookie', 'theme=dark')
+    headers.append('X-Response-Id', 'res-1')
+    const response = new Response('ok', { headers })
+
+    const attrs = gatherResponseAttributes(response, ['set-cookie', 'x-response-id'])
+
+    expect(attrs['http.response.header.set-cookie']).toEqual(['session=secret', 'theme=dark'])
+    expect(attrs['http.response.header.x-response-id']).toEqual(['res-1'])
   })
 })
 

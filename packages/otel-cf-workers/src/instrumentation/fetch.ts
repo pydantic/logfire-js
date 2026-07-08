@@ -107,7 +107,10 @@ function gatherHeaderAttributes(
   for (const [rawKey, value] of headers.entries()) {
     const key = rawKey.toLowerCase()
     if (shouldCaptureHeader(selector, key, value)) {
-      attrs[`${prefix}.${key}`] = [value]
+      const attrKey = `${prefix}.${key}`
+      const existingValue = attrs[attrKey]
+      const existingValues = Array.isArray(existingValue) ? existingValue.filter((item): item is string => typeof item === 'string') : []
+      attrs[attrKey] = [...existingValues, value]
     }
   }
 }
