@@ -11,8 +11,25 @@ import { ATTR_FAAS_COLDSTART, ATTR_FAAS_INVOCATION_ID, ATTR_FAAS_TRIGGER } from 
 import { versionAttributes } from './version.js'
 
 export type IncludeTraceContextFn = (request: Request) => boolean
+/**
+ * Predicate for selecting headers to record as span attributes. The header name
+ * is lowercased before this function is called; the value is passed unchanged.
+ */
 export type HeaderCapturePredicate = (name: string, value: string) => boolean
+/**
+ * Controls header capture for request/response span attributes.
+ *
+ * - `true`: capture all headers.
+ * - `string[]`: capture only these header names, matched case-insensitively.
+ * - function: capture headers when the predicate returns `true`.
+ *
+ * @default undefined No headers are captured.
+ */
 export type HeaderCaptureSelector = boolean | readonly string[] | HeaderCapturePredicate
+/**
+ * Explicit request and response header capture selectors. Header capture is
+ * disabled by default to avoid recording sensitive values.
+ */
 export interface HeaderCaptureConfig {
   request?: HeaderCaptureSelector
   response?: HeaderCaptureSelector
@@ -20,6 +37,9 @@ export interface HeaderCaptureConfig {
 
 export interface FetcherConfig {
   includeTraceContext?: boolean | IncludeTraceContextFn
+  /**
+   * Explicit header capture for outbound fetch spans.
+   */
   captureHeaders?: HeaderCaptureConfig
 }
 
@@ -31,6 +51,9 @@ export interface FetchHandlerConfig {
    * @default true
    */
   acceptTraceContext?: boolean | AcceptTraceContextFn
+  /**
+   * Explicit header capture for incoming fetch handler spans.
+   */
   captureHeaders?: HeaderCaptureConfig
 }
 

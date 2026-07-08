@@ -61,6 +61,11 @@ export default instrumentWorker(handler, {
   service: {
     name: 'my-worker',
   },
+  fetch: {
+    captureHeaders: {
+      request: ['x-request-id'],
+    },
+  },
   handlers: {
     fetch: {
       captureHeaders: {
