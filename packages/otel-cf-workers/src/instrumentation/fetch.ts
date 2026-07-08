@@ -11,8 +11,36 @@ import { ATTR_FAAS_COLDSTART, ATTR_FAAS_INVOCATION_ID, ATTR_FAAS_TRIGGER } from 
 import { versionAttributes } from './version.js'
 
 export type IncludeTraceContextFn = (request: Request) => boolean
+/**
+ * Predicate for selecting headers to record as span attributes. The header name
+ * is lowercased before this function is called; the value is passed unchanged.
+ */
+export type HeaderCapturePredicate = (name: string, value: string) => boolean
+/**
+ * Controls header capture for request/response span attributes.
+ *
+ * - `true`: capture all headers.
+ * - `string[]`: capture only these header names, matched case-insensitively.
+ * - function: capture headers when the predicate returns `true`.
+ *
+ * @default undefined No headers are captured.
+ */
+export type HeaderCaptureSelector = boolean | readonly string[] | HeaderCapturePredicate
+/**
+ * Explicit request and response header capture selectors. Header capture is
+ * disabled by default to avoid recording sensitive values.
+ */
+export interface HeaderCaptureConfig {
+  request?: HeaderCaptureSelector
+  response?: HeaderCaptureSelector
+}
+
 export interface FetcherConfig {
   includeTraceContext?: boolean | IncludeTraceContextFn
+  /**
+   * Explicit header capture for outbound fetch spans.
+   */
+  captureHeaders?: HeaderCaptureConfig
 }
 
 export type AcceptTraceContextFn = (request: Request) => boolean
@@ -23,6 +51,10 @@ export interface FetchHandlerConfig {
    * @default true
    */
   acceptTraceContext?: boolean | AcceptTraceContextFn
+  /**
+   * Explicit header capture for incoming fetch handler spans.
+   */
+  captureHeaders?: HeaderCaptureConfig
 }
 
 type FetchHandler = ExportedHandlerFetchHandler
@@ -50,8 +82,41 @@ const gatherOutgoingCfAttributes = (cf: RequestInitCfProperties): Attributes => 
   return attrs
 }
 
-export function gatherRequestAttributes(request: Request): Attributes {
-  const attrs: Record<string, string | number> = {}
+function shouldCaptureHeader(selector: HeaderCaptureSelector | undefined, name: string, value: string): boolean {
+  if (selector === undefined || selector === false) {
+    return false
+  }
+
+  if (selector === true) {
+    return true
+  }
+
+  if (typeof selector === 'function') {
+    return selector(name, value)
+  }
+
+  return selector.some((headerName) => headerName.toLowerCase() === name)
+}
+
+function gatherHeaderAttributes(
+  attrs: Attributes,
+  headers: Headers,
+  prefix: 'http.request.header' | 'http.response.header',
+  selector?: HeaderCaptureSelector
+): void {
+  for (const [rawKey, value] of headers.entries()) {
+    const key = rawKey.toLowerCase()
+    if (shouldCaptureHeader(selector, key, value)) {
+      const attrKey = `${prefix}.${key}`
+      const existingValue = attrs[attrKey]
+      const existingValues = Array.isArray(existingValue) ? existingValue.filter((item): item is string => typeof item === 'string') : []
+      attrs[attrKey] = [...existingValues, value]
+    }
+  }
+}
+
+export function gatherRequestAttributes(request: Request, captureHeaders?: HeaderCaptureSelector): Attributes {
+  const attrs: Attributes = {}
   const headers = request.headers
   attrs['http.request.method'] = request.method.toUpperCase()
   attrs['network.protocol.name'] = 'http'
@@ -74,9 +139,7 @@ export function gatherRequestAttributes(request: Request): Attributes {
     attrs['http.accepts'] = request.cf.clientAcceptEncoding
   }
 
-  for (const [key, value] of headers.entries()) {
-    attrs[`http.request.header.${key}`] = value
-  }
+  gatherHeaderAttributes(attrs, headers, 'http.request.header', captureHeaders)
 
   const u = new URL(request.url)
   attrs['url.full'] = `${u.protocol}//${u.host}${u.pathname}${u.search}`
@@ -88,8 +151,8 @@ export function gatherRequestAttributes(request: Request): Attributes {
   return attrs
 }
 
-export function gatherResponseAttributes(response: Response): Attributes {
-  const attrs: Record<string, string | number> = {}
+export function gatherResponseAttributes(response: Response, captureHeaders?: HeaderCaptureSelector): Attributes {
+  const attrs: Attributes = {}
   attrs['http.response.status_code'] = response.status
   const contentLength = response.headers.get('content-length')
   if (contentLength !== null) {
@@ -100,9 +163,7 @@ export function gatherResponseAttributes(response: Response): Attributes {
     attrs['http.mime_type'] = contentType
   }
 
-  for (const [key, value] of response.headers.entries()) {
-    attrs[`http.response.header.${key}`] = value
-  }
+  gatherHeaderAttributes(attrs, response.headers, 'http.response.header', captureHeaders)
   return attrs
 }
 
@@ -161,6 +222,7 @@ export async function waitUntilTrace(fn: () => Promise<unknown>): Promise<void> 
 let cold_start = true
 export async function executeFetchHandler(fetchFn: FetchHandler, [request, env, ctx]: FetchHandlerArgs): Promise<Response> {
   const spanContext = getParentContextFromRequest(request)
+  const captureHeaders = getActiveConfig()?.handlers?.fetch?.captureHeaders
 
   const tracer = trace.getTracer('fetchHandler')
   const attributes = {
@@ -169,7 +231,7 @@ export async function executeFetchHandler(fetchFn: FetchHandler, [request, env, 
     [ATTR_FAAS_INVOCATION_ID]: request.headers.get('cf-ray') ?? undefined,
   }
   cold_start = false
-  Object.assign(attributes, gatherRequestAttributes(request))
+  Object.assign(attributes, gatherRequestAttributes(request, captureHeaders?.request))
   Object.assign(attributes, gatherIncomingCfAttributes(request))
   Object.assign(attributes, versionAttributes(env))
   const options: SpanOptions = {
@@ -182,7 +244,7 @@ export async function executeFetchHandler(fetchFn: FetchHandler, [request, env, 
     const readable = span as unknown as ReadableSpan
     try {
       const response = await fetchFn(request, env, ctx)
-      span.setAttributes(gatherResponseAttributes(response))
+      span.setAttributes(gatherResponseAttributes(response, captureHeaders?.response))
 
       return response
     } catch (error) {
@@ -253,12 +315,12 @@ export function instrumentClientFetch(fetchFn: Fetcher['fetch'], configFn: getFe
               },
             })
           }
-          span.setAttributes(gatherRequestAttributes(request))
+          span.setAttributes(gatherRequestAttributes(request, config.captureHeaders?.request))
           if (request.cf) {
             span.setAttributes(gatherOutgoingCfAttributes(request.cf))
           }
           const response = await Reflect.apply(target, thisArg, [request])
-          span.setAttributes(gatherResponseAttributes(response))
+          span.setAttributes(gatherResponseAttributes(response, config.captureHeaders?.response))
           return response
         } catch (error) {
           span.recordException(error as Exception)

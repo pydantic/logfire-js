@@ -52,6 +52,34 @@ export const Counter = instrumentDO(CounterDurableObject, {
 })
 ```
 
+Request and response headers are not captured as span attributes by default. To
+record specific headers, use the Cloudflare OpenTelemetry config fields exposed
+through this package's existing `fetch` and `handlers` options:
+
+```ts
+export default instrumentWorker(handler, {
+  service: {
+    name: 'my-worker',
+  },
+  fetch: {
+    captureHeaders: {
+      request: ['x-request-id'],
+    },
+  },
+  handlers: {
+    fetch: {
+      captureHeaders: {
+        request: ['x-request-id'],
+        response: ['cache-control'],
+      },
+    },
+  },
+})
+```
+
+Logfire scrubbing still helps redact sensitive attributes before export, but it
+is a backstop. Prefer explicit header capture over capturing every header.
+
 ## Runtime lifecycle
 
 Cloudflare Workers do not have a process-style shutdown hook. Logfire relies on

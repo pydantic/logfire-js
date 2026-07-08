@@ -171,6 +171,44 @@ const fetchConf = (request: Request): boolean => {
 }
 ```
 
+Request and response headers are not captured as span attributes by default.
+Capture the headers you need with `captureHeaders.request` and
+`captureHeaders.response`. Header names are matched case-insensitively, and
+captured values are recorded as arrays on `http.request.header.<name>` and
+`http.response.header.<name>`.
+
+```typescript
+const fetch = {
+  captureHeaders: {
+    request: ['x-request-id'],
+    response: ['cache-control'],
+  },
+}
+```
+
+You can use a predicate for dynamic selection:
+
+```typescript
+const fetch = {
+  captureHeaders: {
+    request: (name: string) => name.startsWith('x-'),
+  },
+}
+```
+
+Set a selector to `true` only when you intentionally want to capture every
+header. This can record sensitive values such as cookies and authorization
+tokens.
+
+```typescript
+const fetch = {
+  captureHeaders: {
+    request: true,
+    response: true,
+  },
+}
+```
+
 ### Handlers
 
 The `handlers` field of the configuration overrides the way in which event handlers, such as `fetch` or `queue`, are instrumented.
@@ -185,6 +223,20 @@ Example:
 ```typescript
 const fetchConf = (request: Request): boolean => {
   return new URL(request.url).hostname === 'example.com'
+}
+```
+
+Incoming Worker fetch spans use the same explicit header capture shape under
+`handlers.fetch.captureHeaders`:
+
+```typescript
+const handlers = {
+  fetch: {
+    captureHeaders: {
+      request: ['x-request-id'],
+      response: ['cache-control'],
+    },
+  },
 }
 ```
 

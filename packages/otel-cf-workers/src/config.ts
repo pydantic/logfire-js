@@ -47,10 +47,12 @@ export function parseConfig(supplied: TraceConfig): ResolvedTraceConfig {
     return {
       fetch: {
         includeTraceContext: supplied.fetch?.includeTraceContext ?? true,
+        captureHeaders: supplied.fetch?.captureHeaders ?? {},
       },
       handlers: {
         fetch: {
           acceptTraceContext: supplied.handlers?.fetch?.acceptTraceContext ?? true,
+          captureHeaders: supplied.handlers?.fetch?.captureHeaders ?? {},
         },
       },
       postProcessor: supplied.postProcessor ?? ((spans: ReadableSpan[]) => spans),

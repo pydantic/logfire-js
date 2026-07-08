@@ -1,8 +1,14 @@
 /// <reference types="@cloudflare/workers-types" />
 
+import type { Span, SpanOptions, Tracer, SpanStatusCode } from '@opentelemetry/api'
+import { context as apiContext, trace } from '@opentelemetry/api'
 import { describe, expect, it, vitest } from 'vitest'
+import { setConfig } from '../../src/config'
+import { AsyncLocalStorageContextManager } from '../../src/context'
 import type { ResolvedTraceConfig } from '../../src/types'
-import { instrumentDOClass } from '../../src/instrumentation/do'
+import { executeDOFetch, instrumentDOClass } from '../../src/instrumentation/do'
+
+apiContext.setGlobalContextManager(new AsyncLocalStorageContextManager())
 
 type FetchWithRequest = (request: Request) => Response | Promise<Response>
 
@@ -56,6 +62,31 @@ function createDurableObjectState(): TestDurableObjectState {
 }
 
 const resolvedConfig = {} as ResolvedTraceConfig
+
+function createSpan() {
+  return {
+    attributes: {} as Record<string, unknown>,
+    end: vitest.fn<() => void>(),
+    recordException: vitest.fn<(exception: unknown) => void>(),
+    setAttribute: vitest.fn<(key: string, value: unknown) => void>(),
+    setAttributes: vitest.fn<(attributes: Record<string, unknown>) => void>(),
+    setStatus: vitest.fn<(status: { code: SpanStatusCode }) => void>(),
+  }
+}
+
+function mockTracer(span: Span, onStart?: (name: string, args: unknown[]) => void) {
+  return {
+    async startActiveSpan(name: string, ...args: unknown[]) {
+      onStart?.(name, args)
+      const options = args.find((arg): arg is SpanOptions => typeof arg === 'object' && arg !== null && 'attributes' in arg)
+      if (options?.attributes) {
+        ;(span as Span & { attributes: Record<string, unknown> }).attributes = options.attributes as Record<string, unknown>
+      }
+      const fn = args.at(-1) as (span: Span) => Promise<unknown>
+      return fn(span)
+    },
+  } as unknown as Tracer
+}
 
 class CustomMethodDurableObject implements DurableObject {
   count = 0
@@ -131,6 +162,65 @@ describe('instrumentDOClass', () => {
       await Promise.allSettled(durableObjectState.waitUntilPromises)
     } finally {
       consoleError.mockRestore()
+    }
+  })
+})
+
+describe('executeDOFetch', () => {
+  it('uses handler header capture config for Durable Object request and response spans', async () => {
+    const span = createSpan()
+    let spanOptions: SpanOptions | undefined
+    const tracer = mockTracer(span as unknown as Span, (_name, args) => {
+      spanOptions = args[0] as SpanOptions
+    })
+    const getTracer = vitest.spyOn(trace, 'getTracer').mockReturnValue(tracer)
+    const fetcher = vitest.fn<FetchWithRequest>(() => {
+      return new Response('ok', {
+        headers: {
+          'Set-Cookie': 'session=secret',
+          'X-Do-Response': 'res-1',
+        },
+      })
+    })
+    const activeContext = setConfig({
+      handlers: {
+        fetch: {
+          captureHeaders: {
+            request: ['x-do-request'],
+            response: ['x-do-response'],
+          },
+        },
+      },
+    } as unknown as ResolvedTraceConfig)
+
+    try {
+      await apiContext.with(activeContext, async () => {
+        await executeDOFetch(
+          fetcher,
+          new Request('https://example.com', {
+            headers: {
+              Authorization: 'Bearer secret',
+              'X-Do-Request': 'req-1',
+            },
+          }),
+          durableObjectId
+        )
+      })
+
+      expect(spanOptions?.attributes).toMatchObject({
+        'http.request.header.x-do-request': ['req-1'],
+      })
+      expect(spanOptions?.attributes).not.toHaveProperty('http.request.header.authorization')
+      expect(span.setAttributes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          'http.response.header.x-do-response': ['res-1'],
+        })
+      )
+      expect(span.setAttributes).not.toHaveBeenCalledWith(
+        expect.objectContaining({ 'http.response.header.set-cookie': ['session=secret'] })
+      )
+    } finally {
+      getTracer.mockRestore()
     }
   })
 })

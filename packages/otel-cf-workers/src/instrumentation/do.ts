@@ -1,7 +1,7 @@
 import type { Exception, SpanOptions } from '@opentelemetry/api'
 import { context as api_context, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api'
 import type { Initialiser } from '../config.js'
-import { setConfig } from '../config.js'
+import { getActiveConfig, setConfig } from '../config.js'
 import { ATTR_FAAS_COLDSTART, ATTR_FAAS_TRIGGER } from '../semconv.js'
 import type { DOConstructorTrigger } from '../types.js'
 import { passthroughGet, unwrap, wrap } from '../wrap.js'
@@ -31,7 +31,7 @@ function instrumentBindingStub(stub: DurableObjectStub, nsName: string): Durable
           'do.id': target.id.toString(),
           'do.id.name': target.id.name,
         }
-        return instrumentClientFetch(fetcher, () => ({ includeTraceContext: true }), attrs)
+        return instrumentClientFetch(fetcher, (config) => ({ ...config.fetch, includeTraceContext: true }), attrs)
       } else {
         return passthroughGet(target, prop)
       }
@@ -90,6 +90,7 @@ let cold_start = true
 export type DOClass<Env = Record<string, unknown>> = new (state: DurableObjectState, env: Env) => DurableObject
 export async function executeDOFetch(fetchFn: FetchFn, request: Request, id: DurableObjectId): Promise<Response> {
   const spanContext = getParentContextFromHeaders(request.headers)
+  const captureHeaders = getActiveConfig()?.handlers?.fetch?.captureHeaders
 
   const tracer = trace.getTracer('DO fetchHandler')
   const attributes = {
@@ -97,7 +98,7 @@ export async function executeDOFetch(fetchFn: FetchFn, request: Request, id: Dur
     [ATTR_FAAS_COLDSTART]: cold_start,
   }
   cold_start = false
-  Object.assign(attributes, gatherRequestAttributes(request))
+  Object.assign(attributes, gatherRequestAttributes(request, captureHeaders?.request))
   Object.assign(attributes, gatherIncomingCfAttributes(request))
   const options: SpanOptions = {
     attributes,
@@ -111,7 +112,7 @@ export async function executeDOFetch(fetchFn: FetchFn, request: Request, id: Dur
       if (response.ok) {
         span.setStatus({ code: SpanStatusCode.OK })
       }
-      span.setAttributes(gatherResponseAttributes(response))
+      span.setAttributes(gatherResponseAttributes(response, captureHeaders?.response))
       span.end()
 
       return response
