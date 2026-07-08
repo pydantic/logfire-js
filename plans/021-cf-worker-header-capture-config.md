@@ -45,9 +45,9 @@ The implementation should:
       values shaped as `string[]`.
 - [ ] Captured response headers use `http.response.header.<lowercase-name>` with
       values shaped as `string[]`.
-- [ ] Worker fetch handler spans, outbound global fetch spans, Durable Object
-      inbound fetch spans, and Durable Object stub outbound fetch spans all use
-      the same config semantics.
+- [ ] Worker fetch handler spans, outbound global fetch spans, service binding
+      outbound fetch spans, Durable Object inbound fetch spans, and Durable
+      Object stub outbound fetch spans all use the same config semantics.
 - [ ] Existing dedicated semantic attributes still appear where currently
       supported: `http.request.method`, `http.request.body.size`,
       `user_agent.original`, `http.mime_type`, `http.accepts`, `url.*`,
@@ -91,6 +91,8 @@ The implementation should:
 - `packages/otel-cf-workers/src/instrumentation/do.ts` - Durable Object inbound
   fetch spans reuse the same gather helpers, and Durable Object stubs use
   `instrumentClientFetch()`.
+- `packages/otel-cf-workers/src/instrumentation/service.ts` - service binding
+  outbound fetch spans use `instrumentClientFetch()`.
 - `packages/otel-cf-workers/src/types.ts` - public `TraceConfig`,
   `FetcherConfig`, and `FetchHandlerConfig` type surface where header capture
   config should be exposed.
@@ -231,6 +233,9 @@ Task 3: Wire request/response capture into span creation
     - Ensure Durable Object inbound fetch spans use handlers.fetch.captureHeaders.
     - Ensure Durable Object stub outbound fetch keeps includeTraceContext true
       while honoring active fetch.captureHeaders for request/response capture.
+  MODIFY packages/otel-cf-workers/src/instrumentation/service.ts:
+    - Ensure service binding outbound fetch keeps includeTraceContext true while
+      honoring active fetch.captureHeaders for request/response capture.
   PATTERN:
     - Prefer passing selectors explicitly to gather helpers over making helpers
       read global context directly.
@@ -253,6 +258,9 @@ Task 4: Tests for defaults and opt-in behavior
     - Add coverage only if config plumbing cannot be adequately covered by fetch
       tests. Prefer a focused test that proves DO inbound fetch does not capture
       sensitive headers by default and honors explicit config.
+  MODIFY packages/otel-cf-workers/test/instrumentation/service.test.ts:
+    - Add a focused regression test that proves service binding outbound fetch
+      honors explicit fetch header capture config.
 
 Task 5: Documentation and migration notes
   MODIFY packages/otel-cf-workers/README.md:
@@ -295,6 +303,8 @@ INSTRUMENTATION:
     Worker fetch handler spans and outbound fetch spans.
   - packages/otel-cf-workers/src/instrumentation/do.ts
     Durable Object inbound and stub outbound fetch spans.
+  - packages/otel-cf-workers/src/instrumentation/service.ts
+    Service binding outbound fetch spans.
 
 LOGFIRE WRAPPER:
   - packages/logfire-cf-workers/src/index.ts
@@ -349,6 +359,7 @@ pnpm run typecheck
 - [ ] Outbound fetch instrumentation uses `fetch.captureHeaders`.
 - [ ] Inbound Worker fetch instrumentation uses `handlers.fetch.captureHeaders`.
 - [ ] Durable Object fetch paths follow the same default and opt-in behavior.
+- [ ] Service binding fetch paths follow the same default and opt-in behavior.
 
 ## Unknowns & Risks
 

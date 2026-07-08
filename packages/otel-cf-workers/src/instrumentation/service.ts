@@ -9,7 +9,7 @@ export function instrumentServiceBinding(fetcher: Fetcher, envName: string): Fet
         const attrs = {
           name: `Service Binding ${envName}`,
         }
-        return instrumentClientFetch(fetcher, () => ({ includeTraceContext: true }), attrs)
+        return instrumentClientFetch(fetcher, (config) => ({ ...config.fetch, includeTraceContext: true }), attrs)
       } else {
         return passthroughGet(target, prop)
       }
