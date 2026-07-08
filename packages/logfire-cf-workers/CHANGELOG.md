@@ -1,5 +1,20 @@
 # @pydantic/logfire-cf-workers
 
+## 2.0.0
+
+### Major Changes
+
+- 2b94d89: Stop capturing all Cloudflare Worker request and response headers by default.
+  Header span attributes now require explicit opt-in through
+  `captureHeaders.request` and `captureHeaders.response`, using case-insensitive
+  header name arrays, predicate functions, or `true` when full capture is
+  intentionally required.
+
+### Patch Changes
+
+- Updated dependencies [2b94d89]
+  - @pydantic/otel-cf-workers@2.0.0
+
 ## 1.0.0
 
 ### Major Changes
