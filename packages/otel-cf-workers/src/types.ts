@@ -9,6 +9,14 @@ export type PostProcessorFn = (spans: ReadableSpan[]) => ReadableSpan[]
 
 export type ExporterConfig = OTLPExporterConfig | SpanExporter
 
+export type {
+  FetchHandlerConfig,
+  FetcherConfig,
+  HeaderCaptureConfig,
+  HeaderCapturePredicate,
+  HeaderCaptureSelector,
+} from './instrumentation/fetch.js'
+
 export interface HandlerConfig {
   fetch?: FetchHandlerConfig
 }
