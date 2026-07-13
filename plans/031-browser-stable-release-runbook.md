@@ -19,20 +19,20 @@ the downstream handoff, and only then retire the feature branch.
 
 ## Success Criteria
 
-- [ ] The local candidate is clean, fully validated, pushed, and represented by
+- [x] The local candidate is clean, fully validated, pushed, and represented by
       fresh successful PR checks against the exact remote head.
-- [ ] Every PR #161 review thread is dispositioned against the pushed candidate,
+- [x] Every PR #161 review thread is dispositioned against the pushed candidate,
       an accepted reviewer approval exists, and `CHANGES_REQUESTED` is cleared
       before merge even though `main` is not repository-protected.
-- [ ] The feature PR merges without publishing, and the resulting main-branch
+- [x] The feature PR merges without publishing, and the resulting main-branch
       run creates or updates the normal `Version Packages` PR.
-- [ ] The Version Packages PR contains exactly browser `0.17.0`, replay `0.1.0`,
+- [x] The Version Packages PR contains exactly browser `0.17.0`, replay `0.1.0`,
       and private client `0.1.16`; its generated artifacts, checks, and
       scratch-clone package/consumer smoke tests pass before merge.
-- [ ] The Version Packages merge publishes exactly the two public stable
+- [x] The Version Packages merge publishes exactly the two public stable
       packages; npm `latest`, tarball contents/imports, package compatibility,
       and required GitHub tags/releases are directly verified.
-- [ ] Registry-installed browser checks re-exercise parent `CX-1`, `CX-5`, and
+- [x] Registry-installed browser checks re-exercise parent `CX-1`, `CX-5`, and
       `CX-8`; the R1-R8 verification records remain applicable to the exact
       published source.
 - [ ] The downstream Platform handoff is recorded, the feature branch is deleted
@@ -531,6 +531,47 @@ Task 8: Delete the feature branch and merge the final cleanup record
 ```
 
 ## Execution Notes
+
+### 2026-07-13 stable publication evidence
+
+- PR #161 reached exact head `c54393e5a7b4ee2932fb7f48e9637f54f04908e0`
+  with a successful build, CodeRabbit approval, and zero unresolved review
+  threads. It was squash-merged as
+  `6760a47ce98dd68ff850cb169261f4b12da5af3d`.
+- Main run [29274477315](https://github.com/pydantic/logfire-js/actions/runs/29274477315)
+  passed and created Version Packages PR #162 without publishing. Registry
+  state remained browser `latest=0.16.4`, replay `latest=0.1.0-alpha.1`, and
+  both `alpha` tags were unchanged.
+- Version Packages head `ab895956bfb375dd7ba6ce7a8af6e2789f0969e0`
+  contained browser `0.17.0`, replay `0.1.0`, and private client `0.1.16` only.
+  Its exact detached full check, CodeRabbit review, zero-thread audit, generated
+  diff inspection, and workspace artifact/consumer verifier passed. PR #162
+  was squash-merged as `1f3b1cbd7b0cc91956dba3c5dad00049dc3969b0`.
+- Publication run [29275066883](https://github.com/pydantic/logfire-js/actions/runs/29275066883)
+  passed. Its immutable log directly records successful publication of exactly
+  `@pydantic/logfire-session-replay@0.1.0` and
+  `@pydantic/logfire-browser@0.17.0`; the complete pre/post registry snapshot
+  proves every other public package and dist-tag was unchanged.
+- The Changesets action did not expose `published=true`, so the workflow's
+  GitHub-release step skipped despite the successful publishes. In accordance
+  with the runbook recovery clause, the two missing tags/releases were created
+  explicitly at publication merge `1f3b1cbd`; both refs resolve directly to
+  that commit.
+- npm now resolves browser `latest=0.17.0` and replay `latest=0.1.0`; browser
+  `alpha=0.17.0-alpha.2` and replay `alpha=0.1.0-alpha.1` remain unchanged. The
+  registry artifact verifier passed isolated ESM, CJS, type-only,
+  optional-peer, and real-browser consumer checks. Its one-day age policy was
+  overridden only for the isolated immediate post-publish check.
+- The downstream contract was delivered to
+  [Platform PR #25595](https://github.com/pydantic/platform/pull/25595#issuecomment-4961379232)
+  with stable versions, page-URL/privacy defaults, replay envelope
+  compatibility, the optional peer range, duplicate-bundle limitation, and
+  release evidence links.
+- Consumer acceptance: `CX-10A`, `CX-10B`, `CX-10C`, and `CX-10` are
+  **DIRECTLY VERIFIED**. `CX-10F` is **VERIFIED WITH RECORDED RECOVERY** for the
+  skipped GitHub-release step and immediate-registry age-policy exception.
+  R9 remains conditional on the evidence/cleanup PRs, their no-publication main
+  runs, and verified feature-branch deletion.
 
 - Task 1 rehearsal used an exact synthetic commit in a disposable clone so the
   verifier could enforce its clean-live-tree and immutable-ref preconditions
