@@ -1,5 +1,6 @@
 /* eslint-disable import/first */
-import { diag, trace } from '@opentelemetry/api'
+import type { Context, ContextManager } from '@opentelemetry/api'
+import { context, diag, ROOT_CONTEXT, trace } from '@opentelemetry/api'
 import type { Instrumentation } from '@opentelemetry/instrumentation'
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-web'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
@@ -37,18 +38,12 @@ const mocks = vi.hoisted(() => {
   class MockWebTracerProvider {
     options: unknown
     forceFlushCalls = 0
-    registerCalls = 0
     shutdownCalls = 0
 
     constructor(options: unknown) {
       this.options = options
       webTracerProviderInstances.push(this)
-    }
-
-    register(): void {
-      lifecycleEvents.push('providerRegister')
-      this.registerCalls++
-      trace.setGlobalTracerProvider(this as never)
+      lifecycleEvents.push('providerCreate')
     }
 
     getTracer(name: string) {
@@ -61,6 +56,9 @@ const mocks = vi.hoisted(() => {
             attributes,
             end() {
               return undefined
+            },
+            isRecording() {
+              return true
             },
             setAttribute(key: string, value: unknown) {
               attributes[key] = value
@@ -95,7 +93,6 @@ const mocks = vi.hoisted(() => {
       if (failures.has('shutdown')) {
         throw failures.get('shutdown')
       }
-      trace.disable()
       return Promise.resolve()
     }
   }
@@ -307,6 +304,31 @@ vi.mock('@opentelemetry/sdk-trace-web', () => ({
   },
   StackContextManager: class MockStackContextManager {
     readonly name = 'mock-stack-context-manager'
+
+    active() {
+      return ROOT_CONTEXT
+    }
+
+    bind<T>(_context: unknown, target: T): T {
+      return target
+    }
+
+    disable(): this {
+      return this
+    }
+
+    enable(): this {
+      return this
+    }
+
+    with<A extends unknown[], F extends (...args: A) => ReturnType<F>>(
+      _context: unknown,
+      fn: F,
+      thisArg?: ThisParameterType<F>,
+      ...args: A
+    ): ReturnType<F> {
+      return Reflect.apply(fn, thisArg, args)
+    }
   },
   TraceIdRatioBasedSampler: class MockTraceIdRatioBasedSampler {
     ratio: number
@@ -330,8 +352,13 @@ import { configureLogfireApi, Level, logfireApiConfig, PendingSpanProcessor, Tai
 
 import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
 import { clearConfiguredBrowserSessionForTests } from './browserSession'
-import logfireBrowser, { configure, getBrowserSessionId, instrument, startPendingSpan, withSettings, withTags } from './index'
+import logfireBrowser, { configure, getBrowserSessionId, instrument, startPendingSpan, startSpan, withSettings, withTags } from './index'
+import { ACTIVE_CONFIGURATION_ERROR, FAILED_CLEANUP_ERROR, resetProviderLifecycleForTests } from './providerLifecycle'
 import type { BrowserSessionReplayRuntime } from './sessionReplay'
+
+afterEach(() => {
+  resetProviderLifecycleForTests()
+})
 
 const originalNavigator = globalThis.navigator
 const originalLocation = globalThis.location
@@ -403,6 +430,9 @@ async function expectCleanupFailureIsMemoized(failingStep: CleanupStep) {
   expect(tracerProvider.forceFlushCalls).toBe(1)
   expect(tracerProvider.shutdownCalls).toBe(1)
   expect(mocks.cleanupStepCalls).toEqual(['unregister', 'forceFlush', 'shutdown'])
+  expect(() => {
+    configure({ traceUrl: 'http://localhost:8989/retry-traces' })
+  }).toThrow(FAILED_CLEANUP_ERROR)
 
   cleanup = undefined
 }
@@ -612,6 +642,152 @@ describe('browser span processors', () => {
     expect(spanProcessors).toHaveLength(2)
   })
 
+  it('routes a cached global tracer and manual tracer through A, inactive, and B', async () => {
+    const cachedGlobalTracer = trace.getTracer('cached-public-configure')
+    const aStarts = vi.fn<SpanProcessor['onStart']>()
+    const bStarts = vi.fn<SpanProcessor['onStart']>()
+    const aProcessor = { ...createTestSpanProcessor(), onStart: aStarts }
+    const bProcessor = { ...createTestSpanProcessor(), onStart: bStarts }
+
+    const cleanupA = configure({
+      resourceAttributes: { generation: 'A' },
+      rum: { webVitals: true },
+      spanProcessors: [aProcessor],
+      traceUrl: 'http://localhost:8989/traces-a',
+    })
+    cachedGlobalTracer.startSpan('cached-a').end()
+    startSpan('manual-a').end()
+    const webVitalsTracerA = (mocks.webVitalsStartCalls[0] as { tracer: { startSpan: (name: string) => { end: () => void } } }).tracer
+    webVitalsTracerA.startSpan('web-vital-a').end()
+    await cleanupA()
+
+    expect(cachedGlobalTracer.startSpan('inactive').isRecording()).toBe(false)
+    expect(startSpan('manual-inactive').isRecording()).toBe(false)
+
+    cleanup = configure({
+      resourceAttributes: { generation: 'B' },
+      rum: { webVitals: true },
+      spanProcessors: [bProcessor],
+      traceUrl: 'http://localhost:8989/traces-b',
+    })
+    cachedGlobalTracer.startSpan('cached-b').end()
+    startSpan('manual-b').end()
+    const webVitalsTracerB = (mocks.webVitalsStartCalls[1] as { tracer: { startSpan: (name: string) => { end: () => void } } }).tracer
+    webVitalsTracerB.startSpan('web-vital-b').end()
+
+    expect(aStarts).toHaveBeenCalledTimes(3)
+    expect(bStarts).toHaveBeenCalledTimes(3)
+    expect(mocks.webVitalsStartCalls).toHaveLength(2)
+    expect(getLatestResourceAttributes()['generation']).toBe('B')
+  })
+
+  it('rejects active and cleaning overlap without creating a second provider', async () => {
+    let releaseWebVitals!: (handle: { shutdown: () => Promise<void> }) => void
+    mocks.setWebVitalsStartupPromise(
+      new Promise((resolve) => {
+        releaseWebVitals = resolve
+      })
+    )
+    const cleanupA = configure({
+      rum: { webVitals: true },
+      traceUrl: 'http://localhost:8989/traces-a',
+    })
+
+    expect(() => {
+      configure({ traceUrl: 'http://localhost:8989/active-overlap' })
+    }).toThrow(ACTIVE_CONFIGURATION_ERROR)
+    expect(mocks.webTracerProviderInstances).toHaveLength(1)
+
+    const pendingCleanup = cleanupA()
+    expect(() => {
+      configure({ traceUrl: 'http://localhost:8989/cleaning-overlap' })
+    }).toThrow(ACTIVE_CONFIGURATION_ERROR)
+    expect(mocks.webTracerProviderInstances).toHaveLength(1)
+
+    releaseWebVitals({ shutdown: async () => Promise.resolve() })
+    await pendingCleanup
+    cleanup = configure({ traceUrl: 'http://localhost:8989/traces-b' })
+    expect(mocks.webTracerProviderInstances).toHaveLength(2)
+  })
+
+  it('leaves shared API settings unchanged when external context rejects an explicit manager', () => {
+    const applicationManager = createMockContextManager()
+    const candidate = createMockContextManager()
+    const candidateEnable = vi.spyOn(candidate, 'enable')
+    const candidateDisable = vi.spyOn(candidate, 'disable')
+    expect(context.setGlobalContextManager(applicationManager)).toBe(true)
+    applicationManager.enable()
+    configureLogfireApi({ baggage: { spanAttributes: ['existing'] }, minLevel: 'warning' })
+    const originalScrubber = logfireApiConfig.scrubber
+    const originalMinLevel = logfireApiConfig.minLevel
+
+    expect(() => {
+      configure({
+        baggage: { spanAttributes: ['replacement'] },
+        contextManager: candidate,
+        minLevel: 'fatal',
+        scrubbing: false,
+        traceUrl: 'http://localhost:8989/rejected-context',
+      })
+    }).toThrow('omit contextManager')
+
+    expect(candidateEnable).not.toHaveBeenCalled()
+    expect(candidateDisable).not.toHaveBeenCalled()
+    expect(logfireApiConfig.baggage.spanAttributes).toEqual(['existing'])
+    expect(logfireApiConfig.minLevel).toBe(originalMinLevel)
+    expect(logfireApiConfig.scrubber).toBe(originalScrubber)
+    expect(mocks.webTracerProviderInstances).toHaveLength(0)
+  })
+
+  it('restores shared settings and settles provider/session rollback before permitting retry', async () => {
+    configureLogfireApi({ baggage: { spanAttributes: ['existing'] }, jsonSchema: 'basic', minLevel: 'warning' })
+    const sharedApiConfigBefore = {
+      baggage: logfireApiConfig.baggage,
+      enableErrorFingerprinting: logfireApiConfig.enableErrorFingerprinting,
+      jsonSchema: logfireApiConfig.jsonSchema,
+      minLevel: logfireApiConfig.minLevel,
+      scrubber: logfireApiConfig.scrubber,
+      tracer: logfireApiConfig.tracer,
+    }
+    expect(() => {
+      configure({
+        baggage: { spanAttributes: ['replacement'] },
+        jsonSchema: false,
+        minLevel: 'fatal',
+        rum: { session: true },
+        scrubbing: { extraPatterns: ['['] },
+        traceUrl: 'http://localhost:8989/invalid-scrubbing',
+      })
+    }).toThrow('Invalid regular expression')
+
+    expect(mocks.webTracerProviderInstances).toHaveLength(1)
+    expect(mocks.webTracerProviderInstances[0]?.shutdownCalls).toBe(1)
+    expect(getBrowserSessionId()).toBeUndefined()
+    expect(logfireApiConfig).toMatchObject(sharedApiConfigBefore)
+    expect(() => {
+      configure({ traceUrl: 'http://localhost:8989/retry-before-rollback-settles' })
+    }).toThrow(ACTIVE_CONFIGURATION_ERROR)
+
+    await waitForConfigureMicrotasks()
+    cleanup = configure({ traceUrl: 'http://localhost:8989/retry-after-rollback' })
+    expect(mocks.webTracerProviderInstances).toHaveLength(2)
+  })
+
+  it('makes failed synchronous setup rollback terminal when provider shutdown rejects', async () => {
+    mocks.failStep('shutdown', new Error('setup rollback shutdown failed'))
+    expect(() => {
+      configure({
+        scrubbing: { extraPatterns: ['['] },
+        traceUrl: 'http://localhost:8989/failed-setup-rollback',
+      })
+    }).toThrow('Invalid regular expression')
+
+    await waitForConfigureMicrotasks()
+    expect(() => {
+      configure({ traceUrl: 'http://localhost:8989/retry-after-failed-setup-rollback' })
+    }).toThrow(FAILED_CLEANUP_ERROR)
+  })
+
   it('keeps tail sampling scoped to the built-in Logfire processor', () => {
     const customProcessor = createTestSpanProcessor()
     cleanup = configure({
@@ -735,7 +911,7 @@ describe('browser span processors', () => {
     })
 
     expect(factory).toHaveBeenCalledTimes(1)
-    expect(mocks.lifecycleEvents).toEqual(['providerRegister', 'instrumentationFactory'])
+    expect(mocks.lifecycleEvents).toEqual(['providerCreate', 'instrumentationFactory'])
     expect(mocks.registerInstrumentationCalls[0]).toMatchObject({
       instrumentations: [preconstructedInstrumentation],
       tracerProvider: getLatestWebTracerProvider(),
@@ -807,21 +983,148 @@ describe('browser span processors', () => {
       traceUrl: 'http://localhost:8989/client-traces',
     })
 
-    expect(mocks.lifecycleEvents).toEqual(['providerRegister'])
+    expect(mocks.lifecycleEvents).toEqual(['providerCreate'])
     expect(mocks.autoInstrumentationConfigs).toEqual([])
 
     await waitForConfigureMicrotasks()
 
-    expect(mocks.lifecycleEvents).toEqual(['providerRegister', 'getWebAutoInstrumentations'])
-    expect(mocks.autoInstrumentationConfigs).toEqual([
-      {
-        '@opentelemetry/instrumentation-fetch': { enabled: true },
-      },
-    ])
+    expect(mocks.lifecycleEvents).toEqual(['providerCreate', 'getWebAutoInstrumentations'])
+    expect(mocks.autoInstrumentationConfigs).toHaveLength(1)
+    const autoConfig = mocks.autoInstrumentationConfigs[0] as Record<string, { enabled?: boolean; ignoreUrls?: (string | RegExp)[] }>
+    expect(autoConfig['@opentelemetry/instrumentation-fetch']?.enabled).toBe(true)
+    expect(
+      autoConfig['@opentelemetry/instrumentation-fetch']?.ignoreUrls?.some(
+        (url) => url instanceof RegExp && url.test('http://localhost:8989/client-traces')
+      )
+    ).toBe(true)
+    expect(
+      autoConfig['@opentelemetry/instrumentation-xml-http-request']?.ignoreUrls?.some(
+        (url) => url instanceof RegExp && url.test('http://localhost:8989/client-traces')
+      )
+    ).toBe(true)
     expect(mocks.registerInstrumentationCalls[1]).toMatchObject({
       instrumentations: mocks.autoInstrumentations,
       tracerProvider: getLatestWebTracerProvider(),
     })
+  })
+
+  it('merges every SDK endpoint into fetch and XHR ignores without mutating caller config', async () => {
+    const fetchIgnores = [/consumer-fetch/u]
+    const xhrIgnores = ['https://app.example/consumer-xhr']
+    const autoInstrumentations = {
+      '@opentelemetry/instrumentation-fetch': { enabled: false, ignoreUrls: fetchIgnores },
+      '@opentelemetry/instrumentation-xml-http-request': { ignoreUrls: xhrIgnores },
+    }
+    const originalFetchConfig = autoInstrumentations['@opentelemetry/instrumentation-fetch']
+    const originalXhrConfig = autoInstrumentations['@opentelemetry/instrumentation-xml-http-request']
+
+    cleanup = configure({
+      autoInstrumentations,
+      metrics: { metricUrl: '/client-metrics' },
+      sessionReplay: {
+        load: () => ({
+          startSessionReplay: () => ({
+            mode: 'full',
+            recording: true,
+            flush: async () => Promise.resolve(),
+            getSessionId: () => 'browser-session',
+            stop: async () => Promise.resolve(),
+          }),
+        }),
+        replayUrl: '/client-replay',
+      },
+      traceUrl: '/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    expect(autoInstrumentations['@opentelemetry/instrumentation-fetch']).toBe(originalFetchConfig)
+    expect(autoInstrumentations['@opentelemetry/instrumentation-xml-http-request']).toBe(originalXhrConfig)
+    expect(originalFetchConfig).toEqual({ enabled: false, ignoreUrls: fetchIgnores })
+    expect(originalXhrConfig).toEqual({ ignoreUrls: xhrIgnores })
+
+    const merged = mocks.autoInstrumentationConfigs.at(-1) as Record<string, { enabled?: boolean; ignoreUrls?: (string | RegExp)[] }>
+    const mergedFetch = merged['@opentelemetry/instrumentation-fetch']
+    const mergedXhr = merged['@opentelemetry/instrumentation-xml-http-request']
+    expect(mergedFetch?.enabled).toBe(false)
+    expect(mergedFetch?.ignoreUrls?.[0]).toBe(fetchIgnores[0])
+    expect(mergedXhr?.ignoreUrls?.[0]).toBe(xhrIgnores[0])
+    for (const endpoint of ['/client-traces', '/client-metrics', '/client-replay/session-1?seq=0']) {
+      expect(mergedFetch?.ignoreUrls?.some((url) => url instanceof RegExp && url.test(endpoint))).toBe(true)
+      expect(mergedXhr?.ignoreUrls?.some((url) => url instanceof RegExp && url.test(endpoint))).toBe(true)
+    }
+    for (const applicationUrl of ['/client-traces/users', '/client-metrics/daily', '/client-replay-other/session-1']) {
+      expect(mergedFetch?.ignoreUrls?.some((url) => url instanceof RegExp && url.test(applicationUrl))).toBe(false)
+      expect(mergedXhr?.ignoreUrls?.some((url) => url instanceof RegExp && url.test(applicationUrl))).toBe(false)
+    }
+  })
+
+  it('merges absolute trace, metric, and replay endpoints into fetch and XHR ignores', async () => {
+    cleanup = configure({
+      autoInstrumentations: true,
+      metrics: { metricUrl: 'https://telemetry.example/v1/metrics' },
+      sessionReplay: {
+        load: () => ({
+          startSessionReplay: () => ({
+            mode: 'full',
+            recording: true,
+            flush: async () => Promise.resolve(),
+            getSessionId: () => 'browser-session',
+            stop: async () => Promise.resolve(),
+          }),
+        }),
+        replayUrl: 'https://telemetry.example/v1/replay',
+      },
+      traceUrl: 'https://telemetry.example/v1/traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    const merged = mocks.autoInstrumentationConfigs.at(-1) as Record<string, { ignoreUrls?: RegExp[] }>
+    for (const key of ['@opentelemetry/instrumentation-fetch', '@opentelemetry/instrumentation-xml-http-request']) {
+      const ignoreUrls = merged[key]?.ignoreUrls ?? []
+      for (const endpoint of [
+        'https://telemetry.example/v1/traces',
+        'https://telemetry.example/v1/metrics',
+        'https://telemetry.example/v1/replay/session-1?seq=0',
+      ]) {
+        expect(ignoreUrls.some((pattern) => pattern.test(endpoint))).toBe(true)
+      }
+    }
+  })
+
+  it('does not install replay ignores when contained replay URL validation fails', async () => {
+    const originalLocation = Reflect.get(globalThis, 'location') as unknown
+    const originalDocument = Reflect.get(globalThis, 'document') as unknown
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      value: new URL('https://app.example/nested/page/'),
+    })
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { baseURI: 'https://app.example/' },
+    })
+    const load = vi.fn<() => { startSessionReplay: () => BrowserSessionReplayRuntime }>()
+
+    try {
+      cleanup = configure({
+        autoInstrumentations: true,
+        sessionReplay: { load, replayUrl: '/' },
+        traceUrl: '/client-traces',
+      })
+      await waitForConfigureMicrotasks()
+
+      expect(load).not.toHaveBeenCalled()
+      const merged = mocks.autoInstrumentationConfigs.at(-1) as Record<string, { ignoreUrls?: RegExp[] }>
+      for (const key of ['@opentelemetry/instrumentation-fetch', '@opentelemetry/instrumentation-xml-http-request']) {
+        const ignoreUrls = merged[key]?.ignoreUrls ?? []
+        expect(ignoreUrls.some((pattern) => pattern.test('https://app.example/client-traces'))).toBe(true)
+        expect(ignoreUrls.some((pattern) => pattern.test('https://app.example/api'))).toBe(false)
+        expect(ignoreUrls.some((pattern) => pattern.test('https://app.example/client-metrics'))).toBe(false)
+        expect(ignoreUrls.some((pattern) => pattern.test('https://app.example/client-replay/session-1'))).toBe(false)
+      }
+    } finally {
+      Object.defineProperty(globalThis, 'location', { configurable: true, value: originalLocation })
+      Object.defineProperty(globalThis, 'document', { configurable: true, value: originalDocument })
+    }
   })
 
   it('does not load first-class browser auto-instrumentations when disabled', async () => {
@@ -886,7 +1189,7 @@ describe('browser Web Vitals config', () => {
 
     expect(mocks.webVitalsStartCalls).toHaveLength(1)
     expect(mocks.webVitalsStartCalls[0]).toMatchObject({ tracer: { name: 'logfire-web-vitals' } })
-    expect(mocks.lifecycleEvents).toEqual(['providerRegister', 'webVitalsStart'])
+    expect(mocks.lifecycleEvents).toEqual(['providerCreate', 'webVitalsStart'])
   })
 
   it('passes Web Vitals options through to startup', () => {
@@ -1048,7 +1351,7 @@ describe('browser session replay config', () => {
 
     expect(load).toHaveBeenCalledTimes(1)
     expect(startSessionReplay).toHaveBeenCalledTimes(1)
-    expect(mocks.lifecycleEvents).toEqual(['providerRegister', 'sessionReplayLoad'])
+    expect(mocks.lifecycleEvents).toEqual(['providerCreate', 'sessionReplayLoad'])
     const spanProcessors = getLatestSpanProcessors()
     expect(spanProcessors[0]).toBeInstanceOf(BrowserSessionSpanProcessor)
   })
@@ -1079,7 +1382,7 @@ describe('browser session replay config', () => {
     })
     await waitForConfigureMicrotasks()
 
-    expect(getLatestWebTracerProvider().registerCalls).toBe(1)
+    expect(getLatestWebTracerProvider().shutdownCalls).toBe(0)
     expect(onError).toHaveBeenCalledWith(expect.any(Error))
   })
 
@@ -1197,7 +1500,7 @@ describe('browser metrics config', () => {
       metricExporterHeaders
     )
     expect((mocks.browserMetricsStartCalls[0]?.options as { metricReaders?: unknown[] }).metricReaders).toEqual([metricReader])
-    expect(mocks.lifecycleEvents).toEqual(['providerRegister', 'browserMetricsStart'])
+    expect(mocks.lifecycleEvents).toEqual(['providerCreate', 'browserMetricsStart'])
   })
 
   it('rejects empty metric URLs', () => {
@@ -1337,3 +1640,22 @@ describe('browser cleanup', () => {
     await expectCleanupFailureIsMemoized('shutdown')
   })
 })
+
+function createMockContextManager(): ContextManager {
+  return {
+    active: () => ROOT_CONTEXT,
+    bind: <T>(_context: Context, target: T): T => target,
+    disable() {
+      return this
+    },
+    enable() {
+      return this
+    },
+    with: <A extends unknown[], F extends (...args: A) => ReturnType<F>>(
+      _context: Context,
+      fn: F,
+      thisArg?: ThisParameterType<F>,
+      ...args: A
+    ): ReturnType<F> => Reflect.apply(fn, thisArg, args),
+  }
+}

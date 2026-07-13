@@ -138,6 +138,63 @@ describe('captureNetwork', () => {
     expect(window.fetch).toBe(originalFetch)
   })
 
+  it('counts fetch string bodies as UTF-8 bytes', async () => {
+    const originalFetch = vi.fn(async () => new Response(null, { status: 204 }))
+    Object.defineProperty(window, 'fetch', { value: originalFetch, writable: true, configurable: true })
+    const emit = vi.fn()
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0 })
+
+    await window.fetch('/api/utf8', { method: 'POST', body: 'é🚀' })
+
+    expect(emit).toHaveBeenCalledWith(CustomTag.Network, expect.objectContaining({ reqBytes: 6 } satisfies Partial<NetworkPayload>))
+    stop()
+  })
+
+  it('does not inspect a body carried only by a Request input', async () => {
+    const originalFetch = vi.fn(async () => new Response(null, { status: 204 }))
+    Object.defineProperty(window, 'fetch', { value: originalFetch, writable: true, configurable: true })
+    const emit = vi.fn()
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0 })
+
+    await window.fetch(new Request('https://api.example.com/request-body', { method: 'POST', body: 'é🚀' }))
+
+    expect(emit).toHaveBeenCalledWith(CustomTag.Network, expect.objectContaining({ reqBytes: 0 } satisfies Partial<NetworkPayload>))
+    stop()
+  })
+
+  it('exposes flattened OpenTelemetry __original metadata on the replay fetch wrapper', async () => {
+    const underlyingFetch = vi.fn(async () => new Response(null, { status: 204 })) as unknown as typeof fetch
+    const otelFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => underlyingFetch(input, init)) as unknown as typeof fetch
+    Object.defineProperty(otelFetch, '__original', {
+      configurable: true,
+      value: underlyingFetch,
+      writable: true,
+    })
+    Object.defineProperty(window, 'fetch', { value: otelFetch, writable: true, configurable: true })
+    const emit = vi.fn()
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [/\/client-traces/u], redactUrlPatterns: [], now: () => 0 })
+
+    const descriptor = Object.getOwnPropertyDescriptor(window.fetch, '__original')
+    expect(descriptor).toEqual({ configurable: true, enumerable: false, value: underlyingFetch, writable: true })
+    const exporterFetch = Reflect.get(window.fetch, '__original') as typeof fetch
+    await exporterFetch('/client-traces')
+
+    expect(underlyingFetch).toHaveBeenCalledTimes(1)
+    expect(otelFetch).not.toHaveBeenCalled()
+    expect(emit).not.toHaveBeenCalled()
+    stop()
+    expect(window.fetch).toBe(otelFetch)
+  })
+
+  it('points __original at a raw predecessor when no wrapper metadata exists', () => {
+    const originalFetch = vi.fn(async () => new Response(null, { status: 204 })) as unknown as typeof fetch
+    Object.defineProperty(window, 'fetch', { value: originalFetch, writable: true, configurable: true })
+    const stop = captureNetwork(vi.fn(), { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0 })
+
+    expect(Reflect.get(window.fetch, '__original')).toBe(originalFetch)
+    stop()
+  })
+
   it('keeps a later fetch wrapper installed and suppresses stopped Logfire emission', async () => {
     const originalFetch = vi.fn(async () => new Response('ok', { status: 200 })) as unknown as typeof fetch
     Object.defineProperty(window, 'fetch', { value: originalFetch, writable: true, configurable: true })
@@ -276,6 +333,22 @@ describe('captureNetwork', () => {
     stop()
     stop()
     expect(window.XMLHttpRequest.prototype.open).not.toBe(wrappedOpen)
+    Object.defineProperty(window, 'XMLHttpRequest', { value: OriginalXhr, writable: true, configurable: true })
+  })
+
+  it('counts XHR string bodies as UTF-8 bytes', () => {
+    const OriginalXhr = window.XMLHttpRequest
+    installFakeXhr()
+    const emit = vi.fn()
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0 })
+    const xhr = new window.XMLHttpRequest() as unknown as FakeXhr
+
+    xhr.open('POST', '/api/utf8')
+    xhr.send('é🚀')
+    xhr.complete(204)
+
+    expect(emit).toHaveBeenCalledWith(CustomTag.Network, expect.objectContaining({ reqBytes: 6 } satisfies Partial<NetworkPayload>))
+    stop()
     Object.defineProperty(window, 'XMLHttpRequest', { value: OriginalXhr, writable: true, configurable: true })
   })
 

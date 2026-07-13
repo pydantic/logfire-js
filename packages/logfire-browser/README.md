@@ -261,6 +261,20 @@ logfire.configure({
 })
 ```
 
+When the document becomes hidden or receives `pagehide`, replay makes a bounded
+best-effort start of the earliest compressed chunks. Its 48,000-byte aggregate
+budget is shared across its own unfinished keepalive requests, while the
+browser's keepalive quota is also shared with unrelated page traffic. Delivery
+after page freeze or termination is therefore not guaranteed. Functional
+`headers` and `token` values are resolved for every upload; an asynchronous
+resolver can finish too late for a lifecycle request, so prefer credentials that
+are synchronously available from your same-origin proxy flow.
+
+Ordinary replay uploads automatically fall back to synchronous gzip if a
+restrictive Content Security Policy blocks the compressor worker. The fallback
+preserves the batch and is remembered for the active replay controller, but it
+may briefly use the main thread.
+
 Do not use direct tokens in normal browser applications. Replay may capture
 console, fetch/XHR, navigation, and DOM events. Keep the default input masking
 enabled, use `blockSelector` or `maskTextSelector` for sensitive page regions,
@@ -356,6 +370,42 @@ once in this order:
 If any cleanup step fails, Logfire still attempts the later steps before
 returning the first failure. Later calls return the same settled cleanup promise
 rather than starting another cleanup cycle.
+
+Await cleanup before configuring Logfire again on the same page:
+
+```js
+const cleanupA = logfire.configure({
+  traceUrl: '/client-traces/a',
+  serviceName: 'browser-app-a',
+})
+
+await cleanupA()
+
+const cleanupB = logfire.configure({
+  traceUrl: '/client-traces/b',
+  serviceName: 'browser-app-b',
+})
+```
+
+Calling `configure()` while a configuration is active or cleaning throws
+`logfire-browser: a configuration is already active; await its cleanup before configuring again`.
+New spans are non-recording between configurations. Spans retain the provider
+generation selected when they start, so end A spans before cleanup A to
+guarantee their export; they are not migrated to B. If cleanup rejects, later
+configuration is refused until the page reloads because an old producer may
+still be active.
+
+Logfire installs one page-stable OpenTelemetry tracer provider, context manager,
+and default propagator only when those globals are not already application-owned.
+Normal cleanup never disables page globals. If the application owns a context
+manager, register it before Logfire and omit `contextManager` from
+`configure()`. A Logfire-owned manager remains enabled across generations and
+cannot be replaced with a different instance.
+
+Same-page reconfiguration requires bundler deduplication of both
+`@pydantic/logfire-browser` and `logfire`. Reconfiguration across duplicate
+physical package copies is unsupported because their lifecycle state is not
+shared.
 
 Browser pages also get OpenTelemetry's built-in batch-processor auto-flush on
 document hide. The underlying batch span processor calls `forceFlush()` when the

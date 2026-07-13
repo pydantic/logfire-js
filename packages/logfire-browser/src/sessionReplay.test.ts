@@ -241,6 +241,28 @@ describe('startBrowserSessionReplay', () => {
     expect(onError).toHaveBeenCalledWith(error)
   })
 
+  it.each(['', '/', '/logfire/replay?token=x', '/logfire/replay#fragment'])(
+    'contains invalid browser replay URL %s before loading the optional package',
+    async (replayUrl) => {
+      const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
+      const load = vi.fn<() => BrowserSessionReplayModule>()
+      const onError = vi.fn<(error: unknown) => void>()
+
+      await expect(
+        startBrowserSessionReplay({ load, onError, replayUrl }, createManager(), new BrowserSessionReplayState(), {
+          traceUrl: '/logfire/traces',
+        })
+      ).resolves.toBeUndefined()
+
+      expect(load).not.toHaveBeenCalled()
+      expect(onError).toHaveBeenCalledTimes(1)
+      const reportedError = onError.mock.calls[0]?.[0]
+      expect(reportedError).toBeInstanceOf(Error)
+      expect((reportedError as Error).message).toContain('replayUrl')
+      expect(diagError).toHaveBeenCalledWith(expect.stringContaining('failed to start session replay'), expect.any(Error))
+    }
+  )
+
   it('does not let a throwing startup error callback reject replay startup handling', async () => {
     const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
     const error = new Error('missing peer')

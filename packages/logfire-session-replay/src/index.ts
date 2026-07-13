@@ -303,6 +303,10 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
   if (config.replayUrl.length === 0) {
     throw new Error('logfire session replay: `replayUrl` is required')
   }
+  const replayUrl = new URL(config.replayUrl, 'https://logfire.invalid/')
+  if (replayUrl.search !== '' || replayUrl.hash !== '') {
+    throw new Error('logfire session replay: `replayUrl` must not contain a query or fragment')
+  }
   const fetchImpl = config.fetchImpl ?? (typeof fetch === 'function' ? fetch.bind(globalThis) : undefined)
   if (fetchImpl === undefined) {
     throw new Error('logfire session replay: no `fetch` available; pass `fetchImpl`')

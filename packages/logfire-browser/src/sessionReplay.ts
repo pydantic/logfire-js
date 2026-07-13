@@ -2,6 +2,7 @@ import { diag } from '@opentelemetry/api'
 
 import type { BrowserSessionManager } from './browserSession'
 import type { BrowserMetricsOptions } from './browserMetrics'
+import { assertBrowserReplayUrl, createTelemetryUrlPatterns } from './telemetryUrls'
 
 import type { SessionReplayConfig as PeerSessionReplayConfig } from '@pydantic/logfire-session-replay'
 
@@ -143,6 +144,7 @@ export async function startBrowserSessionReplay(
   telemetryOptions: BrowserSessionReplayTelemetryOptions
 ): Promise<BrowserSessionReplayRuntime | undefined> {
   try {
+    assertBrowserReplayUrl(options.replayUrl)
     browserSessionManager.touch()
     const initialSessionId = browserSessionManager.peekSessionId()
     if (initialSessionId === undefined) {
@@ -173,7 +175,14 @@ function createReplayConfig(
 ): BrowserSessionReplayPackageConfig {
   const config: BrowserSessionReplayPackageConfig = {
     getSessionId: () => browserSessionManager.peekSessionId(),
-    ignoreUrlPatterns: [...createTelemetryIgnorePatterns(options.replayUrl, telemetryOptions), ...(options.ignoreUrlPatterns ?? [])],
+    ignoreUrlPatterns: [
+      ...createTelemetryUrlPatterns([
+        { kind: 'exact', url: telemetryOptions.traceUrl },
+        ...(telemetryOptions.metricUrl === undefined ? [] : [{ kind: 'exact' as const, url: telemetryOptions.metricUrl }]),
+        { kind: 'replay-base', url: options.replayUrl },
+      ]),
+      ...(options.ignoreUrlPatterns ?? []),
+    ],
     redactUrlPatterns: options.redactUrlPatterns ?? [],
     replayUrl: options.replayUrl,
   }
@@ -262,24 +271,4 @@ function wrapReplayRuntime(replay: BrowserSessionReplayRuntime, replayState: Bro
       return stopPromise
     },
   }
-}
-
-function createTelemetryIgnorePatterns(replayUrl: string, telemetryOptions: BrowserSessionReplayTelemetryOptions): RegExp[] {
-  return [telemetryOptions.traceUrl, telemetryOptions.metricUrl, replayUrl].flatMap((url) => {
-    const pattern = createUrlPrefixPattern(url)
-    return pattern === undefined ? [] : [pattern]
-  })
-}
-
-function createUrlPrefixPattern(url: string | undefined): RegExp | undefined {
-  if (url === undefined || url.length === 0) {
-    return undefined
-  }
-
-  const normalizedUrl = url.replace(/\/+$/u, '')
-  return new RegExp(`^${escapeRegExp(normalizedUrl)}(?:[/?#]|$)`, 'u')
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
 }

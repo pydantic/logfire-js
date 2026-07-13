@@ -75,10 +75,13 @@
     }
   },
   "devDependencies": {
+    "@opentelemetry/context-zone": "catalog:",
+    "@opentelemetry/instrumentation-fetch": "catalog:",
     "@opentelemetry/sdk-trace-web": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
     "@pydantic/logfire-session-replay": "workspace:*",
-    "user-agent-data-types": "^0.4.2"
+    "user-agent-data-types": "^0.4.2",
+    "zone.js": "^0.15.1"
   },
   "files": [
     "dist",

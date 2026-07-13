@@ -657,6 +657,21 @@ describe('startSessionReplay config validation', () => {
     expect(() => startSessionReplay(baseConfig(fetchImpl, { replayUrl: '' }))).toThrow(/replayUrl.*required/u)
   })
 
+  it.each(['https://app.example.com/replay?token=x', '/replay#fragment'])(
+    'throws when replayUrl contains a query or fragment: %s',
+    (replayUrl) => {
+      const { fetchImpl } = recordingFetch()
+      expect(() => startSessionReplay(baseConfig(fetchImpl, { replayUrl }))).toThrow(/must not contain a query or fragment/u)
+    }
+  )
+
+  it('retains standalone root replayUrl support', async () => {
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { replayUrl: '/' }))
+    expect(replay.recording).toBe(true)
+    await replay.stop()
+  })
+
   it('throws when fetch is unavailable', () => {
     vi.stubGlobal('fetch', undefined)
     expect(() =>

@@ -128,62 +128,66 @@ function captureFetch(emit: Emit, options: NetworkCaptureOptions): Stop {
   if (typeof original !== 'function') {
     return noop
   }
-  return patchMethod(
-    window,
-    'fetch',
-    (originalFetch, isActive) =>
-      async function (this: Window, input: RequestInfo | URL, init?: RequestInit) {
-        const callOriginal = originalFetch as typeof window.fetch
-        if (!isActive()) {
-          return callOriginal.call(this, input, init)
-        }
-        const startedAt = options.now()
-        const method = getFetchMethod(input, init)
-        const rawUrl = getFetchUrl(input)
-        if (shouldIgnoreUrl(rawUrl, options.ignoreUrlPatterns)) {
-          return callOriginal.call(this, input, init)
-        }
-        const url = redactUrl(rawUrl, options.redactUrlPatterns)
-        const reqBytes = sizeOfBody(init?.body)
-
-        try {
-          const response = await callOriginal.call(this, input, init)
-          if (isActive()) {
-            safeEmit(
-              emit,
-              CustomTag.Network,
-              createNetworkPayload({
-                method,
-                url,
-                status: response.status,
-                durationMs: Math.max(0, options.now() - startedAt),
-                reqBytes,
-                resBytes: contentLength(response.headers),
-              }),
-              options.onError
-            )
-          }
-          return response
-        } catch (error) {
-          if (isActive()) {
-            safeEmit(
-              emit,
-              CustomTag.Network,
-              createNetworkPayload({
-                method,
-                url,
-                status: 0,
-                durationMs: Math.max(0, options.now() - startedAt),
-                failed: true,
-                reqBytes,
-              }),
-              options.onError
-            )
-          }
-          throw error
-        }
+  return patchMethod(window, 'fetch', (originalFetch, isActive) => {
+    const replayFetch = async function (this: Window, input: RequestInfo | URL, init?: RequestInit) {
+      const callOriginal = originalFetch as typeof window.fetch
+      if (!isActive()) {
+        return callOriginal.call(this, input, init)
       }
-  )
+      const startedAt = options.now()
+      const method = getFetchMethod(input, init)
+      const rawUrl = getFetchUrl(input)
+      if (shouldIgnoreUrl(rawUrl, options.ignoreUrlPatterns)) {
+        return callOriginal.call(this, input, init)
+      }
+      const url = redactUrl(rawUrl, options.redactUrlPatterns)
+      const reqBytes = sizeOfBody(init?.body)
+
+      try {
+        const response = await callOriginal.call(this, input, init)
+        if (isActive()) {
+          safeEmit(
+            emit,
+            CustomTag.Network,
+            createNetworkPayload({
+              method,
+              url,
+              status: response.status,
+              durationMs: Math.max(0, options.now() - startedAt),
+              reqBytes,
+              resBytes: contentLength(response.headers),
+            }),
+            options.onError
+          )
+        }
+        return response
+      } catch (error) {
+        if (isActive()) {
+          safeEmit(
+            emit,
+            CustomTag.Network,
+            createNetworkPayload({
+              method,
+              url,
+              status: 0,
+              durationMs: Math.max(0, options.now() - startedAt),
+              failed: true,
+              reqBytes,
+            }),
+            options.onError
+          )
+        }
+        throw error
+      }
+    }
+    const predecessorOriginal = Reflect.get(originalFetch, '__original') as unknown
+    Object.defineProperty(replayFetch, '__original', {
+      configurable: true,
+      value: typeof predecessorOriginal === 'function' ? predecessorOriginal : originalFetch,
+      writable: true,
+    })
+    return replayFetch
+  })
 }
 
 function captureXhr(emit: Emit, options: NetworkCaptureOptions): Stop {
@@ -468,7 +472,7 @@ function sizeOfBody(body: BodyInit | Document | null | undefined): number | unde
     return 0
   }
   if (typeof body === 'string') {
-    return body.length
+    return new TextEncoder().encode(body).byteLength
   }
   if (body instanceof ArrayBuffer) {
     return body.byteLength

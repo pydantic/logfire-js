@@ -6,13 +6,7 @@ import type { Instrumentation } from '@opentelemetry/instrumentation'
 import { registerInstrumentations } from '@opentelemetry/instrumentation'
 import { resourceFromAttributes } from '@opentelemetry/resources'
 import type { BufferConfig, SpanProcessor } from '@opentelemetry/sdk-trace-web'
-import {
-  BatchSpanProcessor,
-  ParentBasedSampler,
-  StackContextManager,
-  TraceIdRatioBasedSampler,
-  WebTracerProvider,
-} from '@opentelemetry/sdk-trace-web'
+import { BatchSpanProcessor, ParentBasedSampler, TraceIdRatioBasedSampler, WebTracerProvider } from '@opentelemetry/sdk-trace-web'
 import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION,
@@ -67,6 +61,16 @@ import type { BrowserSessionReplayOptions } from './sessionReplay'
 import { startBrowserWebVitals } from './webVitals'
 import type { BrowserWebVitalsOptions } from './webVitals'
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
+import {
+  activateProviderGeneration,
+  assertProviderLifecycleAvailable,
+  beginProviderCleanup,
+  deactivateProviderDelegate,
+  getStableBrowserTracer,
+  initializeProviderLifecycleGlobals,
+  settleProviderCleanup,
+} from './providerLifecycle'
+import { createTelemetryUrlPatterns, isBrowserReplayUrlValid } from './telemetryUrls'
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from 'logfire'
 export { getBrowserSessionId } from './browserSession'
@@ -288,18 +292,40 @@ function flattenInstrumentations(instrumentations: Instrumentation | Instrumenta
 }
 
 function resolveAutoInstrumentationsConfig(
-  autoInstrumentations: LogfireConfigOptions['autoInstrumentations']
+  autoInstrumentations: LogfireConfigOptions['autoInstrumentations'],
+  telemetryUrls: { metricUrl?: string | undefined; replayUrl?: string | undefined; traceUrl: string }
 ): WebAutoInstrumentationConfigMap | undefined {
   if (autoInstrumentations === undefined || autoInstrumentations === false) {
     return undefined
   }
 
-  if (autoInstrumentations === true) {
-    return {}
+  const config = autoInstrumentations === true ? {} : autoInstrumentations
+  const { enabled, ...instrumentationConfig } = config
+  if (enabled === false) {
+    return undefined
   }
 
-  const { enabled, ...config } = autoInstrumentations
-  return enabled === false ? undefined : config
+  const endpointPatterns = createTelemetryUrlPatterns([
+    { kind: 'exact', url: telemetryUrls.traceUrl },
+    ...(telemetryUrls.metricUrl === undefined ? [] : [{ kind: 'exact' as const, url: telemetryUrls.metricUrl }]),
+    ...(telemetryUrls.replayUrl === undefined ? [] : [{ kind: 'replay-base' as const, url: telemetryUrls.replayUrl }]),
+  ])
+  const fetchKey = '@opentelemetry/instrumentation-fetch'
+  const xhrKey = '@opentelemetry/instrumentation-xml-http-request'
+  const fetchConfig = instrumentationConfig[fetchKey]
+  const xhrConfig = instrumentationConfig[xhrKey]
+
+  return {
+    ...instrumentationConfig,
+    [fetchKey]: {
+      ...fetchConfig,
+      ignoreUrls: [...(fetchConfig?.ignoreUrls ?? []), ...endpointPatterns],
+    },
+    [xhrKey]: {
+      ...xhrConfig,
+      ignoreUrls: [...(xhrConfig?.ignoreUrls ?? []), ...endpointPatterns],
+    },
+  }
 }
 
 function noopUnregister(): void {
@@ -309,6 +335,7 @@ function noopUnregister(): void {
 function startBrowserInstrumentations(options: {
   autoInstrumentations: LogfireConfigOptions['autoInstrumentations']
   instrumentations: LogfireConfigOptions['instrumentations']
+  telemetryUrls: { metricUrl?: string | undefined; replayUrl?: string | undefined; traceUrl: string }
   tracerProvider: WebTracerProvider
 }): () => Promise<void> {
   const unregisterConfigured: (() => void)[] = []
@@ -329,7 +356,7 @@ function startBrowserInstrumentations(options: {
       diag.error('logfire-browser: failed to start configured browser instrumentation group', error)
     }
   }
-  const autoInstrumentationsConfig = resolveAutoInstrumentationsConfig(options.autoInstrumentations)
+  const autoInstrumentationsConfig = resolveAutoInstrumentationsConfig(options.autoInstrumentations, options.telemetryUrls)
   const unregisterAutoInstrumentationsPromise =
     autoInstrumentationsConfig === undefined
       ? undefined
@@ -387,10 +414,28 @@ function disableInstrumentations(instrumentations: Instrumentation[]): void {
   }
 }
 
-export function configure(options: LogfireConfigOptions): () => Promise<void> {
-  if (options.diagLogLevel !== undefined) {
-    diag.setLogger(new DiagConsoleLogger(), options.diagLogLevel)
+function snapshotSharedLogfireApiConfig() {
+  return {
+    baggage: logfireApiConfig.baggage,
+    enableErrorFingerprinting: logfireApiConfig.enableErrorFingerprinting,
+    jsonSchema: logfireApiConfig.jsonSchema,
+    minLevel: logfireApiConfig.minLevel,
+    scrubber: logfireApiConfig.scrubber,
+    tracer: logfireApiConfig.tracer,
   }
+}
+
+function restoreSharedLogfireApiConfig(snapshot: ReturnType<typeof snapshotSharedLogfireApiConfig>): void {
+  logfireApiConfig.baggage = snapshot.baggage
+  logfireApiConfig.enableErrorFingerprinting = snapshot.enableErrorFingerprinting
+  logfireApiConfig.jsonSchema = snapshot.jsonSchema
+  logfireApiConfig.minLevel = snapshot.minLevel
+  logfireApiConfig.scrubber = snapshot.scrubber
+  logfireApiConfig.tracer = snapshot.tracer
+}
+
+export function configure(options: LogfireConfigOptions): () => Promise<void> {
+  assertProviderLifecycleAvailable()
 
   const webVitalsOptions = resolveBrowserWebVitalsOptions(options.rum?.webVitals)
   const sessionReplayOptions = resolveBrowserSessionReplayOptions(options.sessionReplay)
@@ -400,23 +445,7 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
     throw new Error('logfire-browser: rum.webVitals.metrics requires top-level metrics.metricUrl')
   }
   const browserSessionOptions = resolveBrowserSessionOptions(options.rum, sessionReplayOptions)
-
-  const apiConfig: LogfireApiConfigOptions = {
-    errorFingerprinting: options.errorFingerprinting ?? false,
-  }
-  if (options.baggage !== undefined) {
-    apiConfig.baggage = options.baggage
-  }
-  if (options.jsonSchema !== undefined) {
-    apiConfig.jsonSchema = options.jsonSchema
-  }
-  if (options.minLevel !== undefined) {
-    apiConfig.minLevel = options.minLevel
-  }
-  if (options.scrubbing !== undefined) {
-    apiConfig.scrubbing = options.scrubbing
-  }
-  configureLogfireApi(apiConfig)
+  initializeProviderLifecycleGlobals(options.contextManager)
 
   const resource = resourceFromAttributes(options.resourceAttributes ?? {}).merge(
     resourceFromAttributes({
@@ -474,20 +503,81 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   }
   spanProcessors.push(...(options.spanProcessors ?? []), spanProcessor)
 
-  const tracerProvider = new WebTracerProvider({
-    idGenerator: new ULIDGenerator(),
-    resource,
-    ...(sampler ? { sampler } : {}),
-    spanProcessors,
-  })
+  let tracerProvider: WebTracerProvider
+  try {
+    tracerProvider = new WebTracerProvider({
+      idGenerator: new ULIDGenerator(),
+      resource,
+      ...(sampler ? { sampler } : {}),
+      spanProcessors,
+    })
+  } catch (error) {
+    if (browserSessionManager !== undefined) {
+      clearConfiguredBrowserSession(browserSessionManager)
+    }
+    throw error
+  }
 
-  tracerProvider.register({
-    contextManager: options.contextManager ?? new StackContextManager(),
-  })
+  const sharedApiConfigSnapshot = snapshotSharedLogfireApiConfig()
+  const generationToken = activateProviderGeneration(tracerProvider)
+  try {
+    const apiConfig: LogfireApiConfigOptions = {
+      errorFingerprinting: options.errorFingerprinting ?? false,
+    }
+    if (options.baggage !== undefined) {
+      apiConfig.baggage = options.baggage
+    }
+    if (options.jsonSchema !== undefined) {
+      apiConfig.jsonSchema = options.jsonSchema
+    }
+    if (options.minLevel !== undefined) {
+      apiConfig.minLevel = options.minLevel
+    }
+    if (options.scrubbing !== undefined) {
+      apiConfig.scrubbing = options.scrubbing
+    }
+    configureLogfireApi(apiConfig)
+    if (options.diagLogLevel !== undefined) {
+      diag.setLogger(new DiagConsoleLogger(), options.diagLogLevel)
+    }
+    logfireApiConfig.tracer = getStableBrowserTracer(logfireApiConfig.otelScope)
+  } catch (error) {
+    beginProviderCleanup(generationToken)
+    deactivateProviderDelegate(generationToken)
+    restoreSharedLogfireApiConfig(sharedApiConfigSnapshot)
+    let rollbackError: Error | undefined
+    if (browserSessionManager !== undefined) {
+      try {
+        clearConfiguredBrowserSession(browserSessionManager)
+      } catch (sessionError) {
+        rollbackError = sessionError instanceof Error ? sessionError : new Error(String(sessionError))
+      }
+    }
+    tracerProvider.shutdown().then(
+      () => {
+        settleProviderCleanup(generationToken, rollbackError)
+      },
+      (shutdownError: unknown) => {
+        settleProviderCleanup(
+          generationToken,
+          rollbackError ?? (shutdownError instanceof Error ? shutdownError : new Error(String(shutdownError)))
+        )
+      }
+    )
+    throw error
+  }
 
   const unregisterInstrumentations = startBrowserInstrumentations({
     autoInstrumentations: options.autoInstrumentations,
     instrumentations: options.instrumentations,
+    telemetryUrls: {
+      metricUrl: browserMetricsOptions?.metricUrl,
+      replayUrl:
+        sessionReplayOptions !== undefined && isBrowserReplayUrlValid(sessionReplayOptions.replayUrl)
+          ? sessionReplayOptions.replayUrl
+          : undefined,
+      traceUrl: options.traceUrl,
+    },
     tracerProvider,
   })
 
@@ -541,7 +631,12 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
   // Return the stored promise directly so repeated cleanup calls preserve identity.
   // eslint-disable-next-line @typescript-eslint/promise-function-async
   return () => {
-    cleanupPromise ??= (async () => {
+    if (cleanupPromise !== undefined) {
+      return cleanupPromise
+    }
+
+    beginProviderCleanup(generationToken)
+    cleanupPromise = (async () => {
       let firstCleanupError: Error | undefined
       const captureCleanupError = (step: string, error: unknown) => {
         const cleanupError = error instanceof Error ? error : new Error(String(error))
@@ -582,6 +677,7 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
           await browserMetrics?.shutdown()
         })
       }
+      deactivateProviderDelegate(generationToken)
       await runCleanupStep('force flush', async () => tracerProvider.forceFlush())
       await runCleanupStep('tracer provider shutdown', async () => tracerProvider.shutdown())
       if (browserSessionManager !== undefined) {
@@ -590,8 +686,10 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
         })
       }
 
-      if (firstCleanupError !== undefined) {
-        throw new Error(firstCleanupError.message, { cause: firstCleanupError })
+      const cleanupError = firstCleanupError === undefined ? undefined : new Error(firstCleanupError.message, { cause: firstCleanupError })
+      settleProviderCleanup(generationToken, cleanupError)
+      if (cleanupError !== undefined) {
+        throw cleanupError
       }
 
       diag.info('logfire-browser: shut down complete')

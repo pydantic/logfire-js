@@ -46,6 +46,39 @@ await replay.flush()
 await replay.stop()
 ```
 
+### OpenTelemetry fetch and XHR instrumentation
+
+When standalone replay runs alongside OpenTelemetry browser HTTP
+instrumentation, configure ignores in both directions. Replay's
+`ignoreUrlPatterns` must include the trace, metric, and replay upload endpoints
+so those requests are not recorded as replay events. OpenTelemetry fetch and
+XHR `ignoreUrls` must include the replay upload URL so replay uploads do not
+create HTTP spans.
+
+```ts
+const telemetryUrls = [/\/client-traces(?:[?#]|$)/, /\/client-metrics(?:[?#]|$)/]
+const replayUploads = [/\/client-replay\/[^/?#]+(?:\?|$)/]
+
+getWebAutoInstrumentations({
+  '@opentelemetry/instrumentation-fetch': {
+    ignoreUrls: replayUploads,
+  },
+  '@opentelemetry/instrumentation-xml-http-request': {
+    ignoreUrls: replayUploads,
+  },
+})
+
+startSessionReplay({
+  replayUrl: '/client-replay',
+  ignoreUrlPatterns: [...telemetryUrls, ...replayUploads],
+})
+```
+
+The replay fetch wrapper preserves OpenTelemetry's `fetch.__original` exporter
+escape hatch when OpenTelemetry is installed first. That protects direct
+exporter bypass, but it cannot infer your independently configured endpoints;
+the bidirectional ignore lists are still required in either startup order.
+
 Your proxy should forward the compressed request body and these headers to
 Logfire replay ingest:
 
@@ -91,17 +124,28 @@ Use `replayUrl + headers` with a backend proxy when possible.
 
 ## Lifecycle Delivery
 
-Full-mode replay requests a best-effort keepalive upload when the page becomes
-hidden or receives `pagehide`. That request starts independently of an ordinary
-upload that is still in flight. Browser keepalive body limits still apply: one
-individually oversized replay event cannot be split safely and may fall back to
-a normal request.
+Full-mode replay requests best-effort keepalive uploads when the page becomes
+hidden or receives `pagehide`. Lifecycle chunks start independently of an
+ordinary upload that is still in flight. The transport admits the earliest
+contiguous prefix whose compressed bodies fit its 48,000-byte aggregate budget
+across its own unfinished keepalive requests. Remaining lifecycle chunks are
+attempted once as normal requests.
+
+That budget is deliberately below the browser limit, but the browser quota is
+shared with other unfinished keepalive requests on the page. It cannot guarantee
+delivery after page freeze or termination. One individually oversized replay
+event also cannot be split safely.
 
 `headers` and functional `token` values are resolved during each upload. An
 asynchronous credential callback can therefore delay the final request beyond
 the browser's page-freeze boundary. Prefer synchronously available proxy
 credentials, and call `flush()` before a controlled navigation when delivery is
 critical.
+
+Ordinary uploads use asynchronous gzip when available. If a restrictive Content
+Security Policy blocks fflate's worker compressor, replay retries the same batch
+with synchronous gzip and remembers the fallback for that replay controller.
+This preserves the batch, but compression may briefly use the main thread.
 
 ## Privacy
 

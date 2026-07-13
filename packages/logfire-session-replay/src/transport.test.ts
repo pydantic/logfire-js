@@ -1,5 +1,6 @@
-/* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/require-await, @typescript-eslint/strict-void-return, vitest/require-mock-type-parameters */
-import { gunzipSync, strFromU8 } from 'fflate'
+/* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/require-await, @typescript-eslint/strict-void-return, vitest/require-mock-type-parameters, vitest/expect-expect, vitest/no-conditional-expect */
+import type { gzip } from 'fflate'
+import { gzipSync, gunzipSync, strFromU8, strToU8 } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ReplayTransport, SEQ_STORAGE_KEY } from './transport'
@@ -54,6 +55,34 @@ function recordingFetch() {
 
 function decodeBody(body: BodyInit | null | undefined): ChunkEnvelope {
   return JSON.parse(strFromU8(gunzipSync(body as Uint8Array))) as ChunkEnvelope
+}
+
+function immediateCompression() {
+  return {
+    gzip: ((input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
+      callback(null, gzipSync(input))
+    }) as typeof gzip,
+    gzipSync,
+  }
+}
+
+function pseudoRandomText(length: number, seed: number): string {
+  let state = seed >>> 0
+  let value = ''
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  for (let index = 0; index < length; index++) {
+    state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0
+    value += alphabet.charAt((state >>> 24) % alphabet.length)
+  }
+  return value
+}
+
+function largeEvent(timestamp: number, seed: number, length = 30_000): RrwebEvent {
+  return {
+    type: EventType.IncrementalSnapshot,
+    data: { text: pseudoRandomText(length, seed) },
+    timestamp,
+  }
 }
 
 describe('ReplayTransport full mode', () => {
@@ -115,6 +144,21 @@ describe('ReplayTransport full mode', () => {
     await transport.shutdown()
     expect(calls).toHaveLength(1)
     expect(decodeBody(calls[0]!.init.body).events.map((event) => event.timestamp)).toEqual([1, 2])
+  })
+
+  it('uses UTF-8 bytes rather than UTF-16 code units for the buffer threshold', async () => {
+    const event = { ...click, data: { text: 'é🚀'.repeat(20) } } satisfies RrwebEvent
+    const json = JSON.stringify(event)
+    const utf8Bytes = strToU8(json).byteLength
+    expect(utf8Bytes).toBeGreaterThan(json.length)
+
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport({ ...makeConfig(fetchImpl), maxBufferBytes: utf8Bytes }, 'sess-utf8', 'full', null)
+    transport.add(event)
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(1)
+    })
+    await transport.shutdown()
   })
 
   it('increments seq on each non-empty flush', async () => {
@@ -224,6 +268,342 @@ describe('ReplayTransport retries', () => {
     ])
     expect(calls.map((call) => call.init.keepalive)).toEqual([true, true, true])
     expect(calls.map((call) => decodeBody(call.init.body).events.map((event) => event.timestamp))).toEqual([[10], [20], [30]])
+  })
+})
+
+describe('ReplayTransport compression fallback', () => {
+  it('recovers from an async gzip setup throw, memoizes it, and preserves both envelopes', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const asyncGzip = vi.fn(() => {
+      throw new Error('worker construction blocked')
+    }) as unknown as typeof gzip
+    const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-csp', 'full', null, { gzip: asyncGzip, gzipSync })
+
+    transport.add(fullSnapshot)
+    await transport.flush()
+    transport.add(click)
+    await transport.flush()
+
+    expect(asyncGzip).toHaveBeenCalledTimes(1)
+    expect(calls.map((call) => decodeBody(call.init.body).events)).toEqual([[fullSnapshot], [click]])
+  })
+
+  it('recovers from an async gzip callback error without reporting it', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const onError = vi.fn()
+    const asyncGzip = vi.fn((_input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
+      callback(new Error('worker rejected'), new Uint8Array())
+    }) as unknown as typeof gzip
+    const transport = new ReplayTransport({ ...makeConfig(fetchImpl), onError }, 'sess-csp', 'full', null, {
+      gzip: asyncGzip,
+      gzipSync,
+    })
+    transport.add(fullSnapshot)
+    await transport.flush()
+
+    expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot])
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('recovers when CSP blocks the worker without an fflate callback', async () => {
+    const policyTarget = new EventTarget()
+    vi.stubGlobal('window', policyTarget)
+    try {
+      const { calls, fetchImpl } = recordingFetch()
+      const asyncGzip = vi.fn(() => undefined) as unknown as typeof gzip
+      const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-csp-event', 'full', null, {
+        gzip: asyncGzip,
+        gzipSync,
+      })
+      transport.add(fullSnapshot)
+      const flush = transport.flush()
+      await vi.waitFor(() => {
+        expect(asyncGzip).toHaveBeenCalledTimes(1)
+      })
+      const violation = new Event('securitypolicyviolation')
+      Object.defineProperties(violation, {
+        effectiveDirective: { value: 'worker-src' },
+        violatedDirective: { value: 'worker-src' },
+      })
+      policyTarget.dispatchEvent(violation)
+      await flush
+
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('reports once and sends nothing when async and sync compression both fail', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch
+    const onError = vi.fn()
+    const asyncGzip = vi.fn(() => {
+      throw new Error('worker blocked')
+    }) as unknown as typeof gzip
+    const syncGzip = vi.fn(() => {
+      throw new Error('sync compressor failed')
+    }) as unknown as typeof gzipSync
+    const transport = new ReplayTransport({ ...makeConfig(fetchImpl), onError }, 'sess-csp', 'full', null, {
+      gzip: asyncGzip,
+      gzipSync: syncGzip,
+    })
+    transport.add(fullSnapshot)
+
+    await expect(transport.flush()).resolves.toBeUndefined()
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+describe('ReplayTransport lifecycle keepalive budget', () => {
+  it('starts an admitted contiguous prefix before responses and sends excess once without keepalive', async () => {
+    const calls: { url: string; init: RequestInit }[] = []
+    const releases: (() => void)[] = []
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} })
+      await new Promise<void>((resolve) => {
+        releases.push(resolve)
+      })
+      return new Response(null, { status: 202 })
+    }) as unknown as typeof fetch
+    const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-budget', 'full', null, immediateCompression())
+    transport.add(largeEvent(10, 1))
+    transport.add(largeEvent(20, 2))
+    transport.add(largeEvent(30, 3))
+
+    const flush = transport.flush({ keepalive: true })
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(3)
+    })
+    const sizes = calls.map((call) => (call.init.body as Uint8Array).byteLength)
+    expect(calls.map((call) => call.init.keepalive)).toEqual([true, true, false])
+    expect(sizes[0]! + sizes[1]!).toBeLessThanOrEqual(48_000)
+    expect(sizes[0]! + sizes[1]! + sizes[2]!).toBeGreaterThan(48_000)
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://app.example.com/replay-proxy/sess-budget?seq=0',
+      'https://app.example.com/replay-proxy/sess-budget?seq=1',
+      'https://app.example.com/replay-proxy/sess-budget?seq=2',
+    ])
+    expect(calls.map((call) => decodeBody(call.init.body).events[0]?.timestamp)).toEqual([10, 20, 30])
+
+    for (const release of releases) {
+      release()
+    }
+    await flush
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+  })
+
+  it('shares reservations across overlapping flushes and reclaims them only after response-body cancellation', async () => {
+    let releaseCancellation!: () => void
+    const cancellationGate = new Promise<void>((resolve) => {
+      releaseCancellation = resolve
+    })
+    const keepaliveFlags: (boolean | undefined)[] = []
+    let heldResponses = 0
+    const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      keepaliveFlags.push(init?.keepalive)
+      if (heldResponses < 3) {
+        heldResponses += 1
+        return new Response(
+          new ReadableStream({
+            cancel: async () => cancellationGate,
+          }),
+          { status: 202 }
+        )
+      }
+      return new Response(null, { status: 202 })
+    }) as unknown as typeof fetch
+    const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-overlap', 'full', null, immediateCompression())
+
+    transport.add(largeEvent(10, 1))
+    transport.add(largeEvent(20, 2))
+    const first = transport.flush({ keepalive: true })
+    await vi.waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    })
+    transport.add(largeEvent(30, 3))
+    const overlapping = transport.flush({ keepalive: true })
+    await vi.waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledTimes(3)
+    })
+    expect(keepaliveFlags).toEqual([true, true, false])
+
+    releaseCancellation()
+    await Promise.all([first, overlapping])
+    transport.add(largeEvent(40, 4))
+    await transport.flush({ keepalive: true })
+    expect(keepaliveFlags).toEqual([true, true, false, true])
+  })
+
+  it('retains a reservation when response completion cannot be confirmed', async () => {
+    const keepaliveFlags: (boolean | undefined)[] = []
+    const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      keepaliveFlags.push(init?.keepalive)
+      return new Response(
+        new ReadableStream({
+          cancel: () => {
+            throw new Error('completion unknown')
+          },
+        }),
+        { status: 202 }
+      )
+    }) as unknown as typeof fetch
+    const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-unknown', 'full', null, immediateCompression())
+    transport.add(largeEvent(10, 1))
+    transport.add(largeEvent(20, 2))
+    await transport.flush({ keepalive: true })
+    transport.add(largeEvent(30, 3))
+    await transport.flush({ keepalive: true })
+    expect(keepaliveFlags).toEqual([true, true, false])
+  })
+
+  it.each(['credentials', 'network'] as const)('reclaims pre-completion capacity after %s failure', async (failure) => {
+    const keepaliveFlags: (boolean | undefined)[] = []
+    let attempts = 0
+    const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      keepaliveFlags.push(init?.keepalive)
+      attempts += 1
+      if (failure === 'network' && attempts === 1) {
+        throw new Error('network down')
+      }
+      return new Response(null, { status: 202 })
+    }) as unknown as typeof fetch
+    const headers = vi.fn(async () => {
+      attempts += failure === 'credentials' ? 1 : 0
+      if (failure === 'credentials' && attempts === 1) {
+        throw new Error('credentials unavailable')
+      }
+      return {}
+    })
+    const transport = new ReplayTransport({ ...makeConfig(fetchImpl), headers }, 'sess-reclaim', 'full', null, immediateCompression())
+
+    transport.add(largeEvent(10, 1))
+    await transport.flush({ keepalive: true })
+    transport.add(largeEvent(20, 2))
+    await transport.flush({ keepalive: true })
+    expect(keepaliveFlags.at(-1)).toBe(true)
+  })
+
+  it('attempts an over-budget lifecycle 429 once and reports it once', async () => {
+    const fetchMock = vi.fn(
+      async (_url: string | URL, _init?: RequestInit) => new Response(null, { status: 429, headers: { 'retry-after': '1' } })
+    )
+    const fetchImpl = fetchMock as unknown as typeof fetch
+    const onError = vi.fn()
+    const transport = new ReplayTransport({ ...makeConfig(fetchImpl), onError }, 'sess-once', 'full', null, immediateCompression())
+    transport.add(largeEvent(10, 1, 70_000))
+    await transport.flush({ keepalive: true })
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]?.[1]?.keepalive).toBe(false)
+    expect(onError).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ReplayTransport Retry-After policy', () => {
+  async function expectRetryAfter(header: string | null, delayMs: number, now = '1994-11-06T08:49:36.000Z'): Promise<void> {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(now))
+    try {
+      let attempts = 0
+      const fetchImpl = vi.fn(async () => {
+        attempts += 1
+        return attempts === 1
+          ? new Response(null, header === null ? { status: 429 } : { status: 429, headers: { 'retry-after': header } })
+          : new Response(null, { status: 202 })
+      }) as unknown as typeof fetch
+      const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-retry-after', 'full', null, immediateCompression())
+      transport.add(fullSnapshot)
+      const flush = transport.flush()
+      await vi.advanceTimersByTimeAsync(0)
+      if (delayMs > 0) {
+        expect(fetchImpl).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(delayMs - 1)
+        expect(fetchImpl).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(1)
+      } else {
+        expect(fetchImpl).toHaveBeenCalledTimes(2)
+      }
+      await flush
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+
+  it.each([
+    ['1', 1_000],
+    ['Sun, 06 Nov 1994 08:49:37 GMT', 1_000],
+    ['Sunday, 06-Nov-94 08:49:37 GMT', 1_000],
+    ['Sun Nov  6 08:49:37 1994', 1_000],
+    ['Sun, 06 Nov 1994 08:49:35 GMT', 0],
+  ] as const)('honors Retry-After %s', async (header, delayMs) => {
+    await expectRetryAfter(header, delayMs)
+  })
+
+  it('applies the RFC850 more-than-50-years rollback', async () => {
+    await expectRetryAfter('Sunday, 06-Nov-77 08:49:37 GMT', 0, '2026-07-13T00:00:00.000Z')
+  })
+
+  it.each(['Sun, 31 Feb 1994 08:49:37 GMT', '1994-11-06T08:49:37Z', 'tomorrow', '+1', '1.5', '999999999999999999999999999999'])(
+    'uses ordinary backoff for invalid Retry-After %s',
+    async (header) => {
+      await expectRetryAfter(header, 500)
+    }
+  )
+
+  it('does not retry early when valid guidance exceeds ten seconds', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchImpl = vi.fn(async () => new Response(null, { status: 429, headers: { 'retry-after': '11' } })) as unknown as typeof fetch
+      const onError = vi.fn()
+      const transport = new ReplayTransport({ ...makeConfig(fetchImpl), onError }, 'sess-long', 'full', null, immediateCompression())
+      transport.add(fullSnapshot)
+      await transport.flush()
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      expect(onError).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('uses 500ms then 1000ms fallback, exhausts three attempts, and refreshes credentials', async () => {
+    vi.useFakeTimers()
+    try {
+      const bodies: Uint8Array[] = []
+      const urls: string[] = []
+      const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+        urls.push(String(url))
+        bodies.push(init?.body as Uint8Array)
+        return new Response(null, { status: 429 })
+      }) as unknown as typeof fetch
+      const token = vi.fn(async () => 'fresh-token')
+      const headers = vi.fn(async () => ({ 'X-Attempt': String(token.mock.calls.length + 1) }))
+      const onError = vi.fn()
+      const transport = new ReplayTransport(
+        { ...makeConfig(fetchImpl), token, headers, onError },
+        'sess-exhausted',
+        'full',
+        null,
+        immediateCompression()
+      )
+      transport.add(fullSnapshot)
+      const flush = transport.flush()
+      await vi.advanceTimersByTimeAsync(500)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1_000)
+      await flush
+
+      expect(fetchImpl).toHaveBeenCalledTimes(3)
+      expect(token).toHaveBeenCalledTimes(3)
+      expect(headers).toHaveBeenCalledTimes(3)
+      expect(urls).toEqual(Array(3).fill('https://app.example.com/replay-proxy/sess-exhausted?seq=0'))
+      expect(bodies.map((body) => Array.from(body))).toEqual(Array(3).fill(Array.from(bodies[0]!)))
+      expect(onError).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
