@@ -36,7 +36,7 @@ jobs:
         run: vp run --filter "./packages/*" test
 
       - name: Test release tooling
-        run: pnpm run test:release-tooling
+        run: node scripts/create-npm-token.test.mjs
 
   release:
     needs: [build]
