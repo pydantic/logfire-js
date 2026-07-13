@@ -187,7 +187,8 @@ uses unit `1`.
 
 Metric data point attributes are intentionally low-cardinality:
 `web_vital.name` and `web_vital.rating` by default. They do not include
-`session.id`, `browser.session.id`, `url.full`, `url.path`, Web Vital
+`session.id`, `browser.session.id`, `logfire.page.url.full`,
+`logfire.page.url.path`, Web Vital
 ids/deltas, DOM selectors, attribution fields, or raw PerformanceEntry data. Use
 spans for raw-sample drilldown, session/replay correlation, exact page context,
 and attribution selectors. When metrics are configured, Logfire Platform should

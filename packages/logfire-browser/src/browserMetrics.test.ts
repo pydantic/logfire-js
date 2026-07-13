@@ -264,6 +264,8 @@ describe('browser metrics runtime', () => {
       defaultAttributes: () =>
         ({
           'browser.session.id': 'browser-session-1',
+          'logfire.page.url.full': 'https://example.com/products/123?token=secret',
+          'logfire.page.url.path': '/products/123',
           'session.id': 'session-1',
           'url.full': 'https://example.com/products/123?token=secret',
           'url.path': '/products/:id',

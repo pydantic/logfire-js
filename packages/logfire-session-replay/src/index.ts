@@ -268,7 +268,13 @@ function createActiveRuntime(options: {
         ignorePromise(transport.triggerFlush(), config.onError)
       }
     }
-    const onWindowError = (event: ErrorEvent) => {
+    const onWindowError = (event: Event) => {
+      // Resource load failures also dispatch non-bubbling `error` events that
+      // reach Window capture listeners. They are not unhandled JavaScript
+      // errors and must not promote an error-sampled replay session.
+      if (!(event instanceof ErrorEvent)) {
+        return
+      }
       handleError(createErrorPayload(event.message, event.filename, errorStack(event.error)))
     }
     const onRejection = (event: PromiseRejectionEvent) => {

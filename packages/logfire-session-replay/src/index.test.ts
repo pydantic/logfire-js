@@ -464,6 +464,22 @@ describe('startSessionReplay buffer mode', () => {
     expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${replay.getSessionId()}?seq=0`])
   })
 
+  it('does not treat resource load failures as unhandled JavaScript errors', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 1, random: rng([0.9, 0.1]) }))
+    emit(fullSnapshot)
+    const image = document.createElement('img')
+    document.body.append(image)
+
+    image.dispatchEvent(new Event('error'))
+
+    expect(replay.mode).toBe('buffer')
+    expect(handle.addCustomEvent).not.toHaveBeenCalledWith(CustomTag.Error, expect.anything())
+    await replay.stop()
+    expect(calls).toHaveLength(0)
+    image.remove()
+  })
+
   it('persists full mode after an error promotes a buffered replay', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const replay = startSessionReplay(

@@ -1,4 +1,3 @@
-import { getWebAutoInstrumentations } from '@opentelemetry/auto-instrumentations-web'
 import * as logfire from '@pydantic/logfire-browser'
 
 const proxyOrigin = developmentProxyOrigin(import.meta.env.VITE_LOGFIRE_PROXY_ORIGIN)
@@ -31,16 +30,13 @@ logfire.configure({
       reportAllChanges: true,
     },
   },
-  // The instrumentations to use
-  // https://www.npmjs.com/package/@opentelemetry/auto-instrumentations-web - for more options and configuration
-  instrumentations: [
-    getWebAutoInstrumentations({
-      '@opentelemetry/instrumentation-document-load': { enabled: true },
-      '@opentelemetry/instrumentation-user-interaction': {
-        eventNames: ['click'],
-      },
-    }),
-  ],
+  // SDK-managed auto-instrumentations automatically exclude Logfire telemetry endpoints.
+  autoInstrumentations: {
+    '@opentelemetry/instrumentation-document-load': { enabled: true },
+    '@opentelemetry/instrumentation-user-interaction': {
+      eventNames: ['click'],
+    },
+  },
   // This outputs details about the generated spans in the browser console, use only in development and for troubleshooting.
   diagLogLevel: logfire.DiagLogLevel.ALL,
   batchSpanProcessorConfig: {

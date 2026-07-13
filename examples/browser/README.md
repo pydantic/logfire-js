@@ -68,8 +68,9 @@ VITE_LOGFIRE_REPLAY=true pnpm run dev
 Open the app URL with a query string, for example
 `http://127.0.0.1:5173/?secret=should-not-appear#fragment`, then interact with
 the buttons. In Logfire, check for spans named `web_vital.*` and confirm they
-include `session.id`, `browser.session.id`, sanitized `url.full`, and
-`url.path`. Also check for metrics named `logfire.browser.web_vital.*`; metric
+include `session.id`, `browser.session.id`, sanitized
+`logfire.page.url.full`, and `logfire.page.url.path`. Also check for metrics
+named `logfire.browser.web_vital.*`; metric
 data points should include low-cardinality attributes such as
 `web_vital.name` and `web_vital.rating`, but not session ids, URL paths, or full
 URLs. With replay enabled, check that replay uploads use the same browser

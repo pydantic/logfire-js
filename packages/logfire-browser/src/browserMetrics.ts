@@ -98,6 +98,8 @@ const WEB_VITAL_METRIC_INSTRUMENTS: Record<WebVitalName, WebVitalMetricInstrumen
 
 const DISALLOWED_WEB_VITAL_METRIC_ATTRIBUTES = new Set([
   'browser.session.id',
+  'logfire.page.url.full',
+  'logfire.page.url.path',
   'session.id',
   'url.full',
   'web_vital.delta',

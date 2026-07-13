@@ -26,8 +26,8 @@ export interface BrowserSessionOptions {
   storageKey?: string
   /**
    * Controls URL attributes stamped on session/RUM spans. Defaults to emitting
-   * `url.full = window.location.origin + window.location.pathname` and
-   * `url.path = window.location.pathname`. Set to false to suppress URL
+   * `logfire.page.url.full = window.location.origin + window.location.pathname`
+   * and `logfire.page.url.path = window.location.pathname`. Set to false to suppress URL
    * attributes, or return custom values (including the raw URL if required).
    */
   urlAttributes?: false | ((url: URL) => BrowserSessionUrlAttributes)

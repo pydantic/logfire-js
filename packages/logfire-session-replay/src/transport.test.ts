@@ -13,6 +13,7 @@ const click: RrwebEvent = {
   data: { source: IncrementalSource.MouseInteraction, type: MouseInteractions.Click },
   timestamp: 2,
 }
+const REPLAY_UPLOAD_TIMEOUT_MS = 10_000
 
 function makeConfig(fetchImpl: typeof fetch): ResolvedSessionReplayConfig {
   return {
@@ -218,6 +219,40 @@ describe('ReplayTransport retries', () => {
     await transport.flush({ keepalive: true })
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(onError).toHaveBeenCalledTimes(1)
+  })
+
+  it('aborts a stalled lifecycle upload and releases flush completion', async () => {
+    vi.useFakeTimers()
+    try {
+      let uploadSignal: AbortSignal | undefined
+      const fetchImpl = vi.fn(
+        async (_url: string | URL | Request, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            uploadSignal = init?.signal ?? undefined
+            uploadSignal?.addEventListener(
+              'abort',
+              () => {
+                const reason: unknown = uploadSignal?.reason
+                reject(reason instanceof Error ? reason : new Error('replay upload aborted'))
+              },
+              { once: true }
+            )
+          })
+      ) as unknown as typeof fetch
+      const onError = vi.fn()
+      const transport = new ReplayTransport({ ...makeConfig(fetchImpl), onError }, 'sess-timeout', 'full', null)
+      transport.add(fullSnapshot)
+
+      const flush = transport.flush({ keepalive: true })
+      await vi.advanceTimersByTimeAsync(REPLAY_UPLOAD_TIMEOUT_MS)
+      await flush
+
+      expect(uploadSignal?.aborted).toBe(true)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'replay upload timed out after 10000ms' }))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('starts a keepalive flush while an ordinary upload is still in flight', async () => {

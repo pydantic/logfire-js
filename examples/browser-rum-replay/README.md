@@ -88,7 +88,7 @@ In traces/logs:
 - `session.id` and `browser.session.id` on browser spans
 - `logfire.session_replay.active` and `logfire.session_replay.mode` on spans
   while replay is active
-- sanitized URL attributes such as `url.path=/orders/:id`
+- sanitized URL attributes such as `logfire.page.url.path=/orders/:id`
 
 In metrics:
 

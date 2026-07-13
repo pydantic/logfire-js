@@ -9,6 +9,7 @@ export const SEQ_STORAGE_KEY = 'lf_session_replay_seq'
 
 const MAX_SEND_ATTEMPTS = 3
 const SEND_BACKOFF_MS = 500
+const REPLAY_UPLOAD_TIMEOUT_MS = 10_000
 const MAX_RETRY_AFTER_MS = 10_000
 const MAX_KEEPALIVE_RESERVED_BYTES = 48_000
 const MAX_KEEPALIVE_CHUNK_BYTES = 48_000
@@ -290,6 +291,10 @@ export class ReplayTransport {
     let requestStarted: boolean | undefined
     let responseReceived: boolean | undefined
     let responseComplete: boolean | undefined
+    const controller = new AbortController()
+    const timeout = setTimeout(() => {
+      controller.abort(new Error(`replay upload timed out after ${String(REPLAY_UPLOAD_TIMEOUT_MS)}ms`))
+    }, REPLAY_UPLOAD_TIMEOUT_MS)
     try {
       const url = `${this.config.replayUrl.replace(/\/+$/u, '')}/${encodeURIComponent(upload.sessionId)}?seq=${String(upload.seq)}`
       const headers = await this.getUploadHeaders()
@@ -298,6 +303,7 @@ export class ReplayTransport {
         headers,
         body: upload.body.slice(),
         keepalive: upload.requestKeepalive,
+        signal: controller.signal,
       })
       requestStarted = true
       const response = await responsePromise
@@ -309,6 +315,7 @@ export class ReplayTransport {
         throw new ReplayIngestError(response.status, retryAfter)
       }
     } finally {
+      clearTimeout(timeout)
       if (upload.reservedBytes > 0 && (requestStarted !== true || responseReceived !== true || responseComplete === true)) {
         this.reservedKeepaliveBytes = Math.max(0, this.reservedKeepaliveBytes - upload.reservedBytes)
       }
