@@ -1,5 +1,35 @@
 # @pydantic/logfire-browser
 
+## 0.17.0
+
+### Minor Changes
+
+- 6760a47: Stabilize browser RUM lifecycle setup with deferred instrumentation factories, opt-in lazy `autoInstrumentations`, provider-owned Web Vitals spans, explicit page URL attributes, and clarified session replay correlation semantics.
+- 6760a47: Add opt-in browser RUM session identity and custom span processor configuration.
+- 6760a47: Add opt-in native OpenTelemetry histogram metrics for browser Web Vitals. Configure top-level `metrics.metricUrl` and `rum.webVitals.metrics` to emit LCP, INP, CLS, FCP, and TTFB metrics in parallel with existing Web Vital spans.
+- 6760a47: Add opt-in browser RUM Web Vitals reporting with `rum.webVitals`, emitting LCP, INP, CLS, FCP, and TTFB as Logfire spans with attribution fields.
+- 6760a47: Add opt-in browser `sessionReplay` integration with SDK-owned session correlation, replay state span attributes, optional peer loading, telemetry endpoint suppression, and live replay mode reporting.
+
+### Patch Changes
+
+- 6760a47: Preserve callable browser cleanup while exposing generation-scoped session replay lifecycle controls, keep Web Vitals spans available when metrics startup fails, and mark Web Vitals point events as Logfire logs.
+
+  Remove unused pre-stable replay transport, recorder snapshot, and navigation `load` surfaces that were never used or emitted.
+
+- 6760a47: Make same-page browser reconfiguration deterministic and ownership-safe. Cached tracers and manual Logfire APIs now follow each sequential provider generation, inactive intervals are non-recording, overlapping configurations fail explicitly, and cleanup preserves application-owned OpenTelemetry globals.
+- 6760a47: Document safer development proxy examples and clarify that the Python telemetry helpers do not forward browser replay uploads.
+- 6760a47: Use privacy-safe browser defaults: omit query strings and fragments from page
+  attributes and replay URLs, mask rendered replay text, and disable replay
+  console capture unless explicitly enabled.
+- 6760a47: Harden browser RUM and session replay for their stable releases with transactional replay lifecycle handling, per-session sampling, retry-safe optional instrumentation, and finalized page URL and error-promotion contracts.
+- Updated dependencies [6760a47]
+- Updated dependencies [6760a47]
+- Updated dependencies [6760a47]
+- Updated dependencies [6760a47]
+- Updated dependencies [6760a47]
+- Updated dependencies [6760a47]
+  - @pydantic/logfire-session-replay@0.1.0
+
 ## 0.17.0-alpha.2
 
 ### Minor Changes
