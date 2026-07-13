@@ -591,8 +591,9 @@ Task 8: Delete the feature branch and merge the final cleanup record
 - A repository-local push mapping unexpectedly sent the first documentation-only
   cleanup commit `38c3b3f` directly to `main`. Exact run
   [29276121713](https://github.com/pydantic/logfire-js/actions/runs/29276121713)
-  passed and reported no packages to publish. Approved recovery PR #164 restored
-  the pre-cleanup tree as `8986267`; exact run
+  passed and reported no packages to publish. Recovery PR #164 was approved at
+  exact head `990a7a4`, with zero unresolved review threads, and restored the
+  pre-cleanup tree as `8986267`; exact run
   [29276457308](https://github.com/pydantic/logfire-js/actions/runs/29276457308)
   also passed with no packages to publish and skipped GitHub release creation.
   No history rewrite or registry/ref mutation was used for recovery.

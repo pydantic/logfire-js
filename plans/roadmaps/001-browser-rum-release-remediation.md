@@ -441,9 +441,10 @@ The roadmap separates stable contracts by independent consumer-visible failure b
   Verified `petyosi/browser-rum-alpha-release` is absent and that its final tree
   exactly matches feature squash merge `6760a47c`. A local push mapping sent the
   initial documentation-only cleanup commit directly to `main`; its exact run
-  29276121713 passed with no packages to publish. Approved recovery PR #164
-  restored the pre-cleanup tree as `8986267`, and exact run 29276457308 also
-  passed without publication or release creation. Cleanup PR #165 is the last
+  29276121713 passed with no packages to publish. Recovery PR #164 was approved
+  at exact head `990a7a4` with zero unresolved review threads, restored the
+  pre-cleanup tree as `8986267`, and exact run 29276457308 also passed without
+  publication or release creation. Cleanup PR #165 is the last
   conditional gate; its post-merge terminal comment must record a green exact
   main run, no publication, unchanged registry/release refs, and branch absence
   before R9/roadmap completion is asserted.
