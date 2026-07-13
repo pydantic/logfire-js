@@ -121,6 +121,8 @@ export interface SessionReplayConfig {
   /** Probability of buffering each otherwise-unsampled session for uncaught error promotion. */
   onErrorSampleRate?: number
 
+  /** Mask all rendered DOM text. Defaults to true. */
+  maskAllText?: boolean
   maskAllInputs?: boolean
   maskTextSelector?: string
   blockSelector?: string
@@ -154,6 +156,7 @@ export interface ResolvedSessionReplayConfig {
   getSessionId: (() => string | undefined) | undefined
   sessionSampleRate: number
   onErrorSampleRate: number
+  maskAllText: boolean
   maskAllInputs: boolean
   maskTextSelector: string
   blockSelector: string
@@ -178,6 +181,7 @@ export interface ResolvedSessionReplayConfig {
 export const DEFAULTS = {
   sessionSampleRate: 1,
   onErrorSampleRate: 1,
+  maskAllText: true,
   maskAllInputs: true,
   maskTextSelector: '',
   blockSelector: '',
@@ -186,7 +190,8 @@ export const DEFAULTS = {
   sessionIdleTimeoutMs: 1_800_000,
   maxSessionDurationMs: 14_400_000,
   distinctId: '',
-  captureConsole: true,
+  captureConsole: false,
   captureNetwork: true,
   captureNavigation: true,
+  redactUrlPatterns: [/.+/u] as RegExp[],
 } as const

@@ -862,18 +862,26 @@ describe('browser span processors', () => {
     try {
       const defaultAttributes = await exercise(true)
       expect(defaultAttributes).toMatchObject({
-        'logfire.page.url.full': 'https://example.com/dashboard?token=secret#recent',
+        'logfire.page.url.full': 'https://example.com/dashboard',
         'logfire.page.url.path': '/dashboard',
       })
       expect(defaultAttributes).not.toHaveProperty('url.full')
       expect(defaultAttributes).not.toHaveProperty('url.path')
 
+      const rawAttributes = await exercise({
+        urlAttributes: (url) => ({ full: url.href, path: url.pathname }),
+      })
+      expect(rawAttributes).toMatchObject({
+        'logfire.page.url.full': 'https://example.com/dashboard?token=secret#recent',
+        'logfire.page.url.path': '/dashboard',
+      })
+
       const sanitizedAttributes = await exercise({
-        urlAttributes: (url) => ({ full: `${url.origin}${url.pathname}`, path: url.pathname }),
+        urlAttributes: (url) => ({ full: `${url.origin}${url.pathname}`, path: '/custom-page' }),
       })
       expect(sanitizedAttributes).toMatchObject({
         'logfire.page.url.full': 'https://example.com/dashboard',
-        'logfire.page.url.path': '/dashboard',
+        'logfire.page.url.path': '/custom-page',
       })
 
       const disabledAttributes = await exercise({ urlAttributes: false })

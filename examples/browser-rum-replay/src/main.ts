@@ -48,12 +48,10 @@ logfire.configure({
     sessionSampleRate: 1,
     onErrorSampleRate: 1,
     maskAllInputs: true,
-    maskTextSelector: '[data-logfire-mask]',
     blockSelector: '[data-logfire-block]',
     captureConsole: true,
     captureNetwork: true,
     captureNavigation: true,
-    redactUrlPatterns: [/[?&](token|secret|email)=/u],
     distinctId: 'anonymous',
     getDistinctId: () => getUserId(),
     flushIntervalMs: 2_000,
@@ -128,7 +126,7 @@ button('shift').addEventListener('click', () => {
 button('console').addEventListener('click', () => {
   console.warn('Logfire replay console capture example', {
     route: routeTemplate(window.location.pathname),
-    user: getUserId(),
+    demo: true,
   })
   logfire.warning('Browser replay console event generated', {
     'example.action': 'console',

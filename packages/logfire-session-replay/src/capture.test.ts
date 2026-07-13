@@ -534,6 +534,36 @@ describe('captureNavigation', () => {
     expect(history.pushState).toBe(originalPush)
   })
 
+  it('redacts matching SPA navigation URLs and preserves navigation kinds', () => {
+    const emit = vi.fn()
+    const stop = captureNavigation(emit, { redactUrlPatterns: [/.+/u] })
+
+    history.pushState({}, '', '/pushed?token=one#details')
+    history.replaceState({}, '', '/replaced?token=two#details')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+
+    expect(
+      emit.mock.calls.map(([_tag, payload]) => ({
+        kind: (payload as NavigationPayload).kind,
+        url: (payload as NavigationPayload).url,
+      }))
+    ).toEqual([
+      { kind: 'push', url: `${window.location.origin}/pushed` },
+      { kind: 'replace', url: `${window.location.origin}/replaced` },
+      { kind: 'pop', url: `${window.location.origin}/replaced` },
+    ])
+    stop()
+  })
+
+  it('preserves raw navigation URLs when redaction is explicitly empty', () => {
+    const emit = vi.fn()
+    const stop = captureNavigation(emit, { redactUrlPatterns: [] })
+    history.pushState({}, '', '/raw?token=secret#details')
+
+    expect((emit.mock.calls[0]![1] as NavigationPayload).url).toBe(`${window.location.origin}/raw?token=secret#details`)
+    stop()
+  })
+
   it('does not throw from navigation capture when emit throws', () => {
     const emitError = new Error('emit failed')
     const onError = vi.fn()

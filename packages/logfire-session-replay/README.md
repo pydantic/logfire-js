@@ -34,9 +34,10 @@ const replay = startSessionReplay({
   sessionSampleRate: 0.1,
   onErrorSampleRate: 1,
 
+  // These are the privacy-safe defaults; they are shown for emphasis.
+  maskAllText: true,
   maskAllInputs: true,
   blockSelector: '[data-logfire-block]',
-  maskTextSelector: '[data-logfire-mask]',
 
   distinctId: currentUser?.id,
   getTraceContext: () => getCurrentTraceContext(),
@@ -149,16 +150,25 @@ This preserves the batch, but compression may briefly use the main thread.
 
 ## Privacy
 
-The recorder masks input values by default, disables canvas recording, disables
-font collection, throttles media sampling, and never captures request or response
-bodies. Replay can still capture DOM text, full URLs, console output, fetch/XHR
-metadata, and navigation events depending on configuration.
+The recorder masks all rendered text and input values by default
+(`maskAllText: true`, `maskAllInputs: true`). It also disables canvas recording
+and font collection, throttles media sampling, never captures request or
+response bodies, and leaves console capture off (`captureConsole: false`).
+Network and navigation capture remain on, but query strings and fragments are
+removed from rrweb page metadata and captured network/navigation URLs by the
+default `redactUrlPatterns` value. Replay envelope `meta.urls` contains those
+same sanitized captured URLs.
 
-Use `blockSelector` to omit entire DOM subtrees, `maskTextSelector` to mask text
-content before events are recorded, `redactUrlPatterns` to strip query strings
-and fragments from matching network URLs, and `captureConsole`,
-`captureNetwork`, or `captureNavigation` to disable capture classes that are not
-appropriate for your application.
+Use `blockSelector` to omit entire DOM subtrees. Set `maskAllText: false` only
+when visible text recording is acceptable; `maskTextSelector` can then retain
+selective text masking. Set `captureConsole: true` only after auditing console
+arguments. An explicit `redactUrlPatterns: []` restores raw captured page,
+network, and navigation URLs. `captureNetwork` and `captureNavigation` can
+disable those capture classes completely.
+
+Text masking does not scrub DOM attributes, CSS content, resource URLs, or
+arbitrary custom-event payloads. Avoid placing secrets there, block affected
+subtrees, and sanitize custom events before recording them.
 
 ## Sampling
 

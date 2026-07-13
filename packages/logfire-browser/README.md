@@ -71,11 +71,12 @@ or 4 hours of total duration by default. Spans get `session.id` and
 `browser.session.id` is emitted for Logfire Platform compatibility.
 
 By default, session-enabled spans also get `logfire.page.url.full` and
-`logfire.page.url.path` from the current page URL. The full value uses
-`location.href`, including query strings and fragments, while the path value
-uses `location.pathname`. Network spans may independently use OpenTelemetry
-`url.*` attributes for their request target. If your app has sensitive query
-strings or fragments, provide a sanitizer or suppress page URL attributes:
+`logfire.page.url.path` from the current page URL. The full value is
+`location.origin + location.pathname`, while the path value is
+`location.pathname`; query strings and fragments are excluded. Network spans
+may independently use OpenTelemetry `url.*` attributes for their request
+target. Provide a callback to customize page attributes, explicitly restore the
+raw page URL, or suppress them:
 
 ```js
 logfire.configure({
@@ -83,10 +84,7 @@ logfire.configure({
   serviceName: 'browser-app',
   rum: {
     session: {
-      urlAttributes: (url) => ({
-        full: `${url.origin}${url.pathname}`,
-        path: url.pathname,
-      }),
+      urlAttributes: (url) => ({ full: url.href, path: url.pathname }),
     },
   },
 })
@@ -230,6 +228,7 @@ logfire.configure({
     headers: async () => ({
       'X-CSRF': await getCsrfToken(),
     }),
+    maskAllText: true,
     maskAllInputs: true,
   },
 })
@@ -275,11 +274,18 @@ restrictive Content Security Policy blocks the compressor worker. The fallback
 preserves the batch and is remembered for the active replay controller, but it
 may briefly use the main thread.
 
-Do not use direct tokens in normal browser applications. Replay may capture
-console, fetch/XHR, navigation, and DOM events. Keep the default input masking
-enabled, use `blockSelector` or `maskTextSelector` for sensitive page regions,
-and set `captureConsole`, `captureNetwork`, or `captureNavigation` to `false`
-when those side channels are not appropriate.
+Do not use direct tokens in normal browser applications. Replay masks all
+rendered text and input values by default, leaves console capture off, and
+removes query strings and fragments from captured page, fetch/XHR, and
+navigation URLs. Network and navigation capture remain enabled. These defaults
+are inherited when the corresponding browser options are omitted.
+
+Use `blockSelector` to omit a subtree. Set `maskAllText: false` only when
+visible text recording is acceptable; `maskTextSelector` can then selectively
+mask sensitive regions. `captureConsole: true` is an explicit opt-in, and
+`redactUrlPatterns: []` explicitly restores raw replay URLs. Text masking does
+not scrub DOM attributes, CSS content, resource URLs, or arbitrary custom-event
+payloads, so those values still require application-side care.
 
 When testing replay locally, browser privacy extensions or ad blockers may block
 requests or dynamic imports whose URLs contain terms such as `session-replay`.

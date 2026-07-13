@@ -101,8 +101,8 @@ async function waitForFcpMetric(): Promise<void> {
 
 async function pollForFcpMetric(deadline: number): Promise<void> {
   const response = await fetch('/receipts/status')
-  const status = (await response.json()) as { fcpMetric?: unknown }
-  if (status.fcpMetric === true) {
+  const status: unknown = await response.json()
+  if (typeof status === 'object' && status !== null && 'fcpMetric' in status && status.fcpMetric === true) {
     return
   }
   if (Date.now() >= deadline) {

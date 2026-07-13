@@ -84,6 +84,19 @@ In replay:
 - blocked content under `[data-logfire-block]`
 - custom replay events for console, navigation, fetch/XHR, and reported errors
 
+This demo deliberately opts into `captureConsole: true` so the console button
+can demonstrate a replay console event. Console capture is off by default. The
+example logs only a fixed demo marker and a route template; never put editable
+identifiers, access tokens, secrets, or other sensitive values in captured
+console arguments.
+
+The replay defaults mask all rendered text and input values and remove query
+strings and fragments from captured URLs. This example keeps those defaults;
+`[data-logfire-block]` demonstrates omitting an entire subtree. Applications
+that explicitly set `maskAllText: false` should use `maskTextSelector` for every
+sensitive text region, and `redactUrlPatterns: []` deliberately restores raw
+captured URLs.
+
 The replay package ignores the telemetry upload URLs automatically, so trace,
 metric, and replay proxy calls should not recursively appear as captured network
 events.

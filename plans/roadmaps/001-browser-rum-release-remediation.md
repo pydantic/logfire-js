@@ -78,12 +78,11 @@ Merge PR #161 only after the browser RUM and replay packages have a safe, docume
 - **Retry boundary**: ordinary replay delivery treats HTTP 429 as transient and honors a valid bounded `Retry-After`; keepalive/unload delivery remains one attempt. — **Evidence**: existing retry split and unload time constraints.
 - **Web Vitals span semantics**: Web Vitals spans are point-in-time events and must carry `logfire.span_type = 'log'`. Platform RUM queries select `web_vital.*` names/attributes, so this preserves their aggregate/drilldown contract. R6 owns implementation and exact tests.
 - **Vite+ test import**: decline cleanup item 19 as obsolete. `capture.test.ts` uses the supported `vite-plus/test` entrypoint and passes the current Vite+ test gate; no functional release defect was established, so preserve it as-is. No child owns changing the import.
+- **D1 page URL default**: emit `logfire.page.url.full = origin + pathname` and `logfire.page.url.path = pathname`; query/fragment values require an explicit `urlAttributes` callback.
+- **D2 replay privacy default**: mask rendered text and inputs, disable console capture, and retain network/navigation metadata only with query/fragment redaction by default; explicit options may opt back into visible text, console arguments, or raw URLs.
 
-Pending decisions before this roadmap can become ACTIVE:
+Remaining stable-contract decisions:
 
-- Same-page reconfiguration uses a page-stable non-caching delegating tracer provider. Only one configuration generation may be active per package instance; cleanup must settle before the next configure call.
-- D1 default page URL value.
-- D2 default visible-text masking and the exact console/network/navigation privacy posture.
 - D3 whether browser integration exposes a replay lifecycle handle in this release.
 - D4 whether `sessionReplay` remains top-level or moves under `rum` before stable publication.
 - Whether metrics startup failure degrades to Web Vitals spans only; the recommended behavior is spans-only degradation with an explicit diagnostic.
@@ -214,20 +213,26 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 
 ### R5: Set and enforce replay/page privacy defaults
 
-- **Status**: BLOCKED
+- **Status**: VERIFIED
 - **Outcome**: page attributes, navigation, DOM text, console, and network capture obey one explicit stable privacy contract with safe examples.
 - **Why separate**: default data collection is a public product/security choice, not an implementation detail.
-- **Depends on**: user decisions D1 and D2.
+- **Depends on**: user decisions D1 and D2 — settled on 2026-07-13.
 - **Produces**: stable default/override matrix and decoded payload evidence consumed by R6/R9 and Platform handoff.
 - **Consumer impact**: owns `CX-5`.
 - **External readiness inputs**: representative page fixture containing query, fragment, visible text, inputs, console data, and navigation.
 - **Must preserve**: configurable overrides and documented direct-token warning.
-- **In scope**: D1, D2, B11, B13, masking/redaction options, docs/tests/examples, Platform report consistency.
-- **Out of scope**: Platform implementation and backend scrubbing.
+- **In scope**: D1, D2, B11, B13, masking/redaction options, docs/tests/examples, and an exact in-repo amendment for the downstream Platform follow-up.
+- **Out of scope**: writes to the adjacent Platform repository, Platform implementation, and backend scrubbing; apply the amendment in a separately authorized Platform task.
 - **Validation boundary**: inspect exact exported span attributes and decompressed replay events under defaults and explicit opt-ins.
-- **Remaining questions**: D1 URL default and D2 visible-text/side-channel default.
-- **Child PRP**: Not generated.
-- **Completion evidence**: Pending.
+- **Remaining questions**: None; D1 uses origin+pathname page defaults, and D2 masks text/inputs, disables console capture, and sanitizes named replay URL metadata unless explicitly overridden.
+- **Child PRP**: `plans/027-browser-privacy-defaults.md` — Deep-assurance cold review READY on 2026-07-13 after aligning parent `CX-5` traceability, separating the Platform-repository sync, scoping Changesets validation, and tightening exact replay-envelope/override evidence.
+- **Completion evidence**: PRP 027 verified on 2026-07-13. Replay tests passed
+  146/146, browser tests passed 145/145, both package typechecks and the full
+  root `pnpm run check` passed, Changesets selected exactly the two intended
+  package patches, and built-package real-browser default/opt-in scenarios
+  decoded exact page, rrweb, network, navigation, envelope, text, input,
+  console, and DOM-attribute evidence. Independent Deep re-review reported no
+  remaining findings.
 
 ### R6: Finalize browser optional-feature API and degradation contract
 
@@ -352,3 +357,11 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 - Cold-reviewed PRP 026 to READY after adding the public browser integration/export boundary, explicit synchronous-throw inventory, last-known session-id fallback, exact 1,000 ms persistence lifecycle, and complete anchor-cap edge coverage.
 - Began executing PRP 026 from clean commit `6e07649`; R4 is active and all R1–R3 contracts remain inherited.
 - Executed and verified PRP 026: optional callback/reporter containment, deterministic anchor-preserving replay cap, 1,000 ms session-write debounce, replay getter isolation, config-time URL validation, and authenticated metric-header failure behavior all pass focused and full repository gates.
+- Settled D1/D2 with privacy-safe defaults, verified installed rrweb 2.1.0 universal-selector text masking in a focused spike, and generated the Deep-assurance R5 child `plans/027-browser-privacy-defaults.md` with direct built-package default/opt-in browser evidence.
+- Cold-reviewed PRP 027 to READY after separating the adjacent Platform report update into a handoff, mapping child evidence to parent `CX-5`, explicitly asserting `ChunkEnvelope.meta.urls` and selective masking, isolating browser sessions, and limiting R5 Changesets validation to its own two-package patch entry.
+- Began executing PRP 027 from source commit `7cfa9f7`; the uncommitted PRP, spike, and roadmap decision record are the preserved planning baseline.
+- Executed and verified PRP 027: privacy-safe page and replay URL defaults,
+  universal rendered-text masking, console opt-in, peer-default-preserving
+  browser bridging, safe example/docs/Changeset/Platform handoff, exact
+  built-package default and raw-opt-in browser receipts, and independent Deep
+  re-review all pass.

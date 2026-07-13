@@ -97,6 +97,7 @@ describe('startBrowserSessionReplay', () => {
         ignoreUrlPatterns: [/\/custom-ignore/u],
         load: () => replayModule,
         maskAllInputs: false,
+        maskAllText: false,
         maskTextSelector: '.secret',
         maxBufferBytes: 123_456,
         onError,
@@ -127,6 +128,7 @@ describe('startBrowserSessionReplay', () => {
       getDistinctId,
       headers,
       maskAllInputs: false,
+      maskAllText: false,
       maskTextSelector: '.secret',
       maxBufferBytes: 123_456,
       onErrorSampleRate: 0.5,
@@ -151,6 +153,56 @@ describe('startBrowserSessionReplay', () => {
     expect(replayConfig?.getSessionId?.()).toBe('browser-session-1')
     expect(touchSpy).toHaveBeenCalledTimes(1)
     expect(getSessionSpy).not.toHaveBeenCalled()
+  })
+
+  it('leaves privacy options absent so the replay package owns safe defaults', async () => {
+    let replayConfig: BrowserSessionReplayPackageConfig | undefined
+    const replayModule: BrowserSessionReplayModule = {
+      startSessionReplay: (config) => {
+        replayConfig = config
+        return createReplayRuntime()
+      },
+    }
+
+    await startBrowserSessionReplay(
+      { load: () => replayModule, replayUrl: '/logfire/replay' },
+      createManager(),
+      new BrowserSessionReplayState(),
+      { traceUrl: '/logfire/traces' }
+    )
+
+    expect(replayConfig).not.toHaveProperty('maskAllText')
+    expect(replayConfig).not.toHaveProperty('maskTextSelector')
+    expect(replayConfig).not.toHaveProperty('redactUrlPatterns')
+  })
+
+  it('forwards explicit raw-data privacy opt-ins unchanged', async () => {
+    let replayConfig: BrowserSessionReplayPackageConfig | undefined
+    const replayModule: BrowserSessionReplayModule = {
+      startSessionReplay: (config) => {
+        replayConfig = config
+        return createReplayRuntime()
+      },
+    }
+
+    await startBrowserSessionReplay(
+      {
+        load: () => replayModule,
+        maskAllText: false,
+        maskTextSelector: '.secret',
+        redactUrlPatterns: [],
+        replayUrl: '/logfire/replay',
+      },
+      createManager(),
+      new BrowserSessionReplayState(),
+      { traceUrl: '/logfire/traces' }
+    )
+
+    expect(replayConfig).toMatchObject({
+      maskAllText: false,
+      maskTextSelector: '.secret',
+      redactUrlPatterns: [],
+    })
   })
 
   it('clears replay state when the wrapped replay is stopped once', async () => {

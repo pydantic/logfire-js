@@ -69,11 +69,12 @@ of total duration by default. Each span gets `session.id` and
 `browser.session.id` is emitted for Logfire Platform compatibility.
 
 Session-enabled spans also get `logfire.page.url.full` and
-`logfire.page.url.path` by default for current page context. The full value uses
-`location.href`, including query strings and fragments, while the path value
-uses `location.pathname`. Network spans may independently use OpenTelemetry
-`url.*` attributes for their request target. If your URLs may contain sensitive
-query strings or fragments, sanitize or suppress page URL attributes:
+`logfire.page.url.path` by default for current page context. The full value is
+`location.origin + location.pathname`, while the path value is
+`location.pathname`; query strings and fragments are excluded. Network spans
+may independently use OpenTelemetry `url.*` attributes for their request
+target. Provide a callback to customize page attributes, explicitly restore the
+raw page URL, or suppress them:
 
 ```ts
 logfire.configure({
@@ -81,10 +82,7 @@ logfire.configure({
   serviceName: 'web-app',
   rum: {
     session: {
-      urlAttributes: (url) => ({
-        full: `${url.origin}${url.pathname}`,
-        path: url.pathname,
-      }),
+      urlAttributes: (url) => ({ full: url.href, path: url.pathname }),
     },
   },
 })
@@ -224,6 +222,7 @@ logfire.configure({
     headers: async () => ({
       'X-CSRF': await getCsrfToken(),
     }),
+    maskAllText: true,
     maskAllInputs: true,
   },
 })
@@ -268,10 +267,17 @@ logfire.configure({
 })
 ```
 
-Replay can capture console, fetch/XHR, navigation, and DOM events. Keep input
-masking enabled by default, use `blockSelector` or `maskTextSelector` for
-sensitive regions, and disable capture classes that are not appropriate for
-your application.
+Replay masks all rendered text and input values by default, leaves console
+capture off, and removes query strings and fragments from captured page,
+fetch/XHR, and navigation URLs. Network and navigation capture remain enabled.
+These replay-package defaults are inherited when browser options are omitted.
+
+Use `blockSelector` to omit a subtree. Set `maskAllText: false` only when
+visible text recording is acceptable; `maskTextSelector` can then selectively
+mask sensitive regions. `captureConsole: true` is an explicit opt-in, and
+`redactUrlPatterns: []` explicitly restores raw replay URLs. Text masking does
+not scrub DOM attributes, CSS content, resource URLs, or arbitrary custom-event
+payloads, so those values still require application-side care.
 
 When testing replay locally, browser privacy extensions or ad blockers may block
 requests or dynamic imports whose URLs contain terms such as `session-replay`.

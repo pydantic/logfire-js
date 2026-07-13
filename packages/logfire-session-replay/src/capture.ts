@@ -1,3 +1,4 @@
+import { matchesUrlPatterns, redactUrl } from './privacy'
 import { CustomTag } from './types'
 import type { ConsoleLevel, ConsolePayload, NavigationPayload, NetworkPayload } from './types'
 
@@ -15,6 +16,10 @@ interface NetworkCaptureOptions extends CaptureOptions {
   ignoreUrlPatterns: RegExp[]
   now: () => number
   redactUrlPatterns: RegExp[]
+}
+
+interface NavigationCaptureOptions extends CaptureOptions {
+  redactUrlPatterns?: RegExp[] | undefined
 }
 
 const CONSOLE_LEVELS: readonly ConsoleLevel[] = ['log', 'info', 'warn', 'error', 'debug']
@@ -73,10 +78,11 @@ export function captureNetwork(emit: Emit, options: NetworkCaptureOptions): Stop
   }
 }
 
-export function captureNavigation(emit: Emit, options: CaptureOptions = {}): Stop {
+export function captureNavigation(emit: Emit, options: NavigationCaptureOptions = { redactUrlPatterns: [] }): Stop {
   const reportError = createSafeReporter(options.onError)
   const emitNavigation = (kind: NavigationPayload['kind']) => {
-    safeEmit(emit, CustomTag.Navigation, { url: window.location.href, kind } satisfies NavigationPayload, reportError)
+    const url = redactUrl(window.location.href, options.redactUrlPatterns ?? [], window.location.href)
+    safeEmit(emit, CustomTag.Navigation, { url, kind } satisfies NavigationPayload, reportError)
   }
   const stops: Stop[] = []
   try {
@@ -143,7 +149,7 @@ function captureFetch(emit: Emit, options: NetworkCaptureOptions): Stop {
       if (shouldIgnoreUrl(rawUrl, options.ignoreUrlPatterns)) {
         return callOriginal.call(this, input, init)
       }
-      const url = redactUrl(rawUrl, options.redactUrlPatterns)
+      const url = redactUrl(rawUrl, options.redactUrlPatterns, window.location.href)
       const reqBytes = sizeOfBody(init?.body)
 
       try {
@@ -215,7 +221,7 @@ function captureXhr(emit: Emit, options: NetworkCaptureOptions): Stop {
             }
             states.set(this, {
               method: method.toUpperCase(),
-              url: redactUrl(rawUrl, options.redactUrlPatterns),
+              url: redactUrl(rawUrl, options.redactUrlPatterns, window.location.href),
               startedAt: 0,
               reqBytes: 0,
               failed: false,
@@ -509,20 +515,6 @@ function sizeOfBody(body: BodyInit | Document | null | undefined): number | unde
   return undefined
 }
 
-function redactUrl(url: string, patterns: RegExp[]): string {
-  if (patterns.length === 0 || !patterns.some((pattern) => pattern.test(url))) {
-    return url
-  }
-  try {
-    const parsed = new URL(url, window.location.href)
-    return `${parsed.origin}${parsed.pathname}`
-  } catch {
-    const [withoutQuery = url] = url.split('?')
-    const [withoutHash = withoutQuery] = withoutQuery.split('#')
-    return withoutHash
-  }
-}
-
 function shouldIgnoreUrl(url: string, patterns: RegExp[]): boolean {
-  return patterns.some((pattern) => pattern.test(url))
+  return matchesUrlPatterns(url, patterns)
 }

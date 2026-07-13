@@ -104,7 +104,7 @@ describe('BrowserSessionSpanProcessor', () => {
 
     expect(span.attributes).toEqual({
       'browser.session.id': 'session-1',
-      'logfire.page.url.full': 'https://example.com/dashboard?tab=activity#recent',
+      'logfire.page.url.full': 'https://example.com/dashboard',
       'logfire.page.url.path': '/dashboard',
       'session.id': 'session-1',
     })
@@ -151,11 +151,28 @@ describe('BrowserSessionSpanProcessor', () => {
     startSpan(createProcessor(), span)
 
     expect(span.attributes).toMatchObject({
-      'logfire.page.url.full': 'https://example.com/products/123?token=secret',
+      'logfire.page.url.full': 'https://example.com/products/123',
       'logfire.page.url.path': '/products/123',
     })
     expect(span.attributes).not.toHaveProperty('url.full')
     expect(span.attributes).not.toHaveProperty('url.path')
+  })
+
+  it('allows an explicit callback to emit the raw page URL', () => {
+    setLocation({ href: 'https://example.com/products/123?token=secret#details' })
+    const span = createSpan()
+
+    startSpan(
+      createProcessor({
+        urlAttributes: (url) => ({ full: url.href, path: url.pathname }),
+      }),
+      span
+    )
+
+    expect(span.attributes).toMatchObject({
+      'logfire.page.url.full': 'https://example.com/products/123?token=secret#details',
+      'logfire.page.url.path': '/products/123',
+    })
   })
 
   it('does not throw when location is unavailable', () => {

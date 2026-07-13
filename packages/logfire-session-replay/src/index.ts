@@ -212,10 +212,12 @@ function createActiveRuntime(options: {
           safeReportError(config.onError, error)
         }
       },
+      maskAllText: config.maskAllText,
       maskAllInputs: config.maskAllInputs,
       maskTextSelector: config.maskTextSelector,
       blockSelector: config.blockSelector,
       checkoutEveryNms: mode === 'buffer' ? 120_000 : 0,
+      redactUrlPatterns: config.redactUrlPatterns,
     })
     cleanup.push(() => {
       recorder.stop()
@@ -313,7 +315,12 @@ function createActiveRuntime(options: {
       )
     }
     if (config.captureNavigation) {
-      cleanup.push(captureNavigation(addCustomEvent, { onError: config.onError }))
+      cleanup.push(
+        captureNavigation(addCustomEvent, {
+          onError: config.onError,
+          redactUrlPatterns: config.redactUrlPatterns,
+        })
+      )
     }
     transport.start()
 
@@ -362,6 +369,7 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     getSessionId: config.getSessionId,
     sessionSampleRate: config.sessionSampleRate ?? DEFAULTS.sessionSampleRate,
     onErrorSampleRate: config.onErrorSampleRate ?? DEFAULTS.onErrorSampleRate,
+    maskAllText: config.maskAllText ?? DEFAULTS.maskAllText,
     maskAllInputs: config.maskAllInputs ?? DEFAULTS.maskAllInputs,
     maskTextSelector: config.maskTextSelector ?? DEFAULTS.maskTextSelector,
     blockSelector: config.blockSelector ?? DEFAULTS.blockSelector,
@@ -376,7 +384,7 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     captureNetwork: config.captureNetwork ?? DEFAULTS.captureNetwork,
     captureNavigation: config.captureNavigation ?? DEFAULTS.captureNavigation,
     ignoreUrlPatterns: config.ignoreUrlPatterns ?? [],
-    redactUrlPatterns: config.redactUrlPatterns ?? [],
+    redactUrlPatterns: config.redactUrlPatterns ?? [...DEFAULTS.redactUrlPatterns],
     onError: config.onError,
     fetchImpl,
     now: config.now ?? Date.now,

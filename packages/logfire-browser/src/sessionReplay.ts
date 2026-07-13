@@ -23,6 +23,7 @@ export interface BrowserSessionReplayPackageConfig {
   getSessionId?: () => string | undefined
   sessionSampleRate?: number
   onErrorSampleRate?: number
+  maskAllText?: boolean
   maskAllInputs?: boolean
   maskTextSelector?: string
   blockSelector?: string
@@ -74,6 +75,7 @@ export interface BrowserSessionReplayOptions {
   sessionSampleRate?: number
   onErrorSampleRate?: number
 
+  maskAllText?: boolean
   maskAllInputs?: boolean
   maskTextSelector?: string
   blockSelector?: string
@@ -183,7 +185,6 @@ function createReplayConfig(
       ]),
       ...(options.ignoreUrlPatterns ?? []),
     ],
-    redactUrlPatterns: options.redactUrlPatterns ?? [],
     replayUrl: options.replayUrl,
   }
 
@@ -198,6 +199,9 @@ function createReplayConfig(
   }
   if (options.onErrorSampleRate !== undefined) {
     config.onErrorSampleRate = options.onErrorSampleRate
+  }
+  if (options.maskAllText !== undefined) {
+    config.maskAllText = options.maskAllText
   }
   if (options.maskAllInputs !== undefined) {
     config.maskAllInputs = options.maskAllInputs
@@ -228,6 +232,9 @@ function createReplayConfig(
   }
   if (options.captureNavigation !== undefined) {
     config.captureNavigation = options.captureNavigation
+  }
+  if (options.redactUrlPatterns !== undefined) {
+    config.redactUrlPatterns = options.redactUrlPatterns
   }
   if (options.onError !== undefined) {
     config.onError = (error) => {

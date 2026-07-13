@@ -695,6 +695,51 @@ describe('startSessionReplay lifecycle', () => {
     await replay.stop()
   })
 
+  it('applies privacy-safe defaults and preserves selective masking opt-in', async () => {
+    const { fetchImpl } = recordingFetch()
+    const defaultConfig = baseConfig(fetchImpl)
+    delete defaultConfig.captureConsole
+    delete defaultConfig.maskAllInputs
+    delete defaultConfig.maskAllText
+    delete defaultConfig.maskTextSelector
+    delete defaultConfig.redactUrlPatterns
+    const defaultReplay = startSessionReplay(defaultConfig)
+
+    expect(captured).toMatchObject({
+      maskAllInputs: true,
+      maskAllText: true,
+      maskTextSelector: '',
+    })
+    expect(captured.redactUrlPatterns).toHaveLength(1)
+    expect(captured.redactUrlPatterns[0]?.test('https://app.example.test/?token=secret')).toBe(true)
+    await defaultReplay.stop()
+
+    const selectiveReplay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        maskAllText: false,
+        maskTextSelector: '.secret',
+        redactUrlPatterns: [],
+      })
+    )
+    expect(captured).toMatchObject({
+      maskAllText: false,
+      maskTextSelector: '.secret',
+      redactUrlPatterns: [],
+    })
+    await selectiveReplay.stop()
+  })
+
+  it('does not install console capture by default', async () => {
+    const { fetchImpl } = recordingFetch()
+    const consoleSpy = vi.spyOn(captureMod, 'captureConsole')
+    const config = baseConfig(fetchImpl)
+    delete config.captureConsole
+    const replay = startSessionReplay(config)
+
+    expect(consoleSpy).not.toHaveBeenCalled()
+    await replay.stop()
+  })
+
   it('wires capture modules to rrweb custom events by default', async () => {
     const { fetchImpl } = recordingFetch()
     const consoleSpy = vi.spyOn(captureMod, 'captureConsole').mockReturnValue(() => {})

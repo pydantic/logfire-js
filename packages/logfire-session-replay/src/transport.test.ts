@@ -22,6 +22,7 @@ function makeConfig(fetchImpl: typeof fetch): ResolvedSessionReplayConfig {
     getSessionId: undefined,
     sessionSampleRate: 1,
     onErrorSampleRate: 1,
+    maskAllText: true,
     maskAllInputs: true,
     maskTextSelector: '',
     blockSelector: '',
