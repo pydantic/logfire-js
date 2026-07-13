@@ -273,7 +273,9 @@ describe('browser Web Vitals reporting', () => {
 
     for (const name of webVitalNames) {
       expect(mocks.registrations[name]).toHaveLength(1)
-      expect(getRegistration(name).options).toMatchObject({ reportAllChanges: true })
+      expect(getRegistration(name).options).toEqual(
+        name === 'INP' ? { includeProcessedEventEntries: false, reportAllChanges: true } : { reportAllChanges: true }
+      )
     }
     expect(retryMetricRecorder.record).toHaveBeenCalledWith(metric)
     expect(mocks.spans).toHaveLength(1)
@@ -320,7 +322,7 @@ describe('browser Web Vitals reporting', () => {
     }
     expect(firstMetricRecorder.record).not.toHaveBeenCalled()
     expect(secondMetricRecorder.record).toHaveBeenCalledWith(metric)
-    expect(mocks.tracerNames).toContain('second-tracer')
+    expect(mocks.tracerNames).toEqual(['second-tracer'])
   })
 
   it('attaches a metric recorder after Web Vitals already started without metrics', async () => {
@@ -360,7 +362,7 @@ describe('browser Web Vitals reporting', () => {
     expect(firstMetricRecorder.shutdown).toHaveBeenCalledTimes(1)
     expect(firstMetricRecorder.record).not.toHaveBeenCalled()
     expect(secondMetricRecorder.record).toHaveBeenCalledWith(metric)
-    expect(mocks.tracerNames).toContain('second-tracer')
+    expect(mocks.tracerNames).toEqual(['second-tracer'])
 
     await secondHandle.shutdown()
     report('LCP', metric)

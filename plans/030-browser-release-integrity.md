@@ -24,31 +24,31 @@ secret set --body`, exposing it to local process inspection.
 
 ## Success Criteria
 
-- [ ] `examples/nextjs/package.json` has the explicit private-package version
+- [x] `examples/nextjs/package.json` has the explicit private-package version
       `0.0.0`; Changesets status no longer reports that package or any null
       version.
-- [ ] The current exit-mode Changeset inventory reports exactly browser
+- [x] The current exit-mode Changeset inventory reports exactly browser
       `0.17.0`, replay `0.1.0`, and private
       `@pydantic/nextjs-client-side-instrumentation` `0.1.16` as non-`none`
       releases, with no other public package release.
-- [ ] A browser-only minor Changeset restores the established stable
+- [x] A browser-only minor Changeset restores the established stable
       `autoInstrumentations` release note without adding browser-only prose to
       replay's changelog or changing the intended public versions.
-- [ ] A disposable local verifier runs the installed Changesets 2.30.0 status
+- [x] A disposable local verifier runs the installed Changesets 2.30.0 status
       and version operations, proves the exact allowed manifest/changelog
       artifacts, consumes exit metadata only in scratch, rejects null or
       unrelated version changes, preserves the live HEAD/index/worktree
       byte-for-byte, and never publishes.
-- [ ] The npm token helper invokes `gh secret set` without `--body` or the token
+- [x] The npm token helper invokes `gh secret set` without `--body` or the token
       in argv, writes the exact token to stdin without a trailing newline, and
       removes its temporary token directory on both success and failure.
-- [ ] A fake-command process test exercises the real helper with a sentinel
+- [x] A fake-command process test exercises the real helper with a sentinel
       credential, exact argv/stdin capture, and no GitHub, npm, or registry
       access.
-- [ ] The review-owned deterministic tests use exact assertions only for stable
+- [x] The review-owned deterministic tests use exact assertions only for stable
       values, prove buffer/interval uploads through observable delivery, and
       retain partial matching for implementation-owned objects.
-- [ ] Parent roadmap scenario `CX-9` is directly reproducible, while publishing,
+- [x] Parent roadmap scenario `CX-9` is directly reproducible, while publishing,
       Version Packages PR merge, npm dist-tag work, and GitHub release creation
       remain deferred to R9.
 
@@ -268,10 +268,10 @@ secret set --body`, exposing it to local process inspection.
 ## Execution Contract
 
 - **Planned at commit**: `c628404`
-- **Planning baseline**: dirty by design. Preserve all existing verified R7
-  modifications/untracked files, `plans/029-browser-proxy-example-safety.md`,
-  the roadmap's R7 verification record, this PRP, and its spike record. Capture
-  exact status before execution; do not restore, stage, or commit any file.
+- **Execution baseline**: clean commit `99f7285`. The verified R7 implementation,
+  `plans/029-browser-proxy-example-safety.md`, the roadmap's R7 verification
+  record, this PRP, and its spike record are committed. Capture exact source
+  state before disposable verification and preserve it byte-for-byte.
 
 ### Expected Changes
 
@@ -557,11 +557,61 @@ substitute.
 - Generated changelog formatting and commit prefixes can vary with final merge
   history. Normalized exact summaries and allowed artifact paths prevent both
   brittle hash assertions and silent feature loss.
-- The current worktree contains verified R7 edits at the planning commit. A
-  clone of HEAD without the live overlay would omit R7 and produce invalid R8
-  evidence.
+- The current worktree contains the in-progress R8 metadata and verifier files.
+  A clone of HEAD without the live overlay would omit them and produce invalid
+  R8 evidence.
 - The token fixture controls executable resolution and generated token content.
   It must avoid placing the sentinel in the parent's argv/environment before the
   helper generates it, or the process-leak assertion becomes meaningless.
 
 **Confidence: 9/10** for one-pass implementation success.
+
+## Execution Notes
+
+- **Executed**: 2026-07-13 from clean source baseline `99f7285`. The earlier
+  dirty R7 planning baseline was reconciled because R7 and the planning
+  artifacts are now committed; R8's scope and exact release contract did not
+  change.
+- **Scope**: matched the expected change set. No SDK runtime/API code, package
+  dependency policy, release action, permissions, external state, or live
+  generated manifest/changelog was changed.
+- **Focused-gate correction**: the interval-upload assertion initially observed
+  the timer before asynchronous compression completed. It now waits for the
+  observable request, then proves stop produces no second upload; the focused
+  replay test and final integrated suite pass.
+- **Unresolved risks**: none within R8. Publication, merge operations, registry
+  state, tags/releases, dist-tags, and branch deletion remain reserved for R9.
+
+## Verification Record
+
+- **Verified**: 2026-07-13 from source baseline `99f7285` with all R8 changes
+  intentionally uncommitted.
+- **Assurance**: the Deep PRP already had an equivalent fresh-context cold
+  review, and preflight exposed no new high-risk uncertainty after the baseline
+  reconciliation. Final execution received complete self-review against the
+  PRP, parent invariants, exclusions, and both acceptance scenarios.
+
+| Scenario | Grade               | Direct evidence                                                                                                                                                                                                                                                                                                                                                            | Limitations                                                                                                                |
+| -------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `CX-9`   | `DIRECTLY VERIFIED` | `node scripts/verify-browser-release-plan.mjs` resolved CLI 2.30.0, assemble 6.0.9, and apply 7.1.0; overlaid the complete live tree into a local clone; proved the exact browser `0.17.0`, replay `0.1.0`, and private-client `0.1.16` plan and generated artifacts; removed scratch; and verified source HEAD, index, status, path types, and file bytes unchanged.      | Local installed Changesets behavior only; publication and the future Version Packages PR remain intentionally unexercised. |
+| `CX-9F`  | `DIRECTLY VERIFIED` | `node scripts/create-npm-token.test.mjs` exercised the real Bash helper through controlled fake `mktemp`, `script`, `npm`, and `gh` binaries for success and exit 23. Exact secret-setting argv omitted `--body` and the token, stdin matched the generated sentinel without a newline, output contained no secret/gh marker, and both helper and case roots were removed. | Uses a generated sentinel and fake external commands by design; no authentication, network, or GitHub secret was touched.  |
+
+### Compliance and Engineering Evidence
+
+- All eight success criteria and five blueprint tasks are implemented; the
+  pause conditions and exclusions held.
+- The disposable verifier permits only the six expected generated
+  manifest/changelog modifications and thirteen exact Changeset/pre-state
+  deletions in scratch, rejects every other path/type/version/null artifact,
+  and performs source-preservation checks on success and failure.
+- The exact-version verifier remains an operator-only command. Only the
+  version-independent token boundary test is part of root `check` and CI.
+
+| Gate                                                                                   | Result                                                                                                            |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Browser focused deterministic tests                                                    | 13 files, 151 tests passed                                                                                        |
+| Replay focused deterministic tests                                                     | 4 files passed; corrected `index.test.ts` passed 41/41 and the full replay suite passed 143/143 in the final gate |
+| `pnpm run test:release-tooling`                                                        | Passed fake success/failure argv, stdin, leak, exit, and cleanup evidence                                         |
+| `pnpm run verify:browser-rum-release-plan`                                             | Passed exact plan/generated artifacts and source-preservation evidence                                            |
+| `pnpm run check`                                                                       | Passed builds, 436-file formatting, lint, all typechecks, all package tests, and the release-tooling test         |
+| `node --check` for both new scripts, `bash -n scripts/create-npm-token.sh`, diff check | Passed                                                                                                            |

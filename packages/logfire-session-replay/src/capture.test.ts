@@ -26,7 +26,7 @@ describe('captureConsole', () => {
       expect(emit).toHaveBeenCalledTimes(1)
       const [tag, payload] = emit.mock.calls[0]!
       expect(tag).toBe(CustomTag.Console)
-      expect(payload).toMatchObject({
+      expect(payload).toEqual({
         level: 'warn',
         args: ['something happened', '42', '{"nested":"value"}'],
       } satisfies ConsolePayload)
@@ -45,9 +45,7 @@ describe('captureConsole', () => {
     try {
       console.log(...Array.from({ length: 15 }, (_value, index) => (index === 0 ? 'x'.repeat(5_000) : index)))
       const payload = emit.mock.calls[0]![1] as ConsolePayload
-      expect(payload.args).toHaveLength(10)
-      expect(payload.args[0]!.length).toBeLessThan(2_000)
-      expect(payload.args[0]).toMatch(/\(\+\d+ chars\)$/u)
+      expect(payload.args).toEqual([`${'x'.repeat(1_024)}...(+3976 chars)`, '1', '2', '3', '4', '5', '6', '7', '8', '9'])
       expect(passthroughLog).toHaveBeenCalledTimes(1)
     } finally {
       stop()

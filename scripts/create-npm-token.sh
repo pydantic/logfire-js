@@ -60,6 +60,6 @@ if [ -z "$TOKEN" ]; then
 fi
 
 echo "Updating NPM_TOKEN secret in $REPO (environment: $ENVIRONMENT)..."
-gh secret set NPM_TOKEN --repo "$REPO" --env "$ENVIRONMENT" --body "$TOKEN" >/dev/null
+printf '%s' "$TOKEN" | gh secret set NPM_TOKEN --repo "$REPO" --env "$ENVIRONMENT" >/dev/null
 
 echo "Done. NPM_TOKEN secret updated in $REPO (environment: $ENVIRONMENT)."

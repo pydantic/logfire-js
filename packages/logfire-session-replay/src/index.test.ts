@@ -285,11 +285,20 @@ describe('startSessionReplay full mode', () => {
 
   it('starts interval flushing in full mode', async () => {
     vi.useFakeTimers()
-    const { fetchImpl } = recordingFetch()
+    const { calls, fetchImpl } = recordingFetch()
     const setSpy = vi.spyOn(globalThis, 'setInterval')
     const replay = startSessionReplay(baseConfig(fetchImpl))
-    expect(setSpy.mock.calls.map((call) => call[1])).toContain(5_000)
+    const sessionId = replay.getSessionId()
+    expect(setSpy.mock.calls.map((call) => call[1])).toEqual([5_000, 1_000])
+    emit(fullSnapshot)
+    await vi.advanceTimersByTimeAsync(5_000)
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(1)
+    })
+    expect(calls[0]!.url).toBe(`https://app.example.com/replay/${sessionId}?seq=0`)
+    expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot])
     await replay.stop()
+    expect(calls).toHaveLength(1)
   })
 
   it('resolves sampling independently when external sessions rotate through full, off, and buffer', async () => {

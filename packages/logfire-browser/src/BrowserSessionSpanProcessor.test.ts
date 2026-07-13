@@ -150,12 +150,12 @@ describe('BrowserSessionSpanProcessor', () => {
 
     startSpan(createProcessor(), span)
 
-    expect(span.attributes).toMatchObject({
+    expect(span.attributes).toEqual({
+      'browser.session.id': 'session-1',
       'logfire.page.url.full': 'https://example.com/products/123',
       'logfire.page.url.path': '/products/123',
+      'session.id': 'session-1',
     })
-    expect(span.attributes).not.toHaveProperty('url.full')
-    expect(span.attributes).not.toHaveProperty('url.path')
   })
 
   it('allows an explicit callback to emit the raw page URL', () => {
@@ -169,9 +169,11 @@ describe('BrowserSessionSpanProcessor', () => {
       span
     )
 
-    expect(span.attributes).toMatchObject({
+    expect(span.attributes).toEqual({
+      'browser.session.id': 'session-1',
       'logfire.page.url.full': 'https://example.com/products/123?token=secret#details',
       'logfire.page.url.path': '/products/123',
+      'session.id': 'session-1',
     })
   })
 
@@ -215,9 +217,11 @@ describe('BrowserSessionSpanProcessor', () => {
 
     startSpan(createProcessor({}, replayState), span)
 
-    expect(span.attributes).toMatchObject({
+    expect(span.attributes).toEqual({
+      'browser.session.id': 'session-1',
       'logfire.session_replay.active': true,
       'logfire.session_replay.mode': 'full',
+      'session.id': 'session-1',
     })
   })
 
@@ -240,26 +244,45 @@ describe('BrowserSessionSpanProcessor', () => {
     mode = 'full'
     startSpan(processor, secondSpan)
 
-    expect(firstSpan.attributes['logfire.session_replay.mode']).toBe('buffer')
-    expect(secondSpan.attributes['logfire.session_replay.mode']).toBe('full')
+    expect(firstSpan.attributes).toEqual({
+      'browser.session.id': 'session-1',
+      'logfire.session_replay.active': true,
+      'logfire.session_replay.mode': 'buffer',
+      'session.id': 'session-1',
+    })
+    expect(secondSpan.attributes).toEqual({
+      'browser.session.id': 'session-1',
+      'logfire.session_replay.active': true,
+      'logfire.session_replay.mode': 'full',
+      'session.id': 'session-1',
+    })
   })
 
   it('does not stamp replay state when replay is absent, stopped, or off', () => {
     const replayState = new BrowserSessionReplayState()
     const beforeReplay = createSpan()
     startSpan(createProcessor({}, replayState), beforeReplay)
-    expect(beforeReplay.attributes).not.toHaveProperty('logfire.session_replay.active')
+    expect(beforeReplay.attributes).toEqual({
+      'browser.session.id': 'session-1',
+      'session.id': 'session-1',
+    })
 
     replayState.setReplay(createReplayRuntime('off'))
     const sampledOff = createSpan()
     startSpan(createProcessor({}, replayState), sampledOff)
-    expect(sampledOff.attributes).not.toHaveProperty('logfire.session_replay.active')
+    expect(sampledOff.attributes).toEqual({
+      'browser.session.id': 'session-1',
+      'session.id': 'session-1',
+    })
 
     replayState.setReplay(createReplayRuntime('full'))
     replayState.clear()
     const afterStop = createSpan()
     startSpan(createProcessor({}, replayState), afterStop)
-    expect(afterStop.attributes).not.toHaveProperty('logfire.session_replay.active')
+    expect(afterStop.attributes).toEqual({
+      'browser.session.id': 'session-1',
+      'session.id': 'session-1',
+    })
   })
 
   it('does not let hostile replay getters break span creation', () => {

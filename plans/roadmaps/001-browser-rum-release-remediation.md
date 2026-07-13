@@ -321,7 +321,7 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 
 ### R8: Reconcile Changesets and release tooling
 
-- **Status**: PRP READY
+- **Status**: VERIFIED
 - **Outcome**: release metadata produces only valid intended versions and npm credentials never appear in command arguments.
 - **Why separate**: release-plan correctness is independently simulatable and should not be mixed with runtime fixes.
 - **Depends on**: final package-visible change inventory before completion; implementation can normalize the private manifest and token input immediately.
@@ -343,11 +343,18 @@ The roadmap separates stable contracts by independent consumer-visible failure b
   full source and generated-tree preservation, closed success/failure token
   argv/stdin and scratch cleanup, kept the exact-version verifier out of
   permanent CI, and bounded deterministic assertions to stable values.
-- **Completion evidence**: Pending.
+- **Completion evidence**: PRP 030 verified on 2026-07-13 from clean baseline
+  `99f7285`. `CX-9` and `CX-9F` are `DIRECTLY VERIFIED`: the pinned disposable
+  Changesets verifier produced exactly browser `0.17.0`, replay `0.1.0`, and
+  private client `0.1.16`, allowed only the expected generated artifacts, and
+  preserved the live source byte-for-byte; the real token helper passed fake
+  success/failure argv, stdin, leak, exit, and cleanup checks. Focused browser
+  and replay tests and the complete `pnpm run check` passed. R9 is now ready for
+  its just-in-time release runbook PRP.
 
 ### R9: Integrate, merge, and publish the official stable release
 
-- **Status**: BLOCKED
+- **Status**: READY FOR PRP
 - **Outcome**: all contracts work together, CI/reviews are green, official packages are published, and the feature branch is safely retired.
 - **Why separate**: integration and publication cross irreversible external checkpoints and cannot be validated by any one implementation child.
 - **Depends on**: verified R1-R8 outputs and all roadmap decisions settled.
@@ -401,6 +408,14 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 
 ### 2026-07-13
 
+- Verified PRP 030 for R8 from clean baseline `99f7285`: exact pinned
+  Changesets status/version artifacts, source-preserving scratch cleanup,
+  stdin-only token transfer, fake success/failure process evidence, focused
+  deterministic tests, and the full root check all passed. R8 is complete and
+  R9 is ready for its just-in-time release runbook PRP.
+- Began executing PRP 030 from clean commit `99f7285`; the previously dirty R7
+  implementation and R8 planning artifacts are now committed, while the R8
+  scope, exact release versions, and no-publish boundary remain unchanged.
 - Reconciled the combined review with completed PRP 022 and current source at `f57d9ec`.
 - Routed the work from one oversized PRP to a roadmap because it contains multiple public decisions, independent implementation outcomes, and validation environments.
 - Generated `plans/025-replay-delivery-reliability.md` for R3 after resolving the aggregate keepalive budget, lifecycle/excess-attempt policy, CSP memoization scope, and bounded `Retry-After` behavior; assigned implementation and browser-doc ownership of the async credential caveat to R3 while R6 preserves/reviews the resulting contract.

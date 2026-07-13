@@ -921,11 +921,11 @@ describe('browser span processors', () => {
 
     expect(factory).toHaveBeenCalledTimes(1)
     expect(mocks.lifecycleEvents).toEqual(['providerCreate', 'instrumentationFactory'])
-    expect(mocks.registerInstrumentationCalls[0]).toMatchObject({
+    expect(mocks.registerInstrumentationCalls[0]).toEqual({
       instrumentations: [preconstructedInstrumentation],
       tracerProvider: getLatestWebTracerProvider(),
     })
-    expect(mocks.registerInstrumentationCalls[1]).toMatchObject({
+    expect(mocks.registerInstrumentationCalls[1]).toEqual({
       instrumentations: [factoryInstrumentation],
       tracerProvider: getLatestWebTracerProvider(),
     })
@@ -950,7 +950,10 @@ describe('browser span processors', () => {
     })
     trace.getTracer('consumer-after-factory-failure').startSpan('still works').end()
 
-    expect(mocks.registerInstrumentationCalls.at(-1)).toMatchObject({ instrumentations: [goodInstrumentation] })
+    expect(mocks.registerInstrumentationCalls.at(-1)).toEqual({
+      instrumentations: [goodInstrumentation],
+      tracerProvider: getLatestWebTracerProvider(),
+    })
     expect(coreSpanStart).toHaveBeenCalledTimes(1)
     expect(diagError).toHaveBeenCalledWith('logfire-browser: failed to start configured browser instrumentation group', factoryError)
     await expect(cleanup()).resolves.toBeUndefined()
@@ -977,7 +980,10 @@ describe('browser span processors', () => {
 
     expect(enable).toHaveBeenCalledTimes(1)
     expect(disable).toHaveBeenCalledTimes(1)
-    expect(mocks.registerInstrumentationCalls.at(-1)).toMatchObject({ instrumentations: [goodInstrumentation] })
+    expect(mocks.registerInstrumentationCalls.at(-1)).toEqual({
+      instrumentations: [goodInstrumentation],
+      tracerProvider: getLatestWebTracerProvider(),
+    })
     expect(coreSpanStart).toHaveBeenCalledTimes(1)
     expect(diagError).toHaveBeenCalledWith('logfire-browser: failed to start configured browser instrumentation group', registrationError)
     await expect(cleanup()).resolves.toBeUndefined()
@@ -1011,7 +1017,7 @@ describe('browser span processors', () => {
         (url) => url instanceof RegExp && url.test('http://localhost:8989/client-traces')
       )
     ).toBe(true)
-    expect(mocks.registerInstrumentationCalls[1]).toMatchObject({
+    expect(mocks.registerInstrumentationCalls[1]).toEqual({
       instrumentations: mocks.autoInstrumentations,
       tracerProvider: getLatestWebTracerProvider(),
     })
@@ -1192,7 +1198,8 @@ describe('browser Web Vitals config', () => {
     })
 
     expect(mocks.webVitalsStartCalls).toHaveLength(1)
-    expect(mocks.webVitalsStartCalls[0]).toMatchObject({ tracer: { name: 'logfire-web-vitals' } })
+    const call = mocks.webVitalsStartCalls[0] as { tracer: { name: string } }
+    expect({ tracerName: call.tracer.name }).toEqual({ tracerName: 'logfire-web-vitals' })
     expect(mocks.lifecycleEvents).toEqual(['providerCreate', 'webVitalsStart'])
   })
 
@@ -1210,11 +1217,22 @@ describe('browser Web Vitals config', () => {
     })
 
     expect(mocks.webVitalsStartCalls).toHaveLength(1)
-    expect(mocks.webVitalsStartCalls[0]).toMatchObject({
+    const call = mocks.webVitalsStartCalls[0] as {
+      generateTarget: () => string
+      includeProcessedEventEntries: boolean
+      reportAllChanges: boolean
+      tracer: { name: string }
+    }
+    expect({
+      generateTarget: call.generateTarget,
+      includeProcessedEventEntries: call.includeProcessedEventEntries,
+      reportAllChanges: call.reportAllChanges,
+      tracerName: call.tracer.name,
+    }).toEqual({
       generateTarget,
       includeProcessedEventEntries: true,
       reportAllChanges: true,
-      tracer: { name: 'logfire-web-vitals' },
+      tracerName: 'logfire-web-vitals',
     })
   })
 

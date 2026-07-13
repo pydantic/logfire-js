@@ -5,6 +5,9 @@ import { BrowserSessionManager } from './browserSession'
 import { BrowserSessionReplayState, startBrowserSessionReplay } from './sessionReplay'
 import type { BrowserSessionReplayModule, BrowserSessionReplayPackageConfig, BrowserSessionReplayRuntime } from './sessionReplay'
 
+const replayStartupDiagnostic =
+  'logfire-browser: failed to start session replay; install @pydantic/logfire-session-replay and verify sessionReplay config'
+
 class MemoryStorage implements Storage {
   private readonly items = new Map<string, string>()
 
@@ -289,31 +292,34 @@ describe('startBrowserSessionReplay', () => {
 
     expect(replay).toBeUndefined()
     expect(replayState.getState()).toBeUndefined()
-    expect(diagError).toHaveBeenCalledWith(expect.stringContaining('failed to start session replay'), error)
+    expect(diagError).toHaveBeenCalledWith(replayStartupDiagnostic, error)
     expect(onError).toHaveBeenCalledWith(error)
   })
 
-  it.each(['', '/', '/logfire/replay?token=x', '/logfire/replay#fragment'])(
-    'contains invalid browser replay URL %s before loading the optional package',
-    async (replayUrl) => {
-      const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
-      const load = vi.fn<() => BrowserSessionReplayModule>()
-      const onError = vi.fn<(error: unknown) => void>()
+  it.each([
+    ['', 'logfire-browser: sessionReplay.replayUrl must be a non-empty browser URL'],
+    ['/', 'logfire-browser: sessionReplay.replayUrl must use a non-root path'],
+    ['/logfire/replay?token=x', 'logfire-browser: sessionReplay.replayUrl must not contain a query or fragment'],
+    ['/logfire/replay#fragment', 'logfire-browser: sessionReplay.replayUrl must not contain a query or fragment'],
+  ])('contains invalid browser replay URL %s before loading the optional package', async (replayUrl, errorMessage) => {
+    const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
+    const load = vi.fn<() => BrowserSessionReplayModule>()
+    const onError = vi.fn<(error: unknown) => void>()
 
-      await expect(
-        startBrowserSessionReplay({ load, onError, replayUrl }, createManager(), new BrowserSessionReplayState(), {
-          traceUrl: '/logfire/traces',
-        })
-      ).resolves.toBeUndefined()
+    await expect(
+      startBrowserSessionReplay({ load, onError, replayUrl }, createManager(), new BrowserSessionReplayState(), {
+        traceUrl: '/logfire/traces',
+      })
+    ).resolves.toBeUndefined()
 
-      expect(load).not.toHaveBeenCalled()
-      expect(onError).toHaveBeenCalledTimes(1)
-      const reportedError = onError.mock.calls[0]?.[0]
-      expect(reportedError).toBeInstanceOf(Error)
-      expect((reportedError as Error).message).toContain('replayUrl')
-      expect(diagError).toHaveBeenCalledWith(expect.stringContaining('failed to start session replay'), expect.any(Error))
-    }
-  )
+    expect(load).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledTimes(1)
+    const reportedError = onError.mock.calls[0]?.[0]
+    expect(reportedError).toBeInstanceOf(Error)
+    expect((reportedError as Error).message).toBe(errorMessage)
+    expect(onError).toHaveBeenCalledWith(reportedError)
+    expect(diagError).toHaveBeenCalledWith(replayStartupDiagnostic, reportedError)
+  })
 
   it('does not let a throwing startup error callback reject replay startup handling', async () => {
     const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
@@ -333,7 +339,7 @@ describe('startBrowserSessionReplay', () => {
         { traceUrl: '/logfire/traces' }
       )
     ).resolves.toBeUndefined()
-    expect(diagError).toHaveBeenCalledWith(expect.stringContaining('failed to start session replay'), error)
+    expect(diagError).toHaveBeenCalledWith(replayStartupDiagnostic, error)
   })
 
   it('contains hostile runtime getters and rejected browser error reporters', async () => {

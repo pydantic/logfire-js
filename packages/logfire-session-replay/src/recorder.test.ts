@@ -55,7 +55,7 @@ describe('startRecording', () => {
     expect(options['collectFonts']).toBe(false)
     expect(options['maskAllInputs']).toBe(true)
     expect(options['maskTextSelector']).toBe('*')
-    expect(options['sampling']).toMatchObject({
+    expect(options['sampling']).toEqual({
       mousemove: true,
       mouseInteraction: true,
       scroll: 150,

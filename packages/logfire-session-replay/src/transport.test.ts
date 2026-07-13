@@ -96,7 +96,7 @@ describe('ReplayTransport full mode', () => {
 
     expect(calls).toHaveLength(1)
     expect(calls[0]!.url).toBe('https://app.example.com/replay-proxy/sess-1?seq=0')
-    expect(calls[0]!.init.headers).toMatchObject({
+    expect(calls[0]!.init.headers).toEqual({
       'Content-Type': 'application/json',
       'Content-Encoding': 'gzip',
     })
@@ -120,7 +120,7 @@ describe('ReplayTransport full mode', () => {
     transport.add(fullSnapshot)
     await transport.flush()
 
-    expect(calls[0]!.init.headers).toMatchObject({
+    expect(calls[0]!.init.headers).toEqual({
       Authorization: 'Bearer write-token',
       'X-CSRF': 'csrf-token',
       'Content-Type': 'application/json',
@@ -142,9 +142,12 @@ describe('ReplayTransport full mode', () => {
     transport.add(fullSnapshot)
     expect(calls).toHaveLength(0)
     transport.add(click)
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(1)
+    })
+    expect(decodeBody(calls[0]!.init.body).events.map((event) => event.timestamp)).toEqual([1, 2])
     await transport.shutdown()
     expect(calls).toHaveLength(1)
-    expect(decodeBody(calls[0]!.init.body).events.map((event) => event.timestamp)).toEqual([1, 2])
   })
 
   it('uses UTF-8 bytes rather than UTF-16 code units for the buffer threshold', async () => {
