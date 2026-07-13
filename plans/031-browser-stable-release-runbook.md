@@ -596,9 +596,10 @@ Task 8: Delete the feature branch and merge the final cleanup record
   pre-cleanup tree as `8986267`; exact run
   [29276457308](https://github.com/pydantic/logfire-js/actions/runs/29276457308)
   also passed with no packages to publish and skipped GitHub release creation.
-  No history rewrite or registry/ref mutation was used for recovery.
+  No history rewrite, registry/dist-tag mutation, or stable-release-ref mutation
+  was used for recovery.
 - This cleanup record deliberately leaves R9 `IN PROGRESS` and the roadmap
-  Cleanup PR #165 was closed unmerged after CodeRabbit emitted no status,
+  `ACTIVE`. Cleanup PR #165 was closed unmerged after CodeRabbit emitted no status,
   comment, or review despite automatic, reopen, new-commit, incremental, and
   full-review triggers; no reviewer gate was bypassed. For superseding cleanup
   PR #166, R9 becomes `VERIFIED` and the roadmap becomes
