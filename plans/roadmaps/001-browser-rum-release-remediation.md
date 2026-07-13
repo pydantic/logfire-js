@@ -354,7 +354,7 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 
 ### R9: Integrate, merge, and publish the official stable release
 
-- **Status**: READY FOR PRP
+- **Status**: IN PROGRESS
 - **Outcome**: all contracts work together, CI/reviews are green, official packages are published, and the feature branch is safely retired.
 - **Why separate**: integration and publication cross irreversible external checkpoints and cannot be validated by any one implementation child.
 - **Depends on**: verified R1-R8 outputs and all roadmap decisions settled.
@@ -362,11 +362,16 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 - **Consumer impact**: owns `CX-10` and rechecks `CX-1`-`CX-9` interactions.
 - **External readiness inputs**: green GitHub checks/reviews, repository merge rights, npm trusted publishing/token workflow, registry access.
 - **Must preserve**: rollback through historical alpha packages and no direct feature-branch publish.
-- **In scope**: full `pnpm run check`, package pack/import smoke, CodeRabbit disposition, PR merges, Version Packages review, npm/GitHub verification, optional alpha dist-tag decision, branch deletion.
+- **In scope**: full `pnpm run check`, package pack/import smoke, CodeRabbit disposition, PR merges, Version Packages review, npm/GitHub verification, alpha dist-tag preservation checks, branch deletion.
 - **Out of scope**: downstream Platform code changes.
 - **Validation boundary**: public registry/package consumer plus GitHub release checks after each authorized checkpoint.
-- **Remaining questions**: release-time operator approval at each external mutation and optional alpha dist-tag removal.
-- **Child PRP**: Not generated; release runbook child generated only after R1-R8 verify.
+- **Remaining questions**: None. Release-time operator approval is an execution
+  gate before each external mutation, and the accepted default is to preserve
+  existing `alpha` dist-tags throughout R9.
+- **Child PRP**: `plans/031-browser-stable-release-runbook.md` — Deep-assurance
+  release runbook generated on 2026-07-13 with explicit SHA/review/check gates,
+  isolated Version Packages pack/consumer evidence, public npm/GitHub
+  verification, downstream handoff, and branch-deletion authorization.
 - **Completion evidence**: Pending.
 
 ## Integration Checkpoints
@@ -408,6 +413,18 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 
 ### 2026-07-13
 
+- Began executing PRP 031 from source baseline `0cb505b`. Task 1 owns the
+  deterministic scratch-clone/registry artifact verifier and the clean local
+  candidate gate; no push, review write, merge, publish, handoff, dist-tag
+  change, or branch deletion is authorized by this status transition.
+- Generated Deep-assurance PRP 031 for R9 from clean source commit `0cb505b`.
+  Live reconnaissance found PR #161 still at `f57d9ec` with 19 unresolved
+  CodeRabbit threads and six unpushed local commits, `main` without enforced
+  branch protection, and a recent green release run whose GitHub-release step
+  was skipped. R9 now fails closed on exact-SHA CI/review evidence, keeps alpha
+  dist-tags unchanged, verifies the Version Packages candidate in scratch, and
+  requires public registry/tarball/GitHub evidence before handoff or branch
+  deletion.
 - Verified PRP 030 for R8 from clean baseline `99f7285`: exact pinned
   Changesets status/version artifacts, source-preserving scratch cleanup,
   stdin-only token transfer, fake success/failure process evidence, focused
