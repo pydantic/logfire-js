@@ -1,6 +1,7 @@
 import { uuidv7 } from './uuid'
 
 export const SESSION_STORAGE_KEY = 'lf_session_replay'
+export const SESSION_ACTIVITY_WRITE_DELAY_MS = 1_000
 
 export interface SessionState {
   id: string
@@ -21,6 +22,8 @@ export class SessionManager {
   private readonly now: () => number
   private readonly storage: Storage | null
   private memorySession: SessionState | undefined
+  private pendingSession: SessionState | undefined
+  private persistenceTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(options: SessionManagerOptions) {
     this.idleTimeoutMs = options.idleTimeoutMs
@@ -31,6 +34,9 @@ export class SessionManager {
 
   getSession(): SessionState {
     const now = this.now()
+    if (this.memorySession !== undefined && !this.isExpired(this.memorySession, now)) {
+      return this.memorySession
+    }
     const session = this.read()
     if (session !== undefined && !this.isExpired(session, now)) {
       return session
@@ -42,12 +48,25 @@ export class SessionManager {
     const now = this.now()
     const session = this.getSession()
     const touchedSession = { ...session, lastActivityAt: now }
-    this.write(touchedSession)
+    this.memorySession = touchedSession
+    this.scheduleWrite(touchedSession)
     return touchedSession
   }
 
   reset(): SessionState {
     return this.createSession(this.now())
+  }
+
+  flushPendingStorage(): void {
+    if (this.persistenceTimer !== undefined) {
+      clearTimeout(this.persistenceTimer)
+      this.persistenceTimer = undefined
+    }
+    const pendingSession = this.pendingSession
+    this.pendingSession = undefined
+    if (pendingSession !== undefined) {
+      this.writeNow(pendingSession)
+    }
   }
 
   private isExpired(session: SessionState, now: number): boolean {
@@ -60,7 +79,8 @@ export class SessionManager {
       startedAt: now,
       lastActivityAt: now,
     }
-    this.write(session)
+    this.flushPendingStorage()
+    this.writeNow(session)
     return session
   }
 
@@ -94,6 +114,26 @@ export class SessionManager {
     } catch {
       // Session identity is best-effort in constrained browser contexts.
     }
+  }
+
+  private scheduleWrite(session: SessionState): void {
+    this.pendingSession = session
+    if (this.persistenceTimer !== undefined) {
+      return
+    }
+    this.persistenceTimer = setTimeout(() => {
+      this.persistenceTimer = undefined
+      const pendingSession = this.pendingSession
+      this.pendingSession = undefined
+      if (pendingSession !== undefined) {
+        this.writeNow(pendingSession)
+      }
+    }, SESSION_ACTIVITY_WRITE_DELAY_MS)
+  }
+
+  private writeNow(session: SessionState): void {
+    this.memorySession = session
+    this.write(session)
   }
 }
 

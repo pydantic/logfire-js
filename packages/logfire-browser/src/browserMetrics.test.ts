@@ -211,6 +211,16 @@ describe('browser metrics runtime', () => {
     expect(provider.options['readers'] as unknown[]).toEqual([mocks.readers[0], additionalReader])
   })
 
+  it('preserves header resolver failures instead of synthesizing empty headers', async () => {
+    const error = new Error('header resolver failed')
+    const metricExporterHeaders = vi.fn<() => Promise<Record<string, string>>>(async () => Promise.reject(error))
+    await startBrowserMetrics({ metricExporterHeaders, metricUrl: 'https://example.com/v1/metrics' }, { attributes: {} } as never)
+
+    const headers = mocks.exporters[0]?.options['headers'] as (() => Promise<Record<string, string>>) | undefined
+    await expect(headers?.()).rejects.toBe(error)
+    expect(metricExporterHeaders).toHaveBeenCalledTimes(1)
+  })
+
   it('creates one histogram per Web Vital with stable names, units, and buckets', async () => {
     await startBrowserMetrics({ metricUrl: '/v1/metrics/browser' }, { attributes: {} } as never)
 

@@ -630,6 +630,34 @@ describe('ReplayTransport buffer mode', () => {
     await transport.triggerFlush()
     expect(decodeBody(calls[0]!.init.body).events.map((event) => event.timestamp)).toEqual([10])
   })
+
+  it('keeps the earliest contiguous incrementals within the buffer cap', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const firstIncremental = { ...click, timestamp: 2 }
+    const secondIncremental = { ...click, timestamp: 3 }
+    const maxBufferBytes = strToU8(JSON.stringify(fullSnapshot)).byteLength + strToU8(JSON.stringify(firstIncremental)).byteLength
+    const transport = new ReplayTransport({ ...makeConfig(fetchImpl), maxBufferBytes }, 'sess-cap-buffer', 'buffer', null)
+    transport.add(click)
+    transport.add(fullSnapshot)
+    transport.add(firstIncremental)
+    transport.add(secondIncremental)
+
+    await transport.triggerFlush()
+
+    expect(decodeBody(calls[0]!.init.body).events.map((event) => event.timestamp)).toEqual([1, 2])
+  })
+
+  it('drops incremental events that exceed the cap and retains an oversized anchor alone', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const oversizedIncremental = { ...click, timestamp: 4, data: { text: 'x'.repeat(100) } }
+    const transport = new ReplayTransport({ ...makeConfig(fetchImpl), maxBufferBytes: 10 }, 'sess-oversized', 'buffer', null)
+    transport.add(oversizedIncremental)
+    transport.add(fullSnapshot)
+    transport.add(oversizedIncremental)
+    await transport.triggerFlush()
+
+    expect(decodeBody(calls[0]!.init.body).events.map((event) => event.timestamp)).toEqual([1])
+  })
 })
 
 describe('ReplayTransport session rotation and sequence persistence', () => {

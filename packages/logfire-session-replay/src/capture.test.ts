@@ -109,6 +109,32 @@ describe('captureConsole', () => {
       }
     }
   })
+
+  it('guards reporter reentrancy when onError logs through captured console', () => {
+    const originalError = console.error
+    const passthroughError = vi.fn()
+    console.error = passthroughError
+    const emit = vi.fn(() => {
+      throw new Error('emit failed')
+    })
+    let reportCalls = 0
+    const stop = captureConsole(emit, {
+      onError: () => {
+        reportCalls += 1
+        console.error('reporting capture failure')
+      },
+    })
+    try {
+      expect(() => {
+        console.warn('trigger')
+      }).not.toThrow()
+      expect(reportCalls).toBe(1)
+      expect(passthroughError).toHaveBeenCalledWith('reporting capture failure')
+    } finally {
+      stop()
+      console.error = originalError
+    }
+  })
 })
 
 describe('captureNetwork', () => {

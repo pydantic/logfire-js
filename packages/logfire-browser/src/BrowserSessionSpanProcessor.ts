@@ -51,7 +51,12 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
     span.setAttribute(ATTR_SESSION_ID, session.id)
     span.setAttribute(ATTR_BROWSER_SESSION_ID, session.id)
 
-    const replayState = this.replayState?.getState()
+    let replayState: ReturnType<BrowserSessionReplayState['getState']>
+    try {
+      replayState = this.replayState?.getState()
+    } catch {
+      replayState = undefined
+    }
     if (replayState !== undefined) {
       span.setAttribute(ATTR_SESSION_REPLAY_ACTIVE, replayState.active)
       span.setAttribute(ATTR_SESSION_REPLAY_MODE, replayState.mode)

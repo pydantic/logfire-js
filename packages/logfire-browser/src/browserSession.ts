@@ -1,5 +1,7 @@
 import type { BrowserWebVitalsOptions } from './webVitals'
 
+export const BROWSER_SESSION_ACTIVITY_WRITE_DELAY_MS = 1_000
+
 export interface BrowserSessionUrlAttributes {
   full?: string
   path?: string
@@ -117,6 +119,8 @@ export class BrowserSessionManager {
   private readonly storageKey: string
   private readonly urlAttributes: BrowserSessionOptions['urlAttributes'] | undefined
   private memorySession: BrowserSessionState | undefined
+  private pendingSession: BrowserSessionState | undefined
+  private persistenceTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(options: BrowserSessionManagerOptions = {}) {
     this.generateId = options.generateId ?? generateBrowserSessionId
@@ -140,12 +144,25 @@ export class BrowserSessionManager {
     const now = this.now()
     const session = this.getSessionAt(now)
     const touchedSession = { ...session, lastActivityAt: now }
-    this.writeSession(touchedSession)
+    this.memorySession = touchedSession
+    this.scheduleWrite(touchedSession)
     return touchedSession
   }
 
   reset(): BrowserSessionState {
     return this.createSession(this.now())
+  }
+
+  flushPendingStorage(): void {
+    if (this.persistenceTimer !== undefined) {
+      clearTimeout(this.persistenceTimer)
+      this.persistenceTimer = undefined
+    }
+    const pendingSession = this.pendingSession
+    this.pendingSession = undefined
+    if (pendingSession !== undefined) {
+      this.writeSession(pendingSession)
+    }
   }
 
   getUrlAttributes(url: URL): BrowserSessionUrlAttributes | undefined {
@@ -169,11 +186,15 @@ export class BrowserSessionManager {
       lastActivityAt: now,
       startedAt: now,
     }
+    this.flushPendingStorage()
     this.writeSession(session)
     return session
   }
 
   private getSessionAt(now: number): BrowserSessionState {
+    if (this.memorySession !== undefined && !this.isExpired(this.memorySession, now)) {
+      return this.memorySession
+    }
     const storedSession = this.readSession()
     if (storedSession !== undefined && !this.isExpired(storedSession, now)) {
       return storedSession
@@ -217,11 +238,27 @@ export class BrowserSessionManager {
       // Session identity is best-effort in constrained browser contexts.
     }
   }
+
+  private scheduleWrite(session: BrowserSessionState): void {
+    this.pendingSession = session
+    if (this.persistenceTimer !== undefined) {
+      return
+    }
+    this.persistenceTimer = setTimeout(() => {
+      this.persistenceTimer = undefined
+      const pendingSession = this.pendingSession
+      this.pendingSession = undefined
+      if (pendingSession !== undefined) {
+        this.writeSession(pendingSession)
+      }
+    }, BROWSER_SESSION_ACTIVITY_WRITE_DELAY_MS)
+  }
 }
 
 let configuredBrowserSessionManager: BrowserSessionManager | undefined
 
 export function configureBrowserSession(session: RUMOptions['session'] | undefined): BrowserSessionManager | undefined {
+  configuredBrowserSessionManager?.flushPendingStorage()
   if (session === undefined || session === false) {
     configuredBrowserSessionManager = undefined
     return undefined
@@ -238,10 +275,12 @@ export function getBrowserSessionId(): string | undefined {
 
 export function clearConfiguredBrowserSession(manager: BrowserSessionManager): void {
   if (configuredBrowserSessionManager === manager) {
+    manager.flushPendingStorage()
     configuredBrowserSessionManager = undefined
   }
 }
 
 export function clearConfiguredBrowserSessionForTests(): void {
+  configuredBrowserSessionManager?.flushPendingStorage()
   configuredBrowserSessionManager = undefined
 }

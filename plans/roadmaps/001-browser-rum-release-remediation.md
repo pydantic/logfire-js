@@ -197,7 +197,7 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 
 ### R4: Contain optional-feature failures and replay backpressure
 
-- **Status**: READY FOR PRP
+- **Status**: VERIFIED
 - **Outcome**: hostile callbacks and optional-module failures cannot escape into host application control flow, while buffers and error reporting remain bounded.
 - **Why separate**: host-safety is independently testable without changing privacy defaults or release metadata.
 - **Depends on**: None.
@@ -208,9 +208,9 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 - **In scope**: B10, X1 containment, active re-check, buffer-mode cap, bounded/debounced session-activity persistence for rrweb events and span starts, onError/console reentrancy, rejection coercion, replay-state getter guards, empty URL validation, storage failure behavior, exact touched tests.
 - **Out of scope**: metrics degradation policy and privacy defaults.
 - **Validation boundary**: public calls/timers/rrweb/export callbacks with throwing and rejecting consumers produce no host exception or unhandled rejection; a fake-clock storage probe proves activity writes are bounded while in-memory expiry remains current.
-- **Remaining questions**: identify any public synchronous methods whose throw is intentional during child research.
-- **Child PRP**: Not generated.
-- **Completion evidence**: Pending.
+- **Remaining questions**: None; invalid configuration/recorder startup failures remain synchronous, while optional callback failures are contained with documented fallbacks.
+- **Child PRP**: `plans/026-browser-failure-containment.md` — cold-reviewed READY on 2026-07-13 after tightening public evidence, callback identity fallback, exact debounce lifecycle, anchor-cap edge cases, and handle getter containment.
+- **Completion evidence**: PRP 026 verified on 2026-07-13. Replay tests passed 136/136, browser tests passed 142/142, both package typechecks and `vp check` passed, the installed OTLP metrics exporter boundary confirmed rejected headers issue no request, and root `pnpm run check` passed.
 
 ### R5: Set and enforce replay/page privacy defaults
 
@@ -348,3 +348,7 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 - Reconciled the secondary roadmap review: assigned Web Vitals span type and inactivity semantics to R6, session-storage write debouncing to R4, UTF-8 captured request-body sizing to R3, and dispositioned the stale `vitest` import suggestion as obsolete after the Vite+ migration.
 - Executed and verified PRP 023 for R1: canonical endpoint suppression, replay fetch metadata, public both-order startup coverage, and the direct four-second browser receipt gate all pass.
 - Executed and verified PRP 024 for R2: page-stable delegation, ownership-safe globals, terminal cleanup/rollback behavior, public A/inactive/B routing, all eight mixed-ownership cases, and both direct Zone/browser receipt scenarios pass.
+- Generated `plans/026-browser-failure-containment.md` for R4 after confirming callback, getter, storage, buffer, URL, and metric-header failure paths against the current `6e07649` baseline; no new spike was required.
+- Cold-reviewed PRP 026 to READY after adding the public browser integration/export boundary, explicit synchronous-throw inventory, last-known session-id fallback, exact 1,000 ms persistence lifecycle, and complete anchor-cap edge coverage.
+- Began executing PRP 026 from clean commit `6e07649`; R4 is active and all R1–R3 contracts remain inherited.
+- Executed and verified PRP 026: optional callback/reporter containment, deterministic anchor-preserving replay cap, 1,000 ms session-write debounce, replay getter isolation, config-time URL validation, and authenticated metric-header failure behavior all pass focused and full repository gates.

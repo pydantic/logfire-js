@@ -154,7 +154,7 @@ export async function startBrowserSessionReplay(
     const replayModule = await options.load()
     const replayConfig = createReplayConfig(options, browserSessionManager, telemetryOptions)
     const replay = replayModule.startSessionReplay(replayConfig)
-    const wrappedReplay = wrapReplayRuntime(replay, replayState)
+    const wrappedReplay = wrapReplayRuntime(replay, replayState, options.onError)
     replayState.setReplay(wrappedReplay)
     return wrappedReplay
   } catch (error) {
@@ -243,27 +243,68 @@ function createReplayConfig(
 
 function safeReportError(onError: ((error: unknown) => void) | undefined, error: unknown): void {
   try {
-    onError?.(error)
+    const result = onError?.(error)
+    if (isPromiseLike(result)) {
+      Promise.resolve(result).catch(() => undefined)
+    }
   } catch {
     // Optional replay and consumer reporters must not break browser configuration.
   }
 }
 
-function wrapReplayRuntime(replay: BrowserSessionReplayRuntime, replayState: BrowserSessionReplayState): BrowserSessionReplayRuntime {
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return typeof value === 'object' && value !== null && 'then' in value && typeof value.then === 'function'
+}
+
+function wrapReplayRuntime(
+  replay: BrowserSessionReplayRuntime,
+  replayState: BrowserSessionReplayState,
+  onError: ((error: unknown) => void) | undefined
+): BrowserSessionReplayRuntime {
   let stopPromise: Promise<void> | undefined
+  let lastSessionId = ''
   return {
     get mode() {
-      return replay.mode
+      try {
+        return replay.mode
+      } catch (error) {
+        safeReportError(onError, error)
+        return 'off'
+      }
     },
     get recording() {
-      return replay.recording
+      try {
+        return replay.recording
+      } catch (error) {
+        safeReportError(onError, error)
+        return false
+      }
     },
-    flush: async () => replay.flush(),
-    getSessionId: () => replay.getSessionId(),
+    flush: async () => {
+      try {
+        await replay.flush()
+      } catch (error) {
+        safeReportError(onError, error)
+      }
+    },
+    getSessionId: () => {
+      try {
+        const sessionId = replay.getSessionId()
+        if (sessionId.length > 0) {
+          lastSessionId = sessionId
+        }
+        return sessionId
+      } catch (error) {
+        safeReportError(onError, error)
+        return lastSessionId
+      }
+    },
     stop: async () => {
       stopPromise ??= (async () => {
         try {
           await replay.stop()
+        } catch (error) {
+          safeReportError(onError, error)
         } finally {
           replayState.clear()
         }

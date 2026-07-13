@@ -58,12 +58,22 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       maxDurationMs: resolvedConfig.maxSessionDurationMs,
       now: resolvedConfig.now,
     })
+    let lastSessionId = internalSessions.getSession().id
     const getSessionId = (touch: boolean): string => {
-      const externalSessionId = resolvedConfig.getSessionId?.()
+      let externalSessionId: string | undefined
+      try {
+        externalSessionId = resolvedConfig.getSessionId?.()
+      } catch (error) {
+        safeReportError(resolvedConfig.onError, error)
+        return lastSessionId
+      }
       if (externalSessionId !== undefined && externalSessionId.length > 0) {
+        lastSessionId = externalSessionId
         return externalSessionId
       }
-      return touch ? internalSessions.touch().id : internalSessions.getSession().id
+      const sessionId = touch ? internalSessions.touch().id : internalSessions.getSession().id
+      lastSessionId = sessionId
+      return sessionId
     }
     const samplingModeStorage = safeSessionStorage()
     let currentSessionId = getSessionId(false)
@@ -125,15 +135,29 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
 
     return {
       get mode() {
-        return runtime?.transport.getMode() ?? 'off'
+        try {
+          return runtime?.transport.getMode() ?? 'off'
+        } catch (error) {
+          safeReportError(resolvedConfig.onError, error)
+          return 'off'
+        }
       },
       get recording() {
-        return runtime !== undefined
+        try {
+          return runtime !== undefined
+        } catch (error) {
+          safeReportError(resolvedConfig.onError, error)
+          return false
+        }
       },
       getSessionId: () => getSessionId(false),
       flush: async () => {
-        await transition
-        await runtime?.transport.flush()
+        try {
+          await transition
+          await runtime?.transport.flush()
+        } catch (error) {
+          safeReportError(resolvedConfig.onError, error)
+        }
       },
       stop: async () => {
         stopPromise ??= (async () => {
@@ -144,6 +168,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           const oldShutdown = oldRuntime?.deactivate() ?? Promise.resolve()
           await reportPromise(oldShutdown, resolvedConfig.onError)
           await transition
+          internalSessions.flushPendingStorage()
           releaseLease()
         })()
         return stopPromise
@@ -167,6 +192,7 @@ function createActiveRuntime(options: {
   const transport = new ReplayTransport(config, sessionId, mode)
   const cleanup: (() => void)[] = []
   let active = true
+  const isRuntimeActive = () => active
   let deactivation: Promise<void> | undefined
 
   try {
@@ -175,12 +201,16 @@ function createActiveRuntime(options: {
         if (!active) {
           return
         }
-        const observedSessionId = getSessionId(true)
-        if (observedSessionId !== sessionId) {
-          onSessionChanged(observedSessionId)
-          return
+        try {
+          const observedSessionId = getSessionId(true)
+          if (observedSessionId !== sessionId) {
+            onSessionChanged(observedSessionId)
+            return
+          }
+          transport.add(event)
+        } catch (error) {
+          safeReportError(config.onError, error)
         }
-        transport.add(event)
       },
       maskAllInputs: config.maskAllInputs,
       maskTextSelector: config.maskTextSelector,
@@ -191,17 +221,31 @@ function createActiveRuntime(options: {
       recorder.stop()
     })
 
+    const addCustomEvent = (tag: string, payload: unknown) => {
+      if (active) {
+        try {
+          recorder.addCustomEvent(tag, payload)
+        } catch (error) {
+          safeReportError(config.onError, error)
+        }
+      }
+    }
+
     let lastTraceId: string | undefined
     if (config.getTraceContext !== undefined) {
       const traceTimer = setInterval(() => {
         if (!active) {
           return
         }
-        const context = config.getTraceContext?.()
-        const traceId = context?.traceId
-        if (traceId !== undefined && traceId.length > 0 && traceId !== lastTraceId) {
-          lastTraceId = traceId
-          recorder.addCustomEvent(CustomTag.Trace, { traceId, spanId: context?.spanId })
+        try {
+          const context = config.getTraceContext?.()
+          const traceId = context?.traceId
+          if (traceId !== undefined && traceId.length > 0 && traceId !== lastTraceId) {
+            lastTraceId = traceId
+            addCustomEvent(CustomTag.Trace, { traceId, spanId: context?.spanId })
+          }
+        } catch (error) {
+          safeReportError(config.onError, error)
         }
       }, SESSION_MONITOR_INTERVAL_MS)
       cleanup.push(() => {
@@ -210,10 +254,13 @@ function createActiveRuntime(options: {
     }
 
     const handleError = (payload: { message: string; source?: string; stack?: string }) => {
-      if (!active) {
+      if (!isRuntimeActive()) {
         return
       }
-      recorder.addCustomEvent(CustomTag.Error, payload)
+      addCustomEvent(CustomTag.Error, payload)
+      if (!isRuntimeActive()) {
+        return
+      }
       if (transport.getMode() === 'buffer') {
         saveSamplingMode(samplingModeStorage, sessionId, 'full')
         ignorePromise(transport.triggerFlush(), config.onError)
@@ -223,8 +270,9 @@ function createActiveRuntime(options: {
       handleError(createErrorPayload(event.message, event.filename, errorStack(event.error)))
     }
     const onRejection = (event: PromiseRejectionEvent) => {
-      const reason = event.reason as { message?: string; stack?: string } | undefined
-      handleError(createErrorPayload(reason?.message ?? String(event.reason ?? 'unhandledrejection'), undefined, reason?.stack))
+      const reason = event.reason as { message?: unknown; stack?: unknown } | undefined
+      const message = coerceRejectionMessage(reason?.message ?? event.reason)
+      handleError(createErrorPayload(message, undefined, typeof reason?.stack === 'string' ? reason.stack : undefined))
     }
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
@@ -251,11 +299,6 @@ function createActiveRuntime(options: {
       window.removeEventListener('pagehide', onPageHide)
     })
 
-    const addCustomEvent = (tag: string, payload: unknown) => {
-      if (active) {
-        recorder.addCustomEvent(tag, payload)
-      }
-    }
     if (config.captureConsole) {
       cleanup.push(captureConsole(addCustomEvent, { onError: config.onError }))
     }
@@ -417,10 +460,17 @@ async function reportPromise(promise: Promise<void>, onError: ((error: unknown) 
 
 function safeReportError(onError: ((error: unknown) => void) | undefined, error: unknown): void {
   try {
-    onError?.(error)
+    const result = onError?.(error)
+    if (isPromiseLike(result)) {
+      Promise.resolve(result).catch(() => undefined)
+    }
   } catch {
     // Error reporting must never break the host application.
   }
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return typeof value === 'object' && value !== null && 'then' in value && typeof value.then === 'function'
 }
 
 function acquireControllerLease(): () => void {
@@ -471,5 +521,23 @@ function createErrorPayload(
     message,
     ...(source === undefined || source.length === 0 ? {} : { source }),
     ...(stack === undefined ? {} : { stack }),
+  }
+}
+
+function coerceRejectionMessage(value: unknown): string {
+  if (value === undefined || value === null) {
+    return 'unhandledrejection'
+  }
+  if (typeof value === 'string') {
+    return value
+  }
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint' || typeof value === 'symbol') {
+    return String(value)
+  }
+  try {
+    const serialized = JSON.stringify(value)
+    return typeof serialized === 'string' ? serialized : Object.prototype.toString.call(value)
+  } catch {
+    return Object.prototype.toString.call(value)
   }
 }

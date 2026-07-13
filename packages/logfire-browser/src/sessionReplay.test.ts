@@ -283,4 +283,44 @@ describe('startBrowserSessionReplay', () => {
     ).resolves.toBeUndefined()
     expect(diagError).toHaveBeenCalledWith(expect.stringContaining('failed to start session replay'), error)
   })
+
+  it('contains hostile runtime getters and rejected browser error reporters', async () => {
+    const onError = vi.fn<() => void>(() => Promise.reject(new Error('reporter failed')) as unknown as void)
+    const replayState = new BrowserSessionReplayState()
+    const replay = await startBrowserSessionReplay(
+      {
+        load: () => ({
+          startSessionReplay: () => ({
+            get mode(): 'full' | 'buffer' | 'off' {
+              throw new Error('mode unavailable')
+            },
+            get recording(): boolean {
+              throw new Error('recording unavailable')
+            },
+            flush: async () => Promise.reject(new Error('flush failed')),
+            getSessionId: () => {
+              throw new Error('session unavailable')
+            },
+            stop: async () => Promise.reject(new Error('stop failed')),
+          }),
+        }),
+        onError,
+        replayUrl: '/logfire/replay',
+      },
+      createManager(),
+      replayState,
+      { traceUrl: '/logfire/traces' }
+    )
+
+    expect(replay).toBeDefined()
+    expect(() => replay?.mode).not.toThrow()
+    expect(() => replay?.recording).not.toThrow()
+    expect(() => replay?.getSessionId()).not.toThrow()
+    await expect(replay?.flush()).resolves.toBeUndefined()
+    await expect(replay?.stop()).resolves.toBeUndefined()
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    expect(onError).toHaveBeenCalled()
+  })
 })

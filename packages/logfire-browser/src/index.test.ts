@@ -1091,7 +1091,7 @@ describe('browser span processors', () => {
     }
   })
 
-  it('does not install replay ignores when contained replay URL validation fails', async () => {
+  it('rejects invalid replay URLs during configuration before installing instrumentation', () => {
     const originalLocation = Reflect.get(globalThis, 'location') as unknown
     const originalDocument = Reflect.get(globalThis, 'document') as unknown
     Object.defineProperty(globalThis, 'location', {
@@ -1103,24 +1103,19 @@ describe('browser span processors', () => {
       value: { baseURI: 'https://app.example/' },
     })
     const load = vi.fn<() => { startSessionReplay: () => BrowserSessionReplayRuntime }>()
+    const configCount = mocks.autoInstrumentationConfigs.length
 
     try {
-      cleanup = configure({
-        autoInstrumentations: true,
-        sessionReplay: { load, replayUrl: '/' },
-        traceUrl: '/client-traces',
-      })
-      await waitForConfigureMicrotasks()
+      expect(() =>
+        configure({
+          autoInstrumentations: true,
+          sessionReplay: { load, replayUrl: '/' },
+          traceUrl: '/client-traces',
+        })
+      ).toThrow(/must use a non-root path/u)
 
       expect(load).not.toHaveBeenCalled()
-      const merged = mocks.autoInstrumentationConfigs.at(-1) as Record<string, { ignoreUrls?: RegExp[] }>
-      for (const key of ['@opentelemetry/instrumentation-fetch', '@opentelemetry/instrumentation-xml-http-request']) {
-        const ignoreUrls = merged[key]?.ignoreUrls ?? []
-        expect(ignoreUrls.some((pattern) => pattern.test('https://app.example/client-traces'))).toBe(true)
-        expect(ignoreUrls.some((pattern) => pattern.test('https://app.example/api'))).toBe(false)
-        expect(ignoreUrls.some((pattern) => pattern.test('https://app.example/client-metrics'))).toBe(false)
-        expect(ignoreUrls.some((pattern) => pattern.test('https://app.example/client-replay/session-1'))).toBe(false)
-      }
+      expect(mocks.autoInstrumentationConfigs).toHaveLength(configCount)
     } finally {
       Object.defineProperty(globalThis, 'location', { configurable: true, value: originalLocation })
       Object.defineProperty(globalThis, 'document', { configurable: true, value: originalDocument })

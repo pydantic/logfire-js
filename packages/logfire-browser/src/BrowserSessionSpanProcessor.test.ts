@@ -208,7 +208,7 @@ describe('BrowserSessionSpanProcessor', () => {
     let mode: BrowserSessionReplayRuntime['mode'] = 'buffer'
     const replayState = new BrowserSessionReplayState()
     replayState.setReplay({
-      get mode() {
+      get mode(): 'full' | 'buffer' | 'off' {
         return mode
       },
       recording: true,
@@ -244,5 +244,29 @@ describe('BrowserSessionSpanProcessor', () => {
     const afterStop = createSpan()
     startSpan(createProcessor({}, replayState), afterStop)
     expect(afterStop.attributes).not.toHaveProperty('logfire.session_replay.active')
+  })
+
+  it('does not let hostile replay getters break span creation', () => {
+    const replayState = new BrowserSessionReplayState()
+    replayState.setReplay({
+      get mode(): 'full' | 'buffer' | 'off' {
+        throw new Error('mode unavailable')
+      },
+      get recording(): boolean {
+        throw new Error('recording unavailable')
+      },
+      flush: async () => Promise.resolve(),
+      getSessionId: () => 'session-1',
+      stop: async () => Promise.resolve(),
+    })
+    const span = createSpan()
+
+    expect(() => {
+      startSpan(createProcessor({}, replayState), span)
+    }).not.toThrow()
+    expect(span.attributes).toEqual({
+      'browser.session.id': 'session-1',
+      'session.id': 'session-1',
+    })
   })
 })

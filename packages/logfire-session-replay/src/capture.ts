@@ -24,6 +24,7 @@ const noop: Stop = () => undefined
 
 export function captureConsole(emit: Emit, options: CaptureOptions = {}): Stop {
   const stops: Stop[] = []
+  const reportError = createSafeReporter(options.onError)
   try {
     for (const level of CONSOLE_LEVELS) {
       const original = (console as Record<ConsoleLevel, unknown>)[level]
@@ -44,7 +45,7 @@ export function captureConsole(emit: Emit, options: CaptureOptions = {}): Stop {
                     level,
                     args: args.slice(0, MAX_ARGS).map(stringifyArg),
                   } satisfies ConsolePayload,
-                  options.onError
+                  reportError
                 )
               }
               return originalConsoleMethod.apply(this, args)
@@ -61,9 +62,10 @@ export function captureConsole(emit: Emit, options: CaptureOptions = {}): Stop {
 
 export function captureNetwork(emit: Emit, options: NetworkCaptureOptions): Stop {
   const normalizedOptions = normalizeNetworkCaptureOptions(options)
-  const stopFetch = captureFetch(emit, normalizedOptions)
+  const safeOptions = { ...normalizedOptions, onError: createSafeReporter(normalizedOptions.onError) }
+  const stopFetch = captureFetch(emit, safeOptions)
   try {
-    const stopXhr = captureXhr(emit, normalizedOptions)
+    const stopXhr = captureXhr(emit, safeOptions)
     return combineStops([stopFetch, stopXhr])
   } catch (error) {
     stopFetch()
@@ -72,8 +74,9 @@ export function captureNetwork(emit: Emit, options: NetworkCaptureOptions): Stop
 }
 
 export function captureNavigation(emit: Emit, options: CaptureOptions = {}): Stop {
+  const reportError = createSafeReporter(options.onError)
   const emitNavigation = (kind: NavigationPayload['kind']) => {
-    safeEmit(emit, CustomTag.Navigation, { url: window.location.href, kind } satisfies NavigationPayload, options.onError)
+    safeEmit(emit, CustomTag.Navigation, { url: window.location.href, kind } satisfies NavigationPayload, reportError)
   }
   const stops: Stop[] = []
   try {
@@ -333,12 +336,32 @@ function safeEmit(emit: Emit, tag: string, payload: unknown, onError: OnError | 
   try {
     emit(tag, payload)
   } catch (error) {
+    onError?.(error)
+  }
+}
+
+function createSafeReporter(onError: OnError | undefined): OnError {
+  let reporting = false
+  return (error: unknown) => {
+    if (reporting) {
+      return
+    }
+    reporting = true
     try {
-      onError?.(error)
+      const result = onError?.(error)
+      if (isPromiseLike(result)) {
+        Promise.resolve(result).catch(() => undefined)
+      }
     } catch {
       // Never let capture break host application behavior.
+    } finally {
+      reporting = false
     }
   }
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return typeof value === 'object' && value !== null && 'then' in value && typeof value.then === 'function'
 }
 
 function patchMethod(

@@ -70,13 +70,26 @@ export class ReplayTransport {
   }
 
   add(event: RrwebEvent): void {
-    if (this.mode === 'buffer' && event.type === EventType.FullSnapshot) {
-      this.buffer = []
-      this.pendingBytes = 0
+    const eventBytes = estimateBytes(event)
+    if (this.mode === 'buffer') {
+      if (event.type === EventType.FullSnapshot) {
+        this.buffer = [event]
+        this.pendingBytes = eventBytes
+        return
+      }
+      // Incremental rrweb events are only useful after a full-snapshot anchor.
+      // Keep the earliest contiguous prefix so later events never depend on a
+      // state transition that was trimmed from the buffer.
+      if (this.buffer.length === 0 || eventBytes > this.config.maxBufferBytes) {
+        return
+      }
+      if (this.pendingBytes + eventBytes > this.config.maxBufferBytes) {
+        return
+      }
     }
 
     this.buffer.push(event)
-    this.pendingBytes += estimateBytes(event)
+    this.pendingBytes += eventBytes
 
     if (this.mode === 'full' && this.pendingBytes >= this.config.maxBufferBytes) {
       this.flushAndReport()
@@ -178,7 +191,14 @@ export class ReplayTransport {
   }
 
   private createEnvelope(events: RrwebEvent[], seq: number): ChunkEnvelope {
-    const distinctId = this.config.getDistinctId?.() ?? this.config.distinctId
+    let distinctId = this.config.distinctId
+    if (this.config.getDistinctId !== undefined) {
+      try {
+        distinctId = this.config.getDistinctId() ?? this.config.distinctId
+      } catch (error) {
+        safeReportError(this.config.onError, error)
+      }
+    }
     return {
       version: CHUNK_ENVELOPE_VERSION,
       meta: computeChunkMeta(seq, events, distinctId),
@@ -357,10 +377,17 @@ export class ReplayTransport {
 
 function safeReportError(onError: ((error: unknown) => void) | undefined, error: unknown): void {
   try {
-    onError?.(error)
+    const result = onError?.(error)
+    if (isPromiseLike(result)) {
+      Promise.resolve(result).catch(() => undefined)
+    }
   } catch {
     // Transport failures and error reporters must not escape into the host app.
   }
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return typeof value === 'object' && value !== null && 'then' in value && typeof value.then === 'function'
 }
 
 class ReplayIngestError extends Error {

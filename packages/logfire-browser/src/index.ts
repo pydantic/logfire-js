@@ -70,7 +70,7 @@ import {
   initializeProviderLifecycleGlobals,
   settleProviderCleanup,
 } from './providerLifecycle'
-import { createTelemetryUrlPatterns, isBrowserReplayUrlValid } from './telemetryUrls'
+import { assertBrowserReplayUrl, createTelemetryUrlPatterns, isBrowserReplayUrlValid } from './telemetryUrls'
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from 'logfire'
 export { getBrowserSessionId } from './browserSession'
@@ -251,6 +251,7 @@ function resolveBrowserSessionReplayOptions(sessionReplay: LogfireConfigOptions[
     return undefined
   }
 
+  assertBrowserReplayUrl(sessionReplay.replayUrl)
   return sessionReplay
 }
 

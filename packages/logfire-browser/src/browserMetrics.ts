@@ -223,9 +223,15 @@ export async function startBrowserMetrics(options: BrowserMetricsOptions, resour
     import('@opentelemetry/exporter-metrics-otlp-http'),
   ])
 
+  const metricExporterHeaders = options.metricExporterHeaders
   const exporter = new OTLPMetricExporter({
     ...options.metricExporterConfig,
-    headers: options.metricExporterHeaders === undefined ? undefined : async () => options.metricExporterHeaders?.() ?? {},
+    headers:
+      metricExporterHeaders === undefined
+        ? undefined
+        : async () => {
+            return metricExporterHeaders()
+          },
     url: options.metricUrl,
   } as OTLPMetricExporterOptions)
   const defaultReader = new PeriodicExportingMetricReader({

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vite-plus/test'
+import { describe, expect, it, vi } from 'vite-plus/test'
 
 import { BrowserSessionManager } from './browserSession'
 
@@ -175,5 +175,37 @@ describe('BrowserSessionManager', () => {
     const firstSession = manager.touch()
 
     expect(manager.reset().id).not.toBe(firstSession.id)
+  })
+
+  it('coalesces activity writes and flushes pending storage on cleanup', () => {
+    vi.useFakeTimers()
+    try {
+      let now = 1_000
+      const storage = new CountingStorage()
+      const manager = new BrowserSessionManager({
+        generateId: createIdGenerator(),
+        now: () => now,
+        storage,
+        storageKey: 'test-session',
+      })
+
+      const first = manager.touch()
+      const initialWrites = storage.setItemCalls
+      now = 1_050
+      manager.touch()
+      now = 1_100
+      manager.touch()
+      expect(storage.setItemCalls).toBe(initialWrites)
+      expect(manager.getSession().id).toBe(first.id)
+
+      vi.advanceTimersByTime(999)
+      expect(storage.setItemCalls).toBe(initialWrites)
+      manager.flushPendingStorage()
+      expect(storage.setItemCalls).toBe(initialWrites + 1)
+      const stored = JSON.parse(storage.getItem('test-session') ?? '') as { lastActivityAt: number }
+      expect(stored.lastActivityAt).toBe(1_100)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -394,6 +394,51 @@ describe('startSessionReplay correlation and errors', () => {
     expect(handle.addCustomEvent).toHaveBeenCalledWith(CustomTag.Error, { message: 'plain', stack: undefined })
     await replay.stop()
   })
+
+  it('retains the last-known session id when an external callback throws', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    const onError = vi.fn<() => void>()
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        getSessionId: () => {
+          calls += 1
+          if (calls > 1) {
+            throw new Error('session callback failed')
+          }
+          return 'stable-session'
+        },
+        onError,
+      })
+    )
+
+    expect(replay.getSessionId()).toBe('stable-session')
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(replay.getSessionId()).toBe('stable-session')
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'session callback failed' }))
+    await replay.stop()
+  })
+
+  it('contains throwing trace callbacks and coerces non-string rejection messages', async () => {
+    vi.useFakeTimers()
+    const onError = vi.fn<() => void>()
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        getTraceContext: () => {
+          throw new Error('trace callback failed')
+        },
+        onError,
+      })
+    )
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'trace callback failed' }))
+    dispatchRejection({ message: 42, stack: 'STACK' })
+    expect(handle.addCustomEvent).toHaveBeenCalledWith(CustomTag.Error, { message: '42', stack: 'STACK' })
+    await replay.stop()
+  })
 })
 
 describe('startSessionReplay buffer mode', () => {
@@ -442,6 +487,25 @@ describe('startSessionReplay buffer mode', () => {
     expect(nextReplay.mode).toBe('full')
     expect(random).not.toHaveBeenCalled()
     await nextReplay.stop()
+  })
+
+  it('does not promote or flush after custom-event handling deactivates the runtime', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        onErrorSampleRate: 1,
+        random: rng([0.9, 0.1]),
+        sessionSampleRate: 0,
+      })
+    )
+    handle.addCustomEvent.mockImplementationOnce(() => {
+      replay.stop().catch(() => undefined)
+    })
+
+    window.dispatchEvent(new ErrorEvent('error', { message: 'deactivate during error capture' }))
+    await replay.stop()
+
+    expect(calls).toHaveLength(0)
   })
 
   it('does not leak error promotion into a later session sampling decision', async () => {

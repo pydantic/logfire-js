@@ -6,7 +6,7 @@ import { startSessionReplay } from '@pydantic/logfire-session-replay'
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
 
 import { clearConfiguredBrowserSessionForTests } from './browserSession'
-import { configure } from './index'
+import { configure, startSpan } from './index'
 
 const originalFetch = globalThis.fetch
 
@@ -126,6 +126,40 @@ describe('public browser configure startup ordering', () => {
       }
     }
   )
+
+  it('keeps real span creation safe when the lazy replay runtime getters throw', async () => {
+    const replayError = new Error('replay reporter failed')
+    const cleanup = configure({
+      sessionReplay: {
+        captureConsole: false,
+        captureNavigation: false,
+        captureNetwork: false,
+        load: () => ({
+          startSessionReplay: () => ({
+            get mode(): 'full' | 'buffer' | 'off' {
+              throw new Error('mode unavailable')
+            },
+            get recording(): boolean {
+              throw new Error('recording unavailable')
+            },
+            flush: async () => Promise.reject(new Error('flush unavailable')),
+            getSessionId: () => 'browser-session',
+            stop: async () => Promise.reject(new Error('stop unavailable')),
+          }),
+        }),
+        onError: () => Promise.reject(replayError) as unknown as void,
+        replayUrl: '/client-replay',
+      },
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      await delay(0)
+      expect(() => startSpan('hostile-replay')).not.toThrow()
+    } finally {
+      await cleanup()
+    }
+  })
 })
 
 async function waitUntil(predicate: () => boolean): Promise<void> {

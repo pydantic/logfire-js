@@ -169,6 +169,14 @@ The recorder uses a Sentry-style two-rate model:
   an in-memory replay buffer and promotes it only for an uncaught `window.error`
   or `unhandledrejection`
 
+Buffer mode is bounded by `maxBufferBytes`, measured as the UTF-8 byte sum of
+event JSON before envelope metadata and compression. It keeps the latest full
+snapshot and the earliest contiguous incremental events that fit; later
+incrementals are dropped until rrweb emits another full snapshot. Incrementals
+before an anchor or larger than the cap are dropped. If one full snapshot is
+larger than the cap, that snapshot is retained alone so promoted replay remains
+playable.
+
 Sampling is resolved and persisted independently for each session id. When the
 session id rotates, the returned handle updates its `mode` and `recording`
 properties. A sampled-off session keeps only a lightweight session-id monitor;
