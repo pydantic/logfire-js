@@ -18,6 +18,7 @@ let handle: {
   addCustomEvent: Mock<(tag: string, payload: unknown) => void>
   takeFullSnapshot: Mock<() => void>
 }
+let handles: (typeof handle)[]
 
 const fullSnapshot: RrwebEvent = { type: EventType.FullSnapshot, data: { node: {} }, timestamp: 1 }
 const click: RrwebEvent = {
@@ -32,6 +33,7 @@ function emit(event: RrwebEvent): void {
 
 beforeEach(() => {
   sessionStorage.clear()
+  handles = []
   vi.spyOn(recorderMod, 'startRecording').mockImplementation((options) => {
     captured = options
     handle = {
@@ -39,6 +41,7 @@ beforeEach(() => {
       addCustomEvent: vi.fn<(tag: string, payload: unknown) => void>(),
       takeFullSnapshot: vi.fn<() => void>(),
     }
+    handles.push(handle)
     return handle
   })
 })
@@ -65,13 +68,14 @@ describe('startSessionReplay environment and sampling gates', () => {
     expect(calls).toHaveLength(0)
   })
 
-  it("is a no-op when sampling resolves to 'off'", () => {
+  it("keeps a lightweight controller when sampling resolves to 'off'", async () => {
     const { fetchImpl } = recordingFetch()
     const start = vi.spyOn(recorderMod, 'startRecording')
     const replay = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 0, random: () => 0.99 }))
     expect(replay.recording).toBe(false)
     expect(replay.mode).toBe('off')
     expect(start).not.toHaveBeenCalled()
+    await replay.stop()
   })
 
   it('keeps sampling mode stable across page loads for the same session id', async () => {
@@ -102,7 +106,7 @@ describe('startSessionReplay environment and sampling gates', () => {
     await secondReplay.stop()
   })
 
-  it('persists off sampling decisions for the same session id', () => {
+  it('persists off sampling decisions for the same session id', async () => {
     const { fetchImpl } = recordingFetch()
     const firstReplay = startSessionReplay(
       baseConfig(fetchImpl, {
@@ -113,6 +117,7 @@ describe('startSessionReplay environment and sampling gates', () => {
       })
     )
     expect(firstReplay.mode).toBe('off')
+    await firstReplay.stop()
 
     const random = vi.fn(() => 0)
     const secondReplay = startSessionReplay(
@@ -126,6 +131,99 @@ describe('startSessionReplay environment and sampling gates', () => {
 
     expect(secondReplay.mode).toBe('off')
     expect(random).not.toHaveBeenCalled()
+    await secondReplay.stop()
+  })
+})
+
+describe('startSessionReplay controller ownership', () => {
+  it('rejects a second active controller without disturbing the owner and releases on stop', async () => {
+    const { fetchImpl } = recordingFetch()
+    const first = startSessionReplay(baseConfig(fetchImpl))
+
+    expect(() => startSessionReplay(baseConfig(fetchImpl))).toThrow(
+      'logfire session replay: a replay controller is already active in this page'
+    )
+    expect(handles[0]!.stop).not.toHaveBeenCalled()
+
+    await first.stop()
+    const next = startSessionReplay(baseConfig(fetchImpl))
+    expect(next.recording).toBe(true)
+    await next.stop()
+  })
+
+  it('holds the page lease while the current session is sampled off', async () => {
+    const { fetchImpl } = recordingFetch()
+    const first = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 0, random: () => 1 }))
+
+    expect(first.recording).toBe(false)
+    expect(() => startSessionReplay(baseConfig(fetchImpl))).toThrow(/controller is already active/u)
+
+    await first.stop()
+    const next = startSessionReplay(baseConfig(fetchImpl))
+    await next.stop()
+  })
+
+  it('coordinates duplicate module instances through the shared page lease', async () => {
+    const { fetchImpl } = recordingFetch()
+    const first = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 0, random: () => 1 }))
+    vi.resetModules()
+    const duplicateModule = await import('./index')
+
+    expect(() => duplicateModule.startSessionReplay(baseConfig(fetchImpl))).toThrow(/controller is already active/u)
+    await first.stop()
+  })
+
+  it('releases the lease and installed resources after initial setup failure', async () => {
+    const { fetchImpl } = recordingFetch()
+    const stopConsole = vi.fn<() => void>()
+    vi.spyOn(captureMod, 'captureConsole').mockReturnValue(stopConsole)
+    vi.spyOn(captureMod, 'captureNetwork').mockImplementationOnce(() => {
+      throw new Error('network capture setup failed')
+    })
+
+    expect(() =>
+      startSessionReplay(baseConfig(fetchImpl, { captureConsole: true, captureNetwork: true, captureNavigation: false }))
+    ).toThrow('network capture setup failed')
+    expect(handles[0]!.stop).toHaveBeenCalledTimes(1)
+    expect(stopConsole).toHaveBeenCalledTimes(1)
+
+    const next = startSessionReplay(baseConfig(fetchImpl))
+    await next.stop()
+  })
+
+  it('releases the lease when rrweb returns no usable recorder stop handle', async () => {
+    const { fetchImpl } = recordingFetch()
+    vi.mocked(recorderMod.startRecording).mockImplementationOnce(() => {
+      throw new Error('logfire session replay: rrweb failed to start recording')
+    })
+
+    expect(() => startSessionReplay(baseConfig(fetchImpl))).toThrow('logfire session replay: rrweb failed to start recording')
+
+    const next = startSessionReplay(baseConfig(fetchImpl))
+    expect(next.recording).toBe(true)
+    await next.stop()
+  })
+
+  it('retains the lease after a later activation failure and retries only for a new session', async () => {
+    vi.useFakeTimers()
+    let sessionId = 'session-a'
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId }))
+    vi.mocked(recorderMod.startRecording).mockImplementationOnce(() => {
+      throw new Error('later recorder failure')
+    })
+
+    sessionId = 'session-b'
+    await vi.advanceTimersByTimeAsync(1_000)
+    await replay.flush()
+    expect(replay.recording).toBe(false)
+    expect(() => startSessionReplay(baseConfig(fetchImpl))).toThrow(/controller is already active/u)
+
+    sessionId = 'session-c'
+    await vi.advanceTimersByTimeAsync(1_000)
+    await replay.flush()
+    expect(replay.recording).toBe(true)
+    await replay.stop()
   })
 })
 
@@ -163,16 +261,21 @@ describe('startSessionReplay full mode', () => {
     await replay.stop()
   })
 
-  it('uses external getSessionId and rotates transport when it changes', async () => {
+  it('uses external getSessionId and creates a fresh runtime when it changes', async () => {
     let sessionId = 'external-1'
     const { calls, fetchImpl } = recordingFetch()
+    const start = vi.spyOn(recorderMod, 'startRecording')
     const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId }))
     expect(replay.getSessionId()).toBe('external-1')
     emit(fullSnapshot)
 
     sessionId = 'external-2'
     emit(click)
-    expect(handle.takeFullSnapshot).toHaveBeenCalledTimes(1)
+    expect(replay.recording).toBe(false)
+    await replay.flush()
+    expect(replay.recording).toBe(true)
+    expect(start).toHaveBeenCalledTimes(2)
+    emit(fullSnapshot)
     await replay.flush()
     await replay.stop()
 
@@ -188,6 +291,68 @@ describe('startSessionReplay full mode', () => {
     const setSpy = vi.spyOn(globalThis, 'setInterval')
     const replay = startSessionReplay(baseConfig(fetchImpl))
     expect(setSpy.mock.calls.map((call) => call[1])).toContain(5_000)
+    await replay.stop()
+  })
+
+  it('resolves sampling independently when external sessions rotate through full, off, and buffer', async () => {
+    vi.useFakeTimers()
+    let sessionId = 'session-full'
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        getSessionId: () => sessionId,
+        sessionSampleRate: 0.5,
+        onErrorSampleRate: 0.5,
+        random: rng([0.1, 0.9, 0.9, 0.9, 0.1]),
+      })
+    )
+    expect(replay.mode).toBe('full')
+
+    sessionId = 'session-off'
+    await vi.advanceTimersByTimeAsync(1_000)
+    await replay.flush()
+    expect(replay.mode).toBe('off')
+    expect(replay.recording).toBe(false)
+
+    sessionId = 'session-buffer'
+    await vi.advanceTimersByTimeAsync(1_000)
+    await replay.flush()
+    expect(replay.mode).toBe('buffer')
+    expect(replay.recording).toBe(true)
+    await replay.stop()
+  })
+
+  it('resolves sampling independently when internal sessions expire through full, off, and buffer', async () => {
+    vi.useFakeTimers()
+    let now = 0
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        maxSessionDurationMs: 10_000,
+        now: () => now,
+        onErrorSampleRate: 0.5,
+        random: rng([0.1, 0.9, 0.9, 0.9, 0.1]),
+        sessionIdleTimeoutMs: 100,
+        sessionSampleRate: 0.5,
+      })
+    )
+    const fullSessionId = replay.getSessionId()
+    expect(replay.mode).toBe('full')
+
+    now = 200
+    await vi.advanceTimersByTimeAsync(1_000)
+    await replay.flush()
+    const offSessionId = replay.getSessionId()
+    expect(offSessionId).not.toBe(fullSessionId)
+    expect(replay.mode).toBe('off')
+    expect(replay.recording).toBe(false)
+
+    now = 400
+    await vi.advanceTimersByTimeAsync(1_000)
+    await replay.flush()
+    expect(replay.getSessionId()).not.toBe(offSessionId)
+    expect(replay.mode).toBe('buffer')
+    expect(replay.recording).toBe(true)
     await replay.stop()
   })
 })
@@ -278,6 +443,30 @@ describe('startSessionReplay buffer mode', () => {
     expect(random).not.toHaveBeenCalled()
     await nextReplay.stop()
   })
+
+  it('does not leak error promotion into a later session sampling decision', async () => {
+    vi.useFakeTimers()
+    let sessionId = 'promoted-session'
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        getSessionId: () => sessionId,
+        onErrorSampleRate: 0.5,
+        random: rng([0.9, 0.1, 0.9, 0.9]),
+        sessionSampleRate: 0.5,
+      })
+    )
+    expect(replay.mode).toBe('buffer')
+    window.dispatchEvent(new ErrorEvent('error', { message: 'promote this session' }))
+    expect(replay.mode).toBe('full')
+
+    sessionId = 'sampled-off-session'
+    await vi.advanceTimersByTimeAsync(1_000)
+    await replay.flush()
+    expect(replay.mode).toBe('off')
+    expect(replay.recording).toBe(false)
+    await replay.stop()
+  })
 })
 
 describe('startSessionReplay lifecycle', () => {
@@ -291,6 +480,124 @@ describe('startSessionReplay lifecycle', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0]!.init.keepalive).toBe(true)
     await replay.stop()
+  })
+
+  it('flushes keepalive on pagehide while the document is still visible', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl))
+    emit(fullSnapshot)
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    window.dispatchEvent(new PageTransitionEvent('pagehide'))
+    await drainMicrotasks()
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.init.keepalive).toBe(true)
+    await replay.stop()
+  })
+
+  it('does not let a throwing onError callback escape from transport reporting', async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 500 })) as unknown as typeof fetch
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        onError: () => {
+          throw new Error('consumer reporter failed')
+        },
+      })
+    )
+    emit(fullSnapshot)
+    await expect(replay.flush()).resolves.toBeUndefined()
+    await expect(replay.stop()).resolves.toBeUndefined()
+  })
+
+  it('does not leak a rejected fire-and-forget pagehide flush when onError throws', async () => {
+    const uploadError = new Error('pagehide upload failed')
+    const onError = vi.fn(() => {
+      throw new Error('consumer reporter failed')
+    })
+    const unhandledRejection = vi.fn<(reason: unknown) => void>()
+    process.on('unhandledRejection', unhandledRejection)
+    const fetchImpl = vi.fn(async () => {
+      throw uploadError
+    }) as unknown as typeof fetch
+    const replay = startSessionReplay(baseConfig(fetchImpl, { onError }))
+    try {
+      emit(fullSnapshot)
+      window.dispatchEvent(new PageTransitionEvent('pagehide'))
+      await vi.waitFor(() => {
+        expect(fetchImpl).toHaveBeenCalledTimes(1)
+      })
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0)
+      })
+
+      expect(onError).toHaveBeenCalledWith(uploadError)
+      expect(unhandledRejection).not.toHaveBeenCalled()
+      await expect(replay.stop()).resolves.toBeUndefined()
+    } finally {
+      process.off('unhandledRejection', unhandledRejection)
+    }
+  })
+
+  it('keeps transition state truthful and prevents pending activation when stop races a delayed old-session flush', async () => {
+    let sessionId = 'session-old'
+    let resolveFetch: ((response: Response) => void) | undefined
+    const calls: string[] = []
+    const fetchImpl = vi.fn(
+      async (url: string | URL) =>
+        new Promise<Response>((resolve) => {
+          calls.push(String(url))
+          resolveFetch = resolve
+        })
+    ) as unknown as typeof fetch
+    const start = vi.spyOn(recorderMod, 'startRecording')
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId }))
+    emit(fullSnapshot)
+
+    sessionId = 'session-new'
+    emit(click)
+    expect(replay.mode).toBe('off')
+    expect(replay.recording).toBe(false)
+    emit(click)
+
+    let flushSettled = false
+    const flushPromise = replay.flush().then(() => {
+      flushSettled = true
+    })
+    const stopPromise = replay.stop()
+    await vi.waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    })
+    expect(flushSettled).toBe(false)
+
+    resolveFetch?.(new Response(null, { status: 202 }))
+    await flushPromise
+    await stopPromise
+
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(calls).toEqual(['https://app.example.com/replay/session-old?seq=0'])
+    expect(decodeBody(vi.mocked(fetchImpl).mock.calls[0]![1]?.body).events).toEqual([fullSnapshot])
+  })
+
+  it('activates the next session after the old-session final flush fails', async () => {
+    let sessionId = 'session-old'
+    const onError = vi.fn<(error: unknown) => void>()
+    const calls: string[] = []
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      calls.push(String(url))
+      return new Response(null, { status: calls.length === 1 ? 400 : 202 })
+    }) as unknown as typeof fetch
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId, onError }))
+    emit(fullSnapshot)
+
+    sessionId = 'session-new'
+    emit(click)
+    await replay.flush()
+    expect(replay.recording).toBe(true)
+    expect(onError).toHaveBeenCalledTimes(1)
+
+    emit(fullSnapshot)
+    await replay.flush()
+    await replay.stop()
+    expect(calls).toEqual(['https://app.example.com/replay/session-old?seq=0', 'https://app.example.com/replay/session-new?seq=0'])
   })
 
   it('awaits the final stop flush and makes repeated stop calls idempotent', async () => {

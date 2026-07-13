@@ -81,7 +81,9 @@ export class ReplayTransport {
     const sessionId = this.sessionId
     this.saveSeq(sessionId, this.seq)
 
-    const prior = this.flushing ?? Promise.resolve()
+    // A pagehide/visibility keepalive must start before the browser freezes the
+    // page, even when an ordinary upload is still awaiting its response.
+    const prior = options.keepalive === true ? Promise.resolve() : (this.flushing ?? Promise.resolve())
     const run = prior.then(async () => {
       for (let index = 0; index < eventChunks.length; index++) {
         const eventChunk = eventChunks[index]
@@ -92,7 +94,14 @@ export class ReplayTransport {
         await this.deliver(eventChunk, seq + index, sessionId, options.keepalive ?? false)
       }
     })
-    this.flushing = run.catch(() => undefined)
+    const previouslyTracked = this.flushing
+    this.flushing =
+      options.keepalive === true && previouslyTracked !== undefined
+        ? Promise.all([previouslyTracked, run]).then(
+            () => undefined,
+            () => undefined
+          )
+        : run.catch(() => undefined)
     await run
   }
 
@@ -122,13 +131,22 @@ export class ReplayTransport {
     await this.flushing
   }
 
+  discard(): void {
+    if (this.timer !== undefined) {
+      clearInterval(this.timer)
+      this.timer = undefined
+    }
+    this.buffer = []
+    this.pendingBytes = 0
+  }
+
   getMode(): 'full' | 'buffer' {
     return this.mode
   }
 
   private flushAndReport(): void {
     this.flush().catch((error: unknown) => {
-      this.config.onError?.(error)
+      safeReportError(this.config.onError, error)
     })
   }
 
@@ -146,7 +164,7 @@ export class ReplayTransport {
       const useKeepalive = keepalive && body.byteLength <= MAX_KEEPALIVE_BODY_BYTES
       await this.sendWithRetry(sessionId, seq, body, useKeepalive)
     } catch (error) {
-      this.config.onError?.(error)
+      safeReportError(this.config.onError, error)
     }
   }
 
@@ -223,6 +241,14 @@ export class ReplayTransport {
     } catch {
       // Cross-page sequence resume is best-effort.
     }
+  }
+}
+
+function safeReportError(onError: ((error: unknown) => void) | undefined, error: unknown): void {
+  try {
+    onError?.(error)
+  } catch {
+    // Transport failures and error reporters must not escape into the host app.
   }
 }
 

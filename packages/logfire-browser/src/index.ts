@@ -287,12 +287,6 @@ function flattenInstrumentations(instrumentations: Instrumentation | Instrumenta
   return Array.isArray(instrumentations) ? instrumentations : [instrumentations]
 }
 
-function resolveConfiguredInstrumentations(instrumentations: BrowserInstrumentationInput[] | undefined): Instrumentation[] {
-  return (instrumentations ?? []).flatMap((instrumentation) =>
-    flattenInstrumentations(typeof instrumentation === 'function' ? instrumentation() : instrumentation)
-  )
-}
-
 function resolveAutoInstrumentationsConfig(
   autoInstrumentations: LogfireConfigOptions['autoInstrumentations']
 ): WebAutoInstrumentationConfigMap | undefined {
@@ -317,22 +311,41 @@ function startBrowserInstrumentations(options: {
   instrumentations: LogfireConfigOptions['instrumentations']
   tracerProvider: WebTracerProvider
 }): () => Promise<void> {
-  const configuredInstrumentations = resolveConfiguredInstrumentations(options.instrumentations)
-  const unregisterConfigured = registerInstrumentations({
-    instrumentations: configuredInstrumentations,
-    tracerProvider: options.tracerProvider,
-  })
+  const unregisterConfigured: (() => void)[] = []
+  const configuredInputs = options.instrumentations ?? []
+  const inputs = configuredInputs.length === 0 ? ([[]] as BrowserInstrumentationInput[]) : configuredInputs
+  for (const input of inputs) {
+    let instrumentations: Instrumentation[] = []
+    try {
+      instrumentations = flattenInstrumentations(typeof input === 'function' ? input() : input)
+      unregisterConfigured.push(
+        registerInstrumentations({
+          instrumentations,
+          tracerProvider: options.tracerProvider,
+        })
+      )
+    } catch (error) {
+      disableInstrumentations(instrumentations)
+      diag.error('logfire-browser: failed to start configured browser instrumentation group', error)
+    }
+  }
   const autoInstrumentationsConfig = resolveAutoInstrumentationsConfig(options.autoInstrumentations)
   const unregisterAutoInstrumentationsPromise =
     autoInstrumentationsConfig === undefined
       ? undefined
       : import('@opentelemetry/auto-instrumentations-web')
-          .then(({ getWebAutoInstrumentations }) =>
-            registerInstrumentations({
-              instrumentations: getWebAutoInstrumentations(autoInstrumentationsConfig),
-              tracerProvider: options.tracerProvider,
-            })
-          )
+          .then(({ getWebAutoInstrumentations }) => {
+            const instrumentations = getWebAutoInstrumentations(autoInstrumentationsConfig)
+            try {
+              return registerInstrumentations({
+                instrumentations,
+                tracerProvider: options.tracerProvider,
+              })
+            } catch (error) {
+              disableInstrumentations(instrumentations)
+              throw error
+            }
+          })
           .catch((error: unknown) => {
             diag.error('logfire-browser: failed to start browser auto-instrumentations', error)
             return noopUnregister
@@ -342,10 +355,35 @@ function startBrowserInstrumentations(options: {
   return async () => {
     cleanupPromise ??= (async () => {
       const unregisterAutoInstrumentations = await unregisterAutoInstrumentationsPromise
-      unregisterAutoInstrumentations?.()
-      unregisterConfigured()
+      const unregisters = [
+        ...unregisterConfigured,
+        ...(unregisterAutoInstrumentations === undefined ? [] : [unregisterAutoInstrumentations]),
+      ]
+      let firstError: unknown
+      for (let index = unregisters.length - 1; index >= 0; index -= 1) {
+        try {
+          unregisters[index]?.()
+        } catch (error) {
+          firstError ??= error
+        }
+      }
+      if (firstError !== undefined) {
+        throw firstError instanceof Error
+          ? firstError
+          : new Error('logfire-browser: instrumentation unregister failed', { cause: firstError })
+      }
     })()
     return cleanupPromise
+  }
+}
+
+function disableInstrumentations(instrumentations: Instrumentation[]): void {
+  for (let index = instrumentations.length - 1; index >= 0; index -= 1) {
+    try {
+      instrumentations[index]?.disable()
+    } catch (error) {
+      diag.error('logfire-browser: failed to disable browser instrumentation after registration failure', error)
+    }
   }
 }
 

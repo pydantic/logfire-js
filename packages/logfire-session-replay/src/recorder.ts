@@ -51,10 +51,13 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
   }
 
   const stop = rrwebRecord(recordOptions)
+  if (stop === undefined) {
+    throw new Error('logfire session replay: rrweb failed to start recording')
+  }
 
   return {
     stop: () => {
-      stop?.()
+      stop()
     },
     addCustomEvent: (tag, payload) => {
       rrwebRecord.addCustomEvent?.(tag, payload)

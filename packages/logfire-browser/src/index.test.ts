@@ -1,4 +1,5 @@
 /* eslint-disable import/first */
+import { diag, trace } from '@opentelemetry/api'
 import type { Instrumentation } from '@opentelemetry/instrumentation'
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-web'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => {
   const autoInstrumentationConfigs: unknown[] = []
   const autoInstrumentations: unknown[] = []
   const registerInstrumentationCalls: { instrumentations: unknown; tracerProvider: unknown }[] = []
+  const registrationFailures: unknown[] = []
   const webVitalsStartCalls: unknown[] = []
   const webTracerProviderInstances: MockWebTracerProvider[] = []
   let browserMetricsForceFlushCalls = 0
@@ -46,10 +48,36 @@ const mocks = vi.hoisted(() => {
     register(): void {
       lifecycleEvents.push('providerRegister')
       this.registerCalls++
+      trace.setGlobalTracerProvider(this as never)
     }
 
-    getTracer(name: string): { name: string; provider: MockWebTracerProvider } {
-      return { name, provider: this }
+    getTracer(name: string) {
+      return {
+        name,
+        provider: this,
+        startSpan: () => {
+          const attributes: Record<string, unknown> = {}
+          const span = {
+            attributes,
+            end() {
+              return undefined
+            },
+            setAttribute(key: string, value: unknown) {
+              attributes[key] = value
+              return this
+            },
+            setAttributes(values: Record<string, unknown>) {
+              Object.assign(attributes, values)
+              return this
+            },
+          }
+          const processors = (this.options as { spanProcessors: SpanProcessor[] }).spanProcessors
+          for (const processor of processors) {
+            processor.onStart(span as never, {} as never)
+          }
+          return span
+        },
+      }
     }
 
     async forceFlush(): Promise<void> {
@@ -67,6 +95,7 @@ const mocks = vi.hoisted(() => {
       if (failures.has('shutdown')) {
         throw failures.get('shutdown')
       }
+      trace.disable()
       return Promise.resolve()
     }
   }
@@ -132,6 +161,9 @@ const mocks = vi.hoisted(() => {
     failStep(step: 'metricForceFlush' | 'metricShutdown' | 'unregister' | 'forceFlush' | 'shutdown', error: unknown) {
       failures.set(step, error)
     },
+    failNextRegistration(error: unknown) {
+      registrationFailures.push(error)
+    },
     get browserMetricsForceFlushCalls() {
       return browserMetricsForceFlushCalls
     },
@@ -158,10 +190,14 @@ const mocks = vi.hoisted(() => {
       return [instrumentation]
     },
     registerInstrumentationCalls,
+    takeRegistrationFailure() {
+      return registrationFailures.shift()
+    },
     reset() {
       autoInstrumentationConfigs.length = 0
       autoInstrumentations.length = 0
       registerInstrumentationCalls.length = 0
+      registrationFailures.length = 0
       browserMetricsForceFlushCalls = 0
       browserMetricsRecorderCreateCalls.length = 0
       browserMetricsRecorders.length = 0
@@ -227,6 +263,13 @@ vi.mock('@opentelemetry/exporter-trace-otlp-http', () => ({
 vi.mock('@opentelemetry/instrumentation', () => ({
   registerInstrumentations: (options: { instrumentations: unknown; tracerProvider: unknown }) => {
     mocks.registerInstrumentationCalls.push(options)
+    const failure = mocks.takeRegistrationFailure()
+    if (failure !== undefined) {
+      for (const instrumentation of options.instrumentations as { enable?: () => void }[]) {
+        instrumentation.enable?.()
+      }
+      throw failure instanceof Error ? failure : new Error('mock instrumentation registration failed', { cause: failure })
+    }
     return () => {
       mocks.unregister()
     }
@@ -245,6 +288,14 @@ vi.mock('@opentelemetry/sdk-trace-web', () => ({
     constructor(exporter: unknown, config: unknown) {
       this.exporter = exporter
       this.config = config
+    }
+
+    onStart(): void {
+      return undefined
+    }
+
+    onEnd(): void {
+      return undefined
     }
   },
   ParentBasedSampler: class MockParentBasedSampler {
@@ -607,6 +658,60 @@ describe('browser span processors', () => {
     expect(spanProcessors).toHaveLength(3)
   })
 
+  it('exports stable page URL attributes through public configure and tracing boundaries', async () => {
+    const locationDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'location')
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      value: { href: 'https://example.com/dashboard?token=secret#recent' },
+    })
+
+    const exercise = async (session: NonNullable<NonNullable<Parameters<typeof configure>[0]['rum']>['session']>) => {
+      let observed: Record<string, unknown> | undefined
+      const observer = createTestSpanProcessor()
+      observer.onStart = (span) => {
+        observed = { ...(span as unknown as { attributes: Record<string, unknown> }).attributes }
+      }
+      cleanup = configure({
+        rum: { session },
+        spanProcessors: [observer],
+        traceUrl: 'http://localhost:8989/client-traces',
+      })
+      trace.getTracer('public-consumer').startSpan('page view').end()
+      await cleanup()
+      cleanup = undefined
+      clearConfiguredBrowserSessionForTests()
+      return observed
+    }
+
+    try {
+      const defaultAttributes = await exercise(true)
+      expect(defaultAttributes).toMatchObject({
+        'logfire.page.url.full': 'https://example.com/dashboard?token=secret#recent',
+        'logfire.page.url.path': '/dashboard',
+      })
+      expect(defaultAttributes).not.toHaveProperty('url.full')
+      expect(defaultAttributes).not.toHaveProperty('url.path')
+
+      const sanitizedAttributes = await exercise({
+        urlAttributes: (url) => ({ full: `${url.origin}${url.pathname}`, path: url.pathname }),
+      })
+      expect(sanitizedAttributes).toMatchObject({
+        'logfire.page.url.full': 'https://example.com/dashboard',
+        'logfire.page.url.path': '/dashboard',
+      })
+
+      const disabledAttributes = await exercise({ urlAttributes: false })
+      expect(disabledAttributes).not.toHaveProperty('logfire.page.url.full')
+      expect(disabledAttributes).not.toHaveProperty('logfire.page.url.path')
+    } finally {
+      if (locationDescriptor === undefined) {
+        Reflect.deleteProperty(globalThis, 'location')
+      } else {
+        Object.defineProperty(globalThis, 'location', locationDescriptor)
+      }
+    }
+  })
+
   it('lazily creates a configured browser session id before the first span', () => {
     cleanup = configure({
       rum: { session: true },
@@ -632,9 +737,66 @@ describe('browser span processors', () => {
     expect(factory).toHaveBeenCalledTimes(1)
     expect(mocks.lifecycleEvents).toEqual(['providerRegister', 'instrumentationFactory'])
     expect(mocks.registerInstrumentationCalls[0]).toMatchObject({
-      instrumentations: [preconstructedInstrumentation, factoryInstrumentation],
+      instrumentations: [preconstructedInstrumentation],
       tracerProvider: getLatestWebTracerProvider(),
     })
+    expect(mocks.registerInstrumentationCalls[1]).toMatchObject({
+      instrumentations: [factoryInstrumentation],
+      tracerProvider: getLatestWebTracerProvider(),
+    })
+  })
+
+  it('contains a throwing instrumentation factory and continues with later groups', async () => {
+    const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
+    const goodInstrumentation = { name: 'good' } as unknown as Instrumentation
+    const factoryError = new Error('factory failed')
+    const coreSpanStart = vi.fn<SpanProcessor['onStart']>()
+    const observer = { ...createTestSpanProcessor(), onStart: coreSpanStart }
+
+    cleanup = configure({
+      instrumentations: [
+        () => {
+          throw factoryError
+        },
+        goodInstrumentation,
+      ],
+      spanProcessors: [observer],
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    trace.getTracer('consumer-after-factory-failure').startSpan('still works').end()
+
+    expect(mocks.registerInstrumentationCalls.at(-1)).toMatchObject({ instrumentations: [goodInstrumentation] })
+    expect(coreSpanStart).toHaveBeenCalledTimes(1)
+    expect(diagError).toHaveBeenCalledWith('logfire-browser: failed to start configured browser instrumentation group', factoryError)
+    await expect(cleanup()).resolves.toBeUndefined()
+    cleanup = undefined
+  })
+
+  it('disables a group whose registration throws and keeps later groups configured', async () => {
+    const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
+    const registrationError = new Error('registration failed')
+    const enable = vi.fn<() => void>()
+    const disable = vi.fn<() => void>()
+    const failedInstrumentation = { disable, enable, name: 'failed' } as unknown as Instrumentation
+    const goodInstrumentation = { name: 'good' } as unknown as Instrumentation
+    const coreSpanStart = vi.fn<SpanProcessor['onStart']>()
+    const observer = { ...createTestSpanProcessor(), onStart: coreSpanStart }
+    mocks.failNextRegistration(registrationError)
+
+    cleanup = configure({
+      instrumentations: [failedInstrumentation, goodInstrumentation],
+      spanProcessors: [observer],
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    trace.getTracer('consumer-after-registration-failure').startSpan('still works').end()
+
+    expect(enable).toHaveBeenCalledTimes(1)
+    expect(disable).toHaveBeenCalledTimes(1)
+    expect(mocks.registerInstrumentationCalls.at(-1)).toMatchObject({ instrumentations: [goodInstrumentation] })
+    expect(coreSpanStart).toHaveBeenCalledTimes(1)
+    expect(diagError).toHaveBeenCalledWith('logfire-browser: failed to start configured browser instrumentation group', registrationError)
+    await expect(cleanup()).resolves.toBeUndefined()
+    cleanup = undefined
   })
 
   it('lazily loads first-class browser auto-instrumentations after provider registration', async () => {
@@ -747,6 +909,29 @@ describe('browser Web Vitals config', () => {
       reportAllChanges: true,
       tracer: { name: 'logfire-web-vitals' },
     })
+  })
+
+  it('retries Web Vitals through configure after a transient startup failure', async () => {
+    const startupError = new Error('transient Web Vitals import failure')
+    const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
+    mocks.setWebVitalsStartupPromise(Promise.reject(startupError))
+    cleanup = configure({
+      rum: { webVitals: true },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+    await cleanup()
+    cleanup = undefined
+
+    mocks.setWebVitalsStartupPromise(Promise.resolve(mocks.createWebVitalsHandle()))
+    cleanup = configure({
+      rum: { webVitals: true },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    expect(mocks.webVitalsStartCalls).toHaveLength(2)
+    expect(diagError).toHaveBeenCalledWith('logfire-browser: failed to start Web Vitals reporting', startupError)
   })
 
   it('implies browser session attributes when Web Vitals are enabled', () => {

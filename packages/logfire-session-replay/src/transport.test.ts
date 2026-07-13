@@ -172,6 +172,37 @@ describe('ReplayTransport retries', () => {
     expect(onError).toHaveBeenCalledTimes(1)
   })
 
+  it('starts a keepalive flush while an ordinary upload is still in flight', async () => {
+    let releaseFirst: ((response: Response) => void) | undefined
+    let callCount = 0
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => {
+      callCount += 1
+      if (callCount === 1) {
+        return new Promise<Response>((resolve) => {
+          releaseFirst = resolve
+        })
+      }
+      return { ok: true, status: 202 } as Response
+    })
+    const fetchImpl = fetchMock as unknown as typeof fetch
+    const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-pagehide', 'full', null)
+    transport.add(fullSnapshot)
+    const ordinaryFlush = transport.flush()
+    await vi.waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+    })
+
+    transport.add(click)
+    const keepaliveFlush = transport.flush({ keepalive: true })
+    await vi.waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+    })
+    expect(fetchMock.mock.calls[1]?.[1]?.keepalive).toBe(true)
+
+    releaseFirst?.({ ok: true, status: 202 } as Response)
+    await Promise.all([ordinaryFlush, keepaliveFlush])
+  })
+
   it('splits large keepalive flushes into ordered chunks', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-large', 'full', null)

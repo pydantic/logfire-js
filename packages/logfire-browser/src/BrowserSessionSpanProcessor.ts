@@ -8,8 +8,6 @@ const ATTR_SESSION_ID = 'session.id'
 const ATTR_BROWSER_SESSION_ID = 'browser.session.id'
 const ATTR_SESSION_REPLAY_ACTIVE = 'logfire.session_replay.active'
 const ATTR_SESSION_REPLAY_MODE = 'logfire.session_replay.mode'
-const ATTR_URL_FULL = 'url.full'
-const ATTR_URL_PATH = 'url.path'
 const ATTR_LOGFIRE_PAGE_URL_FULL = 'logfire.page.url.full'
 const ATTR_LOGFIRE_PAGE_URL_PATH = 'logfire.page.url.path'
 
@@ -73,11 +71,9 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
 
     if (urlAttributes?.full !== undefined) {
       span.setAttribute(ATTR_LOGFIRE_PAGE_URL_FULL, urlAttributes.full)
-      span.setAttribute(ATTR_URL_FULL, urlAttributes.full)
     }
     if (urlAttributes?.path !== undefined) {
       span.setAttribute(ATTR_LOGFIRE_PAGE_URL_PATH, urlAttributes.path)
-      span.setAttribute(ATTR_URL_PATH, urlAttributes.path)
     }
   }
 

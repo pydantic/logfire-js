@@ -56,6 +56,23 @@ interface BrowserWebVitalsStartOptions extends BrowserWebVitalsOptions {
 let startupPromise: Promise<void> | undefined
 let currentMetricRecorder: BrowserWebVitalsMetricRecorder | undefined
 let currentTracer: Tracer | undefined
+let registeredObserverOptions: ObserverOptions | undefined
+let observerOptionsDuringStartup: ObserverOptions | undefined
+const registeredWebVitals = new Set<WebVitalName>()
+
+type WebVitalName = 'CLS' | 'FCP' | 'INP' | 'LCP' | 'TTFB'
+
+interface ObserverOptions {
+  generateTarget: BrowserWebVitalsOptions['generateTarget']
+  includeProcessedEventEntries: boolean
+  reportAllChanges: boolean | undefined
+}
+
+interface ReportOptionSource {
+  generateTarget?: BrowserWebVitalsOptions['generateTarget']
+  includeProcessedEventEntries?: boolean | undefined
+  reportAllChanges?: boolean | undefined
+}
 
 function createHandle(metricRecorder: BrowserWebVitalsMetricRecorder | undefined, tracer: Tracer): BrowserWebVitalsHandle {
   let shutdownCalled = false
@@ -88,7 +105,7 @@ function setPrimitiveAttribute(attributes: Attributes, key: string, value: unkno
   }
 }
 
-function createBaseReportOptions(options: BrowserWebVitalsOptions = {}): AttributionReportOpts {
+function createBaseReportOptions(options: ReportOptionSource = {}): AttributionReportOpts {
   const reportOptions: AttributionReportOpts = {}
   if (options.reportAllChanges !== undefined) {
     reportOptions.reportAllChanges = options.reportAllChanges
@@ -99,7 +116,7 @@ function createBaseReportOptions(options: BrowserWebVitalsOptions = {}): Attribu
   return reportOptions
 }
 
-function createInpReportOptions(options: BrowserWebVitalsOptions = {}): INPAttributionReportOpts {
+function createInpReportOptions(options: ReportOptionSource = {}): INPAttributionReportOpts {
   return {
     ...createBaseReportOptions(options),
     includeProcessedEventEntries: options.includeProcessedEventEntries ?? false,
@@ -213,16 +230,30 @@ function reportWebVital(
   reportWebVitalMetric(metric, metricRecorder)
 }
 
-function registerWebVitals(webVitals: WebVitalsAttributionModule, options: BrowserWebVitalsStartOptions): void {
+function registerWebVitals(webVitals: WebVitalsAttributionModule, requestedOptions: BrowserWebVitalsStartOptions): void {
+  const options = (observerOptionsDuringStartup ??= normalizeObserverOptions(requestedOptions))
   const reportOptions = createBaseReportOptions(options)
   const report = (metric: MetricWithAttribution) => {
+    if (registeredObserverOptions === undefined) {
+      return
+    }
     reportWebVital(metric, currentMetricRecorder, currentTracer)
   }
-  webVitals.onLCP(report, reportOptions)
-  webVitals.onINP(report, createInpReportOptions(options))
-  webVitals.onCLS(report, reportOptions)
-  webVitals.onFCP(report, reportOptions)
-  webVitals.onTTFB(report, reportOptions)
+  const registrations = [
+    ['LCP', webVitals.onLCP, reportOptions],
+    ['INP', webVitals.onINP, createInpReportOptions(options)],
+    ['CLS', webVitals.onCLS, reportOptions],
+    ['FCP', webVitals.onFCP, reportOptions],
+    ['TTFB', webVitals.onTTFB, reportOptions],
+  ] as const
+  for (const [name, register, registrationOptions] of registrations) {
+    if (registeredWebVitals.has(name)) {
+      continue
+    }
+    register(report, registrationOptions as never)
+    registeredWebVitals.add(name)
+  }
+  registeredObserverOptions = options
 }
 
 export async function startBrowserWebVitals(options: BrowserWebVitalsStartOptions): Promise<BrowserWebVitalsHandle> {
@@ -231,15 +262,39 @@ export async function startBrowserWebVitals(options: BrowserWebVitalsStartOption
   }
   currentTracer = options.tracer
 
-  startupPromise ??= import('web-vitals/attribution')
-    .then((webVitals) => {
-      registerWebVitals(webVitals, options)
-    })
-    .catch((error: unknown) => {
-      diag.error('logfire-browser: failed to start Web Vitals reporting', error)
-    })
+  const observerOptions = normalizeObserverOptions(options)
+  if (startupPromise === undefined) {
+    const startup = import('web-vitals/attribution')
+      .then((webVitals) => {
+        registerWebVitals(webVitals, options)
+      })
+      .catch((error: unknown) => {
+        if (startupPromise === startup) {
+          startupPromise = undefined
+        }
+        if (registeredWebVitals.size === 0) {
+          observerOptionsDuringStartup = undefined
+        }
+        throw error
+      })
+    startupPromise = startup
+  }
 
-  await startupPromise
+  try {
+    await startupPromise
+  } catch (error) {
+    options.metricRecorder?.shutdown()
+    if (currentMetricRecorder === options.metricRecorder) {
+      currentMetricRecorder = undefined
+    }
+    if (currentTracer === options.tracer) {
+      currentTracer = undefined
+    }
+    throw error
+  }
+  if (registeredObserverOptions !== undefined && !sameObserverOptions(registeredObserverOptions, observerOptions)) {
+    diag.warn('logfire-browser: Web Vitals observer options are fixed by the first successful startup; ignoring changed options')
+  }
   return createHandle(options.metricRecorder, options.tracer)
 }
 
@@ -247,4 +302,23 @@ export function resetBrowserWebVitalsForTests(): void {
   startupPromise = undefined
   currentMetricRecorder = undefined
   currentTracer = undefined
+  registeredObserverOptions = undefined
+  observerOptionsDuringStartup = undefined
+  registeredWebVitals.clear()
+}
+
+function normalizeObserverOptions(options: BrowserWebVitalsOptions): ObserverOptions {
+  return {
+    generateTarget: options.generateTarget,
+    includeProcessedEventEntries: options.includeProcessedEventEntries ?? false,
+    reportAllChanges: options.reportAllChanges,
+  }
+}
+
+function sameObserverOptions(left: ObserverOptions, right: ObserverOptions): boolean {
+  return (
+    left.generateTarget === right.generateTarget &&
+    left.includeProcessedEventEntries === right.includeProcessedEventEntries &&
+    (left.reportAllChanges ?? false) === (right.reportAllChanges ?? false)
+  )
 }

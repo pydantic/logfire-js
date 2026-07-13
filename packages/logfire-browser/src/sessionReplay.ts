@@ -153,9 +153,7 @@ export async function startBrowserSessionReplay(
     const replayConfig = createReplayConfig(options, browserSessionManager, telemetryOptions)
     const replay = replayModule.startSessionReplay(replayConfig)
     const wrappedReplay = wrapReplayRuntime(replay, replayState)
-    if (wrappedReplay.recording && (wrappedReplay.mode === 'full' || wrappedReplay.mode === 'buffer')) {
-      replayState.setReplay(wrappedReplay)
-    }
+    replayState.setReplay(wrappedReplay)
     return wrappedReplay
   } catch (error) {
     replayState.clear()
@@ -163,7 +161,7 @@ export async function startBrowserSessionReplay(
       'logfire-browser: failed to start session replay; install @pydantic/logfire-session-replay and verify sessionReplay config',
       error
     )
-    options.onError?.(error)
+    safeReportError(options.onError, error)
     return undefined
   }
 }
@@ -223,13 +221,23 @@ function createReplayConfig(
     config.captureNavigation = options.captureNavigation
   }
   if (options.onError !== undefined) {
-    config.onError = options.onError
+    config.onError = (error) => {
+      safeReportError(options.onError, error)
+    }
   }
   if (options.fetchImpl !== undefined) {
     config.fetchImpl = options.fetchImpl
   }
 
   return config
+}
+
+function safeReportError(onError: ((error: unknown) => void) | undefined, error: unknown): void {
+  try {
+    onError?.(error)
+  } catch {
+    // Optional replay and consumer reporters must not break browser configuration.
+  }
 }
 
 function wrapReplayRuntime(replay: BrowserSessionReplayRuntime, replayState: BrowserSessionReplayState): BrowserSessionReplayRuntime {

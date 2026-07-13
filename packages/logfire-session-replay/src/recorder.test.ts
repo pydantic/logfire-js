@@ -95,10 +95,8 @@ describe('startRecording', () => {
     expect(stopFn).toHaveBeenCalledTimes(1)
   })
 
-  it('does not throw when rrweb returns no stop function', () => {
+  it('treats a missing rrweb stop function as startup failure', () => {
     record.mockReturnValueOnce(undefined)
-    expect(() => {
-      startRecording({ emit: () => {}, maskAllInputs: true }).stop()
-    }).not.toThrow()
+    expect(() => startRecording({ emit: () => {}, maskAllInputs: true })).toThrow('logfire session replay: rrweb failed to start recording')
   })
 })

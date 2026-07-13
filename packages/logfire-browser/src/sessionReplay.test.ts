@@ -129,7 +129,6 @@ describe('startBrowserSessionReplay', () => {
       maskAllInputs: false,
       maskTextSelector: '.secret',
       maxBufferBytes: 123_456,
-      onError,
       onErrorSampleRate: 0.5,
       redactUrlPatterns: [/\/redact/u],
       replayUrl: '/logfire/replay',
@@ -139,6 +138,9 @@ describe('startBrowserSessionReplay', () => {
     expect(replayConfig).not.toHaveProperty('getTraceContext')
     expect(replayConfig).not.toHaveProperty('sessionIdleTimeoutMs')
     expect(replayConfig).not.toHaveProperty('maxSessionDurationMs')
+    const reportedError = new Error('reported by replay')
+    replayConfig?.onError?.(reportedError)
+    expect(onError).toHaveBeenCalledWith(reportedError)
     expect(replayConfig?.ignoreUrlPatterns?.some((pattern) => pattern.test('/logfire/traces'))).toBe(true)
     expect(replayConfig?.ignoreUrlPatterns?.some((pattern) => pattern.test('/logfire/metrics'))).toBe(true)
     expect(replayConfig?.ignoreUrlPatterns?.some((pattern) => pattern.test('/logfire/replay/browser-session-1?seq=0'))).toBe(true)
@@ -178,10 +180,23 @@ describe('startBrowserSessionReplay', () => {
     expect(replayState.getState()).toBeUndefined()
   })
 
-  it('does not mark replay active when sampling resolves to off', async () => {
+  it('keeps dynamic replay state while sampling moves from off to active and back', async () => {
     const replayState = new BrowserSessionReplayState()
+    let mode: BrowserSessionReplayRuntime['mode'] = 'off'
+    let recording = false
+    const runtime: BrowserSessionReplayRuntime = {
+      get mode() {
+        return mode
+      },
+      get recording() {
+        return recording
+      },
+      flush: async () => Promise.resolve(),
+      getSessionId: () => 'browser-session-1',
+      stop: async () => Promise.resolve(),
+    }
     const replayModule: BrowserSessionReplayModule = {
-      startSessionReplay: () => createReplayRuntime({ mode: 'off', recording: false }),
+      startSessionReplay: () => runtime,
     }
 
     const replay = await startBrowserSessionReplay(
@@ -193,6 +208,13 @@ describe('startBrowserSessionReplay', () => {
 
     expect(replay?.mode).toBe('off')
     expect(replayState.getState()).toBeUndefined()
+    mode = 'buffer'
+    recording = true
+    expect(replayState.getState()).toEqual({ active: true, mode: 'buffer' })
+    mode = 'off'
+    recording = false
+    expect(replayState.getState()).toBeUndefined()
+    await replay?.stop()
   })
 
   it('reports startup failures without throwing', async () => {
@@ -217,5 +239,26 @@ describe('startBrowserSessionReplay', () => {
     expect(replayState.getState()).toBeUndefined()
     expect(diagError).toHaveBeenCalledWith(expect.stringContaining('failed to start session replay'), error)
     expect(onError).toHaveBeenCalledWith(error)
+  })
+
+  it('does not let a throwing startup error callback reject replay startup handling', async () => {
+    const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
+    const error = new Error('missing peer')
+
+    await expect(
+      startBrowserSessionReplay(
+        {
+          load: async () => Promise.reject(error),
+          onError: () => {
+            throw new Error('consumer callback failed')
+          },
+          replayUrl: '/logfire/replay',
+        },
+        createManager(),
+        new BrowserSessionReplayState(),
+        { traceUrl: '/logfire/traces' }
+      )
+    ).resolves.toBeUndefined()
+    expect(diagError).toHaveBeenCalledWith(expect.stringContaining('failed to start session replay'), error)
   })
 })

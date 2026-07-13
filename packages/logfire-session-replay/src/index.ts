@@ -1,6 +1,5 @@
 import { captureConsole, captureNavigation, captureNetwork } from './capture'
 import { startRecording } from './recorder'
-import type { RecorderHandle } from './recorder'
 import { decideSamplingMode } from './sampling'
 import { safeSessionStorage, SessionManager } from './session'
 import { ReplayTransport } from './transport'
@@ -36,129 +35,267 @@ const NOOP: SessionReplay = {
 }
 
 const SAMPLING_MODE_STORAGE_KEY = 'lf_session_replay_mode'
+const CONTROLLER_LEASE_KEY = Symbol.for('@pydantic/logfire-session-replay/controller')
+const SESSION_MONITOR_INTERVAL_MS = 1_000
+
+interface ActiveRuntime {
+  readonly sessionId: string
+  readonly transport: ReplayTransport
+  deactivate(): Promise<void>
+  discard(): void
+}
 
 export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     return NOOP
   }
 
-  const resolvedConfig = resolveConfig(config)
-  const internalSessions = new SessionManager({
-    idleTimeoutMs: resolvedConfig.sessionIdleTimeoutMs,
-    maxDurationMs: resolvedConfig.maxSessionDurationMs,
-    now: resolvedConfig.now,
-  })
-  const getSessionId = (touch: boolean): string => {
-    const externalSessionId = resolvedConfig.getSessionId?.()
-    if (externalSessionId !== undefined && externalSessionId.length > 0) {
-      return externalSessionId
-    }
-    return touch ? internalSessions.touch().id : internalSessions.getSession().id
-  }
-  const initialSessionId = getSessionId(false)
-  const samplingModeStorage = safeSessionStorage()
-  const mode = resolveSamplingMode(resolvedConfig, initialSessionId, samplingModeStorage)
-
-  if (mode === 'off') {
-    return NOOP
-  }
-
-  const transport = new ReplayTransport(resolvedConfig, initialSessionId, mode)
-  const recorderRef: { current?: RecorderHandle } = {}
-  const recorder = startRecording({
-    emit: (event) => {
-      const sessionId = getSessionId(true)
-      if (transport.rotate(sessionId)) {
-        recorderRef.current?.takeFullSnapshot()
+  const releaseLease = acquireControllerLease()
+  try {
+    const resolvedConfig = resolveConfig(config)
+    const internalSessions = new SessionManager({
+      idleTimeoutMs: resolvedConfig.sessionIdleTimeoutMs,
+      maxDurationMs: resolvedConfig.maxSessionDurationMs,
+      now: resolvedConfig.now,
+    })
+    const getSessionId = (touch: boolean): string => {
+      const externalSessionId = resolvedConfig.getSessionId?.()
+      if (externalSessionId !== undefined && externalSessionId.length > 0) {
+        return externalSessionId
       }
-      transport.add(event)
-    },
-    maskAllInputs: resolvedConfig.maskAllInputs,
-    maskTextSelector: resolvedConfig.maskTextSelector,
-    blockSelector: resolvedConfig.blockSelector,
-    checkoutEveryNms: mode === 'buffer' ? 120_000 : 0,
-  })
-  recorderRef.current = recorder
-
-  let lastTraceId: string | undefined
-  const traceTimer =
-    resolvedConfig.getTraceContext === undefined
-      ? undefined
-      : setInterval(() => {
-          const context = resolvedConfig.getTraceContext?.()
-          const traceId = context?.traceId
-          if (traceId !== undefined && traceId.length > 0 && traceId !== lastTraceId) {
-            lastTraceId = traceId
-            recorder.addCustomEvent(CustomTag.Trace, { traceId, spanId: context?.spanId })
-          }
-        }, 1_000)
-
-  const handleError = (payload: { message: string; source?: string; stack?: string }) => {
-    recorder.addCustomEvent(CustomTag.Error, payload)
-    if (transport.getMode() === 'buffer') {
-      saveSamplingMode(samplingModeStorage, getSessionId(false), 'full')
-      ignorePromise(transport.triggerFlush(), resolvedConfig.onError)
+      return touch ? internalSessions.touch().id : internalSessions.getSession().id
     }
-  }
-  const onWindowError = (event: ErrorEvent) => {
-    handleError(createErrorPayload(event.message, event.filename, errorStack(event.error)))
-  }
-  const onRejection = (event: PromiseRejectionEvent) => {
-    const reason = event.reason as { message?: string; stack?: string } | undefined
-    handleError(createErrorPayload(reason?.message ?? String(event.reason ?? 'unhandledrejection'), undefined, reason?.stack))
-  }
-  const onHide = () => {
-    if (document.visibilityState === 'hidden') {
-      ignorePromise(transport.flush({ keepalive: true }), resolvedConfig.onError)
-    }
-  }
+    const samplingModeStorage = safeSessionStorage()
+    let currentSessionId = getSessionId(false)
+    let runtime: ActiveRuntime | undefined
+    let stopped = false
+    let transition = Promise.resolve()
+    let stopPromise: Promise<void> | undefined
 
-  window.addEventListener('error', onWindowError, true)
-  window.addEventListener('unhandledrejection', onRejection, true)
-  document.addEventListener('visibilitychange', onHide)
-  window.addEventListener('pagehide', onHide)
-
-  const addCustomEvent = (tag: string, payload: unknown) => {
-    recorder.addCustomEvent(tag, payload)
-  }
-  const stopConsole = resolvedConfig.captureConsole ? captureConsole(addCustomEvent, { onError: resolvedConfig.onError }) : noop
-  const stopNetwork = resolvedConfig.captureNetwork
-    ? captureNetwork(addCustomEvent, {
-        ignoreUrlPatterns: resolvedConfig.ignoreUrlPatterns,
-        now: resolvedConfig.now,
-        onError: resolvedConfig.onError,
-        redactUrlPatterns: resolvedConfig.redactUrlPatterns,
-      })
-    : noop
-  const stopNavigation = resolvedConfig.captureNavigation ? captureNavigation(addCustomEvent, { onError: resolvedConfig.onError }) : noop
-
-  transport.start()
-
-  let stopPromise: Promise<void> | undefined
-  return {
-    get mode() {
-      return transport.getMode()
-    },
-    recording: true,
-    getSessionId: () => getSessionId(false),
-    flush: async () => transport.flush(),
-    stop: async () => {
-      stopPromise ??= (async () => {
-        if (traceTimer !== undefined) {
-          clearInterval(traceTimer)
+    const activate = (sessionId: string, initial: boolean): void => {
+      const mode = resolveSamplingMode(resolvedConfig, sessionId, samplingModeStorage)
+      if (mode === 'off' || stopped || sessionId !== currentSessionId) {
+        return
+      }
+      try {
+        runtime = createActiveRuntime({
+          config: resolvedConfig,
+          getSessionId,
+          mode,
+          onSessionChanged: observeSession,
+          samplingModeStorage,
+          sessionId,
+        })
+      } catch (error) {
+        runtime = undefined
+        if (initial) {
+          throw error
         }
-        window.removeEventListener('error', onWindowError, true)
-        window.removeEventListener('unhandledrejection', onRejection, true)
-        document.removeEventListener('visibilitychange', onHide)
-        window.removeEventListener('pagehide', onHide)
-        stopConsole()
-        stopNetwork()
-        stopNavigation()
-        recorder.stop()
-        await transport.shutdown({ keepalive: false })
-      })()
-      return stopPromise
-    },
+        safeReportError(resolvedConfig.onError, error)
+      }
+    }
+
+    const observeSession = (sessionId: string): void => {
+      if (stopped || sessionId === currentSessionId) {
+        return
+      }
+      currentSessionId = sessionId
+      const oldRuntime = runtime
+      runtime = undefined
+      const oldShutdown = oldRuntime?.deactivate() ?? Promise.resolve()
+      transition = transition.then(async () => {
+        await reportPromise(oldShutdown, resolvedConfig.onError)
+        if (!stopped && currentSessionId === sessionId) {
+          activate(sessionId, false)
+        }
+      })
+    }
+
+    let sessionTimer: ReturnType<typeof setInterval>
+    try {
+      activate(currentSessionId, true)
+      sessionTimer = setInterval(() => {
+        observeSession(getSessionId(false))
+      }, SESSION_MONITOR_INTERVAL_MS)
+    } catch (error) {
+      runtime?.discard()
+      runtime = undefined
+      throw error
+    }
+
+    return {
+      get mode() {
+        return runtime?.transport.getMode() ?? 'off'
+      },
+      get recording() {
+        return runtime !== undefined
+      },
+      getSessionId: () => getSessionId(false),
+      flush: async () => {
+        await transition
+        await runtime?.transport.flush()
+      },
+      stop: async () => {
+        stopPromise ??= (async () => {
+          stopped = true
+          clearInterval(sessionTimer)
+          const oldRuntime = runtime
+          runtime = undefined
+          const oldShutdown = oldRuntime?.deactivate() ?? Promise.resolve()
+          await reportPromise(oldShutdown, resolvedConfig.onError)
+          await transition
+          releaseLease()
+        })()
+        return stopPromise
+      },
+    }
+  } catch (error) {
+    releaseLease()
+    throw error
+  }
+}
+
+function createActiveRuntime(options: {
+  config: ResolvedSessionReplayConfig
+  getSessionId: (touch: boolean) => string
+  mode: 'full' | 'buffer'
+  onSessionChanged: (sessionId: string) => void
+  samplingModeStorage: Storage | null
+  sessionId: string
+}): ActiveRuntime {
+  const { config, getSessionId, mode, onSessionChanged, samplingModeStorage, sessionId } = options
+  const transport = new ReplayTransport(config, sessionId, mode)
+  const cleanup: (() => void)[] = []
+  let active = true
+  let deactivation: Promise<void> | undefined
+
+  try {
+    const recorder = startRecording({
+      emit: (event) => {
+        if (!active) {
+          return
+        }
+        const observedSessionId = getSessionId(true)
+        if (observedSessionId !== sessionId) {
+          onSessionChanged(observedSessionId)
+          return
+        }
+        transport.add(event)
+      },
+      maskAllInputs: config.maskAllInputs,
+      maskTextSelector: config.maskTextSelector,
+      blockSelector: config.blockSelector,
+      checkoutEveryNms: mode === 'buffer' ? 120_000 : 0,
+    })
+    cleanup.push(() => {
+      recorder.stop()
+    })
+
+    let lastTraceId: string | undefined
+    if (config.getTraceContext !== undefined) {
+      const traceTimer = setInterval(() => {
+        if (!active) {
+          return
+        }
+        const context = config.getTraceContext?.()
+        const traceId = context?.traceId
+        if (traceId !== undefined && traceId.length > 0 && traceId !== lastTraceId) {
+          lastTraceId = traceId
+          recorder.addCustomEvent(CustomTag.Trace, { traceId, spanId: context?.spanId })
+        }
+      }, SESSION_MONITOR_INTERVAL_MS)
+      cleanup.push(() => {
+        clearInterval(traceTimer)
+      })
+    }
+
+    const handleError = (payload: { message: string; source?: string; stack?: string }) => {
+      if (!active) {
+        return
+      }
+      recorder.addCustomEvent(CustomTag.Error, payload)
+      if (transport.getMode() === 'buffer') {
+        saveSamplingMode(samplingModeStorage, sessionId, 'full')
+        ignorePromise(transport.triggerFlush(), config.onError)
+      }
+    }
+    const onWindowError = (event: ErrorEvent) => {
+      handleError(createErrorPayload(event.message, event.filename, errorStack(event.error)))
+    }
+    const onRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason as { message?: string; stack?: string } | undefined
+      handleError(createErrorPayload(reason?.message ?? String(event.reason ?? 'unhandledrejection'), undefined, reason?.stack))
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        ignorePromise(transport.flush({ keepalive: true }), config.onError)
+      }
+    }
+    const onPageHide = () => {
+      ignorePromise(transport.flush({ keepalive: true }), config.onError)
+    }
+    window.addEventListener('error', onWindowError, true)
+    cleanup.push(() => {
+      window.removeEventListener('error', onWindowError, true)
+    })
+    window.addEventListener('unhandledrejection', onRejection, true)
+    cleanup.push(() => {
+      window.removeEventListener('unhandledrejection', onRejection, true)
+    })
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    cleanup.push(() => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    })
+    window.addEventListener('pagehide', onPageHide)
+    cleanup.push(() => {
+      window.removeEventListener('pagehide', onPageHide)
+    })
+
+    const addCustomEvent = (tag: string, payload: unknown) => {
+      if (active) {
+        recorder.addCustomEvent(tag, payload)
+      }
+    }
+    if (config.captureConsole) {
+      cleanup.push(captureConsole(addCustomEvent, { onError: config.onError }))
+    }
+    if (config.captureNetwork) {
+      cleanup.push(
+        captureNetwork(addCustomEvent, {
+          ignoreUrlPatterns: config.ignoreUrlPatterns,
+          now: config.now,
+          onError: config.onError,
+          redactUrlPatterns: config.redactUrlPatterns,
+        })
+      )
+    }
+    if (config.captureNavigation) {
+      cleanup.push(captureNavigation(addCustomEvent, { onError: config.onError }))
+    }
+    transport.start()
+
+    return {
+      sessionId,
+      transport,
+      deactivate: async () => {
+        deactivation ??= (async () => {
+          active = false
+          stopCleanup(cleanup)
+          await transport.shutdown({ keepalive: false })
+        })()
+        return deactivation
+      },
+      discard: () => {
+        active = false
+        stopCleanup(cleanup)
+        transport.discard()
+      },
+    }
+  } catch (error) {
+    active = false
+    stopCleanup(cleanup)
+    transport.discard()
+    throw error
   }
 }
 
@@ -260,14 +397,61 @@ function errorStack(error: unknown): string | undefined {
   return typeof stack === 'string' ? stack : undefined
 }
 
-function noop(): undefined {
-  return undefined
-}
-
 function ignorePromise(promise: Promise<void>, onError: ((error: unknown) => void) | undefined): void {
   promise.catch((error: unknown) => {
-    onError?.(error)
+    safeReportError(onError, error)
   })
+}
+
+async function reportPromise(promise: Promise<void>, onError: ((error: unknown) => void) | undefined): Promise<void> {
+  try {
+    await promise
+  } catch (error) {
+    safeReportError(onError, error)
+  }
+}
+
+function safeReportError(onError: ((error: unknown) => void) | undefined, error: unknown): void {
+  try {
+    onError?.(error)
+  } catch {
+    // Error reporting must never break the host application.
+  }
+}
+
+function acquireControllerLease(): () => void {
+  const target = globalThis as Record<PropertyKey, unknown>
+  if (target[CONTROLLER_LEASE_KEY] !== undefined) {
+    throw new Error('logfire session replay: a replay controller is already active in this page')
+  }
+  const owner = {}
+  Object.defineProperty(target, CONTROLLER_LEASE_KEY, {
+    configurable: true,
+    enumerable: false,
+    value: owner,
+    writable: true,
+  })
+  let released = false
+  return () => {
+    if (released) {
+      return
+    }
+    released = true
+    if (target[CONTROLLER_LEASE_KEY] === owner) {
+      Reflect.deleteProperty(target, CONTROLLER_LEASE_KEY)
+    }
+  }
+}
+
+function stopCleanup(cleanup: (() => void)[]): void {
+  for (let index = cleanup.length - 1; index >= 0; index -= 1) {
+    try {
+      cleanup[index]?.()
+    } catch {
+      // Transactional cleanup continues through every installed resource.
+    }
+  }
+  cleanup.length = 0
 }
 
 function createErrorPayload(

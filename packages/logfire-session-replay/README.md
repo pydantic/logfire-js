@@ -89,6 +89,20 @@ startSessionReplay({
 Normal browser applications should not expose project write tokens in bundles.
 Use `replayUrl + headers` with a backend proxy when possible.
 
+## Lifecycle Delivery
+
+Full-mode replay requests a best-effort keepalive upload when the page becomes
+hidden or receives `pagehide`. That request starts independently of an ordinary
+upload that is still in flight. Browser keepalive body limits still apply: one
+individually oversized replay event cannot be split safely and may fall back to
+a normal request.
+
+`headers` and functional `token` values are resolved during each upload. An
+asynchronous credential callback can therefore delay the final request beyond
+the browser's page-freeze boundary. Prefer synchronously available proxy
+credentials, and call `flush()` before a controlled navigation when delivery is
+critical.
+
 ## Privacy
 
 The recorder masks input values by default, disables canvas recording, disables
@@ -106,9 +120,19 @@ appropriate for your application.
 
 The recorder uses a Sentry-style two-rate model:
 
-- `sessionSampleRate`: records the full session continuously
+- `sessionSampleRate`: records the current browser session continuously
 - `onErrorSampleRate`: for sessions not selected by `sessionSampleRate`, keeps
-  an in-memory replay buffer and uploads it only if an error occurs
+  an in-memory replay buffer and promotes it only for an uncaught `window.error`
+  or `unhandledrejection`
+
+Sampling is resolved and persisted independently for each session id. When the
+session id rotates, the returned handle updates its `mode` and `recording`
+properties. A sampled-off session keeps only a lightweight session-id monitor;
+it does not start rrweb or patch console, network, or navigation globals, and a
+later sampled session can begin recording without reloading the page.
+
+Caught exceptions, `console.error`, and errors reported through another API do
+not automatically promote the replay buffer.
 
 `stop()` is awaitable and flushes the final chunk before resolving.
 

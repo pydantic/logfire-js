@@ -27,11 +27,15 @@ const mocks = vi.hoisted(() => {
   }
   const spans: MockSpan[] = []
   const diagErrors: unknown[][] = []
+  const diagWarnings: unknown[][] = []
   const tracerNames: string[] = []
   let startSpanErrorMessage: string | undefined
+  let registrationErrorMessage: string | undefined
+  let registrationErrorName: MockWebVitalName | undefined
 
   return {
     diagErrors,
+    diagWarnings,
     get startSpanErrorMessage() {
       return startSpanErrorMessage
     },
@@ -39,6 +43,12 @@ const mocks = vi.hoisted(() => {
       startSpanErrorMessage = message
     },
     register(name: MockWebVitalName, callback: (metric: unknown) => void, options: unknown) {
+      if (registrationErrorMessage !== undefined && (registrationErrorName === undefined || registrationErrorName === name)) {
+        const message = registrationErrorMessage
+        registrationErrorMessage = undefined
+        registrationErrorName = undefined
+        throw new Error(message)
+      }
       registrations[name].push({ callback, options })
     },
     registrations,
@@ -48,10 +58,25 @@ const mocks = vi.hoisted(() => {
       }
       spans.length = 0
       diagErrors.length = 0
+      diagWarnings.length = 0
       tracerNames.length = 0
       startSpanErrorMessage = undefined
+      registrationErrorMessage = undefined
+      registrationErrorName = undefined
     },
     spans,
+    get registrationErrorMessage() {
+      return registrationErrorMessage
+    },
+    set registrationErrorMessage(message: string | undefined) {
+      registrationErrorMessage = message
+    },
+    get registrationErrorName() {
+      return registrationErrorName
+    },
+    set registrationErrorName(name: MockWebVitalName | undefined) {
+      registrationErrorName = name
+    },
     startSpan(name: string) {
       if (startSpanErrorMessage !== undefined) {
         throw new Error(startSpanErrorMessage)
@@ -80,6 +105,9 @@ vi.mock('@opentelemetry/api', () => ({
   diag: {
     error: (...args: unknown[]) => {
       mocks.diagErrors.push(args)
+    },
+    warn: (...args: unknown[]) => {
+      mocks.diagWarnings.push(args)
     },
   },
 }))
@@ -203,6 +231,55 @@ describe('browser Web Vitals reporting', () => {
       expect(mocks.registrations[name]).toHaveLength(1)
     }
     expect(getRegistration('LCP').options).toEqual({ reportAllChanges: true })
+    expect(mocks.diagWarnings).toEqual([
+      ['logfire-browser: Web Vitals observer options are fixed by the first successful startup; ignoring changed options'],
+    ])
+  })
+
+  it('retries after the first observer startup fails', async () => {
+    mocks.registrationErrorMessage = 'observer startup failed'
+
+    await expect(startWebVitals({ reportAllChanges: true })).rejects.toThrow('observer startup failed')
+    await expect(startWebVitals({ reportAllChanges: false })).resolves.toBeDefined()
+
+    for (const name of webVitalNames) {
+      expect(mocks.registrations[name]).toHaveLength(1)
+    }
+    expect(getRegistration('LCP').options).toEqual({ reportAllChanges: false })
+  })
+
+  it('retries only missing observers after a partial startup failure', async () => {
+    const failedMetricRecorder = createMetricRecorder()
+    const retryMetricRecorder = createMetricRecorder()
+    const metric = createMetric('LCP', {
+      resourceLoadDelay: 10,
+      resourceLoadDuration: 20,
+      target: '#hero img',
+      timeToFirstByte: 40,
+    })
+    mocks.registrationErrorName = 'INP'
+    mocks.registrationErrorMessage = 'INP observer startup failed'
+
+    await expect(startWebVitals({ metricRecorder: failedMetricRecorder, reportAllChanges: true })).rejects.toThrow(
+      'INP observer startup failed'
+    )
+    report('LCP', metric)
+    expect(failedMetricRecorder.shutdown).toHaveBeenCalledTimes(1)
+    expect(failedMetricRecorder.record).not.toHaveBeenCalled()
+    expect(mocks.spans).toHaveLength(0)
+
+    await expect(startWebVitals({ metricRecorder: retryMetricRecorder, reportAllChanges: false })).resolves.toBeDefined()
+    report('LCP', metric)
+
+    for (const name of webVitalNames) {
+      expect(mocks.registrations[name]).toHaveLength(1)
+      expect(getRegistration(name).options).toMatchObject({ reportAllChanges: true })
+    }
+    expect(retryMetricRecorder.record).toHaveBeenCalledWith(metric)
+    expect(mocks.spans).toHaveLength(1)
+    expect(mocks.diagWarnings).toEqual([
+      ['logfire-browser: Web Vitals observer options are fixed by the first successful startup; ignoring changed options'],
+    ])
   })
 
   it('records Web Vitals through the configured metric recorder', async () => {

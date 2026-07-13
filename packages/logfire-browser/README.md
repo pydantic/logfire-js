@@ -71,12 +71,11 @@ or 4 hours of total duration by default. Spans get `session.id` and
 `browser.session.id` is emitted for Logfire Platform compatibility.
 
 By default, session-enabled spans also get `logfire.page.url.full` and
-`logfire.page.url.path` from the current page URL. During the alpha, the SDK
-also emits compatibility `url.full` and `url.path` values with the same
-sanitized page URL. Prefer `logfire.page.url.*` for page grouping because
-OpenTelemetry fetch/resource spans may use `url.*` for the network target URL.
-If your app has sensitive query strings or fragments, provide a sanitizer or
-suppress URL attributes:
+`logfire.page.url.path` from the current page URL. The full value uses
+`location.href`, including query strings and fragments, while the path value
+uses `location.pathname`. Network spans may independently use OpenTelemetry
+`url.*` attributes for their request target. If your app has sensitive query
+strings or fragments, provide a sanitizer or suppress page URL attributes:
 
 ```js
 logfire.configure({
@@ -153,6 +152,13 @@ logfire.configure({
   },
 })
 ```
+
+Web Vitals observers live for the page lifetime. The first successful startup
+fixes `reportAllChanges`, `generateTarget`, and
+`includeProcessedEventEntries`; later `configure()` calls can update the tracer
+and metric destination but ignore changed observer options with a diagnostic
+warning. If the initial lazy load or observer startup fails, a later
+`configure()` call retries it.
 
 To emit native OpenTelemetry histogram metrics in parallel with those spans,
 configure a browser-safe metrics proxy and opt Web Vitals into metrics:

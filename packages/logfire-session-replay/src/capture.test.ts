@@ -72,6 +72,43 @@ describe('captureConsole', () => {
       console.log = realLog
     }
   })
+
+  it('keeps a later console wrapper installed and makes the stopped Logfire wrapper inert', () => {
+    const realLog = console.log
+    const originalLog = vi.fn()
+    console.log = originalLog
+    const emit = vi.fn()
+    const stop = captureConsole(emit)
+    const logfireWrapper = console.log
+    const thirdParty = vi.fn(function (this: Console, ...args: unknown[]) {
+      logfireWrapper.apply(this, args)
+    })
+    console.log = thirdParty
+    try {
+      stop()
+      expect(console.log).toBe(thirdParty)
+      console.log('after stop')
+      expect(thirdParty).toHaveBeenCalledWith('after stop')
+      expect(originalLog).toHaveBeenCalledWith('after stop')
+      expect(emit).not.toHaveBeenCalled()
+    } finally {
+      console.log = realLog
+    }
+  })
+
+  it('rolls back earlier console patches when a later method cannot be assigned', () => {
+    const originalLog = console.log
+    const warnDescriptor = Object.getOwnPropertyDescriptor(console, 'warn')
+    Object.defineProperty(console, 'warn', { configurable: true, value: console.warn, writable: false })
+    try {
+      expect(() => captureConsole(vi.fn())).toThrow(/read only/u)
+      expect(console.log).toBe(originalLog)
+    } finally {
+      if (warnDescriptor !== undefined) {
+        Object.defineProperty(console, 'warn', warnDescriptor)
+      }
+    }
+  })
 })
 
 describe('captureNetwork', () => {
@@ -99,6 +136,22 @@ describe('captureNetwork', () => {
     )
     stop()
     expect(window.fetch).toBe(originalFetch)
+  })
+
+  it('keeps a later fetch wrapper installed and suppresses stopped Logfire emission', async () => {
+    const originalFetch = vi.fn(async () => new Response('ok', { status: 200 })) as unknown as typeof fetch
+    Object.defineProperty(window, 'fetch', { value: originalFetch, writable: true, configurable: true })
+    const emit = vi.fn()
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0 })
+    const logfireWrapper = window.fetch
+    const thirdParty = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => logfireWrapper(input, init)) as unknown as typeof fetch
+    window.fetch = thirdParty
+
+    stop()
+    expect(window.fetch).toBe(thirdParty)
+    await window.fetch('/after-stop')
+    expect(originalFetch).toHaveBeenCalledTimes(1)
+    expect(emit).not.toHaveBeenCalled()
   })
 
   it('captures fetch failures and rethrows host errors', async () => {
@@ -226,6 +279,64 @@ describe('captureNetwork', () => {
     Object.defineProperty(window, 'XMLHttpRequest', { value: OriginalXhr, writable: true, configurable: true })
   })
 
+  it('keeps later XHR wrappers installed and makes stopped Logfire wrappers inert', () => {
+    const OriginalXhr = window.XMLHttpRequest
+    installFakeXhr()
+    const prototype = window.XMLHttpRequest.prototype
+    const emit = vi.fn()
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0 })
+    const logfireOpen = prototype.open
+    const logfireSend = prototype.send
+    const thirdPartyOpen = vi.fn(function (this: XMLHttpRequest, ...args: Parameters<XMLHttpRequest['open']>) {
+      logfireOpen.apply(this, args)
+    }) as unknown as typeof prototype.open
+    const thirdPartySend = vi.fn(function (this: XMLHttpRequest, ...args: Parameters<XMLHttpRequest['send']>) {
+      logfireSend.apply(this, args)
+    }) as typeof prototype.send
+    prototype.open = thirdPartyOpen
+    prototype.send = thirdPartySend
+
+    stop()
+    expect(prototype.open).toBe(thirdPartyOpen)
+    expect(prototype.send).toBe(thirdPartySend)
+    const xhr = new window.XMLHttpRequest() as unknown as FakeXhr
+    xhr.open('GET', '/after-stop')
+    xhr.send()
+    xhr.complete(200)
+    expect(emit).not.toHaveBeenCalled()
+    Object.defineProperty(window, 'XMLHttpRequest', { value: OriginalXhr, writable: true, configurable: true })
+  })
+
+  it('preserves XHR receivers, arguments, and predecessor return values', () => {
+    const OriginalXhr = window.XMLHttpRequest
+    installFakeXhr()
+    const prototype = window.XMLHttpRequest.prototype
+    const openResult = Symbol('open result')
+    const sendResult = Symbol('send result')
+    const originalOpen = vi.fn(function () {
+      return openResult
+    })
+    const originalSend = vi.fn(function () {
+      return sendResult
+    })
+    prototype.open = originalOpen as unknown as typeof prototype.open
+    prototype.send = originalSend as unknown as typeof prototype.send
+    const stop = captureNetwork(vi.fn(), { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0 })
+    const xhr = new window.XMLHttpRequest()
+    const wrappedOpen = xhr.open as unknown as (method: string, url: string) => unknown
+    const wrappedSend = xhr.send as unknown as () => unknown
+
+    expect(wrappedOpen.call(xhr, 'GET', '/exact-arguments')).toBe(openResult)
+    expect(wrappedSend.call(xhr)).toBe(sendResult)
+    expect(originalOpen.mock.contexts).toEqual([xhr])
+    expect(originalOpen.mock.calls).toEqual([['GET', '/exact-arguments']])
+    expect(originalSend.mock.contexts).toEqual([xhr])
+    expect(originalSend.mock.calls).toEqual([[]])
+
+    stop()
+    Object.defineProperty(window, 'XMLHttpRequest', { value: OriginalXhr, writable: true, configurable: true })
+  })
+
   it('captures XHR failures without request or response bodies', () => {
     const OriginalXhr = window.XMLHttpRequest
     installFakeXhr()
@@ -339,6 +450,64 @@ describe('captureNavigation', () => {
     }).not.toThrow()
     expect(onError).toHaveBeenCalledWith(emitError)
     stop()
+  })
+
+  it('keeps later history wrappers installed and makes stopped Logfire wrappers inert', () => {
+    const originalPush = history.pushState
+    const originalReplace = history.replaceState
+    const emit = vi.fn()
+    const stop = captureNavigation(emit)
+    const logfirePush = history.pushState
+    const logfireReplace = history.replaceState
+    const thirdPartyPush = vi.fn(function (this: History, ...args: Parameters<History['pushState']>) {
+      logfirePush.apply(this, args)
+    })
+    const thirdPartyReplace = vi.fn(function (this: History, ...args: Parameters<History['replaceState']>) {
+      logfireReplace.apply(this, args)
+    })
+    history.pushState = thirdPartyPush
+    history.replaceState = thirdPartyReplace
+    try {
+      stop()
+      expect(history.pushState).toBe(thirdPartyPush)
+      expect(history.replaceState).toBe(thirdPartyReplace)
+      history.pushState({}, '', '/third-party-push')
+      history.replaceState({}, '', '/third-party-replace')
+      expect(emit).not.toHaveBeenCalled()
+    } finally {
+      history.pushState = originalPush
+      history.replaceState = originalReplace
+    }
+  })
+
+  it('preserves history receivers, arguments, and predecessor return values', () => {
+    const originalPush = history.pushState
+    const originalReplace = history.replaceState
+    const pushResult = Symbol('push result')
+    const replaceResult = Symbol('replace result')
+    const predecessorPush = vi.fn(function () {
+      return pushResult
+    })
+    const predecessorReplace = vi.fn(function () {
+      return replaceResult
+    })
+    history.pushState = predecessorPush as unknown as typeof history.pushState
+    history.replaceState = predecessorReplace as unknown as typeof history.replaceState
+    try {
+      const stop = captureNavigation(vi.fn())
+      const wrappedPush = history.pushState as unknown as (data: unknown, unused: string, url: string) => unknown
+      const wrappedReplace = history.replaceState as unknown as (data: unknown, unused: string, url: string) => unknown
+      expect(wrappedPush.call(history, { page: 1 }, '', '/push')).toBe(pushResult)
+      expect(wrappedReplace.call(history, { page: 2 }, '', '/replace')).toBe(replaceResult)
+      expect(predecessorPush.mock.contexts).toEqual([history])
+      expect(predecessorPush.mock.calls).toEqual([[{ page: 1 }, '', '/push']])
+      expect(predecessorReplace.mock.contexts).toEqual([history])
+      expect(predecessorReplace.mock.calls).toEqual([[{ page: 2 }, '', '/replace']])
+      stop()
+    } finally {
+      history.pushState = originalPush
+      history.replaceState = originalReplace
+    }
   })
 })
 

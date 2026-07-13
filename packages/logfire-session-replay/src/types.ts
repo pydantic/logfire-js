@@ -116,7 +116,9 @@ export interface SessionReplayConfig {
    */
   getSessionId?: () => string | undefined
 
+  /** Probability of recording each new browser session in full. */
   sessionSampleRate?: number
+  /** Probability of buffering each otherwise-unsampled session for uncaught error promotion. */
   onErrorSampleRate?: number
 
   maskAllInputs?: boolean
