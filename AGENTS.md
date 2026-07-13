@@ -13,6 +13,7 @@ This repository is the Pydantic Logfire JavaScript SDK monorepo. It provides Ope
 - `packages/logfire-cf-workers` publishes `@pydantic/logfire-cf-workers`, which adapts Logfire to Cloudflare Workers.
 - `packages/otel-cf-workers` publishes `@pydantic/otel-cf-workers`, the lower-level Cloudflare Workers OpenTelemetry implementation used by the Logfire wrapper.
 - `packages/logfire-browser` publishes `@pydantic/logfire-browser`, which adapts Logfire to browser tracing.
+- `packages/logfire-session-replay` publishes `@pydantic/logfire-session-replay`, the optional standalone rrweb recorder used by the browser package's session replay integration.
 - `packages/tooling-config` contains shared build and lint configuration.
 - `examples/` contains runnable examples for Express, Next.js, Deno, Cloudflare Workers, browser usage, and related integrations.
 

@@ -25,7 +25,7 @@
     "stats",
     "monitoring"
   ],
-  "version": "0.16.4",
+  "version": "0.17.0-alpha.2",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -54,20 +54,34 @@
   },
   "dependencies": {
     "@opentelemetry/api": "catalog:",
+    "@opentelemetry/auto-instrumentations-web": "catalog:",
     "@opentelemetry/core": "catalog:",
+    "@opentelemetry/exporter-metrics-otlp-http": "catalog:",
     "@opentelemetry/exporter-trace-otlp-http": "catalog:",
     "@opentelemetry/instrumentation": "catalog:",
     "@opentelemetry/resources": "catalog:",
-    "logfire": "workspace:*"
+    "@opentelemetry/sdk-metrics": "catalog:",
+    "logfire": "workspace:*",
+    "web-vitals": "catalog:"
   },
   "peerDependencies": {
+    "@pydantic/logfire-session-replay": "workspace:^",
     "@opentelemetry/sdk-trace-web": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:"
   },
+  "peerDependenciesMeta": {
+    "@pydantic/logfire-session-replay": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@opentelemetry/context-zone": "catalog:",
+    "@opentelemetry/instrumentation-fetch": "catalog:",
     "@opentelemetry/sdk-trace-web": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
-    "user-agent-data-types": "^0.4.2"
+    "@pydantic/logfire-session-replay": "workspace:*",
+    "user-agent-data-types": "^0.4.2",
+    "zone.js": "^0.15.1"
   },
   "files": [
     "dist",

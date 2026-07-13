@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       CI: true
     steps:
@@ -34,6 +36,9 @@ jobs:
 
       - name: Test
         run: vp run --filter "./packages/*" test
+
+      - name: Test release tooling
+        run: node scripts/create-npm-token.test.mjs
 
   release:
     needs: [build]

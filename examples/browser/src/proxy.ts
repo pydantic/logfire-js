@@ -1,40 +1,34 @@
-import express from 'express'
-import cors from 'cors'
+import { pathToFileURL } from 'node:url'
 
-const app = express()
-const PORT = 8989
+import {
+  createDevelopmentProxyApp,
+  listenDevelopmentProxy,
+  loadDevelopmentProxyConfig,
+  type DevelopmentProxyConfig,
+} from './proxySupport.ts'
 
-// Enable CORS - handle origins dynamically to avoid wildcard issues with credentials
-app.use(
-  cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    credentials: true,
+export function loadProxyConfig(env: NodeJS.ProcessEnv = process.env): DevelopmentProxyConfig {
+  return loadDevelopmentProxyConfig({
+    defaultAllowedOrigins: ['http://127.0.0.1:5173', 'http://127.0.0.1:4173'],
+    defaultPort: 8989,
+    env,
   })
-)
+}
 
-// Parse JSON bodies
-app.use(express.json())
-
-const logfireUrl = process.env.LOGFIRE_URL || 'http://localhost:4318/v1/traces'
-const token = process.env.LOGFIRE_TOKEN || ''
-
-// Single endpoint: POST /client-traces
-app.post('/client-traces', async (req, res) => {
-  const response = await fetch(logfireUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: token,
-    },
-    body: JSON.stringify(req.body),
+export function createProxyApp(config: DevelopmentProxyConfig) {
+  const app = createDevelopmentProxyApp(config)
+  app.get('/api/post', (_request, response) => {
+    response.json({ id: 1, title: 'Browser proxy response' })
   })
-  res.status(response.status).send(response.body)
-})
+  return app
+}
 
-// Start the server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}, proxying to ${logfireUrl}`)
-})
+export async function startProxy(config: DevelopmentProxyConfig = loadProxyConfig()) {
+  const server = await listenDevelopmentProxy(createProxyApp(config), config)
+  console.log(`Browser development proxy listening on http://${config.host}:${String(config.port)}`)
+  return server
+}
 
-export default app
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await startProxy()
+}

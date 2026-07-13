@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 
 # Creates a granular npm token for CI publishing and updates the
 # NPM_TOKEN secret in the GitHub repo.
@@ -10,9 +10,20 @@ set -uo pipefail
 # Runs from a temp directory to avoid project .npmrc / devEngines config.
 
 REPO="pydantic/logfire-js"
+ENVIRONMENT="npm"
 WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
 TOKEN_FILE="$WORKDIR/token.txt"
+
+command -v gh >/dev/null || { echo "gh CLI is required."; exit 1; }
+command -v npm >/dev/null || { echo "npm CLI is required."; exit 1; }
+command -v script >/dev/null || { echo "script command is required to preserve interactive npm prompts."; exit 1; }
+
+echo "Checking GitHub authentication..."
+gh auth status --hostname github.com >/dev/null
+
+echo "Checking npm authentication..."
+npm whoami --registry https://registry.npmjs.org/ >/dev/null
 
 echo "Creating npm granular access token..."
 echo ""
@@ -24,21 +35,31 @@ script -q "$TOKEN_FILE" sh -c "cd '$WORKDIR' && npm token create \
   --scopes @pydantic \
   --packages logfire \
   --packages-and-scopes-permission read-write \
-  --bypass-2fa \
-  --otp=''"
+  --bypass-2fa"
 
 echo ""
 
-TOKEN=$(grep -i 'token' "$TOKEN_FILE" | grep '│' | head -1 | sed 's/.*│[[:space:]]*//' | sed 's/[[:space:]]*$//' | tr -d '\r')
+TOKEN=$(
+  awk -F '│' '
+    tolower($2) ~ /^[[:space:]]*token[[:space:]]*$/ {
+      value = $3
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      print value
+      exit
+    }
+  ' "$TOKEN_FILE" | tr -d '\r'
+)
+
+if [ -z "$TOKEN" ]; then
+  TOKEN=$(grep -Eo 'npm_[A-Za-z0-9_=-]+' "$TOKEN_FILE" | head -1 || true)
+fi
 
 if [ -z "$TOKEN" ]; then
   echo "Failed to extract token from output."
   exit 1
 fi
 
-echo "Token:"
-echo "$TOKEN"
+echo "Updating NPM_TOKEN secret in $REPO (environment: $ENVIRONMENT)..."
+printf '%s' "$TOKEN" | gh secret set NPM_TOKEN --repo "$REPO" --env "$ENVIRONMENT" >/dev/null
 
-# echo "Updating NPM_TOKEN secret in $REPO (environment: npm)..."
-# echo "$TOKEN" | gh secret set NPM_TOKEN --repo "$REPO" --env npm
-# echo "Done. NPM_TOKEN secret updated in $REPO."
+echo "Done. NPM_TOKEN secret updated in $REPO (environment: $ENVIRONMENT)."

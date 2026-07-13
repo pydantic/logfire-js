@@ -1,0 +1,185 @@
+/**
+ * @vitest-environment jsdom
+ */
+/* eslint-disable import/first, @typescript-eslint/no-non-null-assertion, @typescript-eslint/strict-void-return, no-empty-function, vitest/require-mock-type-parameters */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Mock } from 'vitest'
+
+const { record, stopFn } = vi.hoisted(() => {
+  const stopFn = vi.fn<() => void>()
+  const record = vi.fn<(options: unknown) => typeof stopFn | undefined>(() => stopFn) as Mock<
+    (options: unknown) => typeof stopFn | undefined
+  > & { addCustomEvent: Mock<(tag: string, payload: unknown) => void> }
+  record.addCustomEvent = vi.fn()
+  return { record, stopFn }
+})
+
+vi.mock('rrweb', () => ({ record }))
+
+import { startRecording } from './recorder'
+import type { RecorderOptions } from './recorder'
+import { EventType, IncrementalSource } from './types'
+import type { RrwebEvent } from './types'
+
+function lastOptions(): Record<string, unknown> {
+  return record.mock.calls.at(-1)![0] as Record<string, unknown>
+}
+
+function startRecordingForTest(
+  options: Pick<RecorderOptions, 'emit'> & Partial<Omit<RecorderOptions, 'emit'>>
+): ReturnType<typeof startRecording> {
+  return startRecording({
+    maskAllInputs: true,
+    maskAllText: false,
+    redactUrlPatterns: [],
+    ...options,
+  })
+}
+
+beforeEach(() => {
+  record.mockClear()
+  record.mockReturnValue(stopFn)
+  stopFn.mockClear()
+  record.addCustomEvent.mockClear()
+})
+
+afterEach(() => {
+  vi.clearAllMocks()
+})
+
+describe('startRecording', () => {
+  it('passes conservative privacy and performance options to rrweb', () => {
+    startRecordingForTest({ emit: () => {}, maskAllInputs: true, maskAllText: true })
+    const options = lastOptions()
+    expect(options['recordCanvas']).toBe(false)
+    expect(options['collectFonts']).toBe(false)
+    expect(options['maskAllInputs']).toBe(true)
+    expect(options['maskTextSelector']).toBe('*')
+    expect(options['sampling']).toEqual({
+      mousemove: true,
+      mouseInteraction: true,
+      scroll: 150,
+      media: 800,
+      input: 'last',
+    })
+  })
+
+  it('omits optional selectors and checkoutEveryNms when unset', () => {
+    startRecordingForTest({ emit: () => {}, maskAllInputs: false, checkoutEveryNms: 0 })
+    const options = lastOptions()
+    expect('maskTextSelector' in options).toBe(false)
+    expect('blockSelector' in options).toBe(false)
+    expect('checkoutEveryNms' in options).toBe(false)
+  })
+
+  it('passes optional selectors and checkoutEveryNms when set', () => {
+    startRecordingForTest({
+      emit: () => {},
+      maskAllInputs: false,
+      maskTextSelector: '.secret',
+      blockSelector: '.blocked',
+      checkoutEveryNms: 120_000,
+    })
+    expect(lastOptions()).toMatchObject({
+      maskTextSelector: '.secret',
+      blockSelector: '.blocked',
+      checkoutEveryNms: 120_000,
+    })
+  })
+
+  it('requires maskAllText false before applying a selective text selector', () => {
+    startRecordingForTest({ emit: () => {}, maskAllText: true, maskTextSelector: '.secret' })
+    expect(lastOptions()['maskTextSelector']).toBe('*')
+
+    startRecordingForTest({ emit: () => {}, maskAllText: false, maskTextSelector: '.secret' })
+    expect(lastOptions()['maskTextSelector']).toBe('.secret')
+  })
+
+  it('forwards rrweb emitted events to the caller', () => {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({ emit: (event) => emitted.push(event), maskAllInputs: true })
+    const rrwebEmit = lastOptions()['emit'] as (event: unknown) => void
+    const event = { type: 2, data: { node: {} }, timestamp: 5 }
+    rrwebEmit(event)
+    expect(emitted).toEqual([event])
+  })
+
+  it('sanitizes matching URL attributes in rrweb metadata and DOM snapshots without mutating input', () => {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [/.+/u] })
+    const rrwebEmit = lastOptions()['emit'] as (event: unknown) => void
+    const meta: RrwebEvent = {
+      type: EventType.Meta,
+      data: { href: 'https://app.example.test/orders?token=secret#details', width: 800 },
+      timestamp: 5,
+    }
+    const snapshot: RrwebEvent = { type: EventType.FullSnapshot, data: { node: { href: '?token=attribute' } }, timestamp: 6 }
+    const fullSnapshot: RrwebEvent = {
+      type: EventType.FullSnapshot,
+      data: {
+        node: {
+          attributes: { href: '/orders?token=full#details', title: 'Orders' },
+          childNodes: [{ attributes: { src: '/avatar?token=image' } }],
+        },
+      },
+      timestamp: 7,
+    }
+    const mutation: RrwebEvent = {
+      type: EventType.IncrementalSnapshot,
+      data: {
+        source: IncrementalSource.Mutation,
+        adds: [{ node: { attributes: { action: '/checkout?token=add' } } }],
+        attributes: [{ attributes: { formaction: '/buy?token=mutation', title: 'Buy' }, id: 1 }],
+      },
+      timestamp: 8,
+    }
+
+    rrwebEmit(meta)
+    rrwebEmit(snapshot)
+    rrwebEmit(fullSnapshot)
+    rrwebEmit(mutation)
+
+    expect(emitted[0]).toEqual({ ...meta, data: { href: 'https://app.example.test/orders', width: 800 } })
+    expect(emitted[1]).toBe(snapshot)
+    expect(emitted[2]).toEqual({
+      ...fullSnapshot,
+      data: {
+        node: {
+          attributes: { href: 'http://localhost:3000/orders', title: 'Orders' },
+          childNodes: [{ attributes: { src: 'http://localhost:3000/avatar' } }],
+        },
+      },
+    })
+    expect(emitted[3]).toEqual({
+      ...mutation,
+      data: {
+        source: IncrementalSource.Mutation,
+        adds: [{ node: { attributes: { action: 'http://localhost:3000/checkout' } } }],
+        attributes: [{ attributes: { formaction: 'http://localhost:3000/buy', title: 'Buy' }, id: 1 }],
+      },
+    })
+    expect(meta.data).toEqual({ href: 'https://app.example.test/orders?token=secret#details', width: 800 })
+    expect((fullSnapshot.data as { node: { attributes: { href: string } } }).node.attributes.href).toBe('/orders?token=full#details')
+    expect((mutation.data as { adds: { node: { attributes: { action: string } } }[] }).adds[0]?.node.attributes.action).toBe(
+      '/checkout?token=add'
+    )
+  })
+
+  it('forwards custom events through rrweb statics', () => {
+    const handle = startRecordingForTest({ emit: () => {}, maskAllInputs: true })
+    handle.addCustomEvent('logfire.error', { message: 'x' })
+    expect(record.addCustomEvent).toHaveBeenCalledWith('logfire.error', { message: 'x' })
+  })
+
+  it('stops the rrweb recorder when a stop function is returned', () => {
+    startRecordingForTest({ emit: () => {}, maskAllInputs: true }).stop()
+    expect(stopFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('treats a missing rrweb stop function as startup failure', () => {
+    record.mockReturnValueOnce(undefined)
+    expect(() => startRecordingForTest({ emit: () => {}, maskAllInputs: true })).toThrow(
+      'logfire session replay: rrweb failed to start recording'
+    )
+  })
+})
