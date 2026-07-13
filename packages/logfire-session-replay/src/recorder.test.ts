@@ -18,7 +18,7 @@ vi.mock('rrweb', () => ({ record }))
 
 import { startRecording } from './recorder'
 import type { RecorderOptions } from './recorder'
-import { EventType } from './types'
+import { EventType, IncrementalSource } from './types'
 import type { RrwebEvent } from './types'
 
 function lastOptions(): Record<string, unknown> {
@@ -104,7 +104,7 @@ describe('startRecording', () => {
     expect(emitted).toEqual([event])
   })
 
-  it('sanitizes matching rrweb Meta hrefs without changing other events', () => {
+  it('sanitizes matching URL attributes in rrweb metadata and DOM snapshots without mutating input', () => {
     const emitted: RrwebEvent[] = []
     startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [/.+/u] })
     const rrwebEmit = lastOptions()['emit'] as (event: unknown) => void
@@ -114,13 +114,55 @@ describe('startRecording', () => {
       timestamp: 5,
     }
     const snapshot: RrwebEvent = { type: EventType.FullSnapshot, data: { node: { href: '?token=attribute' } }, timestamp: 6 }
+    const fullSnapshot: RrwebEvent = {
+      type: EventType.FullSnapshot,
+      data: {
+        node: {
+          attributes: { href: '/orders?token=full#details', title: 'Orders' },
+          childNodes: [{ attributes: { src: '/avatar?token=image' } }],
+        },
+      },
+      timestamp: 7,
+    }
+    const mutation: RrwebEvent = {
+      type: EventType.IncrementalSnapshot,
+      data: {
+        source: IncrementalSource.Mutation,
+        adds: [{ node: { attributes: { action: '/checkout?token=add' } } }],
+        attributes: [{ attributes: { formaction: '/buy?token=mutation', title: 'Buy' }, id: 1 }],
+      },
+      timestamp: 8,
+    }
 
     rrwebEmit(meta)
     rrwebEmit(snapshot)
+    rrwebEmit(fullSnapshot)
+    rrwebEmit(mutation)
 
     expect(emitted[0]).toEqual({ ...meta, data: { href: 'https://app.example.test/orders', width: 800 } })
     expect(emitted[1]).toBe(snapshot)
+    expect(emitted[2]).toEqual({
+      ...fullSnapshot,
+      data: {
+        node: {
+          attributes: { href: 'http://localhost:3000/orders', title: 'Orders' },
+          childNodes: [{ attributes: { src: 'http://localhost:3000/avatar' } }],
+        },
+      },
+    })
+    expect(emitted[3]).toEqual({
+      ...mutation,
+      data: {
+        source: IncrementalSource.Mutation,
+        adds: [{ node: { attributes: { action: 'http://localhost:3000/checkout' } } }],
+        attributes: [{ attributes: { formaction: 'http://localhost:3000/buy', title: 'Buy' }, id: 1 }],
+      },
+    })
     expect(meta.data).toEqual({ href: 'https://app.example.test/orders?token=secret#details', width: 800 })
+    expect((fullSnapshot.data as { node: { attributes: { href: string } } }).node.attributes.href).toBe('/orders?token=full#details')
+    expect((mutation.data as { adds: { node: { attributes: { action: string } } }[] }).adds[0]?.node.attributes.action).toBe(
+      '/checkout?token=add'
+    )
   })
 
   it('forwards custom events through rrweb statics', () => {

@@ -110,9 +110,9 @@ export default defineConfig({
           }
           if (request.method === 'POST' && url.pathname.startsWith('/application/')) {
             readBody(request, (body) => {
-              const values = applicationReceipts.get('utf8') ?? []
+              const values = applicationReceipts.get(scenario) ?? []
               values.push({ byteLength: body.byteLength, path: url.pathname })
-              applicationReceipts.set('utf8', values)
+              applicationReceipts.set(scenario, values)
               response.statusCode = 204
               response.end()
             })

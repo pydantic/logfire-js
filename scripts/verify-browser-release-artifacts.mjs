@@ -281,8 +281,8 @@ async function verifyNodeConsumers(artifacts, options, root) {
   await createConsumer(withReplay, dependencySpecs(artifacts, options, true), true)
   commands.push(run('npm', ['install', '--ignore-scripts', '--cache', join(root, 'npm-cache')], withReplay).record)
   await writeNodeSmokeFiles(withReplay, true)
-  const esm = run(process.execPath, ['smoke.mjs'], withReplay)
-  const cjs = run(process.execPath, ['smoke.cjs'], withReplay)
+  const esm = await runNodeSmoke('smoke.mjs', withReplay)
+  const cjs = await runNodeSmoke('smoke.cjs', withReplay)
   commands.push(esm.record, cjs.record)
   resolutions.push(...JSON.parse(esm.stdout).resolutions, ...JSON.parse(cjs.stdout).resolutions)
   commands.push(run(join(withReplay, 'node_modules/.bin/tsc'), ['--project', 'tsconfig.json'], withReplay).record)
@@ -293,7 +293,7 @@ async function verifyNodeConsumers(artifacts, options, root) {
     run('npm', ['install', '--ignore-scripts', '--omit=optional', '--cache', join(root, 'npm-cache-without-replay')], withoutReplay).record
   )
   await writeNodeSmokeFiles(withoutReplay, false)
-  const absent = run(process.execPath, ['smoke.mjs'], withoutReplay)
+  const absent = await runNodeSmoke('smoke.mjs', withoutReplay)
   commands.push(absent.record)
   resolutions.push(...JSON.parse(absent.stdout).resolutions)
 
@@ -713,12 +713,12 @@ function equalSourceStates(left, right) {
   return left.head === right.head && left.index === right.index && left.status === right.status
 }
 
-function run(executable, arguments_, cwd) {
+function run(executable, arguments_, cwd, options = {}) {
   const timeout = basenameForError(executable) === 'agent-browser' ? 60_000 : 10 * 60_000
   const result = spawnSync(executable, arguments_, {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, CI: 'true' },
+    env: options.env ?? { ...process.env, CI: 'true' },
     maxBuffer: 32 * 1024 * 1024,
     timeout,
   })
@@ -737,6 +737,18 @@ function run(executable, arguments_, cwd) {
     stderr: result.stderr.trim(),
     stdout: result.stdout.trim(),
   }
+}
+
+async function runNodeSmoke(filename, cwd) {
+  const canonicalRoot = await realpath(cwd)
+  return run(
+    process.execPath,
+    ['--permission', `--allow-fs-read=${canonicalRoot}`, `--allow-fs-write=${canonicalRoot}`, filename],
+    canonicalRoot,
+    {
+      env: { CI: 'true' },
+    }
+  )
 }
 
 function runAllowFailure(executable, arguments_, cwd) {
