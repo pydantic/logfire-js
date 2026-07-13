@@ -1,10 +1,13 @@
 import { getWebAutoInstrumentations } from '@opentelemetry/auto-instrumentations-web'
 import * as logfire from '@pydantic/logfire-browser'
 
+const proxyOrigin = developmentProxyOrigin(import.meta.env.VITE_LOGFIRE_PROXY_ORIGIN)
+installR7UnhandledObserver(proxyOrigin)
+
 logfire.configure({
-  traceUrl: 'http://localhost:8989/client-traces',
+  traceUrl: `${proxyOrigin}/client-traces`,
   metrics: {
-    metricUrl: 'http://localhost:8989/client-metrics',
+    metricUrl: `${proxyOrigin}/client-metrics`,
   },
   serviceName: 'browser-rum-smoke',
   serviceVersion: '0.1.0',
@@ -13,7 +16,7 @@ logfire.configure({
       ? {
           load: () => import('lf-browser-recorder'),
           maskAllInputs: true,
-          replayUrl: 'http://localhost:8989/client-replay',
+          replayUrl: `${proxyOrigin}/client-replay`,
         }
       : false,
   rum: {
@@ -61,22 +64,57 @@ function delay(ms: number): Promise<void> {
   })
 }
 
+function developmentProxyOrigin(value: string | undefined): string {
+  if (value === undefined || value === '') {
+    return ''
+  }
+  const url = new URL(value)
+  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.origin !== value) {
+    throw new Error('VITE_LOGFIRE_PROXY_ORIGIN must be an http://127.0.0.1:<port> origin')
+  }
+  return value
+}
+
+function installR7UnhandledObserver(origin: string): void {
+  if (origin === '') {
+    return
+  }
+  window.__r7Unhandled = []
+  window.addEventListener('unhandledrejection', (event) => {
+    window.__r7Unhandled?.push(String(event.reason))
+  })
+}
+
 sessionElement?.replaceChildren(logfire.getBrowserSessionId() ?? 'unavailable')
 
 document.querySelector<HTMLButtonElement>('[data-action="fetch"]')?.addEventListener('click', () => {
   setStatus('fetching')
   logfire.info('Browser RUM smoke fetch clicked')
-  void logfire.span('browser rum smoke fetch', {
-    attributes: {
-      'example.action': 'fetch',
-    },
-    callback: async () => {
-      const response = await fetch('https://jsonplaceholder.typicode.com/posts/1')
-      setStatus(`fetched ${response.status}`)
-      return response
-    },
-  })
+  void runFetchAction()
 })
+
+async function runFetchAction(): Promise<void> {
+  try {
+    await logfire.span('browser rum smoke fetch', {
+      attributes: {
+        'example.action': 'fetch',
+      },
+      callback: async () => {
+        const response = await fetch(`${proxyOrigin}/api/post`)
+        if (!response.ok) {
+          throw new Error(`basic fetch failed with ${String(response.status)}`)
+        }
+        setStatus(`fetched ${response.status}`)
+        return response
+      },
+    })
+  } catch (error) {
+    setStatus('fetch failed')
+    logfire.reportError('Browser example fetch failed', error, {
+      'example.action': 'fetch',
+    })
+  }
+}
 
 document.querySelector<HTMLButtonElement>('[data-action="work"]')?.addEventListener('click', () => {
   setStatus('working')

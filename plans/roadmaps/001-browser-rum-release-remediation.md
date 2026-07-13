@@ -296,7 +296,7 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 
 ### R7: Make documented proxies and examples safe and truthful
 
-- **Status**: READY FOR PRP
+- **Status**: VERIFIED
 - **Outcome**: the documented development proxy supports its claimed routes and examples fail visibly without exposing token-injecting servers broadly.
 - **Why separate**: Node proxy/server and browser UI validation are independent from SDK runtime internals.
 - **Depends on**: R5 supplies final privacy wording before completion, but implementation can begin with the existing route contract.
@@ -307,13 +307,21 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 - **In scope**: B7-B9, loopback binding, explicit origin allow-list, 413/502 behavior, query encoding, example rejected-action UX, build prerequisite and `.env.example` guidance, default URL review.
 - **Out of scope**: production proxy deployment or modifying the Python Logfire repository.
 - **Validation boundary**: exercise valid, oversize, and failed-upstream requests plus example error UI through running servers.
-- **Remaining questions**: exact documentation form for a separate Python replay relay; no SDK architecture dependency.
-- **Child PRP**: Not generated.
-- **Completion evidence**: Pending.
+- **Remaining questions**: None; B7 is dispositioned by separating the Python trace/log/metric forwarding helpers explicitly from the independently authenticated replay endpoint contract and JavaScript development examples, without adding a Python relay or production proxy design.
+- **Child PRP**: `plans/029-browser-proxy-example-safety.md` — Deep-assurance cold review READY on 2026-07-13 after pinning the loopback/origin/environment and header contracts, all-route 403/413/502 evidence for both proxies, exact Changeset validation, and a real-browser success/HTTP/socket-rejection/retry matrix for every `CX-7` action.
+- **Completion evidence**: PRP 029 verified on 2026-07-13 from baseline
+  `c628404`. `CX-6` and `CX-7` are `DIRECTLY VERIFIED`: both actual proxy suites
+  passed 8/8 cases, a genuine-gzip public replay receipt confirmed byte and
+  encoding fidelity, both Vite examples built, and all 12 real-browser
+  success/HTTP/socket-rejection rows passed with retries, responsive controls,
+  and zero unhandled rejections. `pnpm run check` passed. Independent Deep
+  consumer/compliance/engineering review reported `READY` with no material
+  findings. R8 has since advanced to `PRP READY`; R9 remains blocked until R8
+  verifies.
 
 ### R8: Reconcile Changesets and release tooling
 
-- **Status**: READY FOR PRP
+- **Status**: PRP READY
 - **Outcome**: release metadata produces only valid intended versions and npm credentials never appear in command arguments.
 - **Why separate**: release-plan correctness is independently simulatable and should not be mixed with runtime fixes.
 - **Depends on**: final package-visible change inventory before completion; implementation can normalize the private manifest and token input immediately.
@@ -324,8 +332,17 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 - **In scope**: B6, B12, private Next.js version, changelog coverage, deterministic test assertion cleanup touching release work, bounded generated-artifact inspection.
 - **Out of scope**: publishing or modifying unrelated package versions.
 - **Validation boundary**: detached `changeset version` simulation and process-argument test produce valid expected output.
-- **Remaining questions**: final changeset prose after upstream children complete.
-- **Child PRP**: Not generated.
+- **Remaining questions**: None. Live Changesets 2.30.0 evidence resolves the
+  private Next.js package to an explicit `0.0.0` that remains unchanged and
+  restores the exact alpha `autoInstrumentations` sentence as the browser-only
+  minor `.changeset/browser-rum-lifecycle.md`; the expected private client
+  normalization remains `0.1.16`.
+- **Child PRP**: `plans/030-browser-release-integrity.md` — Deep-assurance PRP
+  READY on 2026-07-13 after a disposable exit-mode spike and cold-review
+  corrections pinned the exact Changesets CLI/assemble/apply versions, enforced
+  full source and generated-tree preservation, closed success/failure token
+  argv/stdin and scratch cleanup, kept the exact-version verifier out of
+  permanent CI, and bounded deterministic assertions to stable values.
 - **Completion evidence**: Pending.
 
 ### R9: Integrate, merge, and publish the official stable release

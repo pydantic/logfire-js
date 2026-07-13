@@ -1,117 +1,34 @@
-import express from 'express'
-import cors from 'cors'
+import { pathToFileURL } from 'node:url'
 
-const app = express()
-const PORT = 8989
+import {
+  createDevelopmentProxyApp,
+  listenDevelopmentProxy,
+  loadDevelopmentProxyConfig,
+  type DevelopmentProxyConfig,
+} from './proxySupport.ts'
 
-// Enable CORS - handle origins dynamically to avoid wildcard issues with credentials
-app.use(
-  cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    credentials: true,
-  })
-)
-
-const logfireUrl = process.env.LOGFIRE_URL || 'http://localhost:3000/v1/traces'
-const logfireMetricsUrl = process.env.LOGFIRE_METRICS_URL || logfireUrl.replace(/\/v1\/traces$/, '/v1/metrics')
-const logfireReplayUrl = process.env.LOGFIRE_REPLAY_URL || logfireUrl.replace(/\/v1\/traces$/, '/v1/replay')
-const token = process.env.LOGFIRE_TOKEN || ''
-const replayBodyLimitBytes = 10 * 1024 * 1024
-
-class RequestBodyTooLargeError extends Error {}
-
-function authHeaders(): Record<string, string> {
-  if (token.length === 0) {
-    return {}
-  }
-  return { Authorization: /^Bearer\s+/iu.test(token) ? token : `Bearer ${token}` }
-}
-
-function readRawBody(req: express.Request, limitBytes: number): Promise<ArrayBuffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    let totalBytes = 0
-    let settled = false
-
-    const fail = (error: Error) => {
-      if (settled) {
-        return
-      }
-      settled = true
-      reject(error)
-    }
-
-    req.on('data', (chunk: Buffer) => {
-      totalBytes += chunk.byteLength
-      if (totalBytes > limitBytes) {
-        fail(new RequestBodyTooLargeError('Replay request body too large'))
-        req.destroy()
-        return
-      }
-      chunks.push(chunk)
-    })
-    req.on('end', () => {
-      if (settled) {
-        return
-      }
-      settled = true
-      const body = Buffer.concat(chunks)
-      resolve(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer)
-    })
-    req.on('error', fail)
+export function loadProxyConfig(env: NodeJS.ProcessEnv = process.env): DevelopmentProxyConfig {
+  return loadDevelopmentProxyConfig({
+    defaultAllowedOrigins: ['http://127.0.0.1:5173', 'http://127.0.0.1:4173'],
+    defaultPort: 8989,
+    env,
   })
 }
 
-app.post('/client-replay/:sessionId', async (req, res) => {
-  const replayUrl = `${logfireReplayUrl.replace(/\/+$/u, '')}/${encodeURIComponent(req.params['sessionId'] ?? '')}?seq=${String(req.query['seq'] ?? '')}`
-  try {
-    const replayBody = await readRawBody(req, replayBodyLimitBytes)
-    const contentEncoding = req.header('content-encoding')
-    const response = await fetch(replayUrl, {
-      method: 'POST',
-      headers: {
-        ...authHeaders(),
-        ...(contentEncoding === undefined ? {} : { 'Content-Encoding': contentEncoding }),
-        'Content-Type': String(req.header('content-type') ?? 'application/json'),
-      },
-      body: replayBody,
-    })
-    res.status(response.status).send(await response.text())
-  } catch (error) {
-    console.error('Replay proxy request failed', error)
-    res.status(error instanceof RequestBodyTooLargeError ? 413 : 502).json({ error: 'replay proxy request failed' })
-  }
-})
-
-// Parse JSON bodies after the raw replay route.
-app.use(express.json())
-
-async function proxyTelemetry(req: express.Request, res: express.Response, url: string): Promise<void> {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      ...authHeaders(),
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(req.body),
+export function createProxyApp(config: DevelopmentProxyConfig) {
+  const app = createDevelopmentProxyApp(config)
+  app.get('/api/post', (_request, response) => {
+    response.json({ id: 1, title: 'Browser proxy response' })
   })
-  res.status(response.status).send(await response.text())
+  return app
 }
 
-app.post('/client-traces', async (req, res) => {
-  await proxyTelemetry(req, res, logfireUrl)
-})
+export async function startProxy(config: DevelopmentProxyConfig = loadProxyConfig()) {
+  const server = await listenDevelopmentProxy(createProxyApp(config), config)
+  console.log(`Browser development proxy listening on http://${config.host}:${String(config.port)}`)
+  return server
+}
 
-app.post('/client-metrics', async (req, res) => {
-  await proxyTelemetry(req, res, logfireMetricsUrl)
-})
-
-// Start the server
-app.listen(PORT, () => {
-  console.log(
-    `Server running on port ${PORT}, proxying traces to ${logfireUrl}, metrics to ${logfireMetricsUrl}, and replay to ${logfireReplayUrl}`
-  )
-})
-
-export default app
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await startProxy()
+}

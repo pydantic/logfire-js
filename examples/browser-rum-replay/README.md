@@ -16,25 +16,42 @@ application flag.
 
 ## Run It
 
-Start the local proxy in one terminal:
+Build workspace packages from the repository root before starting either Vite
+example:
+
+```bash
+pnpm run build
+```
+
+The included Express proxy is a development-only helper, not a production proxy
+deployment. It binds to `127.0.0.1`, uses an exact bounded Vite dev and preview
+origin allow-list, limits request bodies, and returns completed `413` or `502`
+responses for oversized bodies or failed upstreams. It adds the Logfire write
+token server-side; no credential is bundled into the browser.
+
+Optionally create a local environment file and replace the token placeholder:
 
 ```bash
 cd examples/browser-rum-replay
-LOGFIRE_TOKEN=logfire-write-token pnpm run proxy
+cp .env.example .env
 ```
 
-The proxy reads normal process environment variables. Pass them inline, export
-them in your shell, or copy `.env.example` to `.env` and load it with your usual
-shell tooling. The default values target the local platform stack at
-`http://localhost:3000` and its seeded `logfire/logfire` write token.
+The proxy script uses `--env-file-if-exists=.env`, so the file is optional.
+Exported and inline variables also work. Start the proxy in one terminal:
+
+```bash
+cd examples/browser-rum-replay
+pnpm run proxy
+```
 
 Environment variables:
 
-- `LOGFIRE_URL`, defaulting to `http://localhost:3000/v1/traces`
-- `LOGFIRE_METRICS_URL`, defaulting to `LOGFIRE_URL` with `/v1/metrics`
-- `LOGFIRE_REPLAY_URL`, defaulting to `LOGFIRE_URL` with `/v1/replay`
-- `LOGFIRE_TOKEN`, forwarded as the `Authorization` header; both
-  `logfire-write-token` and `Bearer logfire-write-token` work
+- `LOGFIRE_URL`, defaulting to the public Logfire `/v1/traces` endpoint
+- `LOGFIRE_METRICS_URL`, defaulting to the matching `/v1/metrics` endpoint
+- `LOGFIRE_REPLAY_URL`, defaulting to the matching `/v1/replay` endpoint
+- `LOGFIRE_TOKEN`, required and normalized to one `Bearer` authorization value
+- `LOGFIRE_ALLOWED_ORIGINS`, defaulting to the exact Vite dev and preview origins
+- `HOST`, fixed to `127.0.0.1`
 - `PORT`, defaulting to `8990`
 
 Start the browser app in another terminal:
@@ -47,8 +64,14 @@ pnpm run dev
 Open:
 
 ```text
-http://localhost:5174/?secret=should-not-appear#fragment
+http://127.0.0.1:5174/?secret=should-not-appear#fragment
 ```
+
+The browser uses relative `/api` and `/client-*` URLs. Vite forwards them to
+`LOGFIRE_PROXY_TARGET`, which defaults to the loopback Express helper. This is
+the authenticated backend-proxy model: the browser never receives a write
+token. `VITE_LOGFIRE_PROXY_ORIGIN` is an explicit test-only escape hatch for
+direct CORS checks and accepts only an `http://127.0.0.1:<port>` origin.
 
 Use the buttons to generate fetch, XHR, manual spans, layout shifts, route
 changes, console events, checkout spans, and reported errors.

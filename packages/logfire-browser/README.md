@@ -19,7 +19,13 @@ If you're instrumenting Cloudflare, see the [Logfire CF workers package](https:/
 
 ## Basic usage
 
-See the [Logfire Browser docs for a primer](https://logfire.pydantic.dev/docs/integrations/javascript/browser/). Ready to run examples are available in the repository [in vanilla browser](https://github.com/pydantic/logfire-js/tree/main/examples/browser) and [Next.js variants](https://github.com/pydantic/logfire-js/tree/main/examples/nextjs-client-side-instrumentation).
+See the [Logfire Browser docs for a primer](https://logfire.pydantic.dev/docs/integrations/javascript/browser/). Ready to run examples are available in the repository [in vanilla browser](https://github.com/pydantic/logfire-js/tree/main/examples/browser), [with RUM and replay](https://github.com/pydantic/logfire-js/tree/main/examples/browser-rum-replay), and [in Next.js variants](https://github.com/pydantic/logfire-js/tree/main/examples/nextjs-client-side-instrumentation).
+
+Build the workspace packages before running the Vite examples. The standalone
+examples use same-origin browser URLs and development-only Express helpers that
+bind to `127.0.0.1`, accept exact configured origins, and inject the Logfire
+write token server-side. Do not put a write token in a browser bundle or treat
+those loopback helpers as a production proxy design.
 
 ## Managed Variables
 

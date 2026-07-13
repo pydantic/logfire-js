@@ -396,9 +396,11 @@ A browser proxy should:
 
 For Next.js, see [Next.js](../frameworks/nextjs.md). For a standalone browser example, see the `examples/browser` project in this repository.
 
-## Python Backend Proxy
+## Python Backend Proxy (Telemetry Only)
 
-Python backends can use the `logfire.forward_export_request_starlette` and `logfire.forward_export_request` helpers to create a telemetry ingress endpoint without exposing the write token.
+Python backends can use the `logfire.forward_export_request_starlette` and
+`logfire.forward_export_request` helpers to create a trace, log, and metric
+telemetry ingress endpoint without exposing the write token.
 
 For FastAPI/Starlette, use `logfire.forward_export_request_starlette` in an endpoint, for example:
 
@@ -423,6 +425,27 @@ async def proxy_browser_telemetry(request: Request):
 
 The `{path:path}` route parameter is required. `forward_export_request_starlette` rejects paths other than `/v1/traces`, `/v1/logs`, and `/v1/metrics` so that it can forward to the appropriate Logfire backend endpoint.
 
+These Python helpers cannot forward session replay. Replay is a separate
+capability and must not be routed through this telemetry-only endpoint. A replay
+proxy needs its own authenticated route that:
+
+- accepts `POST /v1/replay/{session_id}?seq={sequence}`
+- percent-encodes the session id as one path segment and the sequence as one
+  query value
+- forwards the request bytes and their `Content-Type` and
+  `Content-Encoding` unchanged
+- adds the Logfire write token only on the server
+- applies the application's authentication, exact origin policy, rate limits,
+  and request-size limit
+
+This repository's
+[`examples/browser`](https://github.com/pydantic/logfire-js/tree/main/examples/browser)
+and
+[`examples/browser-rum-replay`](https://github.com/pydantic/logfire-js/tree/main/examples/browser-rum-replay)
+projects contain runnable JavaScript development proxies for traces, metrics,
+and replay. They bind to loopback and are reference helpers for local
+development, not a production proxy deployment design.
+
 For Django, Flask, Litestar, or a custom HTTP server, use `forward_export_request` directly, e.g:
 
 ```py title="main.py"
@@ -445,7 +468,7 @@ def my_custom_proxy_route(request):
     )
 ```
 
-Protect this endpoint in production. Treat browser telemetry ingress like any other externally reachable write endpoint: clients can be numerous, retry requests, duplicate payloads, or send malicious data. Use your normal authentication, session, CORS, and rate-limiting controls. Configure CORS for the app origin that should send telemetry; avoid `*` unless you intentionally operate a public telemetry ingestion endpoint.
+Protect this endpoint in production. Treat browser telemetry ingress like any other externally reachable write endpoint: clients can be numerous, retry requests, duplicate payloads, or send malicious data. Use your normal authentication, session, CORS, and rate-limiting controls. Configure CORS for the exact app origins that should send telemetry; do not use wildcard credentialed CORS.
 
 Caveats:
 

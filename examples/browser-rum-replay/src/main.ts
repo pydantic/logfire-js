@@ -23,7 +23,8 @@ interface CheckoutResponse {
   userId: string
 }
 
-const proxyOrigin = import.meta.env.VITE_LOGFIRE_PROXY_ORIGIN ?? 'http://localhost:8990'
+const proxyOrigin = developmentProxyOrigin(import.meta.env.VITE_LOGFIRE_PROXY_ORIGIN)
+installR7UnhandledObserver(proxyOrigin)
 const traceUrl = `${proxyOrigin}/client-traces`
 const metricUrl = `${proxyOrigin}/client-metrics`
 const replayUrl = `${proxyOrigin}/client-replay`
@@ -159,85 +160,103 @@ async function loadCatalog(): Promise<void> {
   setStatus('loading catalog')
   logEvent('fetch catalog started')
   const region = regionSelect.value
-  await logfire.span('browser replay catalog workflow', {
-    attributes: {
-      'app.route': routeTemplate(window.location.pathname),
-      'example.action': 'catalog',
-      'example.region': region,
-    },
-    callback: async () => {
-      logfire.info('Catalog fetch requested', {
+  try {
+    await logfire.span('browser replay catalog workflow', {
+      attributes: {
+        'app.route': routeTemplate(window.location.pathname),
+        'example.action': 'catalog',
         'example.region': region,
-      })
-      const response = await fetch(
-        `${proxyOrigin}/api/catalog?region=${encodeURIComponent(region)}&token=client-secret&email=demo@example.com`
-      )
-      const catalog = (await response.json()) as CatalogResponse
-      renderCatalog(catalog)
-      setStatus(`catalog loaded for ${catalog.region}`)
-      logEvent(`fetch catalog completed with ${String(catalog.products.length)} products`)
-    },
-  })
+      },
+      callback: async () => {
+        logfire.info('Catalog fetch requested', {
+          'example.region': region,
+        })
+        const response = await fetch(
+          `${proxyOrigin}/api/catalog?region=${encodeURIComponent(region)}&token=client-secret&email=demo@example.com`
+        )
+        if (!response.ok) {
+          throw new Error(`catalog failed with ${String(response.status)}`)
+        }
+        const catalog = (await response.json()) as CatalogResponse
+        renderCatalog(catalog)
+        setStatus(`catalog loaded for ${catalog.region}`)
+        logEvent(`fetch catalog completed with ${String(catalog.products.length)} products`)
+      },
+    })
+  } catch (error) {
+    failAction('catalog', error)
+  }
 }
 
 async function loadInventoryWithXhr(): Promise<void> {
   setStatus('checking inventory')
   logEvent('xhr inventory started')
-  const inventory = await logfire.span('browser replay xhr inventory', {
-    attributes: {
-      'example.action': 'xhr',
-    },
-    callback: async () => xhrJson<InventoryResponse>(`${proxyOrigin}/api/inventory?secret=inventory-secret`),
-  })
-  setStatus(`inventory ${String(inventory.available)} at ${inventory.warehouse}`)
-  logEvent(`xhr inventory completed at ${inventory.checkedAt}`)
+  try {
+    const inventory = await logfire.span('browser replay xhr inventory', {
+      attributes: {
+        'example.action': 'xhr',
+      },
+      callback: async () => xhrJson<InventoryResponse>(`${proxyOrigin}/api/inventory?secret=inventory-secret`),
+    })
+    setStatus(`inventory ${String(inventory.available)} at ${inventory.warehouse}`)
+    logEvent(`xhr inventory completed at ${inventory.checkedAt}`)
+  } catch (error) {
+    failAction('inventory', error)
+  }
 }
 
 async function runCheckout(): Promise<void> {
   setStatus('checkout running')
   logEvent('checkout workflow started')
-  await logfire.span('browser replay checkout workflow', {
-    attributes: {
-      'app.route': routeTemplate(window.location.pathname),
-      'example.action': 'checkout',
-      'enduser.id': getUserId(),
-    },
-    callback: async () => {
-      await logfire.span('browser replay validate cart', {
-        attributes: {
-          'example.step': 'validate',
-        },
-        callback: async () => {
-          await delay(90)
-        },
-      })
-      await logfire.span('browser replay submit order', {
-        attributes: {
-          'example.step': 'submit',
-        },
-        callback: async () => {
-          const response = await fetch(`${proxyOrigin}/api/checkout?secret=checkout-secret`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              userId: getUserId(),
-              region: regionSelect.value,
-              privateNote: getInput('private-note').value,
-            }),
-          })
-          const checkout = (await response.json()) as CheckoutResponse
-          appendResult(checkout.orderId, checkout.userId, checkout.accepted ? 'accepted' : 'rejected')
-          logfire.info('Checkout accepted', {
-            'example.order_id': checkout.orderId,
-          })
-        },
-      })
-    },
-  })
-  setStatus('checkout accepted')
-  logEvent('checkout workflow completed')
+  try {
+    await logfire.span('browser replay checkout workflow', {
+      attributes: {
+        'app.route': routeTemplate(window.location.pathname),
+        'example.action': 'checkout',
+        'enduser.id': getUserId(),
+      },
+      callback: async () => {
+        await logfire.span('browser replay validate cart', {
+          attributes: {
+            'example.step': 'validate',
+          },
+          callback: async () => {
+            await delay(90)
+          },
+        })
+        await logfire.span('browser replay submit order', {
+          attributes: {
+            'example.step': 'submit',
+          },
+          callback: async () => {
+            const response = await fetch(`${proxyOrigin}/api/checkout?secret=checkout-secret`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                userId: getUserId(),
+                region: regionSelect.value,
+                privateNote: getInput('private-note').value,
+              }),
+            })
+            if (!response.ok) {
+              throw new Error(`checkout failed with ${String(response.status)}`)
+            }
+            const checkout = (await response.json()) as CheckoutResponse
+            appendResult(checkout.orderId, checkout.userId, checkout.accepted ? 'accepted' : 'rejected')
+            logfire.info('Checkout accepted', {
+              'example.order_id': checkout.orderId,
+            })
+          },
+        })
+      },
+    })
+    setStatus('checkout accepted')
+    logEvent('checkout workflow completed')
+  } catch (error) {
+    failAction('checkout', error)
+  }
 }
 
 function createLayoutShift(): void {
@@ -311,6 +330,14 @@ function setStatus(status: string): void {
   statusElement.textContent = status
 }
 
+function failAction(action: 'catalog' | 'inventory' | 'checkout', error: unknown): void {
+  setStatus(`${action} failed`)
+  logEvent(`${action} failed`)
+  logfire.reportError('Browser replay example action failed', error, {
+    'example.action': action,
+  })
+}
+
 function logEvent(message: string): void {
   const timestamp = new Date().toLocaleTimeString()
   logElement.textContent = `[${timestamp}] ${message}\n${logElement.textContent ?? ''}`.slice(0, 3_000)
@@ -338,6 +365,27 @@ function routeTemplate(pathname: string): string {
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
+  })
+}
+
+function developmentProxyOrigin(value: string | undefined): string {
+  if (value === undefined || value === '') {
+    return ''
+  }
+  const url = new URL(value)
+  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.origin !== value) {
+    throw new Error('VITE_LOGFIRE_PROXY_ORIGIN must be an http://127.0.0.1:<port> origin')
+  }
+  return value
+}
+
+function installR7UnhandledObserver(origin: string): void {
+  if (origin === '') {
+    return
+  }
+  window.__r7Unhandled = []
+  window.addEventListener('unhandledrejection', (event) => {
+    window.__r7Unhandled?.push(String(event.reason))
   })
 }
 
