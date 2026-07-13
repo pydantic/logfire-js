@@ -13,6 +13,8 @@ import type {
 
 import type { BrowserWebVitalsMetricOptions, BrowserWebVitalsMetricRecorder } from './browserMetrics'
 
+const LOGFIRE_SPAN_TYPE_KEY = 'logfire.span_type'
+
 export interface BrowserWebVitalsOptions {
   /**
    * Report metric changes instead of only final reportable values.
@@ -56,6 +58,7 @@ interface BrowserWebVitalsStartOptions extends BrowserWebVitalsOptions {
 let startupPromise: Promise<void> | undefined
 let currentMetricRecorder: BrowserWebVitalsMetricRecorder | undefined
 let currentTracer: Tracer | undefined
+let currentOwner: { active: boolean } | undefined
 let registeredObserverOptions: ObserverOptions | undefined
 let observerOptionsDuringStartup: ObserverOptions | undefined
 const registeredWebVitals = new Set<WebVitalName>()
@@ -74,7 +77,11 @@ interface ReportOptionSource {
   reportAllChanges?: boolean | undefined
 }
 
-function createHandle(metricRecorder: BrowserWebVitalsMetricRecorder | undefined, tracer: Tracer): BrowserWebVitalsHandle {
+function createHandle(
+  metricRecorder: BrowserWebVitalsMetricRecorder | undefined,
+  tracer: Tracer,
+  owner: { active: boolean }
+): BrowserWebVitalsHandle {
   let shutdownCalled = false
   return {
     async shutdown() {
@@ -82,12 +89,16 @@ function createHandle(metricRecorder: BrowserWebVitalsMetricRecorder | undefined
         return Promise.resolve()
       }
       shutdownCalled = true
+      owner.active = false
       metricRecorder?.shutdown()
       if (currentMetricRecorder === metricRecorder) {
         currentMetricRecorder = undefined
       }
       if (currentTracer === tracer) {
         currentTracer = undefined
+      }
+      if (currentOwner === owner) {
+        currentOwner = undefined
       }
       return Promise.resolve()
     },
@@ -124,7 +135,7 @@ function createInpReportOptions(options: ReportOptionSource = {}): INPAttributio
 }
 
 function createBaseAttributes(metric: MetricWithAttribution): Attributes {
-  const attributes: Attributes = {}
+  const attributes: Attributes = { [LOGFIRE_SPAN_TYPE_KEY]: 'log' }
   setPrimitiveAttribute(attributes, 'web_vital.name', metric.name)
   setPrimitiveAttribute(attributes, 'web_vital.value', metric.value)
   setPrimitiveAttribute(attributes, 'web_vital.delta', metric.delta)
@@ -234,7 +245,7 @@ function registerWebVitals(webVitals: WebVitalsAttributionModule, requestedOptio
   const options = (observerOptionsDuringStartup ??= normalizeObserverOptions(requestedOptions))
   const reportOptions = createBaseReportOptions(options)
   const report = (metric: MetricWithAttribution) => {
-    if (registeredObserverOptions === undefined) {
+    if (registeredObserverOptions === undefined || currentOwner?.active !== true) {
       return
     }
     reportWebVital(metric, currentMetricRecorder, currentTracer)
@@ -257,10 +268,12 @@ function registerWebVitals(webVitals: WebVitalsAttributionModule, requestedOptio
 }
 
 export async function startBrowserWebVitals(options: BrowserWebVitalsStartOptions): Promise<BrowserWebVitalsHandle> {
+  const owner = { active: true }
   if (options.metricRecorder !== undefined) {
     currentMetricRecorder = options.metricRecorder
   }
   currentTracer = options.tracer
+  currentOwner = owner
 
   const observerOptions = normalizeObserverOptions(options)
   if (startupPromise === undefined) {
@@ -283,6 +296,7 @@ export async function startBrowserWebVitals(options: BrowserWebVitalsStartOption
   try {
     await startupPromise
   } catch (error) {
+    owner.active = false
     options.metricRecorder?.shutdown()
     if (currentMetricRecorder === options.metricRecorder) {
       currentMetricRecorder = undefined
@@ -290,18 +304,22 @@ export async function startBrowserWebVitals(options: BrowserWebVitalsStartOption
     if (currentTracer === options.tracer) {
       currentTracer = undefined
     }
+    if (currentOwner === owner) {
+      currentOwner = undefined
+    }
     throw error
   }
   if (registeredObserverOptions !== undefined && !sameObserverOptions(registeredObserverOptions, observerOptions)) {
     diag.warn('logfire-browser: Web Vitals observer options are fixed by the first successful startup; ignoring changed options')
   }
-  return createHandle(options.metricRecorder, options.tracer)
+  return createHandle(options.metricRecorder, options.tracer, owner)
 }
 
 export function resetBrowserWebVitalsForTests(): void {
   startupPromise = undefined
   currentMetricRecorder = undefined
   currentTracer = undefined
+  currentOwner = undefined
   registeredObserverOptions = undefined
   observerOptionsDuringStartup = undefined
   registeredWebVitals.clear()

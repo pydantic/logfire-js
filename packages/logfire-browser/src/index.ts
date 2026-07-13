@@ -57,7 +57,7 @@ import { clearConfiguredBrowserSession, configureBrowserSession, getBrowserSessi
 import type { RUMOptions } from './browserSession'
 import type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
 import { BrowserSessionReplayState, startBrowserSessionReplay } from './sessionReplay'
-import type { BrowserSessionReplayOptions } from './sessionReplay'
+import type { BrowserSessionReplayControl, BrowserSessionReplayOptions } from './sessionReplay'
 import { startBrowserWebVitals } from './webVitals'
 import type { BrowserWebVitalsOptions } from './webVitals'
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
@@ -82,6 +82,18 @@ export type { BrowserWebVitalsOptions } from './webVitals'
 type TraceExporterConfig = NonNullable<typeof OTLPTraceExporter extends new (config: infer T) => unknown ? T : never>
 export type BrowserInstrumentationInput = Instrumentation | Instrumentation[] | (() => Instrumentation | Instrumentation[])
 export type AutoInstrumentationsConfig = WebAutoInstrumentationConfigMap & { enabled?: boolean }
+
+export interface BrowserSessionReplayHandle {
+  readonly mode: 'full' | 'buffer' | 'off'
+  readonly recording: boolean
+  flush(): Promise<void>
+  stop(): Promise<void>
+}
+
+export interface BrowserConfigureHandle {
+  (): Promise<void>
+  readonly sessionReplay?: BrowserSessionReplayHandle
+}
 
 export interface LogfireConfigOptions {
   /**
@@ -435,7 +447,7 @@ function restoreSharedLogfireApiConfig(snapshot: ReturnType<typeof snapshotShare
   logfireApiConfig.tracer = snapshot.tracer
 }
 
-export function configure(options: LogfireConfigOptions): () => Promise<void> {
+export function configure(options: LogfireConfigOptions): BrowserConfigureHandle {
   assertProviderLifecycleAvailable()
 
   const webVitalsOptions = resolveBrowserWebVitalsOptions(options.rum?.webVitals)
@@ -582,13 +594,59 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
     tracerProvider,
   })
 
+  let readySessionReplay: BrowserSessionReplayControl | undefined
   const sessionReplayStartupPromise =
     sessionReplayOptions === undefined || browserSessionManager === undefined
       ? undefined
       : startBrowserSessionReplay(sessionReplayOptions, browserSessionManager, browserSessionReplayState, {
           metricUrl: browserMetricsOptions?.metricUrl,
           traceUrl: options.traceUrl,
+        }).then((sessionReplay) => {
+          readySessionReplay = sessionReplay
+          return sessionReplay
         })
+
+  let replayOperationTail = Promise.resolve()
+  let replayStopPromise: Promise<void> | undefined
+  let replayStopped = false
+  const sessionReplayHandle: BrowserSessionReplayHandle | undefined =
+    sessionReplayStartupPromise === undefined
+      ? undefined
+      : {
+          get mode() {
+            return replayStopped ? 'off' : (readySessionReplay?.mode ?? 'off')
+          },
+          get recording() {
+            return replayStopped ? false : (readySessionReplay?.recording ?? false)
+          },
+          // Return stored promises directly so stop/full-cleanup calls preserve identity.
+          // eslint-disable-next-line @typescript-eslint/promise-function-async
+          flush() {
+            if (replayStopped) {
+              return replayStopPromise ?? replayOperationTail
+            }
+            const flushPromise = replayOperationTail.then(async () => {
+              const sessionReplay = await sessionReplayStartupPromise
+              await sessionReplay?.flush()
+            })
+            replayOperationTail = flushPromise
+            return flushPromise
+          },
+          // eslint-disable-next-line @typescript-eslint/promise-function-async
+          stop() {
+            if (replayStopPromise !== undefined) {
+              return replayStopPromise
+            }
+            replayStopped = true
+            browserSessionReplayState.clear()
+            replayStopPromise = replayOperationTail.then(async () => {
+              const sessionReplay = await sessionReplayStartupPromise
+              await sessionReplay?.stop()
+            })
+            replayOperationTail = replayStopPromise
+            return replayStopPromise
+          },
+        }
 
   const browserMetricsStartupPromise =
     browserMetricsOptions === undefined
@@ -614,7 +672,11 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
         : (async () => {
             const browserMetrics = await browserMetricsStartupPromise
             if (browserMetrics === undefined) {
-              throw new Error('logfire-browser: failed to start Web Vitals metrics because browser metrics transport did not start')
+              diag.warn('logfire-browser: browser metrics did not start; continuing Web Vitals with span reporting only')
+              return startBrowserWebVitals({
+                ...webVitalsOptions,
+                tracer: tracerProvider.getTracer('logfire-web-vitals'),
+              })
             }
 
             return startBrowserWebVitals({
@@ -631,7 +693,7 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
 
   // Return the stored promise directly so repeated cleanup calls preserve identity.
   // eslint-disable-next-line @typescript-eslint/promise-function-async
-  return () => {
+  const cleanup: BrowserConfigureHandle = () => {
     if (cleanupPromise !== undefined) {
       return cleanupPromise
     }
@@ -654,12 +716,8 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
       }
 
       diag.info('logfire-browser: shutting down')
-      if (sessionReplayStartupPromise !== undefined) {
-        browserSessionReplayState.clear()
-        await runCleanupStep('session replay shutdown', async () => {
-          const sessionReplay = await sessionReplayStartupPromise
-          await sessionReplay?.stop()
-        })
+      if (sessionReplayHandle !== undefined) {
+        await runCleanupStep('session replay shutdown', async () => sessionReplayHandle.stop())
       }
       await runCleanupStep('instrumentation unregister', unregisterInstrumentations)
       if (webVitalsStartupPromise !== undefined) {
@@ -698,6 +756,13 @@ export function configure(options: LogfireConfigOptions): () => Promise<void> {
 
     return cleanupPromise
   }
+  if (sessionReplayHandle !== undefined) {
+    Object.defineProperty(cleanup, 'sessionReplay', {
+      enumerable: true,
+      value: sessionReplayHandle,
+    })
+  }
+  return cleanup
 }
 
 const defaultExport: {

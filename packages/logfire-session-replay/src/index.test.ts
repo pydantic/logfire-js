@@ -16,7 +16,6 @@ let captured: recorderMod.RecorderOptions
 let handle: {
   stop: Mock<() => void>
   addCustomEvent: Mock<(tag: string, payload: unknown) => void>
-  takeFullSnapshot: Mock<() => void>
 }
 let handles: (typeof handle)[]
 
@@ -39,7 +38,6 @@ beforeEach(() => {
     handle = {
       stop: vi.fn<() => void>(),
       addCustomEvent: vi.fn<(tag: string, payload: unknown) => void>(),
-      takeFullSnapshot: vi.fn<() => void>(),
     }
     handles.push(handle)
     return handle

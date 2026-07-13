@@ -230,7 +230,6 @@ describe('BrowserSessionSpanProcessor', () => {
       },
       recording: true,
       flush: async () => Promise.resolve(),
-      getSessionId: () => 'session-1',
       stop: async () => Promise.resolve(),
     })
     const processor = createProcessor({}, replayState)
@@ -273,7 +272,6 @@ describe('BrowserSessionSpanProcessor', () => {
         throw new Error('recording unavailable')
       },
       flush: async () => Promise.resolve(),
-      getSessionId: () => 'session-1',
       stop: async () => Promise.resolve(),
     })
     const span = createSpan()

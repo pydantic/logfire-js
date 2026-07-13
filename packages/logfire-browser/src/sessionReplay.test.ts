@@ -367,7 +367,6 @@ describe('startBrowserSessionReplay', () => {
     expect(replay).toBeDefined()
     expect(() => replay?.mode).not.toThrow()
     expect(() => replay?.recording).not.toThrow()
-    expect(() => replay?.getSessionId()).not.toThrow()
     await expect(replay?.flush()).resolves.toBeUndefined()
     await expect(replay?.stop()).resolves.toBeUndefined()
     await new Promise<void>((resolve) => {

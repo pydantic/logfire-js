@@ -116,7 +116,8 @@ logfire.configure({
 The browser SDK dynamically loads `web-vitals/attribution` only when
 `rum.webVitals` is enabled. It records LCP, INP, CLS, FCP, and TTFB as short
 OpenTelemetry spans named `web_vital.lcp`, `web_vital.inp`, `web_vital.cls`,
-`web_vital.fcp`, and `web_vital.ttfb`.
+`web_vital.fcp`, and `web_vital.ttfb`. These point events carry exact
+`logfire.span_type = 'log'`.
 
 Every Web Vital span includes `web_vital.name`, `web_vital.value`,
 `web_vital.delta`, `web_vital.id`, `web_vital.rating`, and
@@ -174,7 +175,9 @@ logfire.configure({
 Metric export is disabled unless top-level `metrics.metricUrl` is configured,
 and `rum.webVitals.metrics` requires that transport. The SDK uses a local
 OpenTelemetry `MeterProvider`; it does not replace the application's global
-meter provider.
+meter provider. If that metrics runtime fails to start, the SDK emits an
+explicit diagnostic and continues Web Vitals span reporting without a metric
+recorder. It never retries configured authentication with empty headers.
 
 Web Vitals metrics are histograms named
 `logfire.browser.web_vital.lcp`, `logfire.browser.web_vital.inp`,
@@ -213,7 +216,7 @@ npm install @pydantic/logfire-session-replay
 Configure replay with a browser-safe proxy endpoint:
 
 ```ts
-logfire.configure({
+const cleanup = logfire.configure({
   traceUrl: '/logfire-proxy/v1/traces',
   serviceName: 'web-app',
   sessionReplay: {
@@ -226,6 +229,11 @@ logfire.configure({
     maskAllInputs: true,
   },
 })
+
+// The property exists synchronously whenever sessionReplay is configured.
+await cleanup.sessionReplay?.flush()
+await cleanup.sessionReplay?.stop() // replay only; tracing remains active
+await cleanup() // full SDK cleanup
 ```
 
 `sessionReplay` implies default RUM session behavior. Replay chunks and browser
@@ -236,6 +244,17 @@ attributes are truthful best-effort annotations, not the primary correlation
 key; early spans should be correlated to replay by browser session id and replay
 time bounds. The browser SDK does not populate replay `traceIds` from
 active-span polling.
+
+Before lazy replay startup completes, after startup failure, and after replay is
+stopped, the facade reports `mode: 'off'` and `recording: false`. Its `stop()`
+method is idempotent and generation-scoped. Session identity remains available
+through `getBrowserSessionId()`, not the replay facade.
+
+Browser-session inactivity currently means span inactivity: replay startup
+initializes and touches the session once before loading the optional peer, but
+subsequent replay events only peek at the session id and do not refresh the
+timeout. Span starts are the ongoing automatic activity;
+`getBrowserSessionId()` also explicitly touches the session.
 
 When the document becomes hidden or receives `pagehide`, replay makes a bounded
 best-effort start of the earliest compressed chunks. Its 48,000-byte aggregate

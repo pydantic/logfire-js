@@ -9,7 +9,10 @@ export interface BrowserSessionUrlAttributes {
 
 export interface BrowserSessionOptions {
   /**
-   * Session inactivity timeout. Defaults to 30 minutes.
+   * Session inactivity timeout. Defaults to 30 minutes. Replay startup touches
+   * the session once before lazy loading; subsequent replay events only peek
+   * and do not refresh inactivity. Span starts are the ongoing automatic
+   * activity, and getBrowserSessionId() explicitly touches the session.
    */
   idleTimeoutMs?: number
   /**

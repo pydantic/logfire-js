@@ -367,6 +367,8 @@ describe('browser Web Vitals reporting', () => {
 
     expect(secondMetricRecorder.shutdown).toHaveBeenCalledTimes(1)
     expect(secondMetricRecorder.record).toHaveBeenCalledTimes(1)
+    expect(mocks.spans).toHaveLength(1)
+    expect(mocks.diagErrors).toEqual([])
   })
 
   it('creates a span with base attributes for each report', async () => {
@@ -379,6 +381,7 @@ describe('browser Web Vitals reporting', () => {
     expect(mocks.spans[0]?.name).toBe('web_vital.fcp')
     expect(mocks.spans[0]?.endCalls).toBe(1)
     expect(mocks.spans[0]?.attributes).toMatchObject({
+      'logfire.span_type': 'log',
       'web_vital.delta': 12,
       'web_vital.id': 'fcp-1',
       'web_vital.name': 'FCP',

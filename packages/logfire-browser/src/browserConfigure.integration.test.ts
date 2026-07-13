@@ -1,6 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
+import { diag } from '@opentelemetry/api'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-web'
 import { startSessionReplay } from '@pydantic/logfire-session-replay'
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
@@ -10,13 +11,69 @@ import { configure, startSpan } from './index'
 
 const originalFetch = globalThis.fetch
 
+const optionalFeatureMocks = vi.hoisted(() => {
+  let metricsStartupError: Error | undefined
+  let webVitalCallback: ((metric: unknown) => void) | undefined
+  return {
+    get metricsStartupError() {
+      return metricsStartupError
+    },
+    get hasWebVitalCallback() {
+      return webVitalCallback !== undefined
+    },
+    set metricsStartupError(error: Error | undefined) {
+      metricsStartupError = error
+    },
+    registerWebVital(callback: (metric: unknown) => void) {
+      webVitalCallback = callback
+    },
+    reset() {
+      metricsStartupError = undefined
+    },
+    reportFcp() {
+      webVitalCallback?.({
+        attribution: { firstByteToFCP: 5, loadState: 'complete', timeToFirstByte: 10 },
+        delta: 15,
+        entries: [],
+        id: 'integration-fcp',
+        name: 'FCP',
+        navigationType: 'navigate',
+        rating: 'good',
+        value: 15,
+      })
+    },
+  }
+})
+
 vi.mock('./browserMetrics', () => ({
-  startBrowserMetrics: async () =>
-    Promise.resolve({
+  startBrowserMetrics: async () => {
+    if (optionalFeatureMocks.metricsStartupError !== undefined) {
+      throw optionalFeatureMocks.metricsStartupError
+    }
+    return Promise.resolve({
       createWebVitalsMetricRecorder: () => ({ record: () => undefined, shutdown: () => undefined }),
       forceFlush: async () => Promise.resolve(),
       shutdown: async () => Promise.resolve(),
-    }),
+    })
+  },
+}))
+
+vi.mock('web-vitals/attribution', () => ({
+  onCLS: (callback: (metric: unknown) => void) => {
+    optionalFeatureMocks.registerWebVital(callback)
+  },
+  onFCP: (callback: (metric: unknown) => void) => {
+    optionalFeatureMocks.registerWebVital(callback)
+  },
+  onINP: (callback: (metric: unknown) => void) => {
+    optionalFeatureMocks.registerWebVital(callback)
+  },
+  onLCP: (callback: (metric: unknown) => void) => {
+    optionalFeatureMocks.registerWebVital(callback)
+  },
+  onTTFB: (callback: (metric: unknown) => void) => {
+    optionalFeatureMocks.registerWebVital(callback)
+  },
 }))
 
 vi.mock('@opentelemetry/exporter-trace-otlp-http', () => ({
@@ -35,6 +92,7 @@ afterEach(() => {
   Object.defineProperty(globalThis, 'fetch', { configurable: true, value: originalFetch, writable: true })
   clearConfiguredBrowserSessionForTests()
   sessionStorage.clear()
+  optionalFeatureMocks.reset()
   vi.restoreAllMocks()
 })
 
@@ -160,10 +218,35 @@ describe('public browser configure startup ordering', () => {
       await cleanup()
     }
   })
+
+  it('exports Web Vitals spans when browser metrics startup fails', async () => {
+    const exporter = new InMemorySpanExporter()
+    const diagWarn = vi.spyOn(diag, 'warn').mockImplementation(() => undefined)
+    optionalFeatureMocks.metricsStartupError = new Error('metrics startup failed')
+    const cleanup = configure({
+      metrics: { metricUrl: '/client-metrics' },
+      rum: { webVitals: { metrics: true } },
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      await waitUntil(() => optionalFeatureMocks.hasWebVitalCallback)
+      await delay(0)
+      optionalFeatureMocks.reportFcp()
+      const span = exporter.getFinishedSpans().find(({ name }) => name === 'web_vital.fcp')
+      expect(span?.attributes['logfire.span_type']).toBe('log')
+      expect(diagWarn).toHaveBeenCalledWith(
+        'logfire-browser: browser metrics did not start; continuing Web Vitals with span reporting only'
+      )
+    } finally {
+      await cleanup()
+    }
+  })
 })
 
 async function waitUntil(predicate: () => boolean): Promise<void> {
-  return waitUntilDeadline(predicate, Date.now() + 2_000)
+  return waitUntilDeadline(predicate, Date.now() + 5_000)
 }
 
 async function waitUntilDeadline(predicate: () => boolean, deadline: number): Promise<void> {

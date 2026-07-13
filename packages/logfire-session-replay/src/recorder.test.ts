@@ -6,13 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Mock } from 'vitest'
 
 const { record, stopFn } = vi.hoisted(() => {
-  const stopFn = vi.fn()
-  const record = vi.fn(() => stopFn) as Mock & {
-    addCustomEvent: Mock
-    takeFullSnapshot: Mock
-  }
+  const stopFn = vi.fn<() => void>()
+  const record = vi.fn<(options: unknown) => typeof stopFn | undefined>(() => stopFn) as Mock<
+    (options: unknown) => typeof stopFn | undefined
+  > & { addCustomEvent: Mock<(tag: string, payload: unknown) => void> }
   record.addCustomEvent = vi.fn()
-  record.takeFullSnapshot = vi.fn()
   return { record, stopFn }
 })
 
@@ -43,7 +41,6 @@ beforeEach(() => {
   record.mockReturnValue(stopFn)
   stopFn.mockClear()
   record.addCustomEvent.mockClear()
-  record.takeFullSnapshot.mockClear()
 })
 
 afterEach(() => {
@@ -126,12 +123,10 @@ describe('startRecording', () => {
     expect(meta.data).toEqual({ href: 'https://app.example.test/orders?token=secret#details', width: 800 })
   })
 
-  it('forwards custom events and full snapshots through rrweb statics', () => {
+  it('forwards custom events through rrweb statics', () => {
     const handle = startRecordingForTest({ emit: () => {}, maskAllInputs: true })
     handle.addCustomEvent('logfire.error', { message: 'x' })
-    handle.takeFullSnapshot()
     expect(record.addCustomEvent).toHaveBeenCalledWith('logfire.error', { message: 'x' })
-    expect(record.takeFullSnapshot).toHaveBeenCalledWith(true)
   })
 
   it('stops the rrweb recorder when a stop function is returned', () => {

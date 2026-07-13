@@ -63,7 +63,7 @@ export interface NetworkPayload {
 
 export interface NavigationPayload {
   url: string
-  kind: 'load' | 'push' | 'replace' | 'pop'
+  kind: 'push' | 'replace' | 'pop'
 }
 
 export interface ChunkMeta {

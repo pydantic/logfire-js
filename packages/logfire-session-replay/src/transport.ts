@@ -43,7 +43,7 @@ export class ReplayTransport {
   private readonly config: ResolvedSessionReplayConfig
   private readonly compression: Compression
   private readonly storage: Storage | null
-  private sessionId: string
+  private readonly sessionId: string
 
   constructor(
     config: ResolvedSessionReplayConfig,
@@ -143,23 +143,6 @@ export class ReplayTransport {
           )
         : run.catch(() => undefined)
     await run
-  }
-
-  rotate(newSessionId: string): boolean {
-    if (newSessionId === this.sessionId) {
-      return false
-    }
-
-    if (this.mode === 'buffer') {
-      this.buffer = []
-      this.pendingBytes = 0
-    } else {
-      this.flushAndReport()
-    }
-
-    this.sessionId = newSessionId
-    this.seq = this.loadSeq(newSessionId)
-    return true
   }
 
   async shutdown(options: { keepalive?: boolean } = {}): Promise<void> {

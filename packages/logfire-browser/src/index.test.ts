@@ -353,6 +353,7 @@ import { configureLogfireApi, Level, logfireApiConfig, PendingSpanProcessor, Tai
 import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
 import { clearConfiguredBrowserSessionForTests } from './browserSession'
 import logfireBrowser, { configure, getBrowserSessionId, instrument, startPendingSpan, startSpan, withSettings, withTags } from './index'
+import type { BrowserConfigureHandle } from './index'
 import { ACTIVE_CONFIGURATION_ERROR, FAILED_CLEANUP_ERROR, resetProviderLifecycleForTests } from './providerLifecycle'
 import type { BrowserSessionReplayRuntime } from './sessionReplay'
 
@@ -362,7 +363,7 @@ afterEach(() => {
 
 const originalNavigator = globalThis.navigator
 const originalLocation = globalThis.location
-let cleanup: (() => Promise<void>) | undefined
+let cleanup: BrowserConfigureHandle | undefined
 type CleanupStep = 'unregister' | 'forceFlush' | 'shutdown'
 
 function getLatestResourceAttributes(): Record<string, unknown> {
@@ -1318,6 +1319,9 @@ describe('browser session replay config', () => {
     cleanup = configure({
       traceUrl: 'http://localhost:8989/client-traces',
     })
+    const legacyCleanup: () => Promise<void> = cleanup
+    expect(legacyCleanup).toBe(cleanup)
+    expect(cleanup.sessionReplay).toBeUndefined()
     await waitForConfigureMicrotasks()
     expect(load).not.toHaveBeenCalled()
     await cleanup()
@@ -1326,8 +1330,109 @@ describe('browser session replay config', () => {
       sessionReplay: false,
       traceUrl: 'http://localhost:8989/client-traces',
     })
+    expect(cleanup.sessionReplay).toBeUndefined()
     await waitForConfigureMicrotasks()
     expect(load).not.toHaveBeenCalled()
+  })
+
+  it('exposes an ordered generation-scoped replay facade without changing callable cleanup', async () => {
+    const calls: string[] = []
+    let releaseLoad!: () => void
+    const loadGate = new Promise<void>((resolve) => {
+      releaseLoad = resolve
+    })
+    const flush = vi.fn<() => Promise<void>>(async () => {
+      calls.push('flush')
+      return Promise.resolve()
+    })
+    const stop = vi.fn<() => Promise<void>>(async () => {
+      calls.push('stop')
+      return Promise.resolve()
+    })
+    const runtime: BrowserSessionReplayRuntime = {
+      mode: 'full',
+      recording: true,
+      flush,
+      getSessionId: () => 'browser-session',
+      stop,
+    }
+
+    cleanup = configure({
+      sessionReplay: {
+        load: async () => {
+          await loadGate
+          return { startSessionReplay: () => runtime }
+        },
+        replayUrl: '/logfire/replay',
+      },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    const replay = cleanup.sessionReplay
+    expect(replay).toBeDefined()
+    expect(replay?.mode).toBe('off')
+    expect(replay?.recording).toBe(false)
+    expect(replay).not.toHaveProperty('getSessionId')
+
+    const flushPromise = replay?.flush()
+    const stopPromise = replay?.stop()
+    expect(replay?.stop()).toBe(stopPromise)
+    expect(replay?.flush()).toBe(stopPromise)
+    expect(replay?.mode).toBe('off')
+    expect(replay?.recording).toBe(false)
+
+    releaseLoad()
+    await flushPromise
+    await stopPromise
+    expect(calls).toEqual(['flush', 'stop'])
+    expect(stop).toHaveBeenCalledTimes(1)
+
+    startSpan('after replay-only stop').end()
+    expect(getLatestWebTracerProvider().shutdownCalls).toBe(0)
+
+    const firstCleanup = cleanup()
+    expect(cleanup()).toBe(firstCleanup)
+    await firstCleanup
+    expect(stop).toHaveBeenCalledTimes(1)
+
+    const oldReplay = replay
+    const nextStop = vi.fn<() => Promise<void>>(async () => Promise.resolve())
+    cleanup = configure({
+      sessionReplay: {
+        load: () => ({
+          startSessionReplay: () => ({
+            mode: 'buffer',
+            recording: true,
+            flush: async () => Promise.resolve(),
+            getSessionId: () => 'browser-session-b',
+            stop: nextStop,
+          }),
+        }),
+        replayUrl: '/logfire/replay',
+      },
+      traceUrl: 'http://localhost:8989/client-traces-b',
+    })
+    await waitForConfigureMicrotasks()
+    await oldReplay?.stop()
+    expect(nextStop).not.toHaveBeenCalled()
+  })
+
+  it('keeps the replay facade safe when lazy startup fails', async () => {
+    cleanup = configure({
+      sessionReplay: {
+        load: async () => Promise.reject(new Error('missing replay package')),
+        replayUrl: '/logfire/replay',
+      },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    const replay = cleanup.sessionReplay
+    await expect(replay?.flush()).resolves.toBeUndefined()
+    const stopPromise = replay?.stop()
+    expect(replay?.stop()).toBe(stopPromise)
+    await expect(stopPromise).resolves.toBeUndefined()
+    expect(replay?.mode).toBe('off')
+    expect(replay?.recording).toBe(false)
   })
 
   it('starts replay after provider registration and implies browser session attributes', async () => {
@@ -1549,6 +1654,22 @@ describe('browser metrics config', () => {
     expect((mocks.webVitalsStartCalls[0] as { metricRecorder?: unknown }).metricRecorder).toBe(mocks.browserMetricsRecorders[0])
     const spanProcessors = getLatestSpanProcessors()
     expect(spanProcessors[0]).toBeInstanceOf(BrowserSessionSpanProcessor)
+  })
+
+  it('degrades failed browser metrics startup to Web Vitals spans only', async () => {
+    const diagWarn = vi.spyOn(diag, 'warn').mockImplementation(() => undefined)
+    mocks.setBrowserMetricsStartupPromise(Promise.reject(new Error('metrics unavailable')))
+
+    cleanup = configure({
+      metrics: { metricUrl: 'http://localhost:8989/client-metrics' },
+      rum: { webVitals: { metrics: true } },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    expect(mocks.webVitalsStartCalls).toHaveLength(1)
+    expect(mocks.webVitalsStartCalls[0]).not.toHaveProperty('metricRecorder')
+    expect(diagWarn).toHaveBeenCalledWith('logfire-browser: browser metrics did not start; continuing Web Vitals with span reporting only')
   })
 
   it('force-flushes and shuts down browser metrics before trace cleanup', async () => {

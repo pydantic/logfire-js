@@ -80,12 +80,37 @@ Merge PR #161 only after the browser RUM and replay packages have a safe, docume
 - **Vite+ test import**: decline cleanup item 19 as obsolete. `capture.test.ts` uses the supported `vite-plus/test` entrypoint and passes the current Vite+ test gate; no functional release defect was established, so preserve it as-is. No child owns changing the import.
 - **D1 page URL default**: emit `logfire.page.url.full = origin + pathname` and `logfire.page.url.path = pathname`; query/fragment values require an explicit `urlAttributes` callback.
 - **D2 replay privacy default**: mask rendered text and inputs, disable console capture, and retain network/navigation metadata only with query/fragment redaction by default; explicit options may opt back into visible text, console arguments, or raw URLs.
+- **D3 replay lifecycle handle**: expose a generation-scoped replay facade as
+  the optional `sessionReplay` property of the existing callable `configure()`
+  cleanup result. Preserve callable cleanup compatibility; provide
+  `mode`, `recording`, `flush()`, and replay-only idempotent `stop()`; keep
+  session identity on `getBrowserSessionId()`. — **Evidence**: Spike 05 and
+  user sign-off on 2026-07-13.
+- **D4 optional-feature placement**: keep `sessionReplay` at the top level of
+  browser `configure()`. Replay may imply browser-session attributes, but its
+  optional peer loading, transport, sampling, and lifecycle surface remain
+  distinct from `rum.webVitals`; preserve the accepted alpha call shape rather
+  than moving it under `rum`. — **Evidence**: current public types/docs and user
+  sign-off on 2026-07-13.
+- **Web Vitals metrics degradation**: when browser metrics startup fails, keep
+  Web Vitals span reporting active and emit an explicit diagnostic; do not
+  disable the independent span path merely because the metric recorder is
+  unavailable, and never retry authenticated metrics without the configured
+  headers. — **Evidence**: independent trace/metrics transports, the settled
+  metrics-credential boundary, and user sign-off on 2026-07-13.
 
-Remaining stable-contract decisions:
+Remaining stable-contract decisions: None.
 
-- D3 whether browser integration exposes a replay lifecycle handle in this release.
-- D4 whether `sessionReplay` remains top-level or moves under `rum` before stable publication.
-- Whether metrics startup failure degrades to Web Vitals spans only; the recommended behavior is spans-only degradation with an explicit diagnostic.
+### Clarifications
+
+- Q: Should the first stable browser integration expose replay lifecycle, and
+  through which compatible shape? -> A: Yes. Use Spike 05's optional
+  generation-scoped `cleanup.sessionReplay` facade while preserving the
+  callable cleanup contract.
+- Q: Should `sessionReplay` move under `rum` before stable publication? -> A:
+  No. Keep the accepted top-level placement.
+- Q: Should browser metrics startup failure also disable Web Vitals spans? ->
+  A: No. Degrade to spans-only reporting with an explicit diagnostic.
 
 ### Roadmap-Level Spikes
 
@@ -93,6 +118,7 @@ Remaining stable-contract decisions:
 - `plans/research/roadmaps/001-browser-rum-release-remediation/spike-02-unload-keepalive-policy.md` — **Result**: serial starts lose later chunks, while unconstrained concurrency exceeds a shared 64 KiB quota; Beacon cannot preserve the transport contract. — **Limits**: real page-freeze behavior remains child evidence.
 - `plans/research/roadmaps/001-browser-rum-release-remediation/spike-03-csp-gzip-fallback.md` — **Result**: retained bytes can fall back to synchronous gzip after setup or callback failure. — **Limits**: actual CSP enforcement remains child evidence.
 - `plans/research/roadmaps/001-browser-rum-release-remediation/spike-04-delegating-provider-contract.md` — **Result**: non-caching per-span delegation preserves cached tracers across generations and independently preserves application-owned globals; duplicate package reconfiguration is unsupported because copies may share mutable core config. — **Limits**: real provider resources, Zone context, and delayed spans remain child evidence.
+- `plans/research/roadmaps/001-browser-rum-release-remediation/spike-05-public-replay-lifecycle-handle.md` — **Result**: an optional replay facade on the callable `configure()` result preserves existing cleanup consumers and can safely coordinate lazy startup, early flush/stop, failure, and repeated cleanup; a replacement object or global getter is inferior. D3 was accepted for the stable release. — **Limits**: R6 must still validate the production facade through packed types and runtime evidence.
 
 ### Compatibility and Rollback Contract
 
@@ -236,10 +262,11 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 
 ### R6: Finalize browser optional-feature API and degradation contract
 
-- **Status**: BLOCKED
+- **Status**: VERIFIED
 - **Outcome**: replay/Web Vitals placement, lifecycle access, and startup-degradation behavior form one documented, typed stable API.
 - **Why separate**: API placement and exposed handles can become long-lived stable commitments.
-- **Depends on**: R2 lifecycle contract, R5 privacy option contract, and user decisions D3/D4/metrics degradation.
+- **Depends on**: verified R2 lifecycle contract, verified R5 privacy option
+  contract, and settled D3/D4/metrics-degradation decisions.
 - **Produces**: package types, docs, changelog contract, and minimal-consumer fixture.
 - **Consumer impact**: owns `CX-8`.
 - **External readiness inputs**: built package tarballs or workspace-packed equivalents.
@@ -247,9 +274,25 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 - **In scope**: D3, D4, metrics-failure degradation, late Web Vitals callback diagnostics, exact `logfire.span_type = 'log'` on Web Vitals point events, documentation that browser-session inactivity currently means span inactivity, dead public/internal surface disposition, and preservation/review of R3's async replay credential caveat across the final API documentation.
 - **Out of scope**: provider internals owned by R2 and proxy implementation.
 - **Validation boundary**: typecheck and run a minimal documented consumer against built package outputs; assert Web Vitals span type exactly and verify the documented span-inactivity definition.
-- **Remaining questions**: D3, D4, and spans-only Web Vitals degradation decision.
-- **Child PRP**: Not generated.
-- **Completion evidence**: Pending.
+- **Remaining questions**: None; lifecycle shape, optional-feature placement,
+  spans-only metrics degradation, Web Vitals point-event semantics, and
+  inactivity terminology are sufficiently bounded for child research.
+- **Child PRP**: `plans/028-browser-optional-feature-api.md` — Standard-assurance
+  cold-reviewed READY on 2026-07-13 after tightening diagnostic ownership,
+  replay-start/session-inactivity wording, synchronous and asynchronous
+  credential-failure containment, and replay-only versus full-cleanup Web
+  Vitals evidence. No additional spike was required because Spike 05 and live
+  source evidence resolved the load-bearing lifecycle contract.
+- **Completion evidence**: PRP 028 verified on 2026-07-13 from source baseline
+  `aae49f6`. Browser tests passed 151/151, replay tests passed 143/143, and the
+  root `pnpm run check` passed formatting, lint, all package builds and
+  typechecks, and all tests. Public `configure()` integration proved spans-only
+  Web Vitals degradation and zero metric requests for synchronous and
+  asynchronous credential-header failure. The built minimal consumer proved
+  legacy callable cleanup, exact ESM/CJS facade types, lazy/live/stopped/failed
+  states, replay-only stop, full cleanup, promise identity, and A/B generation
+  isolation. Changesets selected exactly the browser and replay patch releases;
+  independent Standard re-review reported READY with no remaining findings.
 
 ### R7: Make documented proxies and examples safe and truthful
 
@@ -365,3 +408,27 @@ The roadmap separates stable contracts by independent consumer-visible failure b
   browser bridging, safe example/docs/Changeset/Platform handoff, exact
   built-package default and raw-opt-in browser receipts, and independent Deep
   re-review all pass.
+- Completed roadmap Spike 05 for D3: a callable configure handle with an
+  optional generation-scoped replay facade is type-compatible and safely models
+  lazy startup and lifecycle races; replacing the cleanup function or using a
+  global getter was rejected.
+- Settled D3 with user sign-off: the first stable browser package will expose
+  the Spike 05 lifecycle facade through `cleanup.sessionReplay` while
+  preserving callable cleanup and the existing browser-session identity API.
+- Settled D4 and metrics degradation with user sign-off: keep
+  `sessionReplay` top-level, and preserve Web Vitals spans with an explicit
+  diagnostic when metrics startup fails. R6 is now ready for child-PRP
+  generation in a new session; no R6 PRP was generated here.
+- Generated `plans/028-browser-optional-feature-api.md` for R6 from source
+  commit `aae49f6` under the Standard assurance profile. Cold review reached
+  READY after clarifying the child-selected metrics diagnostic, initial replay
+  session touch versus subsequent span inactivity, both credential-header
+  failure modes, and Web Vitals behavior across replay-only stop/full cleanup.
+- Began executing PRP 028 from source commit `aae49f6`; the uncommitted roadmap,
+  child PRP, and Spike 05 decision record remain the preserved planning
+  baseline.
+- Verified PRP 028 for R6 from source baseline `aae49f6`: focused browser and
+  replay suites, the full root check, public metrics/header degradation tests,
+  built minimal-consumer `CX-8` evidence, exact Changeset selection, and
+  independent Standard re-review all passed. R6 is complete; no commit was
+  created.

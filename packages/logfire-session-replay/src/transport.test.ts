@@ -661,37 +661,7 @@ describe('ReplayTransport buffer mode', () => {
   })
 })
 
-describe('ReplayTransport session rotation and sequence persistence', () => {
-  it('ships old full-mode tail under the old id and resets seq for the new id', async () => {
-    const { calls, fetchImpl } = recordingFetch()
-    const transport = new ReplayTransport(makeConfig(fetchImpl), 'old', 'full', null)
-    transport.add(fullSnapshot)
-    await transport.flush()
-    transport.add(click)
-    expect(transport.rotate('new')).toBe(true)
-    transport.add({ ...fullSnapshot, timestamp: 20 })
-    await transport.flush()
-    await transport.shutdown()
-
-    expect(calls.map((call) => call.url)).toEqual([
-      'https://app.example.com/replay-proxy/old?seq=0',
-      'https://app.example.com/replay-proxy/old?seq=1',
-      'https://app.example.com/replay-proxy/new?seq=0',
-    ])
-  })
-
-  it('drops an untriggered buffer-mode tail on rotation', async () => {
-    const { calls, fetchImpl } = recordingFetch()
-    const transport = new ReplayTransport(makeConfig(fetchImpl), 'old', 'buffer', null)
-    transport.add(fullSnapshot)
-    transport.add(click)
-    expect(transport.rotate('new')).toBe(true)
-    transport.add({ ...fullSnapshot, timestamp: 20 })
-    await transport.triggerFlush()
-    expect(calls.map((call) => call.url)).toEqual(['https://app.example.com/replay-proxy/new?seq=0'])
-    expect(decodeBody(calls[0]!.init.body).events.map((event) => event.timestamp)).toEqual([20])
-  })
-
+describe('ReplayTransport sequence persistence', () => {
   it('resumes seq across page loads for the same session id', async () => {
     const storage = memoryStorage()
     const { calls, fetchImpl } = recordingFetch()
@@ -711,34 +681,6 @@ describe('ReplayTransport session rotation and sequence persistence', () => {
       'https://app.example.com/replay-proxy/S?seq=2',
     ])
     expect(storage.getItem(SEQ_STORAGE_KEY)).toBe(JSON.stringify({ id: 'S', seq: 3 }))
-  })
-
-  it('serializes concurrent flushes across a rotation', async () => {
-    const calls: string[] = []
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    let first = true
-    const fetchImpl = vi.fn(async (url: string | URL) => {
-      calls.push(String(url))
-      if (first) {
-        first = false
-        await gate
-      }
-      return { ok: true, status: 202 } as Response
-    }) as unknown as typeof fetch
-
-    const transport = new ReplayTransport(makeConfig(fetchImpl), 'old', 'full', null)
-    transport.add(fullSnapshot)
-    const firstFlush = transport.flush()
-    transport.rotate('new')
-    transport.add(click)
-    const secondFlush = transport.flush()
-    release()
-    await Promise.all([firstFlush, secondFlush])
-
-    expect(calls).toEqual(['https://app.example.com/replay-proxy/old?seq=0', 'https://app.example.com/replay-proxy/new?seq=0'])
   })
 })
 

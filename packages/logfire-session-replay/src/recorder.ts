@@ -6,7 +6,6 @@ import type { RrwebEvent } from './types'
 
 type RrwebRecord = ((options: unknown) => (() => void) | undefined) & {
   addCustomEvent?: (tag: string, payload: unknown) => void
-  takeFullSnapshot?: (isCheckout?: boolean) => void
 }
 
 const rrwebRecord = record as unknown as RrwebRecord
@@ -14,7 +13,6 @@ const rrwebRecord = record as unknown as RrwebRecord
 export interface RecorderHandle {
   stop(): void
   addCustomEvent(tag: string, payload: unknown): void
-  takeFullSnapshot(): void
 }
 
 export interface RecorderOptions {
@@ -67,9 +65,6 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
     },
     addCustomEvent: (tag, payload) => {
       rrwebRecord.addCustomEvent?.(tag, payload)
-    },
-    takeFullSnapshot: () => {
-      rrwebRecord.takeFullSnapshot?.(true)
     },
   }
 }

@@ -16,6 +16,13 @@ export interface BrowserSessionReplayRuntime {
   stop(): Promise<void>
 }
 
+export interface BrowserSessionReplayControl {
+  readonly recording: boolean
+  readonly mode: 'full' | 'buffer' | 'off'
+  flush(): Promise<void>
+  stop(): Promise<void>
+}
+
 export interface BrowserSessionReplayPackageConfig {
   replayUrl: string
   headers?: () => MaybePromise<Record<string, string>>
@@ -104,9 +111,9 @@ export interface BrowserSessionReplaySpanState {
 }
 
 export class BrowserSessionReplayState {
-  private replay: BrowserSessionReplayRuntime | undefined
+  private replay: BrowserSessionReplayControl | undefined
 
-  setReplay(replay: BrowserSessionReplayRuntime): void {
+  setReplay(replay: BrowserSessionReplayControl): void {
     this.replay = replay
   }
 
@@ -144,7 +151,7 @@ export async function startBrowserSessionReplay(
   browserSessionManager: BrowserSessionManager,
   replayState: BrowserSessionReplayState,
   telemetryOptions: BrowserSessionReplayTelemetryOptions
-): Promise<BrowserSessionReplayRuntime | undefined> {
+): Promise<BrowserSessionReplayControl | undefined> {
   try {
     assertBrowserReplayUrl(options.replayUrl)
     browserSessionManager.touch()
@@ -267,9 +274,8 @@ function wrapReplayRuntime(
   replay: BrowserSessionReplayRuntime,
   replayState: BrowserSessionReplayState,
   onError: ((error: unknown) => void) | undefined
-): BrowserSessionReplayRuntime {
+): BrowserSessionReplayControl {
   let stopPromise: Promise<void> | undefined
-  let lastSessionId = ''
   return {
     get mode() {
       try {
@@ -292,18 +298,6 @@ function wrapReplayRuntime(
         await replay.flush()
       } catch (error) {
         safeReportError(onError, error)
-      }
-    },
-    getSessionId: () => {
-      try {
-        const sessionId = replay.getSessionId()
-        if (sessionId.length > 0) {
-          lastSessionId = sessionId
-        }
-        return sessionId
-      } catch (error) {
-        safeReportError(onError, error)
-        return lastSessionId
       }
     },
     stop: async () => {
