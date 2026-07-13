@@ -372,7 +372,14 @@ The roadmap separates stable contracts by independent consumer-visible failure b
   release runbook generated on 2026-07-13 with explicit SHA/review/check gates,
   isolated Version Packages pack/consumer evidence, public npm/GitHub
   verification, downstream handoff, and branch-deletion authorization.
-- **Completion evidence**: Pending.
+- **Completion evidence**: Evidence PR #163 was squash-merged as `f93e28a7`.
+  Its exact main run
+  [29275885492](https://github.com/pydantic/logfire-js/actions/runs/29275885492)
+  passed, reported no packages to publish, and skipped GitHub release creation;
+  the complete registry/dist-tag and stable-release-ref snapshot was unchanged.
+  The feature branch is absent remotely, and its final tree is identical to the
+  feature squash merge tree. Final completion remains conditional on cleanup PR
+  #166's successful no-publication main run and terminal evidence comment.
 - **Publication evidence**: PR #161 merged as `6760a47c`; Version Packages PR
   #162 merged as `1f3b1cbd`. Main publication run
   [29275066883](https://github.com/pydantic/logfire-js/actions/runs/29275066883)
@@ -384,9 +391,11 @@ The roadmap separates stable contracts by independent consumer-visible failure b
   their refs were rechecked directly.
   The downstream stable-contract handoff is recorded on
   [Platform PR #25595](https://github.com/pydantic/platform/pull/25595#issuecomment-4961379232).
-  R9 remains `IN PROGRESS` and the roadmap remains `ACTIVE` until the durable
-  evidence merge, verified branch deletion, cleanup merge, and that cleanup
-  PR's terminal no-publication comment are complete.
+  R9 remains `IN PROGRESS` and the roadmap remains `ACTIVE` until cleanup PR
+  #166 merges and its terminal comment records the exact successful main run,
+  no published packages, skipped GitHub release creation, unchanged registry
+  and release refs, and continued feature-branch absence. At that point R9 is
+  `VERIFIED` and this roadmap is `COMPLETE` without another main push.
 
 ## Integration Checkpoints
 
@@ -427,6 +436,20 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 
 ### 2026-07-13
 
+- Merged durable publication evidence PR #163 as `f93e28a7`; exact main run
+  29275885492 passed with no packages to publish and no public-state change.
+  Verified `petyosi/browser-rum-alpha-release` is absent and that its final tree
+  exactly matches feature squash merge `6760a47c`. A local push mapping sent the
+  initial documentation-only cleanup commit directly to `main`; its exact run
+  29276121713 passed with no packages to publish. Recovery PR #164 was approved
+  at exact head `990a7a4` with zero unresolved review threads, restored the
+  pre-cleanup tree as `8986267`, and exact run 29276457308 also passed without
+  publication or release creation. Cleanup PR #165 was closed unmerged after
+  CodeRabbit emitted no response to automatic and repeated manual review
+  triggers; the reviewer gate was not bypassed. Superseding cleanup PR #166 is
+  the last conditional gate; its post-merge terminal comment must record a
+  green exact main run, no publication, unchanged registry/release refs, and
+  branch absence before R9/roadmap completion is asserted.
 - Published and directly verified the official browser `0.17.0` and replay
   `0.1.0` stable packages through feature PR #161 and Version Packages PR #162.
   Exact registry consumers passed, GitHub tags/releases point to publication
