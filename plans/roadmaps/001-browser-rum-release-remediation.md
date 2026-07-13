@@ -18,12 +18,12 @@ Merge PR #161 only after the browser RUM and replay packages have a safe, docume
 
 ## Roadmap Completion Criteria
 
-- [ ] All blockers B1-B13 in `reports/pr-161-combined-review.md` are fixed with regression evidence.
-- [ ] Stable-contract decisions D1-D4 are explicit, implemented, and documented; recovered header failures never become unauthenticated exports.
-- [ ] Every should-fix item is either implemented and verified or has an explicit non-blocking follow-up disposition accepted before release.
-- [ ] Public browser/replay, proxy/example, and release acceptance scenarios pass through their named evidence surfaces.
-- [ ] The complete repository check and isolated Changesets version simulation pass with only the intended public versions and valid private-package versions.
-- [ ] PR #161 and the generated Version Packages PR are reviewed and merged through the normal protected-branch workflow; npm `latest` resolves to the intended stable packages.
+- [x] All blockers B1-B13 in `reports/pr-161-combined-review.md` are fixed with regression evidence.
+- [x] Stable-contract decisions D1-D4 are explicit, implemented, and documented; recovered header failures never become unauthenticated exports.
+- [x] Every should-fix item is either implemented and verified or has an explicit non-blocking follow-up disposition accepted before release.
+- [x] Public browser/replay, proxy/example, and release acceptance scenarios pass through their named evidence surfaces.
+- [x] The complete repository check and isolated Changesets version simulation pass with only the intended public versions and valid private-package versions.
+- [x] PR #161 and the generated Version Packages PR are reviewed and merged through the normal protected-branch workflow; npm `latest` resolves to the intended stable packages.
 - [ ] The alpha branch is deleted only after the published packages and downstream handoff are verified.
 
 ## Explicitly Out of Scope
@@ -373,6 +373,17 @@ The roadmap separates stable contracts by independent consumer-visible failure b
   isolated Version Packages pack/consumer evidence, public npm/GitHub
   verification, downstream handoff, and branch-deletion authorization.
 - **Completion evidence**: Pending.
+- **Publication evidence**: PR #161 merged as `6760a47c`; Version Packages PR
+  #162 merged as `1f3b1cbd`. Main publication run
+  [29275066883](https://github.com/pydantic/logfire-js/actions/runs/29275066883)
+  published exactly browser `0.17.0` and replay `0.1.0`. npm `latest`, exact
+  tarball integrity, isolated registry consumers, and GitHub tags/releases all
+  passed; alpha tags and every unrelated public package remained unchanged.
+  The downstream stable-contract handoff is recorded on
+  [Platform PR #25595](https://github.com/pydantic/platform/pull/25595#issuecomment-4961379232).
+  R9 remains `IN PROGRESS` and the roadmap remains `ACTIVE` until the durable
+  evidence merge, verified branch deletion, cleanup merge, and that cleanup
+  PR's terminal no-publication comment are complete.
 
 ## Integration Checkpoints
 
@@ -413,6 +424,12 @@ The roadmap separates stable contracts by independent consumer-visible failure b
 
 ### 2026-07-13
 
+- Published and directly verified the official browser `0.17.0` and replay
+  `0.1.0` stable packages through feature PR #161 and Version Packages PR #162.
+  Exact registry consumers passed, GitHub tags/releases point to publication
+  merge `1f3b1cbd`, existing alpha tags were preserved, and the Platform handoff
+  was posted to PR #25595. R9 is pending only its durable evidence/branch
+  cleanup gates.
 - Began executing PRP 031 from source baseline `0cb505b`. Task 1 owns the
   deterministic scratch-clone/registry artifact verifier and the clean local
   candidate gate; no push, review write, merge, publish, handoff, dist-tag
