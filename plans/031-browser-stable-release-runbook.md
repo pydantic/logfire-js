@@ -35,9 +35,11 @@ the downstream handoff, and only then retire the feature branch.
 - [x] Registry-installed browser checks re-exercise parent `CX-1`, `CX-5`, and
       `CX-8`; the R1-R8 verification records remain applicable to the exact
       published source.
-- [ ] The downstream Platform handoff is recorded, the feature branch is deleted
-      only after all evidence is green, and existing `alpha` dist-tags remain
-      unchanged.
+- [x] The downstream Platform handoff is recorded, the feature branch is absent,
+      its squash-equivalent content is verified after the evidence gate, and
+      existing `alpha` dist-tags remain unchanged. GitHub's automatic branch
+      deletion preempted the planned explicit post-evidence deletion; the exact
+      tree comparison and later no-publication snapshot record the recovery.
 - [ ] Publication/handoff evidence is merged to `main` through a dedicated
       evidence PR before branch deletion; a final cleanup PR records deletion
       with a conditional terminal gate, and the roadmap becomes complete only
@@ -570,8 +572,36 @@ Task 8: Delete the feature branch and merge the final cleanup record
 - Consumer acceptance: `CX-10A`, `CX-10B`, `CX-10C`, and `CX-10` are
   **DIRECTLY VERIFIED**. `CX-10F` is **VERIFIED WITH RECORDED RECOVERY** for the
   skipped GitHub-release step and immediate-registry age-policy exception.
-  R9 remains conditional on the evidence/cleanup PRs, their no-publication main
-  runs, and verified feature-branch deletion.
+  R9 remains conditional on the cleanup PR, its no-publication main run, and
+  its terminal evidence comment.
+- Evidence PR #163 was approved at exact head `e10c8d6`, with a successful
+  exact-head build and zero unresolved review threads, then squash-merged as
+  `f93e28a7fcaa4ffe6e9a6e56a789ae9e120b9910`. Main run
+  [29275885492](https://github.com/pydantic/logfire-js/actions/runs/29275885492)
+  passed and reported `There are no new packages that should be published`;
+  GitHub release creation skipped. The complete registry/dist-tag snapshot and
+  both stable release refs were unchanged after the run.
+- The remote feature branch `petyosi/browser-rum-alpha-release` was already
+  absent when the post-evidence cleanup gate ran, consistent with repository
+  automatic branch deletion. Its
+  final head `c54393e` and feature squash merge `6760a47c` have the identical
+  tree `c574694065bb7c9b6d1739b230c73cc46319e54b`, proving no feature-branch
+  content was omitted by squash. Browser `alpha=0.17.0-alpha.2` and replay
+  `alpha=0.1.0-alpha.1` remain unchanged.
+- A repository-local push mapping unexpectedly sent the first documentation-only
+  cleanup commit `38c3b3f` directly to `main`. Exact run
+  [29276121713](https://github.com/pydantic/logfire-js/actions/runs/29276121713)
+  passed and reported no packages to publish. Approved recovery PR #164 restored
+  the pre-cleanup tree as `8986267`; exact run
+  [29276457308](https://github.com/pydantic/logfire-js/actions/runs/29276457308)
+  also passed with no packages to publish and skipped GitHub release creation.
+  No history rewrite or registry/ref mutation was used for recovery.
+- This cleanup record deliberately leaves R9 `IN PROGRESS` and the roadmap
+  `ACTIVE`. For cleanup PR #165, R9 becomes `VERIFIED` and the roadmap becomes
+  `COMPLETE` only after the merged PR's terminal evidence comment records its
+  exact successful main run, no published packages, skipped GitHub release
+  creation, an unchanged complete registry/ref snapshot, and continued feature
+  branch absence.
 
 - Task 1 rehearsal used an exact synthetic commit in a disposable clone so the
   verifier could enforce its clean-live-tree and immutable-ref preconditions
