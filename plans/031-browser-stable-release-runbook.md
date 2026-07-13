@@ -598,7 +598,10 @@ Task 8: Delete the feature branch and merge the final cleanup record
   also passed with no packages to publish and skipped GitHub release creation.
   No history rewrite or registry/ref mutation was used for recovery.
 - This cleanup record deliberately leaves R9 `IN PROGRESS` and the roadmap
-  `ACTIVE`. For cleanup PR #165, R9 becomes `VERIFIED` and the roadmap becomes
+  Cleanup PR #165 was closed unmerged after CodeRabbit emitted no status,
+  comment, or review despite automatic, reopen, new-commit, incremental, and
+  full-review triggers; no reviewer gate was bypassed. For superseding cleanup
+  PR #166, R9 becomes `VERIFIED` and the roadmap becomes
   `COMPLETE` only after the merged PR's terminal evidence comment records its
   exact successful main run, no published packages, skipped GitHub release
   creation, an unchanged complete registry/ref snapshot, and continued feature
