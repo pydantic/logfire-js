@@ -377,8 +377,11 @@ The roadmap separates stable contracts by independent consumer-visible failure b
   #162 merged as `1f3b1cbd`. Main publication run
   [29275066883](https://github.com/pydantic/logfire-js/actions/runs/29275066883)
   published exactly browser `0.17.0` and replay `0.1.0`. npm `latest`, exact
-  tarball integrity, isolated registry consumers, and GitHub tags/releases all
-  passed; alpha tags and every unrelated public package remained unchanged.
+  tarball integrity, and isolated registry consumers passed; alpha tags and
+  every unrelated public package remained unchanged. The workflow skipped its
+  GitHub-release step because `published=true` was unavailable, so the required
+  tags/releases were created explicitly at the verified publication merge and
+  their refs were rechecked directly.
   The downstream stable-contract handoff is recorded on
   [Platform PR #25595](https://github.com/pydantic/platform/pull/25595#issuecomment-4961379232).
   R9 remains `IN PROGRESS` and the roadmap remains `ACTIVE` until the durable
