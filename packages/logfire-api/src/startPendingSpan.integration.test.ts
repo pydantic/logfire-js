@@ -1,11 +1,11 @@
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
-import { trace as TraceAPI } from '@opentelemetry/api'
+import { SpanKind, trace as TraceAPI } from '@opentelemetry/api'
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { describe, expect, test } from 'vite-plus/test'
 
 import { ATTRIBUTES_SPAN_TYPE_KEY } from './constants'
-import { configureLogfireApi, startPendingSpan } from './index'
+import { configureLogfireApi, instrument, span, startPendingSpan, startSpan } from './index'
 import { PendingSpanProcessor } from './PendingSpanProcessor'
 import { TailSamplingProcessor } from './TailSamplingProcessor'
 
@@ -31,6 +31,36 @@ function pendingSpans(spans: ReadableSpan[]): ReadableSpan[] {
 }
 
 describe('startPendingSpan integration', () => {
+  test('exports requested span kinds across manual span APIs and pending placeholders', async () => {
+    const spans = await collectSpans(
+      (primary) => [primary],
+      () => {
+        startSpan('internal operation').end()
+        startSpan('client request', {}, { kind: SpanKind.CLIENT }).end()
+        span('server handler', { kind: SpanKind.SERVER, callback: () => undefined })
+        span('produce job', {}, { kind: SpanKind.PRODUCER }, () => undefined)
+        startPendingSpan('consume job', {}, { kind: SpanKind.CONSUMER }).end()
+        instrument(() => undefined, { kind: SpanKind.CLIENT, message: 'instrumented request' })()
+      }
+    )
+
+    expect(
+      spans.map((span) => ({
+        kind: span.kind,
+        name: span.name,
+      }))
+    ).toEqual([
+      { kind: SpanKind.INTERNAL, name: 'internal operation' },
+      { kind: SpanKind.CLIENT, name: 'client request' },
+      { kind: SpanKind.SERVER, name: 'server handler' },
+      { kind: SpanKind.PRODUCER, name: 'produce job' },
+      { kind: SpanKind.CONSUMER, name: 'consume job' },
+      { kind: SpanKind.CONSUMER, name: 'consume job' },
+      { kind: SpanKind.CLIENT, name: 'instrumented request' },
+    ])
+    expect(pendingSpans(spans).map((span) => span.kind)).toEqual([SpanKind.CONSUMER])
+  })
+
   test('emits one manual pending span with non-tail automatic pending processing installed', async () => {
     const spans = await collectSpans(
       (primary) => [primary, new PendingSpanProcessor(primary)],
@@ -61,3 +91,4 @@ describe('startPendingSpan integration', () => {
     expect(spans.map((span) => span.attributes[ATTRIBUTES_SPAN_TYPE_KEY])).toEqual(['pending_span', 'span'])
   })
 })
+

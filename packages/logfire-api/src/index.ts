@@ -1,4 +1,4 @@
-import type { Attributes, Context, Exception, HrTime, Span } from '@opentelemetry/api'
+import type { Attributes, Context, Exception, HrTime, Span, SpanKind } from '@opentelemetry/api'
 import {
   INVALID_SPAN_CONTEXT,
   SpanStatusCode,
@@ -84,7 +84,15 @@ export interface LogOptions {
   tags?: string[]
 }
 
-export type StartPendingSpanOptions = Omit<LogOptions, 'log'>
+export interface SpanOptions extends LogOptions {
+  /**
+   * The OpenTelemetry kind for this span.
+   * Defaults to SpanKind.INTERNAL.
+   */
+  kind?: SpanKind
+}
+
+export type StartPendingSpanOptions = Omit<SpanOptions, 'log'>
 
 export interface LogfireClientSettings {
   level?: LogFireLevel
@@ -119,6 +127,11 @@ export interface InstrumentOptions {
    */
   level?: LogFireLevel
   /**
+   * The OpenTelemetry kind for the instrumented call span.
+   * Defaults to SpanKind.INTERNAL.
+   */
+  kind?: SpanKind
+  /**
    * The message template for the instrumented call span.
    */
   message?: string
@@ -148,6 +161,12 @@ interface LogfireSpanStart {
 type LevelSource = 'default' | 'explicit'
 
 interface ResolvedLogOptions extends Omit<LogOptions, 'level' | 'tags'> {
+  level: LogFireLevel
+  levelSource: LevelSource
+  tags: string[]
+}
+
+interface ResolvedSpanOptions extends Omit<SpanOptions, 'level' | 'tags'> {
   level: LogFireLevel
   levelSource: LevelSource
   tags: string[]
@@ -197,6 +216,10 @@ function resolveLogOptions(settings: ResolvedLogfireClientSettings, options: Log
     merged.levelSource = 'explicit'
   }
   return merged
+}
+
+function resolveSpanOptions(settings: ResolvedLogfireClientSettings, options: SpanOptions | undefined): ResolvedSpanOptions {
+  return resolveLogOptions(settings, options)
 }
 
 function resolveLogLevel(
@@ -415,9 +438,9 @@ function startSpanWithSettings(
   settings: ResolvedLogfireClientSettings,
   msgTemplate: string,
   attributes: Record<string, unknown> = {},
-  options: LogOptions = {}
+  options: SpanOptions = {}
 ): Span {
-  const resolvedOptions = resolveLogOptions(settings, options)
+  const resolvedOptions = resolveSpanOptions(settings, options)
   if (shouldFilterLevel(resolvedOptions.level, resolvedOptions.levelSource, resolvedOptions.log === true)) {
     return getNoopSpan()
   }
@@ -425,14 +448,17 @@ function startSpanWithSettings(
 
   const span = logfireApiConfig.tracer.startSpan(
     spanStart.name,
-    { attributes: spanStart.attributes },
+    {
+      attributes: spanStart.attributes,
+      ...(resolvedOptions.kind === undefined ? {} : { kind: resolvedOptions.kind }),
+    },
     getSpanStartContext(resolvedOptions.parentSpan)
   )
 
   return span
 }
 
-export function startSpan(msgTemplate: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): Span {
+export function startSpan(msgTemplate: string, attributes: Record<string, unknown> = {}, options: SpanOptions = {}): Span {
   return startSpanWithSettings(ROOT_CLIENT_SETTINGS, msgTemplate, attributes, options)
 }
 
@@ -446,7 +472,7 @@ function startPendingSpanWithSettings(
   attributes: Record<string, unknown> = {},
   options: StartPendingSpanOptions = {}
 ): Span {
-  const resolvedOptions = resolveLogOptions(settings, options)
+  const resolvedOptions = resolveSpanOptions(settings, options)
   if (shouldFilterLevel(resolvedOptions.level, resolvedOptions.levelSource, false)) {
     return getNoopSpan()
   }
@@ -454,7 +480,10 @@ function startPendingSpanWithSettings(
   const parentContext = getSpanStartContext(resolvedOptions.parentSpan)
   const realSpan = logfireApiConfig.tracer.startSpan(
     spanStart.name,
-    { attributes: spanStart.attributes },
+    {
+      attributes: spanStart.attributes,
+      ...(resolvedOptions.kind === undefined ? {} : { kind: resolvedOptions.kind }),
+    },
     setPendingSpanSuppressed(parentContext)
   )
 
@@ -477,6 +506,7 @@ function startPendingSpanWithSettings(
         [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span',
       },
       startTime,
+      ...(resolvedOptions.kind === undefined ? {} : { kind: resolvedOptions.kind }),
     },
     TheTraceAPI.setSpan(parentContext, realSpan)
   )
@@ -494,12 +524,13 @@ export function startPendingSpan(
 }
 
 type SpanCallback<R> = (activeSpan: Span) => R
-type SpanArgsVariant1<R> = [Record<string, unknown>, LogOptions, SpanCallback<R>]
+type SpanArgsVariant1<R> = [Record<string, unknown>, SpanOptions, SpanCallback<R>]
 type SpanArgsVariant2<R> = [
   {
     _spanName?: string
     attributes?: Record<string, unknown>
     callback: SpanCallback<R>
+    kind?: SpanKind
     level?: LogFireLevel
     parentSpan?: Span
     tags?: string[]
@@ -513,7 +544,7 @@ type SpanArgsVariant2<R> = [
  * The span will be ended automatically after the function call.
  */
 export function span<R>(msgTemplate: string, options: SpanArgsVariant2<R>[0]): R
-export function span<R>(msgTemplate: string, attributes: Record<string, unknown>, options: LogOptions, callback: (span: Span) => R): R
+export function span<R>(msgTemplate: string, attributes: Record<string, unknown>, options: SpanOptions, callback: (span: Span) => R): R
 export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | SpanArgsVariant2<R>): R {
   return spanWithSettings(ROOT_CLIENT_SETTINGS, msgTemplate, ...args)
 }
@@ -526,6 +557,7 @@ function spanWithSettings<R>(
   let attributes: Record<string, unknown>
   let level: LogFireLevel
   let levelSource: LevelSource
+  let kind: SpanKind | undefined
   let tags: string[]
   let callback!: SpanCallback<R>
   let parentSpan: Span | undefined
@@ -536,15 +568,17 @@ function spanWithSettings<R>(
     attributes = args[0].attributes ?? {}
     level = resolvedLevel.level
     levelSource = resolvedLevel.source
+    kind = options.kind
     tags = mergeTags(settings.tags, options.tags)
     callback = options.callback
     parentSpan = options.parentSpan
     spanName = options._spanName
   } else {
-    const options = resolveLogOptions(settings, args[1])
+    const options = resolveSpanOptions(settings, args[1])
     attributes = args[0]
     level = options.level
     levelSource = options.levelSource
+    kind = options.kind
     tags = options.tags
     parentSpan = options.parentSpan
     spanName = options._spanName
@@ -562,6 +596,7 @@ function spanWithSettings<R>(
     spanName ?? msgTemplate,
     {
       attributes: serializedAttributes,
+      ...(kind === undefined ? {} : { kind }),
     },
     context,
     (span: Span) => {
@@ -672,6 +707,9 @@ function instrumentWithSettings<F extends InstrumentableFunction>(
     }
     if (options.level !== undefined) {
       spanOptions.level = options.level
+    }
+    if (options.kind !== undefined) {
+      spanOptions.kind = options.kind
     }
     if (options.parentSpan !== undefined) {
       spanOptions.parentSpan = options.parentSpan
@@ -966,7 +1004,7 @@ export interface LogfireClient {
   reportError(message: string, error: unknown, extraAttributes?: Record<string, unknown>, options?: ReportErrorOptions): void
   span: typeof span
   startPendingSpan(message: string, attributes?: Record<string, unknown>, options?: StartPendingSpanOptions): Span
-  startSpan(message: string, attributes?: Record<string, unknown>, options?: LogOptions): Span
+  startSpan(message: string, attributes?: Record<string, unknown>, options?: SpanOptions): Span
   trace(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
   warning(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
   withSettings(settings: LogfireClientSettings): LogfireClient
@@ -1095,3 +1133,4 @@ const defaultExport: {
 }
 
 export default defaultExport
+

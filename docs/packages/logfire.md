@@ -130,6 +130,26 @@ await logfire.span('fetch user profile', {
 })
 ```
 
+Set `kind` when a manual span represents a remote operation. This preserves
+OpenTelemetry service topology and dependency semantics:
+
+```ts
+import { SpanKind } from '@opentelemetry/api'
+import * as logfire from 'logfire'
+
+await logfire.span('request inventory service', {
+  kind: SpanKind.CLIENT,
+  attributes: { 'server.address': 'inventory.internal' },
+  callback: async () => fetch('https://inventory.internal/items'),
+})
+```
+
+`span()`, `startSpan()`, `startPendingSpan()`, and `instrument()` accept
+`SpanKind.CLIENT`, `SpanKind.SERVER`, `SpanKind.PRODUCER`, or
+`SpanKind.CONSUMER`. Omitting `kind` keeps OpenTelemetry's default
+`SpanKind.INTERNAL` behavior. Pending placeholders use the same kind as their
+real span.
+
 Use `startSpan()` when you need to control the span lifetime yourself:
 
 ```ts
@@ -344,3 +364,4 @@ Use a runtime package unless your platform already configures OpenTelemetry:
 - [`@pydantic/logfire-node`](node.md) for Node.js
 - [`@pydantic/logfire-browser`](browser.md) for browsers
 - [`@pydantic/logfire-cf-workers`](cloudflare.md) for Cloudflare Workers
+
