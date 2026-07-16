@@ -56,35 +56,32 @@ class ChunksFormatter {
 
   // Equivalent to Python's getField method
   getField(fieldName: string, record: Record<string, unknown>): [unknown, string] {
-    if (fieldName.includes('.') || fieldName.includes('[')) {
-      // Handle nested field access like "a.b" or "a[b]"
-      try {
-        // Simple nested property access (this is a simplification)
-        const parts = fieldName.split('.')
-        let obj = record[parts[0] ?? '']
-        for (let i = 1; i < parts.length; i++) {
-          const key = parts[i] ?? ''
-          if (key in record) {
-            obj = record[key]
-          } else {
-            throw new KnownFormattingError(`The field ${fieldName} is not an object.`)
-          }
-        }
-        return [obj, parts[0] ?? '']
-      } catch {
-        // Try getting the whole thing from object
-        if (fieldName in record) {
-          return [record[fieldName], fieldName]
-        }
+    // A literal attribute key always wins, so OTel-style dotted names like
+    // "http.method" keep resolving even when nested traversal is possible.
+    if (fieldName in record) {
+      return [record[fieldName], fieldName]
+    }
+
+    if (fieldName.includes('.')) {
+      // Handle nested field access like "a.b" by walking into the record value
+      const parts = fieldName.split('.')
+      const firstKey = parts[0] ?? ''
+      if (!(firstKey in record)) {
         throw new KnownFormattingError(`The field ${fieldName} is not defined.`)
       }
-    } else {
-      // Simple field access
-      if (fieldName in record) {
-        return [record[fieldName], fieldName]
+      let obj: unknown = record[firstKey]
+      for (let i = 1; i < parts.length; i++) {
+        const key = parts[i] ?? ''
+        if (typeof obj === 'object' && obj !== null && key in obj) {
+          obj = (obj as Record<string, unknown>)[key]
+        } else {
+          throw new KnownFormattingError(`The field ${fieldName} is not defined.`)
+        }
       }
-      throw new KnownFormattingError(`The field ${fieldName} is not defined.`)
+      return [obj, firstKey]
     }
+
+    throw new KnownFormattingError(`The field ${fieldName} is not defined.`)
   }
 
   parse(formatString: string): [string, null | string, null | string, null | string][] {
