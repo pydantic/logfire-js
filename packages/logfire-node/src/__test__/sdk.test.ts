@@ -392,6 +392,20 @@ function makeReadableSpan(): Span {
   } as unknown as Span
 }
 
+function fakeInstrumentation() {
+  const state = { disableCalls: 0, enabled: true }
+  const instrumentation = {
+    disable: () => {
+      state.disableCalls++
+      state.enabled = false
+    },
+    enable: () => {
+      state.enabled = true
+    },
+  } as unknown as Instrumentation
+  return { instrumentation, state }
+}
+
 describe('sdk lifecycle helpers', () => {
   beforeEach(() => {
     mocks.reset()
@@ -758,18 +772,15 @@ describe('sdk lifecycle helpers', () => {
     const propagationDisableSpy = vi.spyOn(propagation, 'disable')
     const contextDisableSpy = vi.spyOn(context, 'disable')
     const logsDisableSpy = vi.spyOn(logs, 'disable')
-    let instrumentationDisableCalls = 0
-    const fakeInstrumentation = {
-      disable: () => {
-        instrumentationDisableCalls++
-      },
-    } as unknown as Instrumentation
-    Object.assign(logfireConfig, { instrumentations: [fakeInstrumentation] })
+    const first = fakeInstrumentation()
+    Object.assign(logfireConfig, { instrumentations: [first.instrumentation] })
 
     start()
     expect(traceDisableSpy).not.toHaveBeenCalled()
-    expect(instrumentationDisableCalls).toBe(0)
+    expect(first.state.disableCalls).toBe(0)
 
+    const second = fakeInstrumentation()
+    Object.assign(logfireConfig, { instrumentations: [second.instrumentation] })
     start()
 
     expect(traceDisableSpy).toHaveBeenCalledTimes(1)
@@ -777,7 +788,19 @@ describe('sdk lifecycle helpers', () => {
     expect(propagationDisableSpy).toHaveBeenCalledTimes(1)
     expect(contextDisableSpy).toHaveBeenCalledTimes(1)
     expect(logsDisableSpy).toHaveBeenCalledTimes(1)
-    expect(instrumentationDisableCalls).toBe(1)
+    expect(first.state.disableCalls).toBe(1)
+    expect(second.state.disableCalls).toBe(0)
+  })
+
+  it('start retains an instrumentation instance reused by the replacement configuration', () => {
+    const reused = fakeInstrumentation()
+    Object.assign(logfireConfig, { instrumentations: [reused.instrumentation] })
+
+    start()
+    start()
+
+    expect(reused.state.disableCalls).toBe(0)
+    expect(reused.state.enabled).toBe(true)
   })
 
   it('shutdown releases owned globals; a later start does not disable again', async () => {

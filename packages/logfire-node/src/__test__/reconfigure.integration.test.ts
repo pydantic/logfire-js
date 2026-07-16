@@ -23,12 +23,18 @@ function recordingProcessor() {
 }
 
 function fakeInstrumentation() {
-  const state = { disableCalls: 0 }
+  // Mirrors InstrumentationBase: enabled at construction, disable() flips the
+  // private state but getConfig().enabled stays true — which makes OTel's
+  // registerInstrumentations skip enable() on registration.
+  const state = { disableCalls: 0, enabled: true }
   const instrumentation = {
     disable: () => {
       state.disableCalls++
+      state.enabled = false
     },
-    enable: () => undefined,
+    enable: () => {
+      state.enabled = true
+    },
     getConfig: () => ({ enabled: true }),
     instrumentationName: 'fake-instrumentation',
     instrumentationVersion: '0.0.0',
@@ -82,6 +88,27 @@ describe('reconfigure integration', () => {
     // Regresses to a 30s deadline rejection when the void exporters do not
     // resolve the export callback; the suite timeout guards the hang.
     await expect(shutdown()).resolves.toBeUndefined()
+  })
+
+  it('keeps an instrumentation instance reused across configure() calls enabled', () => {
+    const reused = fakeInstrumentation()
+
+    configure({ ...base, instrumentations: [reused.instrumentation] })
+    expect(reused.state.enabled).toBe(true)
+
+    configure({ ...base, instrumentations: [reused.instrumentation] })
+    expect(reused.state.enabled).toBe(true)
+  })
+
+  it('re-enables an instrumentation instance that skipped a configure() generation', () => {
+    const reused = fakeInstrumentation()
+
+    configure({ ...base, instrumentations: [reused.instrumentation] })
+    configure(base)
+    expect(reused.state.enabled).toBe(false)
+
+    configure({ ...base, instrumentations: [reused.instrumentation] })
+    expect(reused.state.enabled).toBe(true)
   })
 
   it('disables superseded consumer instrumentations on reconfigure and shutdown (CX-4)', async () => {

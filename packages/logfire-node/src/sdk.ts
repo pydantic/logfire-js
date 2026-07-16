@@ -46,6 +46,7 @@ export interface LogfireShutdownOptions extends LogfireFlushOptions {
 }
 
 interface ShutdownRuntimeOptions extends LogfireShutdownOptions {
+  retainedInstrumentations?: ReadonlySet<Instrumentation>
   shutdownVariables?: boolean
 }
 
@@ -86,8 +87,14 @@ function safelyDisable(disable: () => void): void {
 // NodeSDK.start() registers the OTel API globals but its shutdown() never
 // unregisters them, and the API refuses duplicate registration — leaving them
 // behind makes the next start() silently keep routing to this dead runtime.
-function releaseRuntimeGlobals(runtime: ActiveRuntime): void {
+function releaseRuntimeGlobals(runtime: ActiveRuntime, retainedInstrumentations?: ReadonlySet<Instrumentation>): void {
   for (const instrumentation of runtime.instrumentations) {
+    // Instances the replacement configuration reuses must keep their patches:
+    // disable() flips only the private enabled flag, and registerInstrumentations
+    // skips enable() while getConfig().enabled is true, stranding them disabled.
+    if (retainedInstrumentations?.has(instrumentation) === true) {
+      continue
+    }
     safelyDisable(() => {
       instrumentation.disable()
     })
@@ -235,7 +242,7 @@ async function shutdownRuntime(runtime: ActiveRuntime, options: ShutdownRuntimeO
     removeProcessListeners(runtime)
     // Must run synchronously before the first await: start() relies on the
     // globals being free before the replacement NodeSDK registers its own.
-    releaseRuntimeGlobals(runtime)
+    releaseRuntimeGlobals(runtime, options.retainedInstrumentations)
     const deadline = createDeadline(options.timeoutMillis)
     const errors: unknown[] = []
 
@@ -310,7 +317,10 @@ export function start(): void {
   if (previousRuntime !== undefined) {
     activeRuntime = undefined
     removeProcessListeners(previousRuntime)
-    shutdownRuntime(previousRuntime, { shutdownVariables: false }).catch((e: unknown) => {
+    shutdownRuntime(previousRuntime, {
+      retainedInstrumentations: new Set(logfireConfig.instrumentations),
+      shutdownVariables: false,
+    }).catch((e: unknown) => {
       diag.warn('logfire SDK: error shutting down previous SDK', e)
     })
   }
@@ -407,6 +417,17 @@ export function start(): void {
   // registered globals disabled by the next teardown.
   globalsRegistrant = runtime
   sdk.start()
+  // registerInstrumentations assumes instances arrive enabled from their
+  // constructor, so one disabled by an earlier generation's teardown (reuse
+  // after a generation gap, or a shutdown() racing this configure) stays
+  // disabled unless re-enabled here; enable() is a no-op when already enabled.
+  for (const instrumentation of logfireConfig.instrumentations) {
+    try {
+      instrumentation.enable()
+    } catch (e: unknown) {
+      diag.warn('logfire SDK: error enabling instrumentation', e)
+    }
+  }
   // Re-fetch after registration: the previous tracer permanently caches its
   // delegate, so it would keep pointing at the superseded provider.
   logfireApiConfig.tracer = trace.getTracer(logfireApiConfig.otelScope)

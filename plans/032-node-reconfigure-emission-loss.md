@@ -263,3 +263,7 @@ The `CX-N` table is the authoritative consumer verification plan; the integratio
 ### Deviations
 
 - None from the blueprint. One evidence nuance for verification: in a falsification run against the pre-fix source (fix hunks stashed, tests kept), CX-1, CX-2, CX-4, both void-exporter tests, and all three new unit tests fail, but CX-3 passes — the stuck-globals defect masks the flush hang when the file's earlier tests have already pinned emissions to a dead generation, so nothing reaches CX-3's buffer. CX-3's pre-fix failure standalone is evidenced by Spike 01's `shutdown-reconfigure` run (30s `AggregateError: logfire SDK: shutdown failed`).
+
+### Post-review fixes
+
+- PR #168 review (confirmed against installed OTel 0.219.0 source and a failing repro test): a consumer instrumentation instance reused across `configure()` calls ended up permanently disabled — teardown's `disable()` flips only the instrumentation's private enabled flag, while `registerInstrumentations` skips `enable()` whenever `getConfig().enabled` is true, assuming instances arrive enabled from their constructor. Fixed two ways in `sdk.ts`: teardown retains instances shared with the replacement configuration (no unpatch/repatch churn in the common stable-config case), and `start()` re-enables user instrumentations after `sdk.start()` (covers reuse after a generation gap and a `shutdown()` racing a re-configure, where the memoized shutdown promise ignores the retain set). Regression coverage: reused-instance and generation-gap integration tests plus a retain unit test.
