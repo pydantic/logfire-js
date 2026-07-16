@@ -82,6 +82,7 @@ These calls produce the legacy `ai.*` attribute shape (for example `ai.model.pro
 ## Example: Text Generation With Tools
 
 ```ts
+import './instrumentation.ts'
 import { OpenTelemetry } from '@ai-sdk/otel'
 import { openai } from '@ai-sdk/openai'
 import { generateText, registerTelemetry, tool } from 'ai'
@@ -126,6 +127,21 @@ Depending on the AI SDK provider and call type, traces can also include:
 - timing information
 - tool call arguments and results
 - prompts and responses (`gen_ai.input.messages` / `gen_ai.output.messages`) when the AI SDK emits them
+
+Prompts and responses may contain sensitive data. To emit telemetry without recording inputs or outputs for a v7 call, set both options to `false`:
+
+```ts
+await generateText({
+  model,
+  prompt,
+  telemetry: {
+    recordInputs: false,
+    recordOutputs: false,
+  },
+})
+```
+
+Set `telemetry.isEnabled` to `false` to disable telemetry entirely for an individual call.
 
 ## Metadata
 
