@@ -4,7 +4,10 @@ import type { MockInstance } from 'vite-plus/test'
 import type { HrTime } from '@opentelemetry/api'
 import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
-import { diag, ROOT_CONTEXT, SpanKind, SpanStatusCode, TraceFlags } from '@opentelemetry/api'
+import type { Instrumentation } from '@opentelemetry/instrumentation'
+
+import { context, diag, metrics, propagation, ROOT_CONTEXT, SpanKind, SpanStatusCode, trace, TraceFlags } from '@opentelemetry/api'
+import { logs } from '@opentelemetry/api-logs'
 
 const mocks = vi.hoisted(() => {
   interface MockMetricReader {
@@ -21,6 +24,7 @@ const mocks = vi.hoisted(() => {
   }
 
   const nodeSdkInstances: MockNodeSDK[] = []
+  const logfireApiConfig = { otelScope: 'logfire', tracer: undefined as unknown }
   const configureVariablesCalls: unknown[][] = []
   const createdMetricReaders: MockMetricReader[] = []
   const metricReaderCallCounts = new Map<number, { forceFlush: number; shutdown: number }>()
@@ -176,6 +180,7 @@ const mocks = vi.hoisted(() => {
     get logForceFlushCalls() {
       return logForceFlushCalls
     },
+    logfireApiConfig,
     logProcessor,
     get logShutdownCalls() {
       return logShutdownCalls
@@ -190,6 +195,8 @@ const mocks = vi.hoisted(() => {
     MockNodeSDK,
     nodeSdkInstances,
     reset() {
+      logfireApiConfig.otelScope = 'logfire'
+      logfireApiConfig.tracer = undefined
       configureVariablesCalls.length = 0
       createdMetricReaders.length = 0
       evalForceFlushCalls = 0
@@ -254,6 +261,7 @@ vi.mock('logfire', async () => {
   ])
   return {
     Level,
+    logfireApiConfig: mocks.logfireApiConfig,
     PendingSpanProcessor,
     reportError: (...args: unknown[]) => {
       mocks.reportErrorCalls.push(args)
@@ -394,6 +402,7 @@ describe('sdk lifecycle helpers', () => {
       apiKey: undefined,
       codeSource: undefined,
       deploymentEnvironment: undefined,
+      instrumentations: [],
       metrics: undefined,
       resourceAttributes: {},
       sampling: undefined,
@@ -741,6 +750,59 @@ describe('sdk lifecycle helpers', () => {
       providerConfigured: true,
     })
     expect(mocks.variableState.resourceAttributes).toMatchObject({ plan: 'pro' })
+  })
+
+  it('start disables previous runtime globals and instrumentations before re-registering', () => {
+    const traceDisableSpy = vi.spyOn(trace, 'disable')
+    const metricsDisableSpy = vi.spyOn(metrics, 'disable')
+    const propagationDisableSpy = vi.spyOn(propagation, 'disable')
+    const contextDisableSpy = vi.spyOn(context, 'disable')
+    const logsDisableSpy = vi.spyOn(logs, 'disable')
+    let instrumentationDisableCalls = 0
+    const fakeInstrumentation = {
+      disable: () => {
+        instrumentationDisableCalls++
+      },
+    } as unknown as Instrumentation
+    Object.assign(logfireConfig, { instrumentations: [fakeInstrumentation] })
+
+    start()
+    expect(traceDisableSpy).not.toHaveBeenCalled()
+    expect(instrumentationDisableCalls).toBe(0)
+
+    start()
+
+    expect(traceDisableSpy).toHaveBeenCalledTimes(1)
+    expect(metricsDisableSpy).toHaveBeenCalledTimes(1)
+    expect(propagationDisableSpy).toHaveBeenCalledTimes(1)
+    expect(contextDisableSpy).toHaveBeenCalledTimes(1)
+    expect(logsDisableSpy).toHaveBeenCalledTimes(1)
+    expect(instrumentationDisableCalls).toBe(1)
+  })
+
+  it('shutdown releases owned globals; a later start does not disable again', async () => {
+    const traceDisableSpy = vi.spyOn(trace, 'disable')
+    start()
+    await shutdown()
+
+    expect(traceDisableSpy).toHaveBeenCalledTimes(1)
+
+    start()
+
+    expect(traceDisableSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('start re-fetches the shared API tracer after the SDK starts', () => {
+    expect(mocks.logfireApiConfig.tracer).toBeUndefined()
+
+    start()
+    const firstTracer = mocks.logfireApiConfig.tracer
+    expect(firstTracer).toBeDefined()
+
+    start()
+
+    expect(mocks.logfireApiConfig.tracer).toBeDefined()
+    expect(mocks.logfireApiConfig.tracer).not.toBe(firstTracer)
   })
 
   it('does not install a SIGINT listener', () => {

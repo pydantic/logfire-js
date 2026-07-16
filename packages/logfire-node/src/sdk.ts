@@ -1,10 +1,12 @@
 import type { LogRecordProcessor } from '@opentelemetry/sdk-logs'
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
-import { diag, DiagConsoleLogger } from '@opentelemetry/api'
+import { context, diag, DiagConsoleLogger, metrics, propagation, trace } from '@opentelemetry/api'
+import { logs } from '@opentelemetry/api-logs'
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node'
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
 import { W3CTraceContextPropagator } from '@opentelemetry/core'
+import type { Instrumentation } from '@opentelemetry/instrumentation'
 import { detectResources, envDetector, resourceFromAttributes } from '@opentelemetry/resources'
 import type { MetricReader } from '@opentelemetry/sdk-metrics'
 import { NodeSDK } from '@opentelemetry/sdk-node'
@@ -22,7 +24,7 @@ import {
   ATTR_VCS_REPOSITORY_REF_REVISION,
   ATTR_VCS_REPOSITORY_URL_FULL,
 } from '@opentelemetry/semantic-conventions/incubating'
-import { PendingSpanProcessor, reportError, TailSamplingProcessor, ULIDGenerator } from 'logfire'
+import { logfireApiConfig, PendingSpanProcessor, reportError, TailSamplingProcessor, ULIDGenerator } from 'logfire'
 import { getEvalsSpanProcessor } from 'logfire/evals'
 import { configureVariables, shutdownVariables } from 'logfire/vars'
 
@@ -57,6 +59,7 @@ interface ProcessListeners {
 type LogfireSignalListenerState = 'logfire-only' | 'user-listeners-present' | 'logfire-missing-no-others' | 'logfire-missing-with-others'
 
 interface ActiveRuntime {
+  instrumentations: Instrumentation[]
   logRecordProcessors: LogRecordProcessor[]
   metricReaders: MetricReader[]
   processListeners: ProcessListeners | undefined
@@ -70,6 +73,45 @@ interface Deadline {
 }
 
 let activeRuntime: ActiveRuntime | undefined
+let globalsRegistrant: ActiveRuntime | undefined
+
+function safelyDisable(disable: () => void): void {
+  try {
+    disable()
+  } catch (e: unknown) {
+    diag.warn('logfire SDK: error during teardown', e)
+  }
+}
+
+// NodeSDK.start() registers the OTel API globals but its shutdown() never
+// unregisters them, and the API refuses duplicate registration — leaving them
+// behind makes the next start() silently keep routing to this dead runtime.
+function releaseRuntimeGlobals(runtime: ActiveRuntime): void {
+  for (const instrumentation of runtime.instrumentations) {
+    safelyDisable(() => {
+      instrumentation.disable()
+    })
+  }
+  if (globalsRegistrant !== runtime) {
+    return
+  }
+  globalsRegistrant = undefined
+  safelyDisable(() => {
+    trace.disable()
+  })
+  safelyDisable(() => {
+    metrics.disable()
+  })
+  safelyDisable(() => {
+    propagation.disable()
+  })
+  safelyDisable(() => {
+    context.disable()
+  })
+  safelyDisable(() => {
+    logs.disable()
+  })
+}
 
 function createDeadline(timeoutMillis = DEFAULT_LIFECYCLE_TIMEOUT_MILLIS): Deadline {
   return { expiresAt: Date.now() + timeoutMillis }
@@ -191,6 +233,9 @@ async function shutdownRuntime(runtime: ActiveRuntime, options: ShutdownRuntimeO
 
   runtime.shutdownPromise = (async () => {
     removeProcessListeners(runtime)
+    // Must run synchronously before the first await: start() relies on the
+    // globals being free before the replacement NodeSDK registers its own.
+    releaseRuntimeGlobals(runtime)
     const deadline = createDeadline(options.timeoutMillis)
     const errors: unknown[] = []
 
@@ -333,11 +378,13 @@ export function start(): void {
             : []),
         ]
 
+  const instrumentations = [...getNodeAutoInstrumentations(logfireConfig.nodeAutoInstrumentations), ...logfireConfig.instrumentations]
+
   const sdk = new NodeSDK({
     autoDetectResources: false,
     contextManager,
     idGenerator: new ULIDGenerator(),
-    instrumentations: [getNodeAutoInstrumentations(logfireConfig.nodeAutoInstrumentations), ...logfireConfig.instrumentations],
+    instrumentations,
     ...(logProcessor ? { logRecordProcessors: [logProcessor] } : {}),
     ...(metricReaders.length === 0 ? {} : { metricReaders }),
     resource,
@@ -347,6 +394,7 @@ export function start(): void {
   })
 
   const runtime: ActiveRuntime = {
+    instrumentations,
     logRecordProcessors,
     metricReaders,
     processListeners: undefined,
@@ -355,7 +403,13 @@ export function start(): void {
     spanProcessors,
   }
   activeRuntime = runtime
+  // Marked before start() so a mid-registration throw still gets its partially
+  // registered globals disabled by the next teardown.
+  globalsRegistrant = runtime
   sdk.start()
+  // Re-fetch after registration: the previous tracer permanently caches its
+  // delegate, so it would keep pointing at the superseded provider.
+  logfireApiConfig.tracer = trace.getTracer(logfireApiConfig.otelScope)
   diag.info('logfire: starting')
 
   const listeners: ProcessListeners = {
