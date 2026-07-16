@@ -414,7 +414,10 @@ export function start(): void {
   }
   activeRuntime = runtime
   // Marked before start() so a mid-registration throw still gets its partially
-  // registered globals disabled by the next teardown.
+  // registered globals disabled by the next teardown. Deliberately tracks the
+  // attempt rather than registration success (registerGlobal refuses duplicates
+  // without throwing): last-configure-wins is the accepted policy even when the
+  // host app pre-registered its own globals — see PRP 032, Unknowns & Risks.
   globalsRegistrant = runtime
   sdk.start()
   // registerInstrumentations assumes instances arrive enabled from their
