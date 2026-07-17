@@ -58,7 +58,8 @@ class ChunksFormatter {
   getField(fieldName: string, record: Record<string, unknown>): [unknown, string] {
     // A literal attribute key always wins, so OTel-style dotted names like
     // "http.method" keep resolving even when nested traversal is possible.
-    if (fieldName in record) {
+    // Object.hasOwn keeps prototype members like `toString` from resolving.
+    if (Object.hasOwn(record, fieldName)) {
       return [record[fieldName], fieldName]
     }
 
@@ -66,13 +67,13 @@ class ChunksFormatter {
       // Handle nested field access like "a.b" by walking into the record value
       const parts = fieldName.split('.')
       const firstKey = parts[0] ?? ''
-      if (!(firstKey in record)) {
+      if (!Object.hasOwn(record, firstKey)) {
         throw new KnownFormattingError(`The field ${fieldName} is not defined.`)
       }
       let obj: unknown = record[firstKey]
       for (let i = 1; i < parts.length; i++) {
         const key = parts[i] ?? ''
-        if (typeof obj === 'object' && obj !== null && key in obj) {
+        if (typeof obj === 'object' && obj !== null && Object.hasOwn(obj, key)) {
           obj = (obj as Record<string, unknown>)[key]
         } else {
           throw new KnownFormattingError(`The field ${fieldName} is not defined.`)

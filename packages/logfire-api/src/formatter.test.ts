@@ -53,4 +53,16 @@ describe('message template nested field access', () => {
   test('plain top-level fields keep working', () => {
     expect(format('hello {name}', { name: 'Bob' })).toBe('hello Bob')
   })
+
+  test('nested traversal does not resolve prototype members', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    expect(format('{user.toString}', { user: {} })).toBe('{user.toString}')
+    expect(warn).toHaveBeenCalledWith('Formatting error: The field user.toString is not defined.')
+  })
+
+  test('top-level lookup does not resolve prototype members', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    expect(format('{toString}', { name: 'Bob' })).toBe('{toString}')
+    expect(warn).toHaveBeenCalledWith('Formatting error: The field toString is not defined.')
+  })
 })
