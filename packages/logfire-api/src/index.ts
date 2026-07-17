@@ -437,9 +437,12 @@ function startSpanWithSettings(
   }
   const spanStart = buildLogfireSpanStart(msgTemplate, attributes, resolvedOptions)
 
+  // Logs are always INTERNAL: a runtime options object carrying `kind` must not
+  // change the exported kind of zero-duration Logfire logs.
+  const kind = resolvedOptions.log === true ? undefined : options.kind
   const span = logfireApiConfig.tracer.startSpan(
     spanStart.name,
-    { attributes: spanStart.attributes, ...(options.kind !== undefined ? { kind: options.kind } : {}) },
+    { attributes: spanStart.attributes, ...(kind !== undefined ? { kind } : {}) },
     getSpanStartContext(resolvedOptions.parentSpan)
   )
 

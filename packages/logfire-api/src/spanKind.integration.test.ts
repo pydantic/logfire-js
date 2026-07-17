@@ -4,8 +4,10 @@ import { SpanKind, trace as TraceAPI } from '@opentelemetry/api'
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { describe, expect, test } from 'vite-plus/test'
 
+import type { SpanOptions } from './index'
+
 import { ATTRIBUTES_SPAN_TYPE_KEY } from './constants'
-import { configureLogfireApi, instrument, span, startPendingSpan, startSpan } from './index'
+import { configureLogfireApi, info, instrument, span, startPendingSpan, startSpan } from './index'
 import { PendingSpanProcessor } from './PendingSpanProcessor'
 
 async function collectSpans(createProcessors: (primary: SpanProcessor) => SpanProcessor[], run: () => void): Promise<ReadableSpan[]> {
@@ -83,6 +85,18 @@ describe('span kind integration', () => {
       ['pending_span', SpanKind.CONSUMER],
       ['span', SpanKind.CONSUMER],
     ])
+  })
+
+  test('log helpers stay INTERNAL when a runtime options object carries a kind', async () => {
+    const spans = await collectSpans(
+      (primary) => [primary],
+      () => {
+        const sneakyOptions: SpanOptions = { kind: SpanKind.CLIENT }
+        info('plain log', {}, sneakyOptions)
+      }
+    )
+
+    expect(spans.map((exported) => [exported.attributes[ATTRIBUTES_SPAN_TYPE_KEY], exported.kind])).toEqual([['log', SpanKind.INTERNAL]])
   })
 
   test('instrument() exports the provided kind on the call span', async () => {
