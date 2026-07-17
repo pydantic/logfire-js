@@ -65,4 +65,14 @@ describe('message template nested field access', () => {
     expect(format('{toString}', { name: 'Bob' })).toBe('{toString}')
     expect(warn).toHaveBeenCalledWith('Formatting error: The field toString is not defined.')
   })
+
+  test('bracket syntax with no matching literal key falls back to the raw template', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    expect(format('first item is {a[0]}', { a: ['zero'] })).toBe('first item is {a[0]}')
+    expect(warn).toHaveBeenCalledWith('Formatting error: The field a[0] is not defined.')
+  })
+
+  test('a literal attribute key containing brackets keeps resolving', () => {
+    expect(format('first item is {a[0]}', { 'a[0]': 'zero' })).toBe('first item is zero')
+  })
 })
