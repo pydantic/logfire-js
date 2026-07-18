@@ -503,6 +503,54 @@ describe('logfire config', () => {
     }).toThrow('Remote variables require an API key')
   })
 
+  describe('distributed tracing', () => {
+    const originalDistributedTracing = process.env['LOGFIRE_DISTRIBUTED_TRACING']
+
+    afterEach(() => {
+      if (originalDistributedTracing === undefined) {
+        delete process.env['LOGFIRE_DISTRIBUTED_TRACING']
+      } else {
+        process.env['LOGFIRE_DISTRIBUTED_TRACING'] = originalDistributedTracing
+      }
+    })
+
+    it('defaults to true when neither the option nor the environment variable is set', () => {
+      delete process.env['LOGFIRE_DISTRIBUTED_TRACING']
+      configure({ sendToLogfire: false })
+      expect(logfireConfig.distributedTracing).toBe(true)
+    })
+
+    it('an explicit false option wins over LOGFIRE_DISTRIBUTED_TRACING=true', () => {
+      process.env['LOGFIRE_DISTRIBUTED_TRACING'] = 'true'
+      configure({ distributedTracing: false, sendToLogfire: false })
+      expect(logfireConfig.distributedTracing).toBe(false)
+    })
+
+    it('an explicit true option wins over LOGFIRE_DISTRIBUTED_TRACING=false', () => {
+      process.env['LOGFIRE_DISTRIBUTED_TRACING'] = 'false'
+      configure({ distributedTracing: true, sendToLogfire: false })
+      expect(logfireConfig.distributedTracing).toBe(true)
+    })
+
+    it('LOGFIRE_DISTRIBUTED_TRACING=false disables distributed tracing when the option is omitted', () => {
+      process.env['LOGFIRE_DISTRIBUTED_TRACING'] = 'false'
+      configure({ sendToLogfire: false })
+      expect(logfireConfig.distributedTracing).toBe(false)
+    })
+
+    it('LOGFIRE_DISTRIBUTED_TRACING=true enables distributed tracing when the option is omitted', () => {
+      process.env['LOGFIRE_DISTRIBUTED_TRACING'] = 'true'
+      configure({ sendToLogfire: false })
+      expect(logfireConfig.distributedTracing).toBe(true)
+    })
+
+    it('an empty LOGFIRE_DISTRIBUTED_TRACING is treated as unset', () => {
+      process.env['LOGFIRE_DISTRIBUTED_TRACING'] = ''
+      configure({ sendToLogfire: false })
+      expect(logfireConfig.distributedTracing).toBe(true)
+    })
+  })
+
   function makeCredentialsDir(credentials: { logfire_api_url: string; project_name: string; project_url: string; token: string }): string {
     const dataDir = makeTmpDir()
     writeFileSync(join(dataDir, 'logfire_credentials.json'), `${JSON.stringify(credentials)}\n`)
