@@ -1,4 +1,4 @@
-import type { Attributes, Context, Exception, HrTime, Span } from '@opentelemetry/api'
+import type { Attributes, Context, Exception, HrTime, Span, SpanKind } from '@opentelemetry/api'
 import {
   INVALID_SPAN_CONTEXT,
   SpanStatusCode,
@@ -84,7 +84,16 @@ export interface LogOptions {
   tags?: string[]
 }
 
-export type StartPendingSpanOptions = Omit<LogOptions, 'log'>
+export interface SpanOptions extends LogOptions {
+  /**
+   * The OpenTelemetry SpanKind for the span, e.g. SpanKind.CLIENT for an
+   * outbound request/response operation.
+   * Defaults to SpanKind.INTERNAL when omitted.
+   */
+  kind?: SpanKind
+}
+
+export type StartPendingSpanOptions = Omit<SpanOptions, 'log'>
 
 export interface LogfireClientSettings {
   level?: LogFireLevel
@@ -114,6 +123,11 @@ export interface InstrumentOptions {
    * best-effort parameter-name extraction from function source.
    */
   extractArgs?: boolean | readonly string[]
+  /**
+   * The OpenTelemetry SpanKind for the instrumented call span.
+   * Defaults to SpanKind.INTERNAL when omitted.
+   */
+  kind?: SpanKind
   /**
    * The log level for the instrumented call span.
    */
@@ -147,7 +161,7 @@ interface LogfireSpanStart {
 
 type LevelSource = 'default' | 'explicit'
 
-interface ResolvedLogOptions extends Omit<LogOptions, 'level' | 'tags'> {
+interface ResolvedLogOptions extends Omit<SpanOptions, 'level' | 'tags'> {
   level: LogFireLevel
   levelSource: LevelSource
   tags: string[]
@@ -182,7 +196,7 @@ function mergeClientSettings(parent: ResolvedLogfireClientSettings, child: Logfi
   return merged
 }
 
-function resolveLogOptions(settings: ResolvedLogfireClientSettings, options: LogOptions | undefined): ResolvedLogOptions {
+function resolveLogOptions(settings: ResolvedLogfireClientSettings, options: SpanOptions | undefined): ResolvedLogOptions {
   const merged: ResolvedLogOptions = {
     ...options,
     level: Level.Info,
@@ -415,7 +429,7 @@ function startSpanWithSettings(
   settings: ResolvedLogfireClientSettings,
   msgTemplate: string,
   attributes: Record<string, unknown> = {},
-  options: LogOptions = {}
+  options: SpanOptions = {}
 ): Span {
   const resolvedOptions = resolveLogOptions(settings, options)
   if (shouldFilterLevel(resolvedOptions.level, resolvedOptions.levelSource, resolvedOptions.log === true)) {
@@ -423,16 +437,19 @@ function startSpanWithSettings(
   }
   const spanStart = buildLogfireSpanStart(msgTemplate, attributes, resolvedOptions)
 
+  // Logs are always INTERNAL: a runtime options object carrying `kind` must not
+  // change the exported kind of zero-duration Logfire logs.
+  const kind = resolvedOptions.log === true ? undefined : resolvedOptions.kind
   const span = logfireApiConfig.tracer.startSpan(
     spanStart.name,
-    { attributes: spanStart.attributes },
+    { attributes: spanStart.attributes, ...(kind !== undefined ? { kind } : {}) },
     getSpanStartContext(resolvedOptions.parentSpan)
   )
 
   return span
 }
 
-export function startSpan(msgTemplate: string, attributes: Record<string, unknown> = {}, options: LogOptions = {}): Span {
+export function startSpan(msgTemplate: string, attributes: Record<string, unknown> = {}, options: SpanOptions = {}): Span {
   return startSpanWithSettings(ROOT_CLIENT_SETTINGS, msgTemplate, attributes, options)
 }
 
@@ -452,9 +469,10 @@ function startPendingSpanWithSettings(
   }
   const spanStart = buildLogfireSpanStart(msgTemplate, attributes, resolvedOptions)
   const parentContext = getSpanStartContext(resolvedOptions.parentSpan)
+  const spanKindOptions = resolvedOptions.kind !== undefined ? { kind: resolvedOptions.kind } : {}
   const realSpan = logfireApiConfig.tracer.startSpan(
     spanStart.name,
-    { attributes: spanStart.attributes },
+    { attributes: spanStart.attributes, ...spanKindOptions },
     setPendingSpanSuppressed(parentContext)
   )
 
@@ -477,6 +495,7 @@ function startPendingSpanWithSettings(
         [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span',
       },
       startTime,
+      ...spanKindOptions,
     },
     TheTraceAPI.setSpan(parentContext, realSpan)
   )
@@ -494,12 +513,13 @@ export function startPendingSpan(
 }
 
 type SpanCallback<R> = (activeSpan: Span) => R
-type SpanArgsVariant1<R> = [Record<string, unknown>, LogOptions, SpanCallback<R>]
+type SpanArgsVariant1<R> = [Record<string, unknown>, SpanOptions, SpanCallback<R>]
 type SpanArgsVariant2<R> = [
   {
     _spanName?: string
     attributes?: Record<string, unknown>
     callback: SpanCallback<R>
+    kind?: SpanKind
     level?: LogFireLevel
     parentSpan?: Span
     tags?: string[]
@@ -513,7 +533,7 @@ type SpanArgsVariant2<R> = [
  * The span will be ended automatically after the function call.
  */
 export function span<R>(msgTemplate: string, options: SpanArgsVariant2<R>[0]): R
-export function span<R>(msgTemplate: string, attributes: Record<string, unknown>, options: LogOptions, callback: (span: Span) => R): R
+export function span<R>(msgTemplate: string, attributes: Record<string, unknown>, options: SpanOptions, callback: (span: Span) => R): R
 export function span<R>(msgTemplate: string, ...args: SpanArgsVariant1<R> | SpanArgsVariant2<R>): R {
   return spanWithSettings(ROOT_CLIENT_SETTINGS, msgTemplate, ...args)
 }
@@ -528,6 +548,7 @@ function spanWithSettings<R>(
   let levelSource: LevelSource
   let tags: string[]
   let callback!: SpanCallback<R>
+  let kind: SpanKind | undefined
   let parentSpan: Span | undefined
   let spanName: string | undefined
   if (args.length === 1) {
@@ -538,6 +559,7 @@ function spanWithSettings<R>(
     levelSource = resolvedLevel.source
     tags = mergeTags(settings.tags, options.tags)
     callback = options.callback
+    kind = options.kind
     parentSpan = options.parentSpan
     spanName = options._spanName
   } else {
@@ -546,6 +568,7 @@ function spanWithSettings<R>(
     level = options.level
     levelSource = options.levelSource
     tags = options.tags
+    kind = options.kind
     parentSpan = options.parentSpan
     spanName = options._spanName
     callback = args[2]
@@ -562,6 +585,7 @@ function spanWithSettings<R>(
     spanName ?? msgTemplate,
     {
       attributes: serializedAttributes,
+      ...(kind !== undefined ? { kind } : {}),
     },
     context,
     (span: Span) => {
@@ -669,6 +693,9 @@ function instrumentWithSettings<F extends InstrumentableFunction>(
         recordReturnAttributes(activeSpan, spanSerializationAttributes ?? {}, result)
         return result
       },
+    }
+    if (options.kind !== undefined) {
+      spanOptions.kind = options.kind
     }
     if (options.level !== undefined) {
       spanOptions.level = options.level
@@ -966,7 +993,7 @@ export interface LogfireClient {
   reportError(message: string, error: unknown, extraAttributes?: Record<string, unknown>, options?: ReportErrorOptions): void
   span: typeof span
   startPendingSpan(message: string, attributes?: Record<string, unknown>, options?: StartPendingSpanOptions): Span
-  startSpan(message: string, attributes?: Record<string, unknown>, options?: LogOptions): Span
+  startSpan(message: string, attributes?: Record<string, unknown>, options?: SpanOptions): Span
   trace(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
   warning(message: string, attributes?: Record<string, unknown>, options?: LogOptions): void
   withSettings(settings: LogfireClientSettings): LogfireClient

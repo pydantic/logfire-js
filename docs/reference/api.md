@@ -20,6 +20,31 @@ Manual tracing and logging:
 - `reportError(message, error, extraAttributes?, options?)`
 - `Level`
 
+Manual spans accept an optional OpenTelemetry `SpanKind` so remote operations
+(HTTP/RPC/WebSocket clients, server handlers not covered by
+auto-instrumentation, queue producers and consumers) export with an accurate
+kind instead of the `INTERNAL` default:
+
+```ts
+import { SpanKind } from '@opentelemetry/api'
+import * as logfire from 'logfire'
+
+await logfire.span('load live view records', {
+  kind: SpanKind.CLIENT,
+  attributes: {
+    'websocket.endpoint': 'historical_query',
+  },
+  callback: async (span) => {
+    // perform the outbound request/response operation
+  },
+})
+```
+
+`startSpan()`, `startPendingSpan()`, and `instrument()` accept the same `kind`
+option, pending span placeholders keep the kind of their real span, and
+omitting `kind` continues to produce `INTERNAL` spans. Log helpers do not take
+a kind; zero-duration Logfire logs stay `INTERNAL`.
+
 Configuration helpers and utilities:
 
 - `configureLogfireApi()`
