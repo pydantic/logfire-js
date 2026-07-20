@@ -161,7 +161,7 @@ interface LogfireSpanStart {
 
 type LevelSource = 'default' | 'explicit'
 
-interface ResolvedLogOptions extends Omit<LogOptions, 'level' | 'tags'> {
+interface ResolvedLogOptions extends Omit<SpanOptions, 'level' | 'tags'> {
   level: LogFireLevel
   levelSource: LevelSource
   tags: string[]
@@ -196,7 +196,7 @@ function mergeClientSettings(parent: ResolvedLogfireClientSettings, child: Logfi
   return merged
 }
 
-function resolveLogOptions(settings: ResolvedLogfireClientSettings, options: LogOptions | undefined): ResolvedLogOptions {
+function resolveLogOptions(settings: ResolvedLogfireClientSettings, options: SpanOptions | undefined): ResolvedLogOptions {
   const merged: ResolvedLogOptions = {
     ...options,
     level: Level.Info,
@@ -439,7 +439,7 @@ function startSpanWithSettings(
 
   // Logs are always INTERNAL: a runtime options object carrying `kind` must not
   // change the exported kind of zero-duration Logfire logs.
-  const kind = resolvedOptions.log === true ? undefined : options.kind
+  const kind = resolvedOptions.log === true ? undefined : resolvedOptions.kind
   const span = logfireApiConfig.tracer.startSpan(
     spanStart.name,
     { attributes: spanStart.attributes, ...(kind !== undefined ? { kind } : {}) },
@@ -469,7 +469,7 @@ function startPendingSpanWithSettings(
   }
   const spanStart = buildLogfireSpanStart(msgTemplate, attributes, resolvedOptions)
   const parentContext = getSpanStartContext(resolvedOptions.parentSpan)
-  const spanKindOptions = options.kind !== undefined ? { kind: options.kind } : {}
+  const spanKindOptions = resolvedOptions.kind !== undefined ? { kind: resolvedOptions.kind } : {}
   const realSpan = logfireApiConfig.tracer.startSpan(
     spanStart.name,
     { attributes: spanStart.attributes, ...spanKindOptions },
@@ -568,7 +568,7 @@ function spanWithSettings<R>(
     level = options.level
     levelSource = options.levelSource
     tags = options.tags
-    kind = args[1].kind
+    kind = options.kind
     parentSpan = options.parentSpan
     spanName = options._spanName
     callback = args[2]

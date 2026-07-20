@@ -1,31 +1,12 @@
-import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base'
-
-import { SpanKind, trace as TraceAPI } from '@opentelemetry/api'
-import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { SpanKind } from '@opentelemetry/api'
 import { describe, expect, test } from 'vite-plus/test'
 
 import type { SpanOptions } from './index'
 
+import { collectSpans } from './__test__/collectSpans'
 import { ATTRIBUTES_SPAN_TYPE_KEY } from './constants'
-import { configureLogfireApi, info, instrument, span, startPendingSpan, startSpan } from './index'
+import { info, instrument, span, startPendingSpan, startSpan } from './index'
 import { PendingSpanProcessor } from './PendingSpanProcessor'
-
-async function collectSpans(createProcessors: (primary: SpanProcessor) => SpanProcessor[], run: () => void): Promise<ReadableSpan[]> {
-  const exporter = new InMemorySpanExporter()
-  const primary = new SimpleSpanProcessor(exporter)
-  const provider = new BasicTracerProvider({ spanProcessors: createProcessors(primary) })
-  TraceAPI.setGlobalTracerProvider(provider)
-  configureLogfireApi({ otelScope: 'logfire', scrubbing: false })
-
-  try {
-    run()
-    await provider.forceFlush()
-    return exporter.getFinishedSpans()
-  } finally {
-    await provider.shutdown()
-    TraceAPI.disable()
-  }
-}
 
 describe('span kind integration', () => {
   test('span() with the options object exports the provided kind', async () => {
