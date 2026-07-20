@@ -144,6 +144,7 @@ type TestSpan = ReadableSpan &
 
 function makeSpan(options: {
   attributes?: Record<string, unknown>
+  endTime?: [number, number]
   name?: string
   parentSpanContext?: object
   recording?: boolean
@@ -161,7 +162,7 @@ function makeSpan(options: {
     droppedLinksCount: 0,
     duration: [0, 0],
     ended: !recording,
-    endTime: [0, 0],
+    endTime: options.endTime ?? [0, 0],
     events: [],
     instrumentationScope: { name: 'test-scope' },
     isRecording: () => recording,
@@ -353,6 +354,56 @@ describe('TailSamplingProcessor', () => {
     processor.onStart(child, ROOT_CONTEXT)
 
     expect(getPendingSpanNames(downstream.calls)).toEqual(['root', 'slow child'])
+  })
+
+  test('flushes when the ending root span crosses the duration threshold', () => {
+    const downstream = makeProcessor()
+    const tail = levelOrDuration({ durationThreshold: 2.0 }).tail
+    if (tail === undefined) {
+      throw new Error('expected tail sampler')
+    }
+    const processor = new TailSamplingProcessor(downstream, tail)
+
+    const root = makeSpan({ endTime: [1010, 0], name: 'slow root', startTime: [1000, 0] })
+    processor.onStart(root, ROOT_CONTEXT)
+    expect(downstream.calls).toHaveLength(0)
+
+    root.setRecording(false)
+    processor.onEnd(root)
+    expect(downstream.calls).toEqual([
+      { event: 'start', span: root },
+      { event: 'end', span: root },
+    ])
+  })
+
+  test('flushes when an ending child span crosses the duration threshold', () => {
+    const downstream = makeProcessor()
+    const tail = levelOrDuration({ durationThreshold: 2.0 }).tail
+    if (tail === undefined) {
+      throw new Error('expected tail sampler')
+    }
+    const processor = new TailSamplingProcessor(downstream, tail)
+
+    const root = makeSpan({ name: 'root', startTime: [1000, 0] })
+    processor.onStart(root, ROOT_CONTEXT)
+
+    const child = makeSpan({
+      endTime: [1005, 0],
+      name: 'slow child',
+      parentSpanContext: root.spanContext(),
+      spanId: 'child00000000000',
+      startTime: [1001, 0],
+    })
+    processor.onStart(child, ROOT_CONTEXT)
+    expect(downstream.calls).toHaveLength(0)
+
+    child.setRecording(false)
+    processor.onEnd(child)
+    expect(downstream.calls).toEqual([
+      { event: 'start', span: root },
+      { event: 'start', span: child },
+      { event: 'end', span: child },
+    ])
   })
 
   test('emits pending spans for later children after acceptance from onEnd', () => {
