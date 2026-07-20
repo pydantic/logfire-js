@@ -549,6 +549,12 @@ describe('logfire config', () => {
       configure({ sendToLogfire: false })
       expect(logfireConfig.distributedTracing).toBe(true)
     })
+
+    it('a whitespace-only LOGFIRE_DISTRIBUTED_TRACING is treated as unset', () => {
+      process.env['LOGFIRE_DISTRIBUTED_TRACING'] = '   '
+      configure({ sendToLogfire: false })
+      expect(logfireConfig.distributedTracing).toBe(true)
+    })
   })
 
   function makeCredentialsDir(credentials: { logfire_api_url: string; project_name: string; project_url: string; token: string }): string {
