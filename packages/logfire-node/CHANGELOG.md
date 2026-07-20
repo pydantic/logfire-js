@@ -1,5 +1,13 @@
 # logfire
 
+## 0.18.5
+
+### Patch Changes
+
+- Updated dependencies [ecdfcf1]
+- Updated dependencies [38fb2d4]
+  - logfire@0.21.0
+
 ## 0.18.4
 
 ### Patch Changes
