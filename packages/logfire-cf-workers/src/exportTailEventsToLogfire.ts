@@ -1,5 +1,7 @@
 import { resolveBaseUrl } from 'logfire'
 
+import { USER_AGENT } from './userAgent'
+
 // simplified interface from CF
 export interface TraceItem {
   logs: { message: unknown[] }[]
@@ -26,6 +28,7 @@ export async function exportTailEventsToLogfire(
       headers: {
         Authorization: token,
         'Content-Type': 'application/json',
+        'User-Agent': USER_AGENT,
       },
       method: 'POST',
     })

@@ -3,7 +3,7 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
 import type { ReadableSpan, Span, SpanExporter, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { BatchSpanProcessor, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 
-import { logfireConfig } from './logfireConfig'
+import { logfireConfig, USER_AGENT } from './logfireConfig'
 import { LogfireConsoleSpanExporter } from './LogfireConsoleSpanExporter'
 import type { ConsoleConfig } from './consoleOptions'
 import { resolveConsoleOptions } from './consoleOptions'
@@ -30,6 +30,7 @@ export function traceExporter(): SpanExporter {
   return new OTLPTraceExporter({
     headers: logfireConfig.authorizationHeaders,
     url: logfireConfig.traceExporterUrl,
+    userAgent: USER_AGENT,
   })
 }
 
