@@ -96,10 +96,6 @@ describe('User-Agent', () => {
     await exportTailEventsToLogfire(events, { LOGFIRE_TOKEN: 'test-token' })
 
     expect(fetchMock).toHaveBeenCalledOnce()
-    const call = fetchMock.mock.calls[0]
-    if (!call) {
-      throw new Error('fetch was not called')
-    }
-    expect(call[1]).toMatchObject({ headers: { 'User-Agent': USER_AGENT } })
+    expect(fetchMock.mock.lastCall?.[1]).toMatchObject({ headers: { 'User-Agent': USER_AGENT } })
   })
 })
