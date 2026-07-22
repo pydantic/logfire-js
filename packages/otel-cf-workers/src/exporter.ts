@@ -8,7 +8,15 @@ import { unwrap } from './wrap.js'
 export interface OTLPExporterConfig {
   url: string
   headers?: Record<string, string>
+  /**
+   * Product identifier prepended to the exporter's default User-Agent,
+   * following the OTLP recommendation that distributions retain the default
+   * exporter identifier.
+   */
+  userAgent?: string
 }
+
+export const OTLP_EXPORTER_USER_AGENT: string = `otel-cf-workers/${PACKAGE_VERSION}`
 
 const defaultHeaders: Record<string, string> = {
   accept: 'application/json',
@@ -20,7 +28,11 @@ export class OTLPExporter implements SpanExporter {
   private readonly url: string
   constructor(config: OTLPExporterConfig) {
     this.url = config.url
-    this.headers = { ...defaultHeaders, ...config.headers }
+    this.headers = {
+      ...defaultHeaders,
+      'user-agent': config.userAgent === undefined ? OTLP_EXPORTER_USER_AGENT : `${config.userAgent} ${OTLP_EXPORTER_USER_AGENT}`,
+      ...config.headers,
+    }
   }
 
   export(items: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {

@@ -96,8 +96,9 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
       ...config,
       additionalSpanProcessors,
       exporter: {
-        headers: { Authorization: token, 'User-Agent': USER_AGENT },
+        headers: { Authorization: token },
         url: `${baseUrl}/v1/traces`,
+        userAgent: USER_AGENT,
       },
       idGenerator: new ULIDGenerator(),
       postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(spans),
