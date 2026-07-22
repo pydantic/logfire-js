@@ -177,7 +177,27 @@ describe('Dataset YAML round-trip', () => {
     }
     aliases.push('name: excessive-merges', 'cases: []')
 
-    expect(() => Dataset.fromText(aliases.join('\n'), { format: 'yaml' })).toThrow('merge keys exceeded maxTotalMergeKeys (10000)')
+    let thrown: unknown
+    try {
+      Dataset.fromText(aliases.join('\n'), { format: 'yaml' })
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toBe(
+      [
+        'merge keys exceeded maxTotalMergeKeys (10000) (142:24)',
+        '',
+        ' 139 | a138: &a138 { <<: *a137, k138: 138 }',
+        ' 140 | a139: &a139 { <<: *a138, k139: 139 }',
+        ' 141 | a140: &a140 { <<: *a139, k140: 140 }',
+        ' 142 | a141: &a141 { <<: *a140, k141: 141 }',
+        '------------------------------^',
+        ' 143 | a142: &a142 { <<: *a141, k142: 142 }',
+        ' 144 | a143: &a143 { <<: *a142, k143: 143 }',
+      ].join('\n')
+    )
   })
 
   it('serializes a small dataset to YAML in pydantic-evals shape', () => {
