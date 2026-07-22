@@ -49,4 +49,34 @@ describe('OTLPExporter user agent', () => {
       'user-agent': `logfire-js/1.2.3 ${OTLP_EXPORTER_USER_AGENT}`,
     })
   })
+
+  it('prepends a lowercase user-agent header to the default identifier', async () => {
+    expect(await exportedHeaders({ url: 'https://example.com/v1/traces', headers: { 'user-agent': 'custom/1.0' } })).toEqual({
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'user-agent': `custom/1.0 ${OTLP_EXPORTER_USER_AGENT}`,
+    })
+  })
+
+  it('prepends a capitalized User-Agent header without duplicating the key', async () => {
+    expect(await exportedHeaders({ url: 'https://example.com/v1/traces', headers: { 'User-Agent': 'custom/1.0' } })).toEqual({
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'user-agent': `custom/1.0 ${OTLP_EXPORTER_USER_AGENT}`,
+    })
+  })
+
+  it('gives the userAgent option precedence over a User-Agent header', async () => {
+    expect(
+      await exportedHeaders({
+        url: 'https://example.com/v1/traces',
+        headers: { 'User-Agent': 'header/1.0' },
+        userAgent: 'option/1.0',
+      })
+    ).toEqual({
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'user-agent': `option/1.0 ${OTLP_EXPORTER_USER_AGENT}`,
+    })
+  })
 })
