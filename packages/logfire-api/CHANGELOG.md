@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.21.1
+
+### Patch Changes
+
+- f0a67f1: Upgrade the internal dataset validation dependency to Zod 4.
+
 ## 0.21.0
 
 ### Minor Changes
