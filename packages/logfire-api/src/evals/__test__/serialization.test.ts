@@ -168,6 +168,18 @@ describe('EvaluatorSpec encoding', () => {
 })
 
 describe('Dataset YAML round-trip', () => {
+  it('rejects merge keys that exceed the YAML expansion limit', () => {
+    const aliases = ['seed: &a0 { k0: 0 }']
+    for (let index = 1; index < 150; index += 1) {
+      const current = String(index)
+      const previous = String(index - 1)
+      aliases.push(`a${current}: &a${current} { <<: *a${previous}, k${current}: ${current} }`)
+    }
+    aliases.push('name: excessive-merges', 'cases: []')
+
+    expect(() => Dataset.fromText(aliases.join('\n'), { format: 'yaml' })).toThrow('merge keys exceeded maxTotalMergeKeys (10000)')
+  })
+
   it('serializes a small dataset to YAML in pydantic-evals shape', () => {
     const dataset = new Dataset<{ text: string }, string>({
       cases: [
