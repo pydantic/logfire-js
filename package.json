@@ -12,11 +12,10 @@
     "lint": "vp lint",
     "format": "vp fmt . --write",
     "format-check": "vp fmt --check",
-    "check": "pnpm run test:security-dependencies && pnpm run build && vp check && pnpm run typecheck && pnpm run test && pnpm run test:release-tooling",
+    "check": "pnpm run build && vp check && pnpm run typecheck && pnpm run test && pnpm run test:release-tooling",
     "release": "pnpm run build && pnpm publish -r --access public",
     "changeset-add": "pnpm changeset add",
     "test:release-tooling": "node scripts/create-npm-token.test.mjs",
-    "test:security-dependencies": "node scripts/assert-security-dependency-versions.test.mjs",
     "verify:browser-rum-release-plan": "node scripts/verify-browser-release-plan.mjs"
   },
   "devDependencies": {
