@@ -162,7 +162,7 @@ function makeSpan(options: {
     droppedLinksCount: 0,
     duration: [0, 0],
     ended: !recording,
-    endTime: options.endTime ?? [0, 0],
+    endTime: options.endTime ?? options.startTime ?? [1000, 0],
     events: [],
     instrumentationScope: { name: 'test-scope' },
     isRecording: () => recording,
