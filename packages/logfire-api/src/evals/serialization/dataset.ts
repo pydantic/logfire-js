@@ -47,7 +47,7 @@ export interface SerializedDataset {
   report_evaluators?: EncodedEvaluator[]
 }
 
-const encodedEvaluatorSchema: z.ZodType<EncodedEvaluator> = z.union([z.string(), z.record(z.unknown())])
+const encodedEvaluatorSchema: z.ZodType<EncodedEvaluator> = z.union([z.string(), z.record(z.string(), z.unknown())])
 const serializedCaseSchema = z.object({
   evaluators: z.array(encodedEvaluatorSchema).optional(),
   expected_output: z.unknown().optional(),
