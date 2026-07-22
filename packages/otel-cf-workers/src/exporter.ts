@@ -28,10 +28,20 @@ export class OTLPExporter implements SpanExporter {
   private readonly url: string
   constructor(config: OTLPExporterConfig) {
     this.url = config.url
+    const headers: Record<string, string> = {}
+    let headerUserAgent: string | undefined
+    for (const [key, value] of Object.entries(config.headers ?? {})) {
+      if (key.toLowerCase() === 'user-agent') {
+        headerUserAgent = value
+      } else {
+        headers[key] = value
+      }
+    }
+    const prefix = config.userAgent ?? headerUserAgent
     this.headers = {
       ...defaultHeaders,
-      'user-agent': config.userAgent === undefined ? OTLP_EXPORTER_USER_AGENT : `${config.userAgent} ${OTLP_EXPORTER_USER_AGENT}`,
-      ...config.headers,
+      ...headers,
+      'user-agent': prefix === undefined ? OTLP_EXPORTER_USER_AGENT : `${prefix} ${OTLP_EXPORTER_USER_AGENT}`,
     }
   }
 
