@@ -40,7 +40,11 @@ describe('User-Agent', () => {
     traceExporter()
 
     expect(OTLPTraceExporterMock).toHaveBeenCalledOnce()
-    expect(OTLPTraceExporterMock).toHaveBeenCalledWith(expect.objectContaining({ userAgent: expectedUserAgent }))
+    expect(OTLPTraceExporterMock).toHaveBeenCalledWith({
+      headers: { Authorization: 'test-token' },
+      url: 'https://logfire-api.pydantic.dev/v1/traces',
+      userAgent: expectedUserAgent,
+    })
   })
 
   it('metricExporter passes userAgent to OTLPMetricExporter', async () => {
@@ -62,7 +66,11 @@ describe('User-Agent', () => {
     metricExporter()
 
     expect(OTLPMetricExporterMock).toHaveBeenCalledOnce()
-    expect(OTLPMetricExporterMock).toHaveBeenCalledWith(expect.objectContaining({ userAgent: expectedUserAgent }))
+    expect(OTLPMetricExporterMock).toHaveBeenCalledWith({
+      headers: { Authorization: 'test-token' },
+      url: 'https://logfire-api.pydantic.dev/v1/metrics',
+      userAgent: expectedUserAgent,
+    })
   })
 
   it('logfireLogRecordProcessor passes userAgent to OTLPLogExporter', async () => {
@@ -84,6 +92,10 @@ describe('User-Agent', () => {
     logfireLogRecordProcessor()
 
     expect(OTLPLogExporterMock).toHaveBeenCalledOnce()
-    expect(OTLPLogExporterMock).toHaveBeenCalledWith(expect.objectContaining({ userAgent: expectedUserAgent }))
+    expect(OTLPLogExporterMock).toHaveBeenCalledWith({
+      headers: { Authorization: 'test-token' },
+      url: 'https://logfire-api.pydantic.dev/v1/logs',
+      userAgent: expectedUserAgent,
+    })
   })
 })
