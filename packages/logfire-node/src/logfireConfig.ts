@@ -449,9 +449,15 @@ function resolveAuthorizationHeaders(token: LogfireToken | undefined): Authoriza
   }
 }
 
-function resolveDistributedTracing(option: LogfireConfigOptions['distributedTracing']) {
-  const envDistributedTracing = process.env['LOGFIRE_DISTRIBUTED_TRACING']
-  return (option ?? envDistributedTracing === undefined) ? true : envDistributedTracing === 'true'
+function resolveDistributedTracing(option: LogfireConfigOptions['distributedTracing']): boolean {
+  if (option !== undefined) {
+    return option
+  }
+  const envDistributedTracing = readNonEmptyEnv(process.env, 'LOGFIRE_DISTRIBUTED_TRACING')
+  if (envDistributedTracing !== undefined) {
+    return envDistributedTracing === 'true'
+  }
+  return true
 }
 
 function requiresRemoteVariables(options: VariablesConfigOptions): boolean {
