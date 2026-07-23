@@ -1,5 +1,15 @@
 # @pydantic/logfire-cf-workers
 
+## 2.0.4
+
+### Patch Changes
+
+- 13b5ee7: Send a `logfire-js/<version>` User-Agent when exporting traces, logs, and metrics. The Cloudflare Workers OTLP exporter now sends a default `otel-cf-workers/<version>` identifier and accepts a `userAgent` option that is prepended to it.
+- Updated dependencies [13b5ee7]
+- Updated dependencies [d2d6461]
+  - @pydantic/otel-cf-workers@2.1.0
+  - logfire@0.21.3
+
 ## 2.0.3
 
 ### Patch Changes
