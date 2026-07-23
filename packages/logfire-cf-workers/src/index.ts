@@ -30,6 +30,7 @@ import {
 } from 'logfire'
 
 import { exportTailEventsToLogfire } from './exportTailEventsToLogfire'
+import { USER_AGENT } from './userAgent'
 import { LogfireCloudflareConsoleSpanExporter } from './LogfireCloudflareConsoleSpanExporter'
 import { TailWorkerExporter } from './TailWorkerExporter'
 export * from './exportTailEventsToLogfire'
@@ -97,6 +98,7 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
       exporter: {
         headers: { Authorization: token },
         url: `${baseUrl}/v1/traces`,
+        userAgent: USER_AGENT,
       },
       idGenerator: new ULIDGenerator(),
       postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(spans),

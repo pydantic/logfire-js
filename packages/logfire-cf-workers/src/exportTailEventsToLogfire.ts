@@ -1,4 +1,7 @@
+import { OTLP_EXPORTER_USER_AGENT } from '@pydantic/otel-cf-workers'
 import { resolveBaseUrl } from 'logfire'
+
+import { USER_AGENT } from './userAgent'
 
 // simplified interface from CF
 export interface TraceItem {
@@ -26,6 +29,7 @@ export async function exportTailEventsToLogfire(
       headers: {
         Authorization: token,
         'Content-Type': 'application/json',
+        'User-Agent': `${USER_AGENT} ${OTLP_EXPORTER_USER_AGENT}`,
       },
       method: 'POST',
     })

@@ -3,6 +3,7 @@ import type { LogRecordExporter, LogRecordProcessor } from '@opentelemetry/sdk-l
 import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs'
 
 import { logfireConfig } from './logfireConfig'
+import { USER_AGENT } from './userAgent'
 
 type BatchLogRecordProcessorConstructor = {
   legacy: new (exporter: LogRecordExporter) => LogRecordProcessor
@@ -40,6 +41,7 @@ export function logfireLogRecordProcessor(): LogRecordProcessor | null {
     new OTLPLogExporter({
       headers: logfireConfig.authorizationHeaders,
       url: logfireConfig.logsExporterUrl,
+      userAgent: USER_AGENT,
     })
   )
 }
