@@ -1,5 +1,12 @@
 # @pydantic/logfire-nextjs-example
 
+## 0.0.4
+
+### Patch Changes
+
+- Updated dependencies [d2d6461]
+  - logfire@0.21.3
+
 ## 0.0.3
 
 ### Patch Changes

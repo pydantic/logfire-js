@@ -1,5 +1,14 @@
 # logfire
 
+## 0.18.8
+
+### Patch Changes
+
+- 59a6682: Fix `distributedTracing` precedence in Node `configure()`. An explicit `distributedTracing: false` was overridden by `LOGFIRE_DISTRIBUTED_TRACING=true`, while an explicit `true` correctly won over the environment. The code option now always wins, matching every other configure() setting, and an empty `LOGFIRE_DISTRIBUTED_TRACING` value is treated as unset instead of disabling distributed tracing.
+- 13b5ee7: Send a `logfire-js/<version>` User-Agent when exporting traces, logs, and metrics. The Cloudflare Workers OTLP exporter now sends a default `otel-cf-workers/<version>` identifier and accepts a `userAgent` option that is prepended to it.
+- Updated dependencies [d2d6461]
+  - logfire@0.21.3
+
 ## 0.18.7
 
 ### Patch Changes
