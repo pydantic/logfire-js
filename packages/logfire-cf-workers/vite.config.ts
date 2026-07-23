@@ -1,8 +1,13 @@
+import { readFileSync } from 'node:fs'
 import { defineConfig } from 'vite-plus'
+
+const { version: packageVersion } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as {
+  version: string
+}
 
 const packageDefines = {
   PACKAGE_TIMESTAMP: String(Date.now()),
-  PACKAGE_VERSION: JSON.stringify(process.env['npm_package_version'] ?? '0.0.0'),
+  PACKAGE_VERSION: JSON.stringify(packageVersion),
 }
 
 const config: ReturnType<typeof defineConfig> = defineConfig({

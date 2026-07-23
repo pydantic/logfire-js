@@ -2,7 +2,8 @@ import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-proto'
 import type { PeriodicExportingMetricReaderOptions, PushMetricExporter } from '@opentelemetry/sdk-metrics'
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
 
-import { logfireConfig, USER_AGENT } from './logfireConfig'
+import { logfireConfig } from './logfireConfig'
+import { USER_AGENT } from './userAgent'
 import { VoidMetricExporter } from './VoidMetricExporter'
 
 export type PeriodicMetricReaderOptions = Omit<PeriodicExportingMetricReaderOptions, 'exporter'>

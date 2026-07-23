@@ -2,7 +2,8 @@ import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto'
 import type { LogRecordExporter, LogRecordProcessor } from '@opentelemetry/sdk-logs'
 import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs'
 
-import { logfireConfig, USER_AGENT } from './logfireConfig'
+import { logfireConfig } from './logfireConfig'
+import { USER_AGENT } from './userAgent'
 
 type BatchLogRecordProcessorConstructor = {
   legacy: new (exporter: LogRecordExporter) => LogRecordProcessor

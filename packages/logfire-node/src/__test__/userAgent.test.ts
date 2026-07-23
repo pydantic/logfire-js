@@ -1,9 +1,10 @@
+import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
-// Mirror the PACKAGE_VERSION define from vite.config.ts so the expected value
-// matches what Vite substituted at test-compile time, regardless of whether
-// npm_package_version is populated in the current shell.
-const expectedUserAgent = `logfire-js/${process.env['npm_package_version'] ?? '0.0.0'}`
+const { version: packageVersion } = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
+  version: string
+}
+const expectedUserAgent = `logfire-js/${packageVersion}`
 
 describe('User-Agent', () => {
   beforeEach(() => {
@@ -17,8 +18,12 @@ describe('User-Agent', () => {
   })
 
   it('USER_AGENT constant equals logfire-js/<package-version>', async () => {
-    const { USER_AGENT } = await import('../logfireConfig')
+    const { USER_AGENT } = await import('../userAgent')
     expect(USER_AGENT).toBe(expectedUserAgent)
+  })
+
+  it('keeps USER_AGENT internal to the package', async () => {
+    expect(await import('../index')).not.toHaveProperty('USER_AGENT')
   })
 
   it('traceExporter passes userAgent to OTLPTraceExporter', async () => {

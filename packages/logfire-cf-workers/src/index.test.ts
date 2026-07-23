@@ -5,6 +5,11 @@ import * as packageRoot from '@pydantic/logfire-cf-workers'
 
 import logfireCfWorkers, { instrument as instrumentWorker } from './index'
 
+const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+  exports: Record<string, Record<string, string>>
+  version: string
+}
+
 describe('cf-workers default export', () => {
   it('keeps instrument as the Cloudflare runtime helper', () => {
     const defaultInstrument = Object.getOwnPropertyDescriptor(logfireCfWorkers, 'instrument')?.value as typeof instrumentWorker
@@ -23,10 +28,6 @@ describe('cf-workers default export', () => {
   })
 
   it('publishes esm-only package metadata', () => {
-    const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
-      exports: Record<string, Record<string, string>>
-    }
-
     expect(packageRoot.instrument).toBeTypeOf('function')
     expect(packageRoot.instrumentDO).toBeTypeOf('function')
     expect(packageRoot.default.instrument).toBe(packageRoot.instrument)
@@ -38,10 +39,7 @@ describe('cf-workers default export', () => {
   })
 })
 
-// Mirror the PACKAGE_VERSION define from vite.config.ts so the expected value
-// matches what Vite substituted at test-compile time, regardless of whether
-// npm_package_version is populated in the current shell.
-const expectedUserAgent = `logfire-js/${process.env['npm_package_version'] ?? '0.0.0'}`
+const expectedUserAgent = `logfire-js/${packageJson.version}`
 
 describe('User-Agent', () => {
   afterEach(() => {

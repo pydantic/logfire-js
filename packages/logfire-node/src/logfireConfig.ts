@@ -175,8 +175,6 @@ export interface LogfireConfigOptions {
   variables?: VariablesConfigOptions
 }
 
-export const USER_AGENT: string = `logfire-js/${PACKAGE_VERSION}`
-
 const DEFAULT_OTEL_SCOPE = 'logfire'
 const TRACE_ENDPOINT_PATH = 'v1/traces'
 const METRIC_ENDPOINT_PATH = 'v1/metrics'

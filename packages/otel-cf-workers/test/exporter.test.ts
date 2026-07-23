@@ -1,11 +1,12 @@
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { OTLPExporterConfig } from '../src/exporter'
 import { OTLP_EXPORTER_USER_AGENT, OTLPExporter } from '../src/exporter'
 
-// Mirror the PACKAGE_VERSION define from vite.config.ts so the expected value
-// matches what Vite substituted at test-compile time, regardless of whether
-// npm_package_version is populated in the current shell.
-const expectedDefaultUserAgent = `otel-cf-workers/${process.env.npm_package_version ?? '0.0.0'}`
+const { version: packageVersion } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as {
+  version: string
+}
+const expectedDefaultUserAgent = `otel-cf-workers/${packageVersion}`
 
 async function exportedHeaders(config: OTLPExporterConfig): Promise<unknown> {
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response('ok'))
