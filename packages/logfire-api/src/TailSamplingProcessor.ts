@@ -133,7 +133,10 @@ export class TailSamplingProcessor implements SpanProcessor {
       return false
     }
 
-    const duration = hrTimeToSeconds(span.startTime) - hrTimeToSeconds(buffer.startTime)
+    // Match Python logfire: duration runs from the trace start to the start or end of this span,
+    // depending on which event is being checked.
+    const spanTime = event === 'end' ? span.endTime : span.startTime
+    const duration = hrTimeToSeconds(spanTime) - hrTimeToSeconds(buffer.startTime)
     const level = SpanLevel.fromSpan(span)
 
     const info: TailSamplingSpanInfo = { context, duration, event, level, span }
