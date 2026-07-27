@@ -438,11 +438,14 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
 
   private config: VariablesConfig | undefined
   private hasAttemptedFetch: boolean = false
+  private lastEtag: string | undefined
   private lastFetchedAt: number | undefined
-  private pollingTimer: ReturnType<typeof setInterval> | undefined
+  private pendingDebounceTimer: ReturnType<typeof setTimeout> | undefined
+  private pollingTimer: ReturnType<typeof setTimeout> | undefined
   private queuedForcedRefreshPromise: Promise<void> | undefined
   private refreshPromise: Promise<void> | undefined
   private sseController: AbortController | undefined
+  private sseHadConnected: boolean = false
   private shutdownRequested: boolean = false
   private started: boolean = false
 
@@ -472,13 +475,21 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
     }
     this.started = true
     if (this.pollingEnabled) {
-      this.pollingTimer = setInterval(() => {
-        this.refresh().catch(ignoreBackgroundError)
-      }, this.pollingIntervalMs)
-      const maybeTimer = this.pollingTimer as { unref?: () => void }
-      if (typeof maybeTimer.unref === 'function') {
-        maybeTimer.unref()
+      const scheduleNextPoll = (): void => {
+        if (this.shutdownRequested) {
+          return
+        }
+        const jitter = (Math.random() * 0.2 - 0.1) * this.pollingIntervalMs
+        this.pollingTimer = setTimeout(() => {
+          this.refresh().catch(ignoreBackgroundError)
+          scheduleNextPoll()
+        }, this.pollingIntervalMs + jitter)
+        const maybeTimer = this.pollingTimer as { unref?: () => void }
+        if (typeof maybeTimer.unref === 'function') {
+          maybeTimer.unref()
+        }
       }
+      scheduleNextPoll()
     }
     if (this.sseEnabled) {
       this.runSseLoop().catch(ignoreBackgroundError)
@@ -490,8 +501,12 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
     this.sseController?.abort()
     this.sseController = undefined
     if (this.pollingTimer !== undefined) {
-      clearInterval(this.pollingTimer)
+      clearTimeout(this.pollingTimer)
       this.pollingTimer = undefined
+    }
+    if (this.pendingDebounceTimer !== undefined) {
+      clearTimeout(this.pendingDebounceTimer)
+      this.pendingDebounceTimer = undefined
     }
   }
 
@@ -507,14 +522,21 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
     }
 
     const now = Date.now()
-    if (!force && this.lastFetchedAt !== undefined && now - this.lastFetchedAt < this.pollingIntervalMs) {
+    if (!force && this.lastFetchedAt !== undefined && now - this.lastFetchedAt < this.pollingIntervalMs * 0.9) {
       return
     }
 
     this.refreshPromise = this.transport
-      .requestJson('/v1/variables/', { method: 'GET' })
-      .then((data) => {
-        this.config = normalizeVariablesConfig(data)
+      .requestJsonConditional('/v1/variables/', {
+        method: 'GET',
+        ...(this.lastEtag !== undefined ? { ifNoneMatch: this.lastEtag } : {}),
+      })
+      .then((result) => {
+        // Server confirms config is unchanged on 304; bump the timestamp to suppress redundant polls.
+        if (!result.notModified) {
+          this.config = normalizeVariablesConfig(result.data)
+          this.lastEtag = result.etag
+        }
         this.lastFetchedAt = Date.now()
       })
       .finally(() => {
@@ -691,9 +713,15 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
         if (!response.ok || response.body === null) {
           throw new HttpStatusError(response.status, response.statusText)
         }
+        // On reconnects (not the very first connection), fetch fresh config immediately
+        // to recover updates published while the stream was down.
+        if (this.sseHadConnected) {
+          this.refresh(true).catch(ignoreBackgroundError)
+        }
+        this.sseHadConnected = true
         // eslint-disable-next-line no-await-in-loop -- the stream must be consumed before reconnecting.
-        const receivedValidData = await this.readSseStream(response.body)
-        if (receivedValidData) {
+        const receivedAnyContent = await this.readSseStream(response.body)
+        if (receivedAnyContent) {
           reconnectDelay = 1_000
         }
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- shutdown can be requested while the stream is being read.
@@ -720,7 +748,7 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
     const reader = stream.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
-    let receivedValidData = false
+    let receivedAnyContent = false
     try {
       while (!this.shutdownRequested) {
         // eslint-disable-next-line no-await-in-loop -- stream chunks must be read sequentially.
@@ -733,6 +761,19 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
         buffer = lines.pop() ?? ''
         for (const line of lines) {
           const trimmed = line.trim()
+          // SSE-framed lines (comments starting with ':' or named fields) indicate a healthy,
+          // well-behaved stream and reset the reconnect backoff. Raw HTTP error bodies such as
+          // HTML pages do not contain SSE framing and will not reset the backoff even if they
+          // deliver bytes.
+          if (
+            trimmed.startsWith(':') ||
+            trimmed.startsWith('data:') ||
+            trimmed.startsWith('event:') ||
+            trimmed.startsWith('id:') ||
+            trimmed.startsWith('retry:')
+          ) {
+            receivedAnyContent = true
+          }
           if (!trimmed.startsWith('data:')) {
             continue
           }
@@ -740,8 +781,8 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
           try {
             const event = JSON.parse(json) as { event?: string }
             if (event.event === 'created' || event.event === 'updated' || event.event === 'deleted') {
-              receivedValidData = true
               this.refresh(true).catch(ignoreBackgroundError)
+              this.scheduleDebouncedRefresh()
             }
           } catch {
             // Ignore malformed SSE data.
@@ -751,7 +792,23 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
     } finally {
       reader.releaseLock()
     }
-    return receivedValidData
+    return receivedAnyContent
+  }
+
+  private scheduleDebouncedRefresh(): void {
+    if (this.pendingDebounceTimer !== undefined) {
+      clearTimeout(this.pendingDebounceTimer)
+    }
+    this.pendingDebounceTimer = setTimeout(() => {
+      this.pendingDebounceTimer = undefined
+      if (!this.shutdownRequested) {
+        this.refresh(true).catch(ignoreBackgroundError)
+      }
+    }, 2_000)
+    const maybeTimer = this.pendingDebounceTimer as { unref?: () => void }
+    if (typeof maybeTimer.unref === 'function') {
+      maybeTimer.unref()
+    }
   }
 }
 

@@ -13,6 +13,18 @@ export interface PlatformRequestOptions {
   query?: Record<string, boolean | number | string | undefined>
 }
 
+export interface PlatformConditionalResult {
+  data: unknown
+  etag: string | undefined
+  notModified: false
+}
+
+export interface PlatformNotModifiedResult {
+  notModified: true
+}
+
+export type PlatformConditionalResponse = PlatformConditionalResult | PlatformNotModifiedResult
+
 export class PlatformAPIClient {
   private readonly apiKey: string
   private readonly baseUrl: string
@@ -30,30 +42,46 @@ export class PlatformAPIClient {
   }
 
   async requestJson(path: string, options: PlatformRequestOptions = {}): Promise<unknown> {
+    const result = await this.requestJsonConditional(path, options)
+    // notModified is only possible when ifNoneMatch is passed; requestJson never sends it.
+    return result.notModified ? undefined : result.data
+  }
+
+  async requestJsonConditional(
+    path: string,
+    options: PlatformRequestOptions & { ifNoneMatch?: string } = {}
+  ): Promise<PlatformConditionalResponse> {
     const controller = new AbortController()
     const timeout = setTimeout(() => {
       controller.abort()
     }, this.timeoutMs)
 
     try {
+      const headers = this.buildHeaders()
+      if (options.ifNoneMatch !== undefined) {
+        headers.set('If-None-Match', options.ifNoneMatch)
+      }
       const init: RequestInit = {
-        headers: this.buildHeaders(),
+        headers,
         method: options.method ?? (options.body === undefined ? 'GET' : 'POST'),
         signal: controller.signal,
       }
       if (options.body !== undefined) {
         init.body = JSON.stringify(options.body)
       }
-      const response = await this.fetchImpl(this.buildUrl(path, options.query), {
-        ...init,
-      })
+      const response = await this.fetchImpl(this.buildUrl(path, options.query), init)
+      if (response.status === 304) {
+        return { notModified: true }
+      }
       if (!response.ok) {
         throw new PlatformHTTPError(response.status, response.statusText, await parseErrorDetail(response))
       }
       if (response.status === 204) {
-        return undefined
+        return { data: undefined, etag: undefined, notModified: false }
       }
-      return await parseSuccessJson(response)
+      const data = await parseSuccessJson(response)
+      const etag = response.headers.get('etag') ?? undefined
+      return { data, etag, notModified: false }
     } catch (error) {
       if (error instanceof PlatformConfigurationError || error instanceof PlatformHTTPError || error instanceof PlatformJSONError) {
         throw error
