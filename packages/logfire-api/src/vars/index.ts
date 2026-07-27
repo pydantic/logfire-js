@@ -522,7 +522,7 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
     }
 
     const now = Date.now()
-    if (!force && this.lastFetchedAt !== undefined && now - this.lastFetchedAt < this.pollingIntervalMs) {
+    if (!force && this.lastFetchedAt !== undefined && now - this.lastFetchedAt < this.pollingIntervalMs * 0.9) {
       return
     }
 
@@ -532,9 +532,8 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
         ...(this.lastEtag !== undefined ? { ifNoneMatch: this.lastEtag } : {}),
       })
       .then((result) => {
-        if (result.notModified) {
-          // Server confirms config is unchanged; bump the timestamp to suppress redundant polls.
-        } else {
+        // Server confirms config is unchanged on 304; bump the timestamp to suppress redundant polls.
+        if (!result.notModified) {
           this.config = normalizeVariablesConfig(result.data)
           this.lastEtag = result.etag
         }
@@ -757,14 +756,24 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
         if (done) {
           break
         }
-        if (value.byteLength > 0) {
-          receivedAnyContent = true
-        }
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split(/\r?\n/u)
         buffer = lines.pop() ?? ''
         for (const line of lines) {
           const trimmed = line.trim()
+          // SSE-framed lines (comments starting with ':' or named fields) indicate a healthy,
+          // well-behaved stream and reset the reconnect backoff. Raw HTTP error bodies such as
+          // HTML pages do not contain SSE framing and will not reset the backoff even if they
+          // deliver bytes.
+          if (
+            trimmed.startsWith(':') ||
+            trimmed.startsWith('data:') ||
+            trimmed.startsWith('event:') ||
+            trimmed.startsWith('id:') ||
+            trimmed.startsWith('retry:')
+          ) {
+            receivedAnyContent = true
+          }
           if (!trimmed.startsWith('data:')) {
             continue
           }

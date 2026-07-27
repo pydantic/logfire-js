@@ -42,44 +42,9 @@ export class PlatformAPIClient {
   }
 
   async requestJson(path: string, options: PlatformRequestOptions = {}): Promise<unknown> {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => {
-      controller.abort()
-    }, this.timeoutMs)
-
-    try {
-      const init: RequestInit = {
-        headers: this.buildHeaders(),
-        method: options.method ?? (options.body === undefined ? 'GET' : 'POST'),
-        signal: controller.signal,
-      }
-      if (options.body !== undefined) {
-        init.body = JSON.stringify(options.body)
-      }
-      const response = await this.fetchImpl(this.buildUrl(path, options.query), {
-        ...init,
-      })
-      if (!response.ok) {
-        throw new PlatformHTTPError(response.status, response.statusText, await parseErrorDetail(response))
-      }
-      if (response.status === 204) {
-        return undefined
-      }
-      return await parseSuccessJson(response)
-    } catch (error) {
-      if (error instanceof PlatformConfigurationError || error instanceof PlatformHTTPError || error instanceof PlatformJSONError) {
-        throw error
-      }
-      if (isAbortError(error)) {
-        throw new PlatformTimeoutError('Logfire platform API request timed out')
-      }
-      if (error instanceof PlatformTransportError) {
-        throw error
-      }
-      throw new PlatformTransportError(`Logfire platform API request failed: ${formatError(error)}`)
-    } finally {
-      clearTimeout(timeout)
-    }
+    const result = await this.requestJsonConditional(path, options)
+    // notModified is only possible when ifNoneMatch is passed; requestJson never sends it.
+    return result.notModified ? undefined : result.data
   }
 
   async requestJsonConditional(
