@@ -95,8 +95,8 @@ describe('LogfireRemoteVariableProvider -- SSE and polling reliability', () => {
     await vi.advanceTimersByTimeAsync(1100)
 
     const varFetchesAfterReconnect = urls.filter((u) => u.includes('/v1/variables/')).length
-    // Second connection (reconnect) MUST trigger a variables fetch.
-    expect(varFetchesAfterReconnect).toBeGreaterThanOrEqual(1)
+    // Second connection (reconnect) MUST trigger exactly one variables fetch.
+    expect(varFetchesAfterReconnect).toBe(1)
 
     provider.shutdown()
   })
