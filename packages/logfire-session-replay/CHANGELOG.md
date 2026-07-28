@@ -1,5 +1,11 @@
 # @pydantic/logfire-session-replay
 
+## 0.2.0
+
+### Minor Changes
+
+- 531fced: Add per-span route names and bounded, per-session custom RUM dimensions to browser spans and session replay metadata.
+
 ## 0.1.0
 
 ### Minor Changes
