@@ -52,6 +52,16 @@ describe('computeChunkMeta', () => {
     expect(meta.distinctId).toBeUndefined()
   })
 
+  it('includes non-empty session attributes without changing the envelope version', () => {
+    expect(computeChunkMeta(0, [], undefined, { account_tier: 'pro', beta_user: true })).toMatchObject({
+      sessionAttributes: {
+        account_tier: 'pro',
+        beta_user: true,
+      },
+    })
+    expect(computeChunkMeta(0, [], undefined, {})).not.toHaveProperty('sessionAttributes')
+  })
+
   it('counts console.error custom events as errors', () => {
     expect(
       computeChunkMeta(0, [

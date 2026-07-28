@@ -28,6 +28,7 @@ export interface BrowserSessionReplayPackageConfig {
   headers?: () => MaybePromise<Record<string, string>>
   token?: string | (() => MaybePromise<string>)
   getSessionId?: () => string | undefined
+  getSessionAttributes?: () => Record<string, string | number | boolean | undefined>
   sessionSampleRate?: number
   onErrorSampleRate?: number
   maskAllText?: boolean
@@ -184,6 +185,7 @@ function createReplayConfig(
 ): BrowserSessionReplayPackageConfig {
   const config: BrowserSessionReplayPackageConfig = {
     getSessionId: () => browserSessionManager.peekSessionId(),
+    getSessionAttributes: () => browserSessionManager.peekSessionAttributes() ?? {},
     ignoreUrlPatterns: [
       ...createTelemetryUrlPatterns([
         { kind: 'exact', url: telemetryOptions.traceUrl },

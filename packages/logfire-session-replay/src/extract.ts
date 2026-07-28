@@ -1,5 +1,5 @@
 import { CustomTag, EventType, IncrementalSource, MouseInteractions } from './types'
-import type { ChunkMeta, RrwebEvent } from './types'
+import type { ChunkMeta, RrwebEvent, SessionAttributes } from './types'
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined
@@ -9,7 +9,12 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
-export function computeChunkMeta(seq: number, events: RrwebEvent[], distinctId?: string): ChunkMeta {
+export function computeChunkMeta(
+  seq: number,
+  events: RrwebEvent[],
+  distinctId?: string,
+  sessionAttributes: SessionAttributes = {}
+): ChunkMeta {
   let firstTimestamp = Number.POSITIVE_INFINITY
   let lastTimestamp = 0
   let clickCount = 0
@@ -80,5 +85,6 @@ export function computeChunkMeta(seq: number, events: RrwebEvent[], distinctId?:
     urls: [...urls],
     traceIds: [...traceIds],
     ...(distinctId !== undefined && distinctId.length > 0 ? { distinctId } : {}),
+    ...(Object.keys(sessionAttributes).length === 0 ? {} : { sessionAttributes: { ...sessionAttributes } }),
   }
 }

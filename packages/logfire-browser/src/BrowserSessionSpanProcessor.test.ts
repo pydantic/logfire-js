@@ -110,6 +110,93 @@ describe('BrowserSessionSpanProcessor', () => {
     })
   })
 
+  it('stamps session dimensions and evaluates the route for each span', () => {
+    let route = '/products/:id'
+    const processor = createProcessor({
+      getRouteName: () => route,
+      getSessionAttributes: () => ({
+        account_tier: 'pro',
+        beta_user: true,
+        seats: 12,
+      }),
+      urlAttributes: false,
+    })
+    const firstSpan = createSpan()
+    const secondSpan = createSpan()
+
+    startSpan(processor, firstSpan)
+    route = ''
+    startSpan(processor, secondSpan)
+
+    expect(firstSpan.attributes).toEqual({
+      'browser.session.id': 'session-1',
+      'logfire.page.route': '/products/:id',
+      'logfire.session.account_tier': 'pro',
+      'logfire.session.beta_user': true,
+      'logfire.session.seats': 12,
+      'session.id': 'session-1',
+    })
+    expect(secondSpan.attributes['logfire.page.route']).toBe('')
+  })
+
+  it('keeps route evaluation independent from URL sanitization failures', () => {
+    setLocation({ href: 'https://example.com/dashboard' })
+    const span = createSpan()
+
+    startSpan(
+      createProcessor({
+        getRouteName: () => '/dashboard',
+        urlAttributes: () => {
+          throw new Error('cannot sanitize')
+        },
+      }),
+      span
+    )
+
+    expect(span.attributes).toMatchObject({
+      'browser.session.id': 'session-1',
+      'logfire.page.route': '/dashboard',
+      'session.id': 'session-1',
+    })
+    expect(span.attributes).not.toHaveProperty('logfire.page.url.full')
+  })
+
+  it.each([
+    ['absent', undefined],
+    ['undefined', () => undefined],
+    ['non-string', () => 123 as never],
+    [
+      'throwing',
+      () => {
+        throw new Error('router unavailable')
+      },
+    ],
+  ])('omits a %s route result without suppressing other attributes', (_name, getRouteName) => {
+    const replayState = new BrowserSessionReplayState()
+    replayState.setReplay(createReplayRuntime('full'))
+    const span = createSpan()
+
+    startSpan(
+      createProcessor(
+        {
+          ...(getRouteName === undefined ? {} : { getRouteName }),
+          getSessionAttributes: () => ({ tier: 'pro' }),
+          urlAttributes: false,
+        },
+        replayState
+      ),
+      span
+    )
+
+    expect(span.attributes).toEqual({
+      'browser.session.id': 'session-1',
+      'logfire.session.tier': 'pro',
+      'logfire.session_replay.active': true,
+      'logfire.session_replay.mode': 'full',
+      'session.id': 'session-1',
+    })
+  })
+
   it('suppresses URL attributes when configured', () => {
     setLocation({ href: 'https://example.com/dashboard?tab=activity#recent' })
     const span = createSpan()

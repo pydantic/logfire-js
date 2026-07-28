@@ -154,8 +154,74 @@ describe('startBrowserSessionReplay', () => {
     expect(touchSpy).toHaveBeenCalledTimes(1)
     expect(replayConfig?.getSessionId?.()).toBe('browser-session-1')
     expect(replayConfig?.getSessionId?.()).toBe('browser-session-1')
+    expect(replayConfig?.getSessionAttributes?.()).toEqual({})
     expect(touchSpy).toHaveBeenCalledTimes(1)
     expect(getSessionSpy).not.toHaveBeenCalled()
+  })
+
+  it('passes the browser session snapshot to replay without touching the session again', async () => {
+    const manager = new BrowserSessionManager({
+      generateId: () => 'browser-session-1',
+      getSessionAttributes: () => ({ account_tier: 'pro', beta_user: true }),
+      now: () => 1_000,
+      storage: new MemoryStorage(),
+      storageKey: 'test-session',
+    })
+    const touchSpy = vi.spyOn(manager, 'touch')
+    let replayConfig: BrowserSessionReplayPackageConfig | undefined
+    const replayModule: BrowserSessionReplayModule = {
+      startSessionReplay: (config) => {
+        replayConfig = config
+        return createReplayRuntime()
+      },
+    }
+
+    await startBrowserSessionReplay({ load: () => replayModule, replayUrl: '/logfire/replay' }, manager, new BrowserSessionReplayState(), {
+      traceUrl: '/logfire/traces',
+    })
+
+    expect(replayConfig?.getSessionAttributes?.()).toEqual({
+      account_tier: 'pro',
+      beta_user: true,
+    })
+    expect(touchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('forwards a fresh non-touching snapshot after browser-session reset', async () => {
+    let id = 0
+    let tier = 'pro'
+    const manager = new BrowserSessionManager({
+      generateId: () => {
+        id += 1
+        return `browser-session-${id.toString()}`
+      },
+      getSessionAttributes: () => ({ account_tier: tier }),
+      now: () => 1_000,
+      storage: new MemoryStorage(),
+      storageKey: 'test-session',
+    })
+    const touchSpy = vi.spyOn(manager, 'touch')
+    let replayConfig: BrowserSessionReplayPackageConfig | undefined
+    const replayModule: BrowserSessionReplayModule = {
+      startSessionReplay: (config) => {
+        replayConfig = config
+        return createReplayRuntime()
+      },
+    }
+
+    await startBrowserSessionReplay({ load: () => replayModule, replayUrl: '/logfire/replay' }, manager, new BrowserSessionReplayState(), {
+      traceUrl: '/logfire/traces',
+    })
+    const touchCallsAfterStartup = touchSpy.mock.calls.length
+    expect(replayConfig?.getSessionAttributes?.()).toEqual({ account_tier: 'pro' })
+
+    tier = 'enterprise'
+    manager.reset()
+
+    expect(replayConfig?.getSessionId?.()).toBe('browser-session-2')
+    expect(replayConfig?.getSessionAttributes?.()).toEqual({ account_tier: 'enterprise' })
+    expect(replayConfig?.getSessionAttributes?.()).toEqual({ account_tier: 'enterprise' })
+    expect(touchSpy).toHaveBeenCalledTimes(touchCallsAfterStartup)
   })
 
   it('leaves privacy options absent so the replay package owns safe defaults', async () => {

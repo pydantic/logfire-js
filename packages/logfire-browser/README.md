@@ -76,6 +76,37 @@ or 4 hours of total duration by default. Spans get `session.id` and
 `browser.session.id`; `session.id` is the OpenTelemetry semantic attribute and
 `browser.session.id` is emitted for Logfire Platform compatibility.
 
+Use `getRouteName` for the application's normalized route template and
+`getSessionAttributes` for low-cardinality dimensions that should remain stable
+for a browser session:
+
+```js
+logfire.configure({
+  traceUrl: '/client-traces',
+  serviceName: 'browser-app',
+  rum: {
+    session: {
+      getRouteName: () => router.currentRoute.value.matched.at(-1)?.path,
+      getSessionAttributes: () => ({
+        account_tier: currentAccount.tier,
+        beta_user: currentUser.isBeta,
+      }),
+    },
+  },
+})
+```
+
+`getRouteName` is evaluated for each span and becomes `logfire.page.route`.
+`getSessionAttributes` is evaluated once for each browser session, persisted
+across same-tab reloads, and refreshed when the session rotates. Accepted
+values become span attributes prefixed with `logfire.session.` and are also
+copied into replay chunk metadata when replay is enabled. Invalid entries are
+omitted. Keys must match
+`^[a-z][a-z0-9_]{0,63}$`; at most 20 entries are retained. Values must be
+booleans, finite numbers, or strings no longer than 200 Unicode code points.
+Treat these dimensions as non-PII: they are persisted in `sessionStorage` for
+the session lifetime.
+
 By default, session-enabled spans also get `logfire.page.url.full` and
 `logfire.page.url.path` from the current page URL. The full value is
 `location.origin + location.pathname`, while the path value is
@@ -199,7 +230,7 @@ uses unit `1`.
 Metric data point attributes are intentionally low-cardinality:
 `web_vital.name` and `web_vital.rating` by default. They do not include
 `session.id`, `browser.session.id`, `logfire.page.url.full`,
-`logfire.page.url.path`, Web Vital
+`logfire.page.url.path`, `logfire.page.route`, `logfire.session.*`, Web Vital
 ids/deltas, DOM selectors, attribution fields, or raw PerformanceEntry data. Use
 spans for raw-sample drilldown, session/replay correlation, exact page context,
 and attribution selectors. When metrics are configured, Logfire Platform should

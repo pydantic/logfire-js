@@ -4,7 +4,7 @@ This example is an end-to-end browser telemetry workbench. It sends:
 
 - browser traces and manual Logfire spans
 - automatic document-load, fetch, XHR, and click/change spans
-- RUM session attributes on browser spans
+- normalized route names and bounded RUM session dimensions on browser spans
 - Core Web Vitals spans and native histogram metrics
 - rrweb session replay chunks through a local backend proxy
 - replay custom events for console, fetch/XHR, navigation, and errors
@@ -86,9 +86,14 @@ In traces/logs:
 - spans named `web_vital.lcp`, `web_vital.inp`, `web_vital.cls`,
   `web_vital.fcp`, and `web_vital.ttfb`
 - `session.id` and `browser.session.id` on browser spans
+- `logfire.page.route` with a normalized route template
+- `logfire.session.account_tier`, `logfire.session.app_region`, and
+  `logfire.session.experiment_variant`
 - `logfire.session_replay.active` and `logfire.session_replay.mode` on spans
   while replay is active
-- sanitized URL attributes such as `logfire.page.url.path=/orders/:id`
+- normalized route attributes such as `logfire.page.route=/orders/:id`
+- privacy-safe default URL attributes that retain the actual path, such as
+  `logfire.page.url.path=/orders/1234`
 
 In metrics:
 
@@ -103,6 +108,7 @@ In replay:
 
 - replay chunks uploaded to `/client-replay/:sessionId?seq=...`
 - the replay session id matching `session.id` / `browser.session.id`
+- matching unprefixed dimensions in `meta.sessionAttributes`
 - masked input values from the form
 - blocked content under `[data-logfire-block]`
 - custom replay events for console, navigation, fetch/XHR, and reported errors

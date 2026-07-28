@@ -225,7 +225,13 @@ describe('public browser configure startup ordering', () => {
     optionalFeatureMocks.metricsStartupError = new Error('metrics startup failed')
     const cleanup = configure({
       metrics: { metricUrl: '/client-metrics' },
-      rum: { webVitals: { metrics: true } },
+      rum: {
+        session: {
+          getRouteName: () => '/integration',
+          getSessionAttributes: () => ({ account_tier: 'pro' }),
+        },
+        webVitals: { metrics: true },
+      },
       spanProcessors: [new SimpleSpanProcessor(exporter)],
       traceUrl: '/client-traces',
     })
@@ -236,6 +242,8 @@ describe('public browser configure startup ordering', () => {
       optionalFeatureMocks.reportFcp()
       const span = exporter.getFinishedSpans().find(({ name }) => name === 'web_vital.fcp')
       expect(span?.attributes['logfire.span_type']).toBe('log')
+      expect(span?.attributes['logfire.page.route']).toBe('/integration')
+      expect(span?.attributes['logfire.session.account_tier']).toBe('pro')
       expect(diagWarn).toHaveBeenCalledWith(
         'logfire-browser: browser metrics did not start; continuing Web Vitals with span reporting only'
       )

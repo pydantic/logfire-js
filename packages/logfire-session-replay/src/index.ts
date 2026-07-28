@@ -1,6 +1,7 @@
 import { captureConsole, captureNavigation, captureNetwork } from './capture'
 import { startRecording } from './recorder'
 import { decideSamplingMode } from './sampling'
+import { snapshotSessionAttributes } from './sessionAttributes'
 import { safeSessionStorage, SessionManager } from './session'
 import { ReplayTransport } from './transport'
 import { CustomTag, DEFAULTS } from './types'
@@ -14,6 +15,9 @@ export type {
   NetworkPayload,
   RrwebEvent,
   SamplingMode,
+  SessionAttributes,
+  SessionAttributesInput,
+  SessionAttributeValue,
   SessionReplayConfig,
 } from './types'
 export { CHUNK_ENVELOPE_VERSION, CustomTag, EventType, IncrementalSource, MouseInteractions } from './types'
@@ -189,7 +193,10 @@ function createActiveRuntime(options: {
   sessionId: string
 }): ActiveRuntime {
   const { config, getSessionId, mode, onSessionChanged, samplingModeStorage, sessionId } = options
-  const transport = new ReplayTransport(config, sessionId, mode)
+  const sessionAttributes = snapshotSessionAttributes(config.getSessionAttributes, (error) => {
+    safeReportError(config.onError, error)
+  })
+  const transport = new ReplayTransport(config, sessionId, mode, undefined, undefined, sessionAttributes)
   const cleanup: (() => void)[] = []
   let active = true
   const isRuntimeActive = () => active
@@ -373,6 +380,7 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     headers: config.headers,
     token: config.token,
     getSessionId: config.getSessionId,
+    getSessionAttributes: config.getSessionAttributes,
     sessionSampleRate: config.sessionSampleRate ?? DEFAULTS.sessionSampleRate,
     onErrorSampleRate: config.onErrorSampleRate ?? DEFAULTS.onErrorSampleRate,
     maskAllText: config.maskAllText ?? DEFAULTS.maskAllText,

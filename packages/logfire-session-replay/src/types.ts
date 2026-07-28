@@ -44,6 +44,9 @@ export const CHUNK_ENVELOPE_VERSION = 1 as const
 export type MaybePromise<T> = T | Promise<T>
 export type ConsoleLevel = 'log' | 'info' | 'warn' | 'error' | 'debug'
 export type SamplingMode = 'full' | 'buffer' | 'off'
+export type SessionAttributeValue = string | number | boolean
+export type SessionAttributesInput = Record<string, SessionAttributeValue | undefined>
+export type SessionAttributes = Record<string, SessionAttributeValue>
 
 export interface ConsolePayload {
   level: ConsoleLevel
@@ -78,6 +81,7 @@ export interface ChunkMeta {
   urls: string[]
   traceIds: string[]
   distinctId?: string
+  sessionAttributes?: SessionAttributes
 }
 
 export interface ChunkEnvelope {
@@ -115,6 +119,11 @@ export interface SessionReplayConfig {
    * pass its RUM session id here.
    */
   getSessionId?: () => string | undefined
+  /**
+   * Returns low-cardinality, non-PII dimensions to snapshot once per replay
+   * session. Invalid or oversized entries are omitted.
+   */
+  getSessionAttributes?: () => SessionAttributesInput
 
   /** Probability of recording each new browser session in full. */
   sessionSampleRate?: number
@@ -154,6 +163,7 @@ export interface ResolvedSessionReplayConfig {
   headers: (() => MaybePromise<Record<string, string>>) | undefined
   token: string | (() => MaybePromise<string>) | undefined
   getSessionId: (() => string | undefined) | undefined
+  getSessionAttributes: (() => SessionAttributesInput) | undefined
   sessionSampleRate: number
   onErrorSampleRate: number
   maskAllText: boolean

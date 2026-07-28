@@ -8,6 +8,7 @@ const ATTR_SESSION_ID = 'session.id'
 const ATTR_BROWSER_SESSION_ID = 'browser.session.id'
 const ATTR_SESSION_REPLAY_ACTIVE = 'logfire.session_replay.active'
 const ATTR_SESSION_REPLAY_MODE = 'logfire.session_replay.mode'
+const ATTR_LOGFIRE_PAGE_ROUTE = 'logfire.page.route'
 const ATTR_LOGFIRE_PAGE_URL_FULL = 'logfire.page.url.full'
 const ATTR_LOGFIRE_PAGE_URL_PATH = 'logfire.page.url.path'
 
@@ -50,6 +51,9 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
     const session = this.sessionManager.touch()
     span.setAttribute(ATTR_SESSION_ID, session.id)
     span.setAttribute(ATTR_BROWSER_SESSION_ID, session.id)
+    for (const [key, value] of Object.entries(session.sessionAttributes ?? {})) {
+      span.setAttribute(`logfire.session.${key}`, value)
+    }
 
     let replayState: ReturnType<BrowserSessionReplayState['getState']>
     try {
@@ -62,6 +66,11 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
       span.setAttribute(ATTR_SESSION_REPLAY_MODE, replayState.mode)
     }
 
+    const routeName = this.sessionManager.getRouteName()
+    if (routeName !== undefined) {
+      span.setAttribute(ATTR_LOGFIRE_PAGE_ROUTE, routeName)
+    }
+
     const url = getCurrentUrl()
     if (url === undefined) {
       return
@@ -71,7 +80,7 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
     try {
       urlAttributes = this.sessionManager.getUrlAttributes(url)
     } catch {
-      return
+      urlAttributes = undefined
     }
 
     if (urlAttributes?.full !== undefined) {

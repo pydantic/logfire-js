@@ -74,7 +74,14 @@ import { assertBrowserReplayUrl, createTelemetryUrlPatterns, isBrowserReplayUrlV
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from 'logfire'
 export { getBrowserSessionId } from './browserSession'
-export type { BrowserSessionOptions, BrowserSessionUrlAttributes, RUMOptions } from './browserSession'
+export type {
+  BrowserSessionAttributes,
+  BrowserSessionAttributesInput,
+  BrowserSessionAttributeValue,
+  BrowserSessionOptions,
+  BrowserSessionUrlAttributes,
+  RUMOptions,
+} from './browserSession'
 export type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
 export type { BrowserSessionReplayOptions } from './sessionReplay'
 export type { BrowserWebVitalsOptions } from './webVitals'
