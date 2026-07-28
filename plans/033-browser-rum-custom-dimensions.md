@@ -57,7 +57,7 @@ runtime rotation for the same browser session id.
       attributes; neither `logfire.page.route` nor `logfire.session.*` is added
       implicitly (CX-5).
 - [x] Public docs and the browser RUM/replay example describe the low-cardinality,
-      non-PII contract; patch changesets cover both public packages.
+      non-PII contract; minor changesets cover both public packages.
 
 ## Assurance
 
@@ -160,7 +160,7 @@ runtime rotation for the same browser session id.
 - `packages/logfire-session-replay/src/types.ts:69-87,95-178` — `ChunkMeta`,
   `SessionReplayConfig`, and resolved configuration are public/exported. —
   **PRP impact**: the standalone callback and optional metadata map require a
-  patch release and public documentation.
+  minor release and public documentation.
 - `packages/logfire-browser/src/browserSession.test.ts`,
   `BrowserSessionSpanProcessor.test.ts`, and `sessionReplay.test.ts` — existing
   canonical tests cover stored-session reuse/rotation, exact span attributes,
@@ -362,7 +362,7 @@ runtime rotation for the same browser session id.
 - `examples/browser-rum-replay/src/main.ts` and
   `examples/browser-rum-replay/README.md` — representative application route
   and safe session-dimension configuration.
-- `.changeset/browser-rum-custom-dimensions.md` — patch notes for both
+- `.changeset/browser-rum-custom-dimensions.md` — minor notes for both
   published packages.
 
 ### Explicitly Out of Scope
@@ -682,14 +682,14 @@ Task 8: Document the bounded public contract and representative usage
     - Add fixed safe sample session dimensions such as account_tier, app_region, and experiment_variant; do not derive them from editable user ids.
     - Update trace/replay expectations and keep metrics dimensions explicitly configured.
   CREATE .changeset/browser-rum-custom-dimensions.md:
-    - Add patch entries for @pydantic/logfire-browser and @pydantic/logfire-session-replay describing normalized route and bounded session metadata support.
+    - Add minor entries for @pydantic/logfire-browser and @pydantic/logfire-session-replay describing normalized route and bounded session metadata support.
   PATTERN: packages/logfire-browser/README.md RUM Session Identity/Web Vitals/Session replay sections and examples/browser-rum-replay/src/main.ts
   ENABLES: CX-1, CX-2, CX-3, CX-4, CX-5
   VERIFY:
     - COMMAND: vp fmt --check packages/logfire-browser/README.md packages/logfire-session-replay/README.md docs/packages/browser.md examples/browser-rum-replay/src/main.ts examples/browser-rum-replay/README.md .changeset/browser-rum-custom-dimensions.md plans/033-browser-rum-custom-dimensions.md
     - EXPECTED: Public docs, example, changeset, and PRP are formatted and agree on names, limits, lifecycles, privacy guidance, replay shape, and metric exclusion.
     - COMMAND: node_modules/.bin/changeset status --output /tmp/prp033-changeset-status.json
-    - EXPECTED: Changesets parses the repository and reports browser-rum-custom-dimensions with exactly patch releases for @pydantic/logfire-browser and @pydantic/logfire-session-replay.
+    - EXPECTED: Changesets parses the repository and reports browser-rum-custom-dimensions with exactly minor releases for @pydantic/logfire-browser and @pydantic/logfire-session-replay.
 
 Task 9: Run focused and integrated package gates
   ENABLES: CX-1, CX-2, CX-3, CX-4, CX-5
@@ -734,7 +734,7 @@ DOCUMENTATION:
   - package READMEs, docs/packages/browser.md, and browser-rum-replay example — one public privacy/cardinality contract.
 
 RELEASE:
-  - .changeset/browser-rum-custom-dimensions.md — patch releases for both public packages.
+  - .changeset/browser-rum-custom-dimensions.md — minor releases for both public packages.
 ```
 
 ## Validation
@@ -845,7 +845,7 @@ compatibility.
 - All six success criteria and nine blueprint tasks are implemented. Public
   types, persisted legacy hydration and empty-snapshot sentinel behavior,
   per-session replay rotation, every-envelope metadata, documentation,
-  representative example usage, and the two-package patch changeset match the
+  representative example usage, and the two-package minor changeset match the
   PRP. Explicit exclusions held.
 - The direct built-browser fixture supplies the joint public-config Web Vital
   span/metric evidence from Task 6, alongside focused integration and metric
@@ -869,7 +869,7 @@ compatibility.
 | Focused browser tests and typecheck         | Complete browser suite passed 168 tests                                                                                                                    |
 | Affected package and fixture builds         | Both packages and the built `rum-dimensions` consumer fixture passed                                                                                       |
 | Sequential direct browser acceptance        | Normal and hostile scenarios passed on one server; phase selectors, receipt isolation, fetch/XHR spans, omitted route, replay chunks, and metrics verified |
-| Formatting, lint, typecheck, and Changesets | Passed; Changesets selects patch releases for exactly `@pydantic/logfire-browser` and `@pydantic/logfire-session-replay`                                   |
+| Formatting, lint, typecheck, and Changesets | Passed; Changesets selects minor releases for exactly `@pydantic/logfire-browser` and `@pydantic/logfire-session-replay`                                   |
 | `pnpm run check`                            | Passed all package builds, formatting, lint, typechecks, tests, and release-tooling tests                                                                  |
 | `git diff --check` and process cleanup      | Passed; browser sessions closed, Vite stopped, and port 4180 confirmed free                                                                                |
 

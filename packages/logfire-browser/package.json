@@ -65,7 +65,7 @@
     "web-vitals": "catalog:"
   },
   "peerDependencies": {
-    "@pydantic/logfire-session-replay": "workspace:^",
+    "@pydantic/logfire-session-replay": "workspace:^0.1.0 || ^0.2.0",
     "@opentelemetry/sdk-trace-web": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:"
   },
