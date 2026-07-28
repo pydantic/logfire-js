@@ -866,7 +866,7 @@ compatibility.
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | PRP structural validator                    | Passed with zero warnings                                                                                                                                  |
 | Focused replay tests and typecheck          | 93 focused tests passed; complete replay suite passed 152 tests                                                                                            |
-| Focused browser tests and typecheck         | Complete browser suite passed 166 tests                                                                                                                    |
+| Focused browser tests and typecheck         | Complete browser suite passed 168 tests                                                                                                                    |
 | Affected package and fixture builds         | Both packages and the built `rum-dimensions` consumer fixture passed                                                                                       |
 | Sequential direct browser acceptance        | Normal and hostile scenarios passed on one server; phase selectors, receipt isolation, fetch/XHR spans, omitted route, replay chunks, and metrics verified |
 | Formatting, lint, typecheck, and Changesets | Passed; Changesets selects patch releases for exactly `@pydantic/logfire-browser` and `@pydantic/logfire-session-replay`                                   |

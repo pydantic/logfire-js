@@ -304,7 +304,7 @@ export class BrowserSessionManager {
     if (this.memorySession !== undefined && !this.isExpired(this.memorySession, now)) {
       return this.memorySession
     }
-    const storedSession = this.readSession()
+    const storedSession = this.readSession(now)
     if (storedSession !== undefined && !this.isExpired(storedSession, now)) {
       return storedSession
     }
@@ -316,7 +316,7 @@ export class BrowserSessionManager {
     return now - session.lastActivityAt > this.idleTimeoutMs || now - session.startedAt > this.maxDurationMs
   }
 
-  private readSession(): BrowserSessionState | undefined {
+  private readSession(now: number): BrowserSessionState | undefined {
     if (this.storage !== null) {
       try {
         const value = this.storage.getItem(this.storageKey)
@@ -326,7 +326,17 @@ export class BrowserSessionManager {
             const session = this.prepareStoredSession(parsedValue)
             this.memorySession = session
             if (hasOwn(parsedValue, 'sessionAttributes') || this.sessionAttributesCallback !== undefined) {
-              this.writeSession(session)
+              const persisted = this.writeSession(session)
+              if (!persisted && !hasOwn(parsedValue, 'sessionAttributes') && this.sessionAttributesCallback !== undefined) {
+                const replacementSession = {
+                  ...session,
+                  id: this.generateId(),
+                  lastActivityAt: now,
+                  startedAt: now,
+                }
+                this.writeSession(replacementSession)
+                return replacementSession
+              }
             }
             return session
           }
@@ -363,16 +373,18 @@ export class BrowserSessionManager {
     return session
   }
 
-  private writeSession(session: BrowserSessionState): void {
+  private writeSession(session: BrowserSessionState): boolean {
     this.memorySession = session
     if (this.storage === null) {
-      return
+      return false
     }
 
     try {
       this.storage.setItem(this.storageKey, JSON.stringify(session))
+      return true
     } catch {
       // Session identity is best-effort in constrained browser contexts.
+      return false
     }
   }
 

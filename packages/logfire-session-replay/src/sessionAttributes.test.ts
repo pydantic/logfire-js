@@ -9,6 +9,8 @@ describe('snapshotSessionAttributes', () => {
     const source = {
       account_tier: 'pro',
       beta_user: true,
+      empty_label: '',
+      paid: false,
       seats: 12,
       skipped: undefined,
     }
@@ -19,6 +21,8 @@ describe('snapshotSessionAttributes', () => {
     expect(attributes).toEqual({
       account_tier: 'pro',
       beta_user: true,
+      empty_label: '',
+      paid: false,
       seats: 12,
     })
     expect(Object.isFrozen(attributes)).toBe(true)

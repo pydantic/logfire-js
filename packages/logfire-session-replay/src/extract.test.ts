@@ -53,11 +53,21 @@ describe('computeChunkMeta', () => {
   })
 
   it('includes non-empty session attributes without changing the envelope version', () => {
-    expect(computeChunkMeta(0, [], undefined, { account_tier: 'pro', beta_user: true })).toMatchObject({
+    expect(computeChunkMeta(0, [], undefined, { account_tier: 'pro', beta_user: true })).toEqual({
+      clickCount: 0,
+      errorCount: 0,
+      eventCount: 0,
+      firstTimestamp: 0,
+      hasFullSnapshot: false,
+      keypressCount: 0,
+      lastTimestamp: 0,
+      seq: 0,
       sessionAttributes: {
         account_tier: 'pro',
         beta_user: true,
       },
+      traceIds: [],
+      urls: [],
     })
     expect(computeChunkMeta(0, [], undefined, {})).not.toHaveProperty('sessionAttributes')
   })

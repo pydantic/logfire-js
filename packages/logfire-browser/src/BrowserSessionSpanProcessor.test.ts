@@ -117,6 +117,8 @@ describe('BrowserSessionSpanProcessor', () => {
       getSessionAttributes: () => ({
         account_tier: 'pro',
         beta_user: true,
+        empty_label: '',
+        paid: false,
         seats: 12,
       }),
       urlAttributes: false,
@@ -133,6 +135,8 @@ describe('BrowserSessionSpanProcessor', () => {
       'logfire.page.route': '/products/:id',
       'logfire.session.account_tier': 'pro',
       'logfire.session.beta_user': true,
+      'logfire.session.empty_label': '',
+      'logfire.session.paid': false,
       'logfire.session.seats': 12,
       'session.id': 'session-1',
     })
@@ -153,12 +157,11 @@ describe('BrowserSessionSpanProcessor', () => {
       span
     )
 
-    expect(span.attributes).toMatchObject({
+    expect(span.attributes).toEqual({
       'browser.session.id': 'session-1',
       'logfire.page.route': '/dashboard',
       'session.id': 'session-1',
     })
-    expect(span.attributes).not.toHaveProperty('logfire.page.url.full')
   })
 
   it.each([

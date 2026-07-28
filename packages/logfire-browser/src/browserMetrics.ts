@@ -98,6 +98,7 @@ const WEB_VITAL_METRIC_INSTRUMENTS: Record<WebVitalName, WebVitalMetricInstrumen
 
 const DISALLOWED_WEB_VITAL_METRIC_ATTRIBUTES = new Set([
   'browser.session.id',
+  'logfire.page.route',
   'logfire.page.url.full',
   'logfire.page.url.path',
   'session.id',
@@ -119,6 +120,7 @@ function isWebVitalName(name: string): name is WebVitalName {
 function isDisallowedWebVitalMetricAttribute(key: string): boolean {
   return (
     DISALLOWED_WEB_VITAL_METRIC_ATTRIBUTES.has(key) ||
+    key.startsWith('logfire.session.') ||
     key.startsWith('web_vital.cls.') ||
     key.startsWith('web_vital.fcp.') ||
     key.startsWith('web_vital.inp.') ||

@@ -40,6 +40,16 @@ class ThrowingStorage extends MemoryStorage {
   }
 }
 
+class ThrowingWriteStorage extends MemoryStorage {
+  seed(key: string, value: string): void {
+    super.setItem(key, value)
+  }
+
+  override setItem(_key: string, _value: string): void {
+    throw new Error('storage is read-only')
+  }
+}
+
 class CountingStorage extends MemoryStorage {
   getItemCalls = 0
   setItemCalls = 0
@@ -90,6 +100,8 @@ describe('BrowserSessionManager', () => {
     const getSessionAttributes = vi.fn<() => Record<string, string | number | boolean | undefined>>(() => ({
       account_tier: 'pro',
       beta_user: true,
+      empty_label: '',
+      paid: false,
       seats: 12,
       invalid: Number.NaN,
     }))
@@ -104,11 +116,15 @@ describe('BrowserSessionManager', () => {
     expect(firstManager.touch().sessionAttributes).toEqual({
       account_tier: 'pro',
       beta_user: true,
+      empty_label: '',
+      paid: false,
       seats: 12,
     })
     expect(firstManager.touch().sessionAttributes).toEqual({
       account_tier: 'pro',
       beta_user: true,
+      empty_label: '',
+      paid: false,
       seats: 12,
     })
     expect(getSessionAttributes).toHaveBeenCalledTimes(1)
@@ -124,6 +140,8 @@ describe('BrowserSessionManager', () => {
     expect(secondManager.touch().sessionAttributes).toEqual({
       account_tier: 'pro',
       beta_user: true,
+      empty_label: '',
+      paid: false,
       seats: 12,
     })
     expect(secondCallback).not.toHaveBeenCalled()
@@ -148,15 +166,89 @@ describe('BrowserSessionManager', () => {
       storageKey: 'test-session',
     })
 
-    expect(manager.touch()).toMatchObject({
+    expect(manager.touch()).toEqual({
       id: 'legacy-session',
+      lastActivityAt: 1_100,
       sessionAttributes: { account_tier: 'pro' },
+      startedAt: 1_000,
     })
     expect(getSessionAttributes).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(storage.getItem('test-session') ?? '')).toMatchObject({
+    expect(JSON.parse(storage.getItem('test-session') ?? '')).toEqual({
       id: 'legacy-session',
+      lastActivityAt: 1_000,
       sessionAttributes: { account_tier: 'pro' },
+      startedAt: 1_000,
     })
+  })
+
+  it('does not hydrate an explicit empty session attribute snapshot', () => {
+    const storage = new MemoryStorage()
+    storage.setItem(
+      'test-session',
+      JSON.stringify({
+        id: 'evaluated-session',
+        lastActivityAt: 1_000,
+        sessionAttributes: {},
+        startedAt: 1_000,
+      })
+    )
+    const getSessionAttributes = vi.fn<() => Record<string, string>>(() => ({ account_tier: 'pro' }))
+    const manager = new BrowserSessionManager({
+      generateId: createIdGenerator(),
+      getSessionAttributes,
+      now: () => 1_100,
+      storage,
+      storageKey: 'test-session',
+    })
+
+    expect(manager.touch().sessionAttributes).toEqual({})
+    expect(getSessionAttributes).not.toHaveBeenCalled()
+  })
+
+  it('abandons a legacy id when its hydrated snapshot cannot be persisted', () => {
+    const storage = new ThrowingWriteStorage()
+    storage.seed(
+      'test-session',
+      JSON.stringify({
+        id: 'legacy-session',
+        lastActivityAt: 1_000,
+        startedAt: 1_000,
+      })
+    )
+    const generateId = createIdGenerator()
+    const firstCallback = vi.fn<() => Record<string, string>>(() => ({ account_tier: 'pro' }))
+    const firstManager = new BrowserSessionManager({
+      generateId,
+      getSessionAttributes: firstCallback,
+      now: () => 1_100,
+      storage,
+      storageKey: 'test-session',
+    })
+
+    expect(firstManager.touch()).toEqual({
+      id: 'session-1',
+      lastActivityAt: 1_100,
+      sessionAttributes: { account_tier: 'pro' },
+      startedAt: 1_100,
+    })
+    expect(firstCallback).toHaveBeenCalledTimes(1)
+
+    const secondCallback = vi.fn<() => Record<string, string>>(() => ({ account_tier: 'free' }))
+    const secondManager = new BrowserSessionManager({
+      generateId,
+      getSessionAttributes: secondCallback,
+      now: () => 1_200,
+      storage,
+      storageKey: 'test-session',
+    })
+
+    expect(secondManager.touch()).toEqual({
+      id: 'session-2',
+      lastActivityAt: 1_200,
+      sessionAttributes: { account_tier: 'free' },
+      startedAt: 1_200,
+    })
+    expect(secondCallback).toHaveBeenCalledTimes(1)
   })
 
   it('captures a fresh snapshot when the session rotates', () => {
