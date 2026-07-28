@@ -59,9 +59,11 @@ logfire.configure({
   },
   rum: {
     session: {
-      urlAttributes: (url) => ({
-        full: `${url.origin}${routeTemplate(url.pathname)}`,
-        path: routeTemplate(url.pathname),
+      getRouteName: () => routeTemplate(window.location.pathname),
+      getSessionAttributes: () => ({
+        account_tier: 'trial',
+        app_region: 'eu',
+        experiment_variant: 'catalog_b',
       }),
     },
     webVitals: {

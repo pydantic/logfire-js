@@ -1,6 +1,13 @@
 import type { BrowserWebVitalsOptions } from './webVitals'
 
 export const BROWSER_SESSION_ACTIVITY_WRITE_DELAY_MS = 1_000
+const MAX_SESSION_ATTRIBUTES = 20
+const MAX_SESSION_ATTRIBUTE_STRING_CODE_POINTS = 200
+const SESSION_ATTRIBUTE_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u
+
+export type BrowserSessionAttributeValue = string | number | boolean
+export type BrowserSessionAttributesInput = Record<string, BrowserSessionAttributeValue | undefined>
+export type BrowserSessionAttributes = Record<string, BrowserSessionAttributeValue>
 
 export interface BrowserSessionUrlAttributes {
   full?: string
@@ -8,6 +15,16 @@ export interface BrowserSessionUrlAttributes {
 }
 
 export interface BrowserSessionOptions {
+  /**
+   * Returns the application's current normalized, low-cardinality route name.
+   * The callback is evaluated independently for every new browser span.
+   */
+  getRouteName?: () => string | undefined
+  /**
+   * Returns low-cardinality, non-PII dimensions to snapshot once per browser
+   * session. Invalid or oversized entries are omitted.
+   */
+  getSessionAttributes?: () => BrowserSessionAttributesInput
   /**
    * Session inactivity timeout. Defaults to 30 minutes. Replay startup touches
    * the session once before lazy loading; subsequent replay events only peek
@@ -37,6 +54,7 @@ export interface BrowserSessionState {
   id: string
   startedAt: number
   lastActivityAt: number
+  sessionAttributes?: BrowserSessionAttributes
 }
 
 export interface RUMOptions {
@@ -114,8 +132,78 @@ function isBrowserSessionState(value: unknown): value is BrowserSessionState {
   )
 }
 
+function hasOwn(value: object, key: PropertyKey): boolean {
+  return Object.hasOwn(value, key)
+}
+
+function hasAtMostCodePoints(value: string, maximum: number): boolean {
+  let count = 0
+  for (const codePoint of value) {
+    count += codePoint.length > 0 ? 1 : 0
+    if (count > maximum) {
+      return false
+    }
+  }
+  return true
+}
+
+function normalizeBrowserSessionAttributes(value: unknown): BrowserSessionAttributes {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return Object.freeze({})
+  }
+
+  let prototype: object | null
+  try {
+    prototype = Object.getPrototypeOf(value) as object | null
+  } catch {
+    return Object.freeze({})
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    return Object.freeze({})
+  }
+
+  let keys: string[]
+  try {
+    keys = Object.keys(value)
+  } catch {
+    return Object.freeze({})
+  }
+
+  const attributes: BrowserSessionAttributes = {}
+  let accepted = 0
+  for (const key of keys) {
+    if (!SESSION_ATTRIBUTE_KEY_PATTERN.test(key)) {
+      continue
+    }
+
+    let attributeValue: unknown
+    try {
+      attributeValue = Reflect.get(value, key)
+    } catch {
+      continue
+    }
+
+    const valid =
+      typeof attributeValue === 'boolean' ||
+      (typeof attributeValue === 'number' && Number.isFinite(attributeValue)) ||
+      (typeof attributeValue === 'string' && hasAtMostCodePoints(attributeValue, MAX_SESSION_ATTRIBUTE_STRING_CODE_POINTS))
+    if (!valid) {
+      continue
+    }
+
+    attributes[key] = attributeValue as BrowserSessionAttributeValue
+    accepted += 1
+    if (accepted === MAX_SESSION_ATTRIBUTES) {
+      break
+    }
+  }
+  return Object.freeze(attributes)
+}
+
 export class BrowserSessionManager {
   private readonly generateId: () => string
+  private readonly routeNameCallback: BrowserSessionOptions['getRouteName'] | undefined
+  private readonly sessionAttributesCallback: BrowserSessionOptions['getSessionAttributes'] | undefined
   private readonly idleTimeoutMs: number
   private readonly maxDurationMs: number
   private readonly now: () => number
@@ -128,6 +216,8 @@ export class BrowserSessionManager {
 
   constructor(options: BrowserSessionManagerOptions = {}) {
     this.generateId = options.generateId ?? generateBrowserSessionId
+    this.routeNameCallback = options.getRouteName
+    this.sessionAttributesCallback = options.getSessionAttributes
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_BROWSER_SESSION_OPTIONS.idleTimeoutMs
     this.maxDurationMs = options.maxDurationMs ?? DEFAULT_BROWSER_SESSION_OPTIONS.maxDurationMs
     this.now = options.now ?? Date.now
@@ -142,6 +232,11 @@ export class BrowserSessionManager {
 
   peekSessionId(): string | undefined {
     return this.memorySession?.id
+  }
+
+  peekSessionAttributes(): BrowserSessionAttributes | undefined {
+    const attributes = this.memorySession?.sessionAttributes
+    return attributes === undefined ? undefined : Object.freeze({ ...attributes })
   }
 
   touch(): BrowserSessionState {
@@ -184,11 +279,21 @@ export class BrowserSessionManager {
     }
   }
 
+  getRouteName(): string | undefined {
+    try {
+      const routeName = this.routeNameCallback?.()
+      return typeof routeName === 'string' ? routeName : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   private createSession(now: number): BrowserSessionState {
     const session: BrowserSessionState = {
       id: this.generateId(),
       lastActivityAt: now,
       startedAt: now,
+      ...(this.sessionAttributesCallback === undefined ? {} : { sessionAttributes: this.captureSessionAttributes() }),
     }
     this.flushPendingStorage()
     this.writeSession(session)
@@ -199,7 +304,7 @@ export class BrowserSessionManager {
     if (this.memorySession !== undefined && !this.isExpired(this.memorySession, now)) {
       return this.memorySession
     }
-    const storedSession = this.readSession()
+    const storedSession = this.readSession(now)
     if (storedSession !== undefined && !this.isExpired(storedSession, now)) {
       return storedSession
     }
@@ -211,15 +316,29 @@ export class BrowserSessionManager {
     return now - session.lastActivityAt > this.idleTimeoutMs || now - session.startedAt > this.maxDurationMs
   }
 
-  private readSession(): BrowserSessionState | undefined {
+  private readSession(now: number): BrowserSessionState | undefined {
     if (this.storage !== null) {
       try {
         const value = this.storage.getItem(this.storageKey)
         if (value !== null) {
           const parsedValue: unknown = JSON.parse(value)
           if (isBrowserSessionState(parsedValue)) {
-            this.memorySession = parsedValue
-            return parsedValue
+            const session = this.prepareStoredSession(parsedValue)
+            this.memorySession = session
+            if (hasOwn(parsedValue, 'sessionAttributes') || this.sessionAttributesCallback !== undefined) {
+              const persisted = this.writeSession(session)
+              if (!persisted && !hasOwn(parsedValue, 'sessionAttributes') && this.sessionAttributesCallback !== undefined) {
+                const replacementSession = {
+                  ...session,
+                  id: this.generateId(),
+                  lastActivityAt: now,
+                  startedAt: now,
+                }
+                this.writeSession(replacementSession)
+                return replacementSession
+              }
+            }
+            return session
           }
         }
       } catch {
@@ -230,16 +349,42 @@ export class BrowserSessionManager {
     return this.memorySession
   }
 
-  private writeSession(session: BrowserSessionState): void {
+  private captureSessionAttributes(): BrowserSessionAttributes {
+    try {
+      return normalizeBrowserSessionAttributes(this.sessionAttributesCallback?.())
+    } catch {
+      return Object.freeze({})
+    }
+  }
+
+  private prepareStoredSession(session: BrowserSessionState): BrowserSessionState {
+    if (hasOwn(session, 'sessionAttributes')) {
+      return {
+        ...session,
+        sessionAttributes: normalizeBrowserSessionAttributes(session.sessionAttributes),
+      }
+    }
+    if (this.sessionAttributesCallback !== undefined) {
+      return {
+        ...session,
+        sessionAttributes: this.captureSessionAttributes(),
+      }
+    }
+    return session
+  }
+
+  private writeSession(session: BrowserSessionState): boolean {
     this.memorySession = session
     if (this.storage === null) {
-      return
+      return false
     }
 
     try {
       this.storage.setItem(this.storageKey, JSON.stringify(session))
+      return true
     } catch {
       // Session identity is best-effort in constrained browser contexts.
+      return false
     }
   }
 

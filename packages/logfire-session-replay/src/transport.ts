@@ -3,7 +3,7 @@ import { gzip, gzipSync, strToU8 } from 'fflate'
 import { computeChunkMeta } from './extract'
 import { safeSessionStorage } from './session'
 import { CHUNK_ENVELOPE_VERSION, EventType } from './types'
-import type { ChunkEnvelope, ResolvedSessionReplayConfig, RrwebEvent } from './types'
+import type { ChunkEnvelope, ResolvedSessionReplayConfig, RrwebEvent, SessionAttributes } from './types'
 
 export const SEQ_STORAGE_KEY = 'lf_session_replay_seq'
 
@@ -45,16 +45,19 @@ export class ReplayTransport {
   private readonly compression: Compression
   private readonly storage: Storage | null
   private readonly sessionId: string
+  private readonly sessionAttributes: SessionAttributes
 
   constructor(
     config: ResolvedSessionReplayConfig,
     sessionId: string,
     mode: 'full' | 'buffer',
     storage: Storage | null = safeSessionStorage(),
-    compression: Compression = DEFAULT_COMPRESSION
+    compression: Compression = DEFAULT_COMPRESSION,
+    sessionAttributes: SessionAttributes = {}
   ) {
     this.config = config
     this.sessionId = sessionId
+    this.sessionAttributes = Object.freeze({ ...sessionAttributes })
     this.mode = mode
     this.storage = storage
     this.compression = compression
@@ -185,7 +188,7 @@ export class ReplayTransport {
     }
     return {
       version: CHUNK_ENVELOPE_VERSION,
-      meta: computeChunkMeta(seq, events, distinctId),
+      meta: computeChunkMeta(seq, events, distinctId, this.sessionAttributes),
       events,
     }
   }

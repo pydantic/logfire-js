@@ -40,6 +40,10 @@ const replay = startSessionReplay({
   blockSelector: '[data-logfire-block]',
 
   distinctId: currentUser?.id,
+  getSessionAttributes: () => ({
+    account_tier: currentAccount.tier,
+    beta_user: currentUser.isBeta,
+  }),
   getTraceContext: () => getCurrentTraceContext(),
 })
 
@@ -103,10 +107,19 @@ The decompressed body shape is:
     urls,
     traceIds,
     distinctId,
+    sessionAttributes,
   },
   events,
 }
 ```
+
+`getSessionAttributes` is snapshotted once for every replay session. Keys must
+match `^[a-z][a-z0-9_]{0,63}$`; at most 20 entries are retained. Values must be
+booleans, finite numbers, or strings no longer than 200 Unicode code points.
+Invalid entries are omitted, and callback failures are reported through
+`onError` without stopping replay. The optional `meta.sessionAttributes` field
+is omitted when the snapshot is empty. Keep these dimensions low-cardinality
+and free of personal or sensitive data.
 
 ## Direct Token Escape Hatch
 

@@ -261,12 +261,15 @@ describe('startSessionReplay full mode', () => {
 
   it('uses external getSessionId and creates a fresh runtime when it changes', async () => {
     let sessionId = 'external-1'
+    let accountTier = 'pro'
+    const getSessionAttributes = vi.fn(() => ({ account_tier: accountTier }))
     const { calls, fetchImpl } = recordingFetch()
     const start = vi.spyOn(recorderMod, 'startRecording')
-    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId }))
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionAttributes, getSessionId: () => sessionId }))
     expect(replay.getSessionId()).toBe('external-1')
     emit(fullSnapshot)
 
+    accountTier = 'enterprise'
     sessionId = 'external-2'
     emit(click)
     expect(replay.recording).toBe(false)
@@ -281,6 +284,11 @@ describe('startSessionReplay full mode', () => {
       'https://app.example.com/replay/external-1?seq=0',
       'https://app.example.com/replay/external-2?seq=0',
     ])
+    expect(calls.map((call) => decodeBody(call.init.body).meta.sessionAttributes)).toEqual([
+      { account_tier: 'pro' },
+      { account_tier: 'enterprise' },
+    ])
+    expect(getSessionAttributes).toHaveBeenCalledTimes(2)
   })
 
   it('starts interval flushing in full mode', async () => {
@@ -593,6 +601,27 @@ describe('startSessionReplay lifecycle', () => {
     emit(fullSnapshot)
     await expect(replay.flush()).resolves.toBeUndefined()
     await expect(replay.stop()).resolves.toBeUndefined()
+  })
+
+  it('contains and reports a throwing session attributes callback', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const callbackError = new Error('session dimensions unavailable')
+    const onError = vi.fn<(error: unknown) => void>()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        getSessionAttributes: () => {
+          throw callbackError
+        },
+        onError,
+      })
+    )
+
+    emit(fullSnapshot)
+    await replay.flush()
+    await replay.stop()
+
+    expect(onError).toHaveBeenCalledExactlyOnceWith(callbackError)
+    expect(decodeBody(calls[0]!.init.body).meta).not.toHaveProperty('sessionAttributes')
   })
 
   it('does not leak a rejected fire-and-forget pagehide flush when onError throws', async () => {

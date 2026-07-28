@@ -21,6 +21,7 @@ function makeConfig(fetchImpl: typeof fetch): ResolvedSessionReplayConfig {
     headers: undefined,
     token: undefined,
     getSessionId: undefined,
+    getSessionAttributes: undefined,
     sessionSampleRate: 1,
     onErrorSampleRate: 1,
     maskAllText: true,
@@ -108,6 +109,28 @@ describe('ReplayTransport full mode', () => {
     expect(envelope.meta.clickCount).toBe(1)
     expect(envelope.meta.hasFullSnapshot).toBe(true)
     expect(envelope.meta.distinctId).toBe('user-1')
+  })
+
+  it('copies one session snapshot into every chunk and omits an empty snapshot', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const sessionAttributes = { account_tier: 'pro', beta_user: true }
+    const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-dimensions', 'full', null, immediateCompression(), sessionAttributes)
+    sessionAttributes.account_tier = 'changed'
+    transport.add(fullSnapshot)
+    await transport.flush()
+    transport.add(click)
+    await transport.flush()
+
+    expect(calls.map((call) => decodeBody(call.init.body).meta.sessionAttributes)).toEqual([
+      { account_tier: 'pro', beta_user: true },
+      { account_tier: 'pro', beta_user: true },
+    ])
+
+    const emptyRecording = recordingFetch()
+    const emptyTransport = new ReplayTransport(makeConfig(emptyRecording.fetchImpl), 'sess-empty', 'full', null, immediateCompression(), {})
+    emptyTransport.add(fullSnapshot)
+    await emptyTransport.flush()
+    expect(decodeBody(emptyRecording.calls[0]!.init.body).meta).not.toHaveProperty('sessionAttributes')
   })
 
   it('merges async headers and direct token auth', async () => {
@@ -288,7 +311,8 @@ describe('ReplayTransport retries', () => {
 
   it('splits large keepalive flushes into ordered chunks', async () => {
     const { calls, fetchImpl } = recordingFetch()
-    const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-large', 'full', null)
+    const sessionAttributes = { account_tier: 'pro', beta_user: true }
+    const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-large', 'full', null, undefined, sessionAttributes)
     const largeEvent = {
       type: EventType.IncrementalSnapshot,
       data: { text: 'x'.repeat(50_000) },
@@ -307,6 +331,11 @@ describe('ReplayTransport retries', () => {
     ])
     expect(calls.map((call) => call.init.keepalive)).toEqual([true, true, true])
     expect(calls.map((call) => decodeBody(call.init.body).events.map((event) => event.timestamp))).toEqual([[10], [20], [30]])
+    expect(calls.map((call) => decodeBody(call.init.body).meta.sessionAttributes)).toEqual([
+      sessionAttributes,
+      sessionAttributes,
+      sessionAttributes,
+    ])
   })
 })
 
@@ -545,13 +574,22 @@ describe('ReplayTransport Retry-After policy', () => {
     vi.setSystemTime(new Date(now))
     try {
       let attempts = 0
-      const fetchImpl = vi.fn(async () => {
+      const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) => {
         attempts += 1
         return attempts === 1
           ? new Response(null, header === null ? { status: 429 } : { status: 429, headers: { 'retry-after': header } })
           : new Response(null, { status: 202 })
-      }) as unknown as typeof fetch
-      const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-retry-after', 'full', null, immediateCompression())
+      })
+      const fetchImpl = fetchMock as unknown as typeof fetch
+      const sessionAttributes = { account_tier: 'pro' }
+      const transport = new ReplayTransport(
+        makeConfig(fetchImpl),
+        'sess-retry-after',
+        'full',
+        null,
+        immediateCompression(),
+        sessionAttributes
+      )
       transport.add(fullSnapshot)
       const flush = transport.flush()
       await vi.advanceTimersByTimeAsync(0)
@@ -565,6 +603,10 @@ describe('ReplayTransport Retry-After policy', () => {
       }
       await flush
       expect(fetchImpl).toHaveBeenCalledTimes(2)
+      expect(fetchMock.mock.calls.map((call) => decodeBody(call[1]?.body).meta.sessionAttributes)).toEqual([
+        sessionAttributes,
+        sessionAttributes,
+      ])
     } finally {
       vi.useRealTimers()
     }

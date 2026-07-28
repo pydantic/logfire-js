@@ -40,6 +40,16 @@ class ThrowingStorage extends MemoryStorage {
   }
 }
 
+class ThrowingWriteStorage extends MemoryStorage {
+  seed(key: string, value: string): void {
+    super.setItem(key, value)
+  }
+
+  override setItem(_key: string, _value: string): void {
+    throw new Error('storage is read-only')
+  }
+}
+
 class CountingStorage extends MemoryStorage {
   getItemCalls = 0
   setItemCalls = 0
@@ -83,6 +93,323 @@ describe('BrowserSessionManager', () => {
     })
 
     expect(secondManager.getSession().id).toBe(firstSession.id)
+  })
+
+  it('snapshots, bounds, and persists session attributes once per session', () => {
+    const storage = new MemoryStorage()
+    const getSessionAttributes = vi.fn<() => Record<string, string | number | boolean | undefined>>(() => ({
+      account_tier: 'pro',
+      beta_user: true,
+      empty_label: '',
+      paid: false,
+      seats: 12,
+      invalid: Number.NaN,
+    }))
+    const firstManager = new BrowserSessionManager({
+      generateId: createIdGenerator(),
+      getSessionAttributes,
+      now: () => 1_000,
+      storage,
+      storageKey: 'test-session',
+    })
+
+    expect(firstManager.touch().sessionAttributes).toEqual({
+      account_tier: 'pro',
+      beta_user: true,
+      empty_label: '',
+      paid: false,
+      seats: 12,
+    })
+    expect(firstManager.touch().sessionAttributes).toEqual({
+      account_tier: 'pro',
+      beta_user: true,
+      empty_label: '',
+      paid: false,
+      seats: 12,
+    })
+    expect(getSessionAttributes).toHaveBeenCalledTimes(1)
+
+    const secondCallback = vi.fn<() => Record<string, string>>(() => ({ account_tier: 'free' }))
+    const secondManager = new BrowserSessionManager({
+      generateId: createIdGenerator(),
+      getSessionAttributes: secondCallback,
+      now: () => 2_000,
+      storage,
+      storageKey: 'test-session',
+    })
+    expect(secondManager.touch().sessionAttributes).toEqual({
+      account_tier: 'pro',
+      beta_user: true,
+      empty_label: '',
+      paid: false,
+      seats: 12,
+    })
+    expect(secondCallback).not.toHaveBeenCalled()
+  })
+
+  it('hydrates legacy stored sessions without changing their id', () => {
+    const storage = new MemoryStorage()
+    storage.setItem(
+      'test-session',
+      JSON.stringify({
+        id: 'legacy-session',
+        lastActivityAt: 1_000,
+        startedAt: 1_000,
+      })
+    )
+    const getSessionAttributes = vi.fn<() => Record<string, string>>(() => ({ account_tier: 'pro' }))
+    const manager = new BrowserSessionManager({
+      generateId: createIdGenerator(),
+      getSessionAttributes,
+      now: () => 1_100,
+      storage,
+      storageKey: 'test-session',
+    })
+
+    expect(manager.touch()).toEqual({
+      id: 'legacy-session',
+      lastActivityAt: 1_100,
+      sessionAttributes: { account_tier: 'pro' },
+      startedAt: 1_000,
+    })
+    expect(getSessionAttributes).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(storage.getItem('test-session') ?? '')).toEqual({
+      id: 'legacy-session',
+      lastActivityAt: 1_000,
+      sessionAttributes: { account_tier: 'pro' },
+      startedAt: 1_000,
+    })
+  })
+
+  it('does not hydrate an explicit empty session attribute snapshot', () => {
+    const storage = new MemoryStorage()
+    storage.setItem(
+      'test-session',
+      JSON.stringify({
+        id: 'evaluated-session',
+        lastActivityAt: 1_000,
+        sessionAttributes: {},
+        startedAt: 1_000,
+      })
+    )
+    const getSessionAttributes = vi.fn<() => Record<string, string>>(() => ({ account_tier: 'pro' }))
+    const manager = new BrowserSessionManager({
+      generateId: createIdGenerator(),
+      getSessionAttributes,
+      now: () => 1_100,
+      storage,
+      storageKey: 'test-session',
+    })
+
+    expect(manager.touch().sessionAttributes).toEqual({})
+    expect(getSessionAttributes).not.toHaveBeenCalled()
+  })
+
+  it('abandons a legacy id when its hydrated snapshot cannot be persisted', () => {
+    const storage = new ThrowingWriteStorage()
+    storage.seed(
+      'test-session',
+      JSON.stringify({
+        id: 'legacy-session',
+        lastActivityAt: 1_000,
+        startedAt: 1_000,
+      })
+    )
+    const generateId = createIdGenerator()
+    const firstCallback = vi.fn<() => Record<string, string>>(() => ({ account_tier: 'pro' }))
+    const firstManager = new BrowserSessionManager({
+      generateId,
+      getSessionAttributes: firstCallback,
+      now: () => 1_100,
+      storage,
+      storageKey: 'test-session',
+    })
+
+    expect(firstManager.touch()).toEqual({
+      id: 'session-1',
+      lastActivityAt: 1_100,
+      sessionAttributes: { account_tier: 'pro' },
+      startedAt: 1_100,
+    })
+    expect(firstCallback).toHaveBeenCalledTimes(1)
+
+    const secondCallback = vi.fn<() => Record<string, string>>(() => ({ account_tier: 'free' }))
+    const secondManager = new BrowserSessionManager({
+      generateId,
+      getSessionAttributes: secondCallback,
+      now: () => 1_200,
+      storage,
+      storageKey: 'test-session',
+    })
+
+    expect(secondManager.touch()).toEqual({
+      id: 'session-2',
+      lastActivityAt: 1_200,
+      sessionAttributes: { account_tier: 'free' },
+      startedAt: 1_200,
+    })
+    expect(secondCallback).toHaveBeenCalledTimes(1)
+  })
+
+  it('captures a fresh snapshot when the session rotates', () => {
+    let now = 1_000
+    let tier = 'pro'
+    const manager = new BrowserSessionManager({
+      generateId: createIdGenerator(),
+      getSessionAttributes: () => ({ tier }),
+      idleTimeoutMs: 100,
+      maxDurationMs: 1_000,
+      now: () => now,
+      storage: new MemoryStorage(),
+      storageKey: 'test-session',
+    })
+
+    expect(manager.touch().sessionAttributes).toEqual({ tier: 'pro' })
+    tier = 'enterprise'
+    expect(manager.touch().sessionAttributes).toEqual({ tier: 'pro' })
+    now = 1_101
+    expect(manager.touch().sessionAttributes).toEqual({ tier: 'enterprise' })
+  })
+
+  it('silently contains hostile session and route callbacks', () => {
+    const sessionCallback = vi.fn<() => Record<string, string>>(() => {
+      throw new Error('session dimensions unavailable')
+    })
+    const routeCallback = vi.fn<() => string>(() => {
+      throw new Error('router unavailable')
+    })
+    const manager = new BrowserSessionManager({
+      generateId: createIdGenerator(),
+      getRouteName: routeCallback,
+      getSessionAttributes: sessionCallback,
+      now: () => 1_000,
+      storage: new MemoryStorage(),
+      storageKey: 'test-session',
+    })
+
+    expect(manager.touch().sessionAttributes).toEqual({})
+    expect(manager.getRouteName()).toBeUndefined()
+    expect(sessionCallback).toHaveBeenCalledTimes(1)
+    expect(routeCallback).toHaveBeenCalledTimes(1)
+  })
+
+  it('enforces the complete session attribute boundary without mutating input', () => {
+    const source: Record<string, unknown> = {
+      Invalid: 'uppercase',
+      invalid_infinity: Number.POSITIVE_INFINITY,
+      invalid_nan: Number.NaN,
+      invalid_object: {},
+      invalid_string: '🚀'.repeat(201),
+      skipped: undefined,
+      valid_unicode: '🚀'.repeat(200),
+    }
+    for (let index = 0; index < 25; index++) {
+      source[`valid_${index.toString()}`] = index
+    }
+    source['invalid-key'] = 'dash'
+    source[`a${'b'.repeat(64)}`] = 'too long'
+    const manager = new BrowserSessionManager({
+      generateId: createIdGenerator(),
+      getSessionAttributes: () => source as Record<string, string | number | boolean | undefined>,
+      now: () => 1_000,
+      storage: new MemoryStorage(),
+      storageKey: 'test-session',
+    })
+
+    const attributes = manager.touch().sessionAttributes
+    source['valid_unicode'] = 'changed'
+
+    expect(attributes?.['valid_unicode']).toBe('🚀'.repeat(200))
+    expect(Object.keys(attributes ?? {})).toHaveLength(20)
+    expect(attributes?.['valid_18']).toBe(18)
+    expect(attributes?.['valid_19']).toBeUndefined()
+    expect(attributes?.['Invalid']).toBeUndefined()
+    expect(Object.isFrozen(attributes)).toBe(true)
+  })
+
+  it('accepts plain and null-prototype records while containing hostile containers and properties', () => {
+    const inherited = Object.create({ inherited: 'ignored' }) as Record<string, string>
+    inherited['own'] = 'also rejected with its custom prototype'
+    const nullPrototype = Object.assign(Object.create(null) as Record<string, string>, { tier: 'pro' })
+    const frozen = Object.freeze({ tier: 'frozen' })
+    const sealed = Object.seal({ tier: 'sealed' })
+    const throwingProperty = Object.defineProperty({ healthy: true }, 'broken', {
+      enumerable: true,
+      get: () => {
+        throw new Error('property unavailable')
+      },
+    })
+    class Dimensions {
+      tier = 'pro'
+    }
+    const prototypeProxy = new Proxy(
+      {},
+      {
+        getPrototypeOf: () => {
+          throw new Error('prototype unavailable')
+        },
+      }
+    )
+    const enumerationProxy = new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw new Error('enumeration unavailable')
+        },
+      }
+    )
+    const values: unknown[] = [
+      nullPrototype,
+      frozen,
+      sealed,
+      throwingProperty,
+      inherited,
+      [],
+      () => ({}),
+      new Date(),
+      new Dimensions(),
+      prototypeProxy,
+      enumerationProxy,
+    ]
+    const expected = [{ tier: 'pro' }, { tier: 'frozen' }, { tier: 'sealed' }, { healthy: true }, {}, {}, {}, {}, {}, {}, {}]
+
+    expect(
+      values.map((value) => {
+        const manager = new BrowserSessionManager({
+          generateId: createIdGenerator(),
+          getSessionAttributes: () => value as Record<string, string | number | boolean | undefined>,
+          now: () => 1_000,
+          storage: new MemoryStorage(),
+          storageKey: 'test-session',
+        })
+        return manager.touch().sessionAttributes
+      })
+    ).toEqual(expected)
+  })
+
+  it('revalidates tampered persisted attributes', () => {
+    const storage = new MemoryStorage()
+    storage.setItem(
+      'test-session',
+      JSON.stringify({
+        id: 'stored-session',
+        lastActivityAt: 1_000,
+        sessionAttributes: {
+          account_tier: 'pro',
+          nested: { secret: true },
+          seats: Number.POSITIVE_INFINITY,
+        },
+        startedAt: 1_000,
+      })
+    )
+    const manager = new BrowserSessionManager({
+      generateId: createIdGenerator(),
+      now: () => 1_100,
+      storage,
+      storageKey: 'test-session',
+    })
+
+    expect(manager.touch().sessionAttributes).toEqual({ account_tier: 'pro' })
   })
 
   it('falls back to memory when storage throws', () => {
