@@ -1131,4 +1131,41 @@ describe('sdk lifecycle helpers', () => {
       'service.namespace': 'env-company',
     })
   })
+
+  it('generates a default service.instance.id shared by every signal', () => {
+    start()
+
+    const instanceId = getLatestResourceAttributes()['service.instance.id']
+    expect(typeof instanceId).toBe('string')
+    expect(instanceId).toMatch(/^[0-9a-f]{32}$/u)
+    expect(getLatestVariablesRuntimeOptions().resourceAttributes['service.instance.id']).toBe(instanceId)
+  })
+
+  it('generates a different service.instance.id for each configuration', () => {
+    start()
+    const firstInstanceId = getLatestResourceAttributes()['service.instance.id']
+
+    start()
+    const secondInstanceId = getLatestResourceAttributes()['service.instance.id']
+
+    expect(firstInstanceId).not.toBe(secondInstanceId)
+  })
+
+  it('lets configured resource attributes override the generated service.instance.id', () => {
+    Object.assign(logfireConfig, {
+      resourceAttributes: { 'service.instance.id': 'configured-instance' },
+    })
+
+    start()
+
+    expect(getLatestResourceAttributes()['service.instance.id']).toBe('configured-instance')
+  })
+
+  it('lets OTEL_RESOURCE_ATTRIBUTES override the generated service.instance.id', () => {
+    process.env['OTEL_RESOURCE_ATTRIBUTES'] = 'service.instance.id=env-instance'
+
+    start()
+
+    expect(getLatestResourceAttributes()['service.instance.id']).toBe('env-instance')
+  })
 })

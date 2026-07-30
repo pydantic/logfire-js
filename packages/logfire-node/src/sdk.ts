@@ -12,6 +12,7 @@ import type { MetricReader } from '@opentelemetry/sdk-metrics'
 import { NodeSDK } from '@opentelemetry/sdk-node'
 import { ParentBasedSampler, TraceIdRatioBasedSampler } from '@opentelemetry/sdk-trace-base'
 import {
+  ATTR_SERVICE_INSTANCE_ID,
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION,
   ATTR_TELEMETRY_SDK_LANGUAGE,
@@ -329,7 +330,10 @@ export function start(): void {
     diag.setLogger(new DiagConsoleLogger(), logfireConfig.diagLogLevel)
   }
 
-  const resource = resourceFromAttributes(logfireConfig.resourceAttributes)
+  // Low-precedence fallback, matching Python Logfire's `fallback_resource_attributes`: every
+  // later merge wins, so `resourceAttributes` and `OTEL_RESOURCE_ATTRIBUTES` still override it.
+  const resource = resourceFromAttributes({ [ATTR_SERVICE_INSTANCE_ID]: crypto.randomUUID().replaceAll('-', '') })
+    .merge(resourceFromAttributes(logfireConfig.resourceAttributes))
     .merge(
       resourceFromAttributes(
         removeEmptyKeys({
