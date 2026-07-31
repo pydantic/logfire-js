@@ -146,8 +146,40 @@ function formatPythonGeneralNumber(value: number): string {
     .replace(/e([+-])(\d)$/u, 'e$10$2')
 }
 
+// Python's `str.isprintable()` treats the Unicode "Other" and "Separator" categories as
+// non-printable, except the ASCII space.
+const PYTHON_NON_PRINTABLE = /[\p{C}\p{Z}]/u
+const PYTHON_SHORT_ESCAPES: Record<string, string> = { '\t': '\\t', '\n': '\\n', '\r': '\\r' }
+
 function pythonStringRepr(value: string): string {
-  return `'${value.replace(/\\/gu, '\\\\').replace(/'/gu, "\\'")}'`
+  // CPython prefers single quotes, switching to double quotes only when the value contains a
+  // single quote and no double quote, and escapes just the quote character it ends up using.
+  const quote = value.includes("'") && !value.includes('"') ? '"' : "'"
+  let escaped = ''
+  for (const char of value) {
+    if (char === '\\' || char === quote) {
+      escaped += `\\${char}`
+      continue
+    }
+    const shortEscape = PYTHON_SHORT_ESCAPES[char]
+    if (shortEscape !== undefined) {
+      escaped += shortEscape
+      continue
+    }
+    if (char !== ' ' && PYTHON_NON_PRINTABLE.test(char)) {
+      const codePoint = char.codePointAt(0) ?? 0
+      if (codePoint < 0x100) {
+        escaped += `\\x${codePoint.toString(16).padStart(2, '0')}`
+      } else if (codePoint < 0x10000) {
+        escaped += `\\u${codePoint.toString(16).padStart(4, '0')}`
+      } else {
+        escaped += `\\U${codePoint.toString(16).padStart(8, '0')}`
+      }
+      continue
+    }
+    escaped += char
+  }
+  return `${quote}${escaped}${quote}`
 }
 
 function applyBaggage(attrs: Record<string, unknown>, baggage: Record<string, unknown> | undefined): void {

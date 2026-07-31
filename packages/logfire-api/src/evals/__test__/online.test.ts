@@ -79,6 +79,27 @@ class CategoryLabel extends Evaluator {
   }
 }
 
+class ApostropheLabel extends Evaluator {
+  static override evaluatorName = 'ApostropheLabel'
+  evaluate(): string {
+    return "the model's answer"
+  }
+}
+
+class BothQuotesLabel extends Evaluator {
+  static override evaluatorName = 'BothQuotesLabel'
+  evaluate(): string {
+    return `both ' and "`
+  }
+}
+
+class ControlCharLabel extends Evaluator {
+  static override evaluatorName = 'ControlCharLabel'
+  evaluate(): string {
+    return 'line\nbreak\tand\\slash'
+  }
+}
+
 class WithReason extends Evaluator {
   static override evaluatorName = 'WithReason'
   evaluate(): EvaluatorOutput {
@@ -191,6 +212,23 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
       await waitForEvaluations()
     })
     expect(logs.map((log) => log.body)).toEqual(['evaluation: TinyScore=1.23e-07', 'evaluation: LargeIntegerScore=1.23457e+06'])
+  })
+
+  it('formats string result bodies like Python repr', async () => {
+    const fn = withOnlineEvaluation(async () => 'x', {
+      evaluators: [new ApostropheLabel(), new BothQuotesLabel(), new ControlCharLabel()],
+      target: 't',
+    })
+    const { logs } = await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+    // Expected values are `repr()` output from CPython for the same three strings.
+    expect(logs.map((log) => log.body)).toEqual([
+      `evaluation: ApostropheLabel="the model's answer"`,
+      `evaluation: BothQuotesLabel='both \\' and "'`,
+      `evaluation: ControlCharLabel='line\\nbreak\\tand\\\\slash'`,
+    ])
   })
 
   it('string output → score.label only (no value)', async () => {
