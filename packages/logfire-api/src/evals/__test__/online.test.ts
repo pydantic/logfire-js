@@ -93,6 +93,14 @@ class RoundsToWholeScore extends Evaluator {
   }
 }
 
+class HalfEvenTieScore extends Evaluator {
+  static override evaluatorName = 'HalfEvenTieScore'
+  evaluate(): number {
+    // 1 / 512 is exact in binary and its seventh significant digit is a tie.
+    return 1 / 512
+  }
+}
+
 class CategoryLabel extends Evaluator {
   static override evaluatorName = 'CategoryLabel'
   evaluate(): string {
@@ -229,6 +237,16 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
       'evaluation: MicroScore=2.325e-06',
       'evaluation: RoundsToWholeScore=-10515',
     ])
+  })
+
+  it('rounds ties to even like Python rather than away from zero', async () => {
+    const fn = withOnlineEvaluation(async () => 'x', { evaluators: [new HalfEvenTieScore()], target: 't' })
+    const { logs } = await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+    // CPython: format(1 / 512, 'g') == '0.00195312'
+    expect(logs[0]!.body).toBe('evaluation: HalfEvenTieScore=0.00195312')
   })
 
   it('string output → score.label only (no value)', async () => {

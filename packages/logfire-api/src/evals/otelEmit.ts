@@ -123,8 +123,18 @@ function emit(body: string, attrs: Record<string, unknown>, parentRef?: SpanRefe
   })
 }
 
-// Python's default `format(value, 'g')` precision.
+// Python's default `format(value, 'g')` precision. Both formatters round half to even, the same
+// way Python does, which `toPrecision` and `toFixed` do not: they round half away from zero, so a
+// tie such as `1 / 512` came out as 0.00195313 instead of Python's 0.00195312.
 const PYTHON_GENERAL_PRECISION = 6
+const PYTHON_ROUNDING_OPTIONS = {
+  maximumSignificantDigits: PYTHON_GENERAL_PRECISION,
+  minimumSignificantDigits: 1,
+  roundingMode: 'halfEven',
+  useGrouping: false,
+} as const
+const PYTHON_FIXED_FORMAT = new Intl.NumberFormat('en-US', PYTHON_ROUNDING_OPTIONS)
+const PYTHON_SCIENTIFIC_FORMAT = new Intl.NumberFormat('en-US', { ...PYTHON_ROUNDING_OPTIONS, notation: 'scientific' })
 
 function formatPythonGeneralNumber(value: number): string {
   if (Number.isNaN(value)) {
@@ -145,19 +155,14 @@ function formatPythonGeneralNumber(value: number): string {
   // Python's `g` decides between fixed and scientific from the exponent left *after* rounding to
   // `PYTHON_GENERAL_PRECISION` significant digits, using scientific when it lands below -4 or at
   // or above the precision, and it always writes at least two exponent digits.
-  const exponential = value.toExponential(PYTHON_GENERAL_PRECISION - 1)
-  const separator = exponential.indexOf('e')
-  const exponent = Number(exponential.slice(separator + 1))
+  const scientific = PYTHON_SCIENTIFIC_FORMAT.format(value)
+  const separator = scientific.indexOf('E')
+  const exponent = Number(scientific.slice(separator + 1))
   if (exponent < -4 || exponent >= PYTHON_GENERAL_PRECISION) {
-    const mantissa = stripTrailingZeros(exponential.slice(0, separator))
     const sign = exponent < 0 ? '-' : '+'
-    return `${mantissa}e${sign}${Math.abs(exponent).toString().padStart(2, '0')}`
+    return `${scientific.slice(0, separator)}e${sign}${Math.abs(exponent).toString().padStart(2, '0')}`
   }
-  return stripTrailingZeros(value.toFixed(Math.max(0, PYTHON_GENERAL_PRECISION - 1 - exponent)))
-}
-
-function stripTrailingZeros(text: string): string {
-  return text.includes('.') ? text.replace(/\.?0+$/u, '') : text
+  return PYTHON_FIXED_FORMAT.format(value)
 }
 
 function pythonStringRepr(value: string): string {
