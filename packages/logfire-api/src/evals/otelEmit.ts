@@ -123,6 +123,9 @@ function emit(body: string, attrs: Record<string, unknown>, parentRef?: SpanRefe
   })
 }
 
+// Python's default `format(value, 'g')` precision.
+const PYTHON_GENERAL_PRECISION = 6
+
 function formatPythonGeneralNumber(value: number): string {
   if (Number.isNaN(value)) {
     return 'nan'
@@ -139,11 +142,22 @@ function formatPythonGeneralNumber(value: number): string {
   if (Number.isInteger(value) && Math.abs(value) < 1e6) {
     return String(value)
   }
-  return value
-    .toPrecision(6)
-    .replace(/(\.\d*?)0+(e|$)/u, '$1$2')
-    .replace(/\.e/u, 'e')
-    .replace(/e([+-])(\d)$/u, 'e$10$2')
+  // Python's `g` decides between fixed and scientific from the exponent left *after* rounding to
+  // `PYTHON_GENERAL_PRECISION` significant digits, using scientific when it lands below -4 or at
+  // or above the precision, and it always writes at least two exponent digits.
+  const exponential = value.toExponential(PYTHON_GENERAL_PRECISION - 1)
+  const separator = exponential.indexOf('e')
+  const exponent = Number(exponential.slice(separator + 1))
+  if (exponent < -4 || exponent >= PYTHON_GENERAL_PRECISION) {
+    const mantissa = stripTrailingZeros(exponential.slice(0, separator))
+    const sign = exponent < 0 ? '-' : '+'
+    return `${mantissa}e${sign}${Math.abs(exponent).toString().padStart(2, '0')}`
+  }
+  return stripTrailingZeros(value.toFixed(Math.max(0, PYTHON_GENERAL_PRECISION - 1 - exponent)))
+}
+
+function stripTrailingZeros(text: string): string {
+  return text.includes('.') ? text.replace(/\.?0+$/u, '') : text
 }
 
 function pythonStringRepr(value: string): string {

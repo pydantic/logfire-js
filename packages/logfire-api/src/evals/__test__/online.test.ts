@@ -72,6 +72,27 @@ class LargeIntegerScore extends Evaluator {
   }
 }
 
+class SubMilliScore extends Evaluator {
+  static override evaluatorName = 'SubMilliScore'
+  evaluate(): number {
+    return 8.65742e-5
+  }
+}
+
+class MicroScore extends Evaluator {
+  static override evaluatorName = 'MicroScore'
+  evaluate(): number {
+    return 2.325e-6
+  }
+}
+
+class RoundsToWholeScore extends Evaluator {
+  static override evaluatorName = 'RoundsToWholeScore'
+  evaluate(): number {
+    return -10515.04
+  }
+}
+
 class CategoryLabel extends Evaluator {
   static override evaluatorName = 'CategoryLabel'
   evaluate(): string {
@@ -191,6 +212,23 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
       await waitForEvaluations()
     })
     expect(logs.map((log) => log.body)).toEqual(['evaluation: TinyScore=1.23e-07', 'evaluation: LargeIntegerScore=1.23457e+06'])
+  })
+
+  it('switches to scientific notation below 1e-4 like Python general format', async () => {
+    const fn = withOnlineEvaluation(async () => 'x', {
+      evaluators: [new SubMilliScore(), new MicroScore(), new RoundsToWholeScore()],
+      target: 't',
+    })
+    const { logs } = await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+    // Expected values are `format(value, 'g')` output from CPython for the same three numbers.
+    expect(logs.map((log) => log.body)).toEqual([
+      'evaluation: SubMilliScore=8.65742e-05',
+      'evaluation: MicroScore=2.325e-06',
+      'evaluation: RoundsToWholeScore=-10515',
+    ])
   })
 
   it('string output → score.label only (no value)', async () => {
