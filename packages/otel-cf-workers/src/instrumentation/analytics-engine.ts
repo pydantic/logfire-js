@@ -1,5 +1,5 @@
-import type { Attributes, SpanOptions } from '@opentelemetry/api'
-import { SpanKind, trace } from '@opentelemetry/api'
+import type { Attributes, Exception, SpanOptions } from '@opentelemetry/api'
+import { SpanKind, SpanStatusCode, trace } from '@opentelemetry/api'
 import { ATTR_DB_NAMESPACE, ATTR_DB_OPERATION_NAME, ATTR_DB_QUERY_TEXT, ATTR_DB_SYSTEM_NAME } from '@opentelemetry/semantic-conventions'
 import { wrap } from '../wrap.js'
 
@@ -39,13 +39,20 @@ function instrumentAEFn(fn: Function, name: string, operation: string) {
         attributes,
       }
       return tracer.startActiveSpan(`Analytics Engine ${name} ${operation}`, options, async (span) => {
-        const result = await Reflect.apply(target, thisArg, argArray)
-        const extraAttrsFn = AEAttributes[operation]
-        const extraAttrs = extraAttrsFn ? extraAttrsFn(argArray, result) : {}
-        span.setAttributes(extraAttrs)
-        span.setAttribute(ATTR_DB_QUERY_TEXT, `${operation} ${argArray[0]}`)
-        span.end()
-        return result
+        try {
+          const result = await Reflect.apply(target, thisArg, argArray)
+          const extraAttrsFn = AEAttributes[operation]
+          const extraAttrs = extraAttrsFn ? extraAttrsFn(argArray, result) : {}
+          span.setAttributes(extraAttrs)
+          span.setAttribute(ATTR_DB_QUERY_TEXT, `${operation} ${argArray[0]}`)
+          return result
+        } catch (error) {
+          span.recordException(error as Exception)
+          span.setStatus({ code: SpanStatusCode.ERROR })
+          throw error
+        } finally {
+          span.end()
+        }
       })
     },
   }
