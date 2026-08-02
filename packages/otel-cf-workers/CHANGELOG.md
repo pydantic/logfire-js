@@ -1,5 +1,11 @@
 # @pydantic/otel-cf-workers
 
+## 2.1.1
+
+### Patch Changes
+
+- 6b4a35a: End the Analytics Engine span when a write rejects, and record the error on it. `instrumentAnalyticsEngineDataset` called `span.end()` only on the success path, so a failed `writeDataPoint` left the span unended and it was never exported, losing the operation from the trace and leaving the failure invisible. It now records the exception, sets the span status to `ERROR`, and ends the span in a `finally` block, matching the other Cloudflare instrumentations.
+
 ## 2.1.0
 
 ### Minor Changes
