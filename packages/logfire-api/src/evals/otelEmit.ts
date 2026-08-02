@@ -126,6 +126,12 @@ function emit(body: string, attrs: Record<string, unknown>, parentRef?: SpanRefe
 // Python's default `format(value, 'g')` precision. Both formatters round half to even, the same
 // way Python does, which `toPrecision` and `toFixed` do not: they round half away from zero, so a
 // tie such as `1 / 512` came out as 0.00195313 instead of Python's 0.00195312.
+//
+// `roundingMode` needs Node 19+, Chrome 106+, Firefox 116+, or Safari 16.4+. Older runtimes
+// ignore the option and fall back to half-away-from-zero, which only affects exact ties: the
+// fixed-versus-scientific choice and the trailing-zero trimming below are unaffected, so those
+// runtimes still land on Python's answer everywhere except a tie, and never do worse than the
+// previous `toPrecision` implementation.
 const PYTHON_GENERAL_PRECISION = 6
 const PYTHON_ROUNDING_OPTIONS = {
   maximumSignificantDigits: PYTHON_GENERAL_PRECISION,
