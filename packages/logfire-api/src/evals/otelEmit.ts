@@ -123,25 +123,18 @@ function emit(body: string, attrs: Record<string, unknown>, parentRef?: SpanRefe
   })
 }
 
-// Python's default `format(value, 'g')` precision. Both formatters round half to even, the same
-// way Python does, which `toPrecision` and `toFixed` do not: they round half away from zero, so a
-// tie such as `1 / 512` came out as 0.00195313 instead of Python's 0.00195312.
-//
-// `roundingMode` needs Node 19+, Chrome 106+, Firefox 116+, or Safari 16.4+. Older runtimes
-// ignore the option and fall back to half-away-from-zero, which only affects exact ties: the
-// fixed-versus-scientific choice and the trailing-zero trimming below are unaffected, so those
-// runtimes still land on Python's answer everywhere except a tie, and never do worse than the
-// previous `toPrecision` implementation.
+// Python's default `format(value, 'g')` precision.
 const PYTHON_GENERAL_PRECISION = 6
-const PYTHON_ROUNDING_OPTIONS = {
-  maximumSignificantDigits: PYTHON_GENERAL_PRECISION,
-  minimumSignificantDigits: 1,
-  roundingMode: 'halfEven',
-  useGrouping: false,
-} as const
-const PYTHON_FIXED_FORMAT = new Intl.NumberFormat('en-US', PYTHON_ROUNDING_OPTIONS)
-const PYTHON_SCIENTIFIC_FORMAT = new Intl.NumberFormat('en-US', { ...PYTHON_ROUNDING_OPTIONS, notation: 'scientific' })
 
+/**
+ * Reproduce CPython's `format(value, 'g')`.
+ *
+ * The rounding has to happen on the binary value rather than on any decimal string, because a
+ * double is rarely the decimal it prints as: `0.1234555` is really 0.123455499..., which CPython
+ * rounds down to `0.123455`. Formatting the shortest round-trip text instead rounds the literal
+ * ties upward and gets `0.123456`. So the significand and exponent are pulled straight out of the
+ * IEEE-754 bits and expanded to exact decimal digits with BigInt, then rounded half to even.
+ */
 function formatPythonGeneralNumber(value: number): string {
   if (Number.isNaN(value)) {
     return 'nan'
@@ -158,17 +151,79 @@ function formatPythonGeneralNumber(value: number): string {
   if (Number.isInteger(value) && Math.abs(value) < 1e6) {
     return String(value)
   }
-  // Python's `g` decides between fixed and scientific from the exponent left *after* rounding to
-  // `PYTHON_GENERAL_PRECISION` significant digits, using scientific when it lands below -4 or at
-  // or above the precision, and it always writes at least two exponent digits.
-  const scientific = PYTHON_SCIENTIFIC_FORMAT.format(value)
-  const separator = scientific.indexOf('E')
-  const exponent = Number(scientific.slice(separator + 1))
-  if (exponent < -4 || exponent >= PYTHON_GENERAL_PRECISION) {
-    const sign = exponent < 0 ? '-' : '+'
-    return `${scientific.slice(0, separator)}e${sign}${Math.abs(exponent).toString().padStart(2, '0')}`
+
+  const sign = value < 0 ? '-' : ''
+  const { digits, pointExponent } = roundToSignificantDigits(exactDecimalDigits(Math.abs(value)))
+
+  // `g` uses scientific notation once the exponent drops below -4 or reaches the precision, and
+  // always writes at least two exponent digits.
+  if (pointExponent < -4 || pointExponent >= PYTHON_GENERAL_PRECISION) {
+    const mantissa = stripTrailingZeros(`${digits.slice(0, 1)}.${digits.slice(1)}`)
+    const exponentSign = pointExponent < 0 ? '-' : '+'
+    return `${sign}${mantissa}e${exponentSign}${Math.abs(pointExponent).toString().padStart(2, '0')}`
   }
-  return PYTHON_FIXED_FORMAT.format(value)
+  if (pointExponent < 0) {
+    return `${sign}${stripTrailingZeros(`0.${'0'.repeat(-pointExponent - 1)}${digits}`)}`
+  }
+  const whole = digits.slice(0, pointExponent + 1)
+  const fraction = digits.slice(pointExponent + 1)
+  return `${sign}${stripTrailingZeros(fraction.length === 0 ? whole : `${whole}.${fraction}`)}`
+}
+
+/**
+ * Every finite double is exactly `significand * 2 ** exponent`, which has a finite decimal
+ * expansion. Returns all of its digits plus the base-10 exponent of the leading one.
+ */
+function exactDecimalDigits(magnitude: number): { digits: string; pointExponent: number } {
+  const view = new DataView(new ArrayBuffer(8))
+  view.setFloat64(0, magnitude)
+  const high = view.getUint32(0)
+  const low = view.getUint32(4)
+  const biasedExponent = (high >>> 20) & 0x7ff
+  const fraction = (BigInt(high & 0xfffff) << 32n) | BigInt(low)
+  // A zero biased exponent means subnormal, so there is no implicit leading one.
+  const significand = biasedExponent === 0 ? fraction : fraction | (1n << 52n)
+  const exponent = biasedExponent === 0 ? -1074 : biasedExponent - 1075
+
+  if (exponent >= 0) {
+    const digits = (significand << BigInt(exponent)).toString()
+    return { digits, pointExponent: digits.length - 1 }
+  }
+  // Scaling by 5 ** -exponent turns the binary fraction into an exact decimal one.
+  const digits = (significand * 5n ** BigInt(-exponent)).toString()
+  return { digits, pointExponent: digits.length - 1 + exponent }
+}
+
+function roundToSignificantDigits(exact: { digits: string; pointExponent: number }): { digits: string; pointExponent: number } {
+  let pointExponent = exact.pointExponent
+  let kept = exact.digits.slice(0, PYTHON_GENERAL_PRECISION).padEnd(PYTHON_GENERAL_PRECISION, '0')
+  const dropped = exact.digits.slice(PYTHON_GENERAL_PRECISION)
+  if (dropped.length === 0) {
+    return { digits: kept, pointExponent }
+  }
+
+  const first = dropped[0] ?? '0'
+  const isExactHalf = first === '5' && /^0*$/u.test(dropped.slice(1))
+  const lastKept = kept.charCodeAt(PYTHON_GENERAL_PRECISION - 1) - 48
+  // Half to even on an exact tie, otherwise ordinary nearest.
+  const roundUp = first > '5' || (isExactHalf ? lastKept % 2 === 1 : first === '5')
+  if (!roundUp) {
+    return { digits: kept, pointExponent }
+  }
+
+  const bumped = (BigInt(kept) + 1n).toString()
+  if (bumped.length > PYTHON_GENERAL_PRECISION) {
+    // 999999 carried into 1000000, so the leading digit moved up a place.
+    kept = bumped.slice(0, PYTHON_GENERAL_PRECISION)
+    pointExponent += 1
+  } else {
+    kept = bumped.padStart(PYTHON_GENERAL_PRECISION, '0')
+  }
+  return { digits: kept, pointExponent }
+}
+
+function stripTrailingZeros(text: string): string {
+  return text.includes('.') ? text.replace(/\.?0+$/u, '') : text
 }
 
 function pythonStringRepr(value: string): string {

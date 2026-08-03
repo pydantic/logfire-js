@@ -101,6 +101,22 @@ class HalfEvenTieScore extends Evaluator {
   }
 }
 
+class BinaryRoundingScore extends Evaluator {
+  static override evaluatorName = 'BinaryRoundingScore'
+  evaluate(): number {
+    // Really 0.123455499..., so rounding the binary value gives a different digit than rounding
+    // the shortest decimal text would.
+    return 0.1234555
+  }
+}
+
+class SmallestSubnormalScore extends Evaluator {
+  static override evaluatorName = 'SmallestSubnormalScore'
+  evaluate(): number {
+    return Number.MIN_VALUE
+  }
+}
+
 class CategoryLabel extends Evaluator {
   static override evaluatorName = 'CategoryLabel'
   evaluate(): string {
@@ -236,6 +252,22 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
       'evaluation: SubMilliScore=8.65742e-05',
       'evaluation: MicroScore=2.325e-06',
       'evaluation: RoundsToWholeScore=-10515',
+    ])
+  })
+
+  it('rounds the binary value rather than its shortest decimal form', async () => {
+    const fn = withOnlineEvaluation(async () => 'x', {
+      evaluators: [new BinaryRoundingScore(), new SmallestSubnormalScore()],
+      target: 't',
+    })
+    const { logs } = await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+    // CPython: format(0.1234555, 'g') == '0.123455' and format(5e-324, 'g') == '4.94066e-324'
+    expect(logs.map((log) => log.body)).toEqual([
+      'evaluation: BinaryRoundingScore=0.123455',
+      'evaluation: SmallestSubnormalScore=4.94066e-324',
     ])
   })
 
