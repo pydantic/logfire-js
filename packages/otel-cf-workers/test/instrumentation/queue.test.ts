@@ -4,7 +4,8 @@ import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '
 import { beforeEach, describe, expect, it, vitest } from 'vitest'
 import { context, SpanStatusCode, trace } from '@opentelemetry/api'
 import { AsyncLocalStorageContextManager } from '../../src/context'
-import { instrumentQueueSender } from '../../src/instrumentation/queue'
+import { executeQueueHandler, instrumentQueueSender } from '../../src/instrumentation/queue'
+import type { QueueHandlerArgs } from '../../src/instrumentation/queue'
 
 const exporter = new InMemorySpanExporter()
 
@@ -64,5 +65,46 @@ describe('queue sender instrumentation', () => {
     expect(spans[0]?.attributes['queue.operation']).toBe('sendBatch')
     expect(spans[0]?.status).toEqual({ code: SpanStatusCode.ERROR })
     expect(spans[0]?.events.map((event) => event.name)).toEqual(['exception'])
+  })
+})
+
+describe('queue consumer instrumentation', () => {
+  function createBatch(): QueueHandlerArgs[0] {
+    return { queue: 'my-queue', messages: [] } as unknown as QueueHandlerArgs[0]
+  }
+
+  function createExecutionContext(): QueueHandlerArgs[2] {
+    return {
+      passThroughOnException: () => undefined,
+      props: {},
+      waitUntil: () => undefined,
+    } as unknown as QueueHandlerArgs[2]
+  }
+
+  it('ends the span without an error status when the handler succeeds', async () => {
+    const queueFn = vitest.fn<() => Promise<void>>().mockResolvedValue(undefined)
+
+    await executeQueueHandler(queueFn as unknown as ExportedHandlerQueueHandler, [createBatch(), {}, createExecutionContext()])
+
+    const spans = exporter.getFinishedSpans()
+    expect(spans).toHaveLength(1)
+    expect(spans[0]?.name).toBe('queueHandler my-queue')
+    expect(spans[0]?.status.code).toBe(SpanStatusCode.UNSET)
+  })
+
+  it('marks the span as an error when the handler throws', async () => {
+    const error = new Error('consumer boom')
+    const queueFn = vitest.fn<() => Promise<void>>().mockRejectedValue(error)
+
+    await expect(
+      executeQueueHandler(queueFn as unknown as ExportedHandlerQueueHandler, [createBatch(), {}, createExecutionContext()])
+    ).rejects.toBe(error)
+
+    const spans = exporter.getFinishedSpans()
+    expect(spans).toHaveLength(1)
+    expect(spans[0]?.name).toBe('queueHandler my-queue')
+    expect(spans[0]?.status).toEqual({ code: SpanStatusCode.ERROR })
+    expect(spans[0]?.events.map((event) => event.name)).toEqual(['exception'])
+    expect(spans[0]?.events[0]?.attributes?.['exception.message']).toBe('consumer boom')
   })
 })

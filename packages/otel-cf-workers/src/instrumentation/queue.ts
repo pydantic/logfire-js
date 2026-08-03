@@ -158,6 +158,7 @@ export async function executeQueueHandler(queueFn: QueueHandler, [batch, env, ct
       return result
     } catch (error) {
       span.recordException(error as Exception)
+      span.setStatus({ code: SpanStatusCode.ERROR })
       span.setAttribute('queue.implicitly_retried', count.total - count.succeeded - count.failed)
       count.retryRemaining()
       span.end()
