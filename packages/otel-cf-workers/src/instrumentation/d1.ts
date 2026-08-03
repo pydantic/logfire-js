@@ -125,6 +125,11 @@ export function instrumentD1Fn(fn: Function, dbName: string, operation: string):
           } catch (error) {
             span.recordException(error as Exception)
             span.setStatus({ code: SpanStatusCode.ERROR })
+            // The whole batch failed, so none of its queries succeeded. The exception itself stays
+            // on the parent so it is not duplicated once per statement.
+            subSpans.forEach((s) => {
+              s.setStatus({ code: SpanStatusCode.ERROR })
+            })
             throw error
           } finally {
             subSpans.forEach((s) => {
