@@ -1,5 +1,5 @@
 import type { Exception, SpanOptions } from '@opentelemetry/api'
-import { context as api_context, SpanKind, trace } from '@opentelemetry/api'
+import { context as api_context, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api'
 import type { Initialiser } from '../config'
 import { setConfig } from '../config'
 import { ATTR_FAAS_TRIGGER, ATTR_MESSAGING_DESTINATION_NAME, ATTR_RPC_MESSAGE_ID } from '../semconv.js'
@@ -46,7 +46,7 @@ function headerAttributes(message: { headers: Headers }): Record<string, unknown
   return Object.fromEntries([...message.headers].map(([key, value]) => [`email.header.${key}`, value] as const))
 }
 
-async function executeEmailHandler(emailFn: EmailHandler, [message, env, ctx]: EmailHandlerArgs): Promise<void> {
+export async function executeEmailHandler(emailFn: EmailHandler, [message, env, ctx]: EmailHandlerArgs): Promise<void> {
   const tracer = trace.getTracer('emailHandler')
   const messageId = message.headers.get('Message-Id')
   const options = {
@@ -64,6 +64,7 @@ async function executeEmailHandler(emailFn: EmailHandler, [message, env, ctx]: E
       span.end()
     } catch (error) {
       span.recordException(error as Exception)
+      span.setStatus({ code: SpanStatusCode.ERROR })
       span.end()
       throw error
     }
