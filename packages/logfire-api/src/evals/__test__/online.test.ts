@@ -72,6 +72,51 @@ class LargeIntegerScore extends Evaluator {
   }
 }
 
+class SubMilliScore extends Evaluator {
+  static override evaluatorName = 'SubMilliScore'
+  evaluate(): number {
+    return 8.65742e-5
+  }
+}
+
+class MicroScore extends Evaluator {
+  static override evaluatorName = 'MicroScore'
+  evaluate(): number {
+    return 2.325e-6
+  }
+}
+
+class RoundsToWholeScore extends Evaluator {
+  static override evaluatorName = 'RoundsToWholeScore'
+  evaluate(): number {
+    return -10515.04
+  }
+}
+
+class HalfEvenTieScore extends Evaluator {
+  static override evaluatorName = 'HalfEvenTieScore'
+  evaluate(): number {
+    // 1 / 512 is exact in binary and its seventh significant digit is a tie.
+    return 1 / 512
+  }
+}
+
+class BinaryRoundingScore extends Evaluator {
+  static override evaluatorName = 'BinaryRoundingScore'
+  evaluate(): number {
+    // Really 0.123455499..., so rounding the binary value gives a different digit than rounding
+    // the shortest decimal text would.
+    return 0.1234555
+  }
+}
+
+class SmallestSubnormalScore extends Evaluator {
+  static override evaluatorName = 'SmallestSubnormalScore'
+  evaluate(): number {
+    return Number.MIN_VALUE
+  }
+}
+
 class CategoryLabel extends Evaluator {
   static override evaluatorName = 'CategoryLabel'
   evaluate(): string {
@@ -212,6 +257,49 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
       await waitForEvaluations()
     })
     expect(logs.map((log) => log.body)).toEqual(['evaluation: TinyScore=1.23e-07', 'evaluation: LargeIntegerScore=1.23457e+06'])
+  })
+
+  it('switches to scientific notation below 1e-4 like Python general format', async () => {
+    const fn = withOnlineEvaluation(async () => 'x', {
+      evaluators: [new SubMilliScore(), new MicroScore(), new RoundsToWholeScore()],
+      target: 't',
+    })
+    const { logs } = await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+    // Expected values are `format(value, 'g')` output from CPython for the same three numbers.
+    expect(logs.map((log) => log.body)).toEqual([
+      'evaluation: SubMilliScore=8.65742e-05',
+      'evaluation: MicroScore=2.325e-06',
+      'evaluation: RoundsToWholeScore=-10515',
+    ])
+  })
+
+  it('rounds the binary value rather than its shortest decimal form', async () => {
+    const fn = withOnlineEvaluation(async () => 'x', {
+      evaluators: [new BinaryRoundingScore(), new SmallestSubnormalScore()],
+      target: 't',
+    })
+    const { logs } = await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+    // CPython: format(0.1234555, 'g') == '0.123455' and format(5e-324, 'g') == '4.94066e-324'
+    expect(logs.map((log) => log.body)).toEqual([
+      'evaluation: BinaryRoundingScore=0.123455',
+      'evaluation: SmallestSubnormalScore=4.94066e-324',
+    ])
+  })
+
+  it('rounds ties to even like Python rather than away from zero', async () => {
+    const fn = withOnlineEvaluation(async () => 'x', { evaluators: [new HalfEvenTieScore()], target: 't' })
+    const { logs } = await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+    // CPython: format(1 / 512, 'g') == '0.00195312'
+    expect(logs[0]!.body).toBe('evaluation: HalfEvenTieScore=0.00195312')
   })
 
   it('formats string result bodies like Python repr', async () => {

@@ -123,6 +123,18 @@ function emit(body: string, attrs: Record<string, unknown>, parentRef?: SpanRefe
   })
 }
 
+// Python's default `format(value, 'g')` precision.
+const PYTHON_GENERAL_PRECISION = 6
+
+/**
+ * Reproduce CPython's `format(value, 'g')`.
+ *
+ * The rounding has to happen on the binary value rather than on any decimal string, because a
+ * double is rarely the decimal it prints as: `0.1234555` is really 0.123455499..., which CPython
+ * rounds down to `0.123455`. Formatting the shortest round-trip text instead rounds the literal
+ * ties upward and gets `0.123456`. So the significand and exponent are pulled straight out of the
+ * IEEE-754 bits and expanded to exact decimal digits with BigInt, then rounded half to even.
+ */
 function formatPythonGeneralNumber(value: number): string {
   if (Number.isNaN(value)) {
     return 'nan'
@@ -139,11 +151,79 @@ function formatPythonGeneralNumber(value: number): string {
   if (Number.isInteger(value) && Math.abs(value) < 1e6) {
     return String(value)
   }
-  return value
-    .toPrecision(6)
-    .replace(/(\.\d*?)0+(e|$)/u, '$1$2')
-    .replace(/\.e/u, 'e')
-    .replace(/e([+-])(\d)$/u, 'e$10$2')
+
+  const sign = value < 0 ? '-' : ''
+  const { digits, pointExponent } = roundToSignificantDigits(exactDecimalDigits(Math.abs(value)))
+
+  // `g` uses scientific notation once the exponent drops below -4 or reaches the precision, and
+  // always writes at least two exponent digits.
+  if (pointExponent < -4 || pointExponent >= PYTHON_GENERAL_PRECISION) {
+    const mantissa = stripTrailingZeros(`${digits.slice(0, 1)}.${digits.slice(1)}`)
+    const exponentSign = pointExponent < 0 ? '-' : '+'
+    return `${sign}${mantissa}e${exponentSign}${Math.abs(pointExponent).toString().padStart(2, '0')}`
+  }
+  if (pointExponent < 0) {
+    return `${sign}${stripTrailingZeros(`0.${'0'.repeat(-pointExponent - 1)}${digits}`)}`
+  }
+  const whole = digits.slice(0, pointExponent + 1)
+  const fraction = digits.slice(pointExponent + 1)
+  return `${sign}${stripTrailingZeros(fraction.length === 0 ? whole : `${whole}.${fraction}`)}`
+}
+
+/**
+ * Every finite double is exactly `significand * 2 ** exponent`, which has a finite decimal
+ * expansion. Returns all of its digits plus the base-10 exponent of the leading one.
+ */
+function exactDecimalDigits(magnitude: number): { digits: string; pointExponent: number } {
+  const view = new DataView(new ArrayBuffer(8))
+  view.setFloat64(0, magnitude)
+  const high = view.getUint32(0)
+  const low = view.getUint32(4)
+  const biasedExponent = (high >>> 20) & 0x7ff
+  const fraction = (BigInt(high & 0xfffff) << 32n) | BigInt(low)
+  // A zero biased exponent means subnormal, so there is no implicit leading one.
+  const significand = biasedExponent === 0 ? fraction : fraction | (1n << 52n)
+  const exponent = biasedExponent === 0 ? -1074 : biasedExponent - 1075
+
+  if (exponent >= 0) {
+    const digits = (significand << BigInt(exponent)).toString()
+    return { digits, pointExponent: digits.length - 1 }
+  }
+  // Scaling by 5 ** -exponent turns the binary fraction into an exact decimal one.
+  const digits = (significand * 5n ** BigInt(-exponent)).toString()
+  return { digits, pointExponent: digits.length - 1 + exponent }
+}
+
+function roundToSignificantDigits(exact: { digits: string; pointExponent: number }): { digits: string; pointExponent: number } {
+  let pointExponent = exact.pointExponent
+  let kept = exact.digits.slice(0, PYTHON_GENERAL_PRECISION).padEnd(PYTHON_GENERAL_PRECISION, '0')
+  const dropped = exact.digits.slice(PYTHON_GENERAL_PRECISION)
+  if (dropped.length === 0) {
+    return { digits: kept, pointExponent }
+  }
+
+  const first = dropped[0] ?? '0'
+  const isExactHalf = first === '5' && /^0*$/u.test(dropped.slice(1))
+  const lastKept = kept.charCodeAt(PYTHON_GENERAL_PRECISION - 1) - 48
+  // Half to even on an exact tie, otherwise ordinary nearest.
+  const roundUp = first > '5' || (isExactHalf ? lastKept % 2 === 1 : first === '5')
+  if (!roundUp) {
+    return { digits: kept, pointExponent }
+  }
+
+  const bumped = (BigInt(kept) + 1n).toString()
+  if (bumped.length > PYTHON_GENERAL_PRECISION) {
+    // 999999 carried into 1000000, so the leading digit moved up a place.
+    kept = bumped.slice(0, PYTHON_GENERAL_PRECISION)
+    pointExponent += 1
+  } else {
+    kept = bumped.padStart(PYTHON_GENERAL_PRECISION, '0')
+  }
+  return { digits: kept, pointExponent }
+}
+
+function stripTrailingZeros(text: string): string {
+  return text.includes('.') ? text.replace(/\.?0+$/u, '') : text
 }
 
 // Python's `str.isprintable()` treats the Unicode "Other" and "Separator" categories as
