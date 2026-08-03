@@ -1,5 +1,5 @@
 import type { Attributes, Exception, SpanOptions } from '@opentelemetry/api'
-import { SpanKind, context as api_context, trace } from '@opentelemetry/api'
+import { SpanKind, SpanStatusCode, context as api_context, trace } from '@opentelemetry/api'
 import type { Initialiser } from '../config.js'
 import { setConfig } from '../config.js'
 import { ATTR_FAAS_TRIGGER } from '../semconv.js'
@@ -193,8 +193,15 @@ function instrumentQueueSend(fn: Queue['send'], name: string): Queue['send'] {
     apply: async (target, thisArg, argArray) => {
       return tracer.startActiveSpan(`Queues ${name} send`, async (span) => {
         span.setAttribute('queue.operation', 'send')
-        await Reflect.apply(target, unwrap(thisArg), argArray)
-        span.end()
+        try {
+          await Reflect.apply(target, unwrap(thisArg), argArray)
+        } catch (error) {
+          span.recordException(error as Exception)
+          span.setStatus({ code: SpanStatusCode.ERROR })
+          throw error
+        } finally {
+          span.end()
+        }
       })
     },
   }
@@ -207,8 +214,15 @@ function instrumentQueueSendBatch(fn: Queue['sendBatch'], name: string): Queue['
     apply: async (target, thisArg, argArray) => {
       return tracer.startActiveSpan(`Queues ${name} sendBatch`, async (span) => {
         span.setAttribute('queue.operation', 'sendBatch')
-        await Reflect.apply(target, unwrap(thisArg), argArray)
-        span.end()
+        try {
+          await Reflect.apply(target, unwrap(thisArg), argArray)
+        } catch (error) {
+          span.recordException(error as Exception)
+          span.setStatus({ code: SpanStatusCode.ERROR })
+          throw error
+        } finally {
+          span.end()
+        }
       })
     },
   }
