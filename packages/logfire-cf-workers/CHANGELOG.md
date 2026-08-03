@@ -1,5 +1,16 @@
 # @pydantic/logfire-cf-workers
 
+## 2.0.7
+
+### Patch Changes
+
+- Updated dependencies [7a364ea]
+- Updated dependencies [82eae91]
+- Updated dependencies [36c3b9e]
+- Updated dependencies [d2930a6]
+  - @pydantic/otel-cf-workers@2.1.2
+  - logfire@0.21.6
+
 ## 2.0.6
 
 ### Patch Changes

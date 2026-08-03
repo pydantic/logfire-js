@@ -1,5 +1,13 @@
 # @pydantic/otel-cf-workers
 
+## 2.1.2
+
+### Patch Changes
+
+- 7a364ea: Set the span status to `ERROR` when an email handler throws. The handler recorded the exception on its span but left the status `UNSET`, so a failed email invocation did not read as failed and was missed by error filters, unlike the fetch, alarm, and Durable Object handlers which already set it.
+- 36c3b9e: Set the span status to `ERROR` when a queue consumer handler throws. The handler recorded the exception on its span but left the status `UNSET`, so a failed queue batch did not read as failed and was missed by error filters, unlike the fetch, alarm, and email handlers which already set it.
+- d2930a6: End the queue producer span when a send rejects, and record the error on it. `instrumentQueueSend` and `instrumentQueueSendBatch` called `span.end()` only after the wrapped call resolved, so a failed `queue.send()` or `queue.sendBatch()` left the span unended and it was never exported, dropping the operation from the trace and hiding the failure. Both now record the exception, set the span status to `ERROR`, and end the span in a `finally` block, matching the queue consumer handler in the same file and the other Cloudflare instrumentations.
+
 ## 2.1.1
 
 ### Patch Changes
