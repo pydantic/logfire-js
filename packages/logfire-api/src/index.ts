@@ -610,7 +610,18 @@ function spanWithSettings<R>(
         )
         // we need this clunky detection because of zone.js promises
       } else if (typeof result === 'object' && result !== null && 'finally' in result && typeof result.finally === 'function') {
-        const resultWithFinally = result as { finally: (onFinally: () => void) => unknown }
+        const resultWithFinally = result as {
+          finally: (onFinally: () => void) => unknown
+          then?: (onFulfilled: undefined, onRejected: (reason: unknown) => void) => unknown
+        }
+        // A zone.js promise rejecting has to record the exception just like a native one does.
+        // The returned chain is deliberately ignored: `result` itself is handed back to the
+        // caller, so the rejection still reaches them.
+        if (typeof resultWithFinally.then === 'function') {
+          resultWithFinally.then(undefined, (reason: unknown) => {
+            recordSpanException(span, reason, serializationAttributes)
+          })
+        }
         resultWithFinally.finally(() => {
           span.end()
         })

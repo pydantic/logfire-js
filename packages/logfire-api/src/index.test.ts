@@ -835,6 +835,39 @@ describe('span', () => {
     expect(spanMock.end).toHaveBeenCalledOnce()
   })
 
+  test('records the exception when a zone.js style promise rejects', async () => {
+    const error = new Error('zone-oops')
+    // Not a native Promise, but exposes `then` and `finally` the way a zone.js promise does.
+    const settled = Promise.reject(error).catch(() => undefined)
+    const zonePromise = {
+      finally: (onFinally: () => void) => {
+        settled.then(onFinally, onFinally)
+        return zonePromise
+      },
+      then: (_onFulfilled: undefined, onRejected: (reason: unknown) => void) => {
+        settled.then(
+          () => {
+            onRejected(error)
+          },
+          () => {
+            onRejected(error)
+          }
+        )
+        return zonePromise
+      },
+    }
+
+    const result = span('test', { callback: () => zonePromise })
+
+    expect(result).toBe(zonePromise)
+    await settled
+    await Promise.resolve()
+
+    expect(spanMock.recordException).toHaveBeenCalledWith(error)
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: zone-oops' })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
   test('thenable callback result is returned untouched', () => {
     const then = vi.fn<() => void>()
     const lazyThenable = { then }
