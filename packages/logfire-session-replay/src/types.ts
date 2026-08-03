@@ -33,7 +33,6 @@ export const MouseInteractions = {
 
 export const CustomTag = {
   Error: 'logfire.error',
-  Trace: 'logfire.trace',
   Console: 'logfire.console',
   Network: 'logfire.network',
   Navigation: 'logfire.navigation',
@@ -79,7 +78,6 @@ export interface ChunkMeta {
   errorCount: number
   hasFullSnapshot: boolean
   urls: string[]
-  traceIds: string[]
   distinctId?: string
   sessionAttributes?: SessionAttributes
 }
@@ -144,7 +142,6 @@ export interface SessionReplayConfig {
 
   distinctId?: string
   getDistinctId?: () => string | undefined
-  getTraceContext?: () => { traceId?: string; spanId?: string } | undefined
 
   captureConsole?: boolean
   captureNetwork?: boolean
@@ -176,7 +173,6 @@ export interface ResolvedSessionReplayConfig {
   maxSessionDurationMs: number
   distinctId: string
   getDistinctId: (() => string | undefined) | undefined
-  getTraceContext: (() => { traceId?: string; spanId?: string } | undefined) | undefined
   captureConsole: boolean
   captureNetwork: boolean
   captureNavigation: boolean

@@ -20,7 +20,6 @@ const events: RrwebEvent[] = [
   },
   { type: EventType.IncrementalSnapshot, data: { source: IncrementalSource.Input, text: 'x' }, timestamp: 150 },
   { type: EventType.Custom, data: { tag: CustomTag.Error, payload: { message: 'boom' } }, timestamp: 160 },
-  { type: EventType.Custom, data: { tag: CustomTag.Trace, payload: { traceId: 'abc', spanId: 'def' } }, timestamp: 170 },
   { type: EventType.Meta, data: { href: 'https://app.example.com/b' }, timestamp: 180 },
 ]
 
@@ -37,7 +36,6 @@ describe('computeChunkMeta', () => {
       errorCount: 1,
       hasFullSnapshot: true,
       urls: ['https://app.example.com/a', 'https://app.example.com/b'],
-      traceIds: ['abc'],
       distinctId: 'user-42',
     })
   })
@@ -66,7 +64,6 @@ describe('computeChunkMeta', () => {
         account_tier: 'pro',
         beta_user: true,
       },
-      traceIds: [],
       urls: [],
     })
     expect(computeChunkMeta(0, [], undefined, {})).not.toHaveProperty('sessionAttributes')

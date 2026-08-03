@@ -140,7 +140,6 @@ describe('startBrowserSessionReplay', () => {
       sessionSampleRate: 0.25,
       token: 'direct-token',
     })
-    expect(replayConfig).not.toHaveProperty('getTraceContext')
     expect(replayConfig).not.toHaveProperty('sessionIdleTimeoutMs')
     expect(replayConfig).not.toHaveProperty('maxSessionDurationMs')
     const reportedError = new Error('reported by replay')

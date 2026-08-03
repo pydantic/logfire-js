@@ -372,27 +372,7 @@ describe('startSessionReplay full mode', () => {
   })
 })
 
-describe('startSessionReplay correlation and errors', () => {
-  it('stamps trace context only when trace id changes', async () => {
-    vi.useFakeTimers()
-    const { fetchImpl } = recordingFetch()
-    const traces = ['A', 'A', 'B']
-    let index = 0
-    const replay = startSessionReplay(
-      baseConfig(fetchImpl, { getTraceContext: () => ({ traceId: traces[index++] ?? '', spanId: 'span' }) })
-    )
-
-    await vi.advanceTimersByTimeAsync(1_000)
-    await vi.advanceTimersByTimeAsync(1_000)
-    await vi.advanceTimersByTimeAsync(1_000)
-
-    expect(handle.addCustomEvent.mock.calls.filter((call) => call[0] === CustomTag.Trace)).toEqual([
-      [CustomTag.Trace, { traceId: 'A', spanId: 'span' }],
-      [CustomTag.Trace, { traceId: 'B', spanId: 'span' }],
-    ])
-    await replay.stop()
-  })
-
+describe('startSessionReplay errors', () => {
   it('surfaces window errors and promise rejections as custom events', async () => {
     const { fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl))
@@ -435,21 +415,10 @@ describe('startSessionReplay correlation and errors', () => {
     await replay.stop()
   })
 
-  it('contains throwing trace callbacks and coerces non-string rejection messages', async () => {
-    vi.useFakeTimers()
-    const onError = vi.fn<() => void>()
+  it('coerces non-string rejection messages', async () => {
     const { fetchImpl } = recordingFetch()
-    const replay = startSessionReplay(
-      baseConfig(fetchImpl, {
-        getTraceContext: () => {
-          throw new Error('trace callback failed')
-        },
-        onError,
-      })
-    )
+    const replay = startSessionReplay(baseConfig(fetchImpl))
 
-    await vi.advanceTimersByTimeAsync(1_000)
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'trace callback failed' }))
     dispatchRejection({ message: 42, stack: 'STACK' })
     expect(handle.addCustomEvent).toHaveBeenCalledWith(CustomTag.Error, { message: '42', stack: 'STACK' })
     await replay.stop()
