@@ -5,7 +5,7 @@ description: Install the Logfire TypeScript SDK, send your first span from Node.
 
 # Getting started
 
-Go from install to your first trace in about five minutes. A **trace** is the full record of one request, job, or task from start to finish, made of nested **spans**; a span is one operation within it, with a name, a start, and a duration. The Logfire TypeScript SDK is built on [OpenTelemetry](https://opentelemetry.io/), the open industry standard, and works across Node.js, browsers, Cloudflare Workers, and other OpenTelemetry-compatible runtimes.
+Go from install to your first trace in about five minutes. A **trace** is the full record of one request, job, task, or agent run from start to finish, made of nested **spans**; a span is one operation within it, with a name, a start, and a duration. The Logfire TypeScript SDK is built on [OpenTelemetry](https://opentelemetry.io/), the open industry standard, and works across Node.js, browsers, Cloudflare Workers, and other OpenTelemetry-compatible runtimes.
 
 ## Before you start
 
@@ -58,13 +58,16 @@ import * as logfire from '@pydantic/logfire-node'
 
 logfire.configure({ serviceName: 'hello-logfire' })
 
-await logfire.span('greeting', {
-  callback: async () => {
-    logfire.info('Hello world!')
-  },
-})
+async function main() {
+  await logfire.span('greeting', {
+    callback: async () => {
+      logfire.info('Hello world!')
+    },
+  })
+  await logfire.shutdown()
+}
 
-await logfire.shutdown()
+main()
 ```
 
 `configure()` connects your app to Logfire. `span()` records one operation, and the `info()` inside it is a log (a timestamped record of a single event) nested in that span, so together they make your first trace. `shutdown()` flushes anything still buffered before a short-lived script exits.
