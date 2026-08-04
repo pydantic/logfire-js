@@ -1,5 +1,12 @@
 # @pydantic/nextjs-client-side-instrumentation
 
+## 0.1.24
+
+### Patch Changes
+
+- Updated dependencies [28a13c0]
+  - @pydantic/logfire-browser@0.18.3
+
 ## 0.1.23
 
 ### Patch Changes

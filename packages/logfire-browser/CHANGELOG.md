@@ -1,5 +1,13 @@
 # @pydantic/logfire-browser
 
+## 0.18.3
+
+### Patch Changes
+
+- 28a13c0: Remove the experimental `getTraceContext` option and `meta.traceIds` chunk field. Correlate recordings with browser spans through their shared browser session id and replay time bounds.
+- Updated dependencies [28a13c0]
+  - @pydantic/logfire-session-replay@0.3.0
+
 ## 0.18.2
 
 ### Patch Changes
