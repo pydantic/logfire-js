@@ -273,8 +273,7 @@ loaded and sampled into `full` or `buffer` mode include
 `logfire.session_replay.active` and `logfire.session_replay.mode`. Those active
 attributes are truthful best-effort annotations, not the primary correlation
 key; early spans should be correlated to replay by browser session id and replay
-time bounds. The browser SDK does not populate replay `traceIds` from
-active-span polling.
+time bounds. Replay chunks do not include per-trace correlation metadata.
 
 Before lazy replay startup completes, after startup failure, and after replay is
 stopped, the facade reports `mode: 'off'` and `recording: false`. Its `stop()`

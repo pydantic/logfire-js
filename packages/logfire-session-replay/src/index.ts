@@ -240,28 +240,6 @@ function createActiveRuntime(options: {
       }
     }
 
-    let lastTraceId: string | undefined
-    if (config.getTraceContext !== undefined) {
-      const traceTimer = setInterval(() => {
-        if (!active) {
-          return
-        }
-        try {
-          const context = config.getTraceContext?.()
-          const traceId = context?.traceId
-          if (traceId !== undefined && traceId.length > 0 && traceId !== lastTraceId) {
-            lastTraceId = traceId
-            addCustomEvent(CustomTag.Trace, { traceId, spanId: context?.spanId })
-          }
-        } catch (error) {
-          safeReportError(config.onError, error)
-        }
-      }, SESSION_MONITOR_INTERVAL_MS)
-      cleanup.push(() => {
-        clearInterval(traceTimer)
-      })
-    }
-
     const handleError = (payload: { message: string; source?: string; stack?: string }) => {
       if (!isRuntimeActive()) {
         return
@@ -393,7 +371,6 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     maxSessionDurationMs: config.maxSessionDurationMs ?? DEFAULTS.maxSessionDurationMs,
     distinctId: config.distinctId ?? DEFAULTS.distinctId,
     getDistinctId: config.getDistinctId,
-    getTraceContext: config.getTraceContext,
     captureConsole: config.captureConsole ?? DEFAULTS.captureConsole,
     captureNetwork: config.captureNetwork ?? DEFAULTS.captureNetwork,
     captureNavigation: config.captureNavigation ?? DEFAULTS.captureNavigation,

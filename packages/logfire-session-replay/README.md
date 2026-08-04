@@ -44,7 +44,7 @@ const replay = startSessionReplay({
     account_tier: currentAccount.tier,
     beta_user: currentUser.isBeta,
   }),
-  getTraceContext: () => getCurrentTraceContext(),
+  getSessionId: () => getSharedBrowserSessionId(),
 })
 
 await replay.flush()
@@ -105,7 +105,6 @@ The decompressed body shape is:
     errorCount,
     hasFullSnapshot,
     urls,
-    traceIds,
     distinctId,
     sessionAttributes,
   },
@@ -215,10 +214,9 @@ not automatically promote the replay buffer.
 
 Use `getSessionId` to share a session id with another SDK layer. The
 `@pydantic/logfire-browser` integration passes its browser RUM session id through
-this hook when top-level `sessionReplay` is configured.
-
-Use `getTraceContext` to stamp active trace ids into the replay stream so the
-replay can be linked to browser traces and errors.
+this hook when top-level `sessionReplay` is configured. Other integrations must
+record the same value as `browser.session.id` on their browser spans so Logfire
+can correlate those spans with the replay over its time bounds.
 
 ## Browser SDK Integration
 

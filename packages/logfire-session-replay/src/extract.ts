@@ -22,7 +22,6 @@ export function computeChunkMeta(
   let errorCount = 0
   let hasFullSnapshot = false
   const urls = new Set<string>()
-  const traceIds = new Set<string>()
 
   for (const event of events) {
     if (event.timestamp < firstTimestamp) {
@@ -55,11 +54,6 @@ export function computeChunkMeta(
       const payload = asRecord(data['payload'])
       if (tag === CustomTag.Error) {
         errorCount++
-      } else if (tag === CustomTag.Trace) {
-        const traceId = asString(payload?.['traceId'])
-        if (traceId !== undefined) {
-          traceIds.add(traceId)
-        }
       } else if (tag === CustomTag.Console) {
         if (payload?.['level'] === 'error') {
           errorCount++
@@ -83,7 +77,6 @@ export function computeChunkMeta(
     errorCount,
     hasFullSnapshot,
     urls: [...urls],
-    traceIds: [...traceIds],
     ...(distinctId !== undefined && distinctId.length > 0 ? { distinctId } : {}),
     ...(Object.keys(sessionAttributes).length === 0 ? {} : { sessionAttributes: { ...sessionAttributes } }),
   }

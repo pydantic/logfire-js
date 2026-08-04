@@ -137,10 +137,7 @@ interface BrowserSessionReplayTelemetryOptions {
   traceUrl: string
 }
 
-type ReplayConfigComparable = Omit<
-  PeerSessionReplayConfig,
-  'getTraceContext' | 'maxSessionDurationMs' | 'now' | 'random' | 'sessionIdleTimeoutMs'
->
+type ReplayConfigComparable = Omit<PeerSessionReplayConfig, 'maxSessionDurationMs' | 'now' | 'random' | 'sessionIdleTimeoutMs'>
 type ReplayConfigAssignable = BrowserSessionReplayPackageConfig extends ReplayConfigComparable ? true : never
 function assertReplayConfigAssignable(_value: ReplayConfigAssignable): void {
   return undefined

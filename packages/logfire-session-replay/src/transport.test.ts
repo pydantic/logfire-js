@@ -34,7 +34,6 @@ function makeConfig(fetchImpl: typeof fetch): ResolvedSessionReplayConfig {
     maxSessionDurationMs: 10_000,
     distinctId: 'user-1',
     getDistinctId: undefined,
-    getTraceContext: undefined,
     captureConsole: true,
     captureNetwork: true,
     captureNavigation: true,
@@ -109,6 +108,7 @@ describe('ReplayTransport full mode', () => {
     expect(envelope.meta.clickCount).toBe(1)
     expect(envelope.meta.hasFullSnapshot).toBe(true)
     expect(envelope.meta.distinctId).toBe('user-1')
+    expect(envelope.meta).not.toHaveProperty('traceIds')
   })
 
   it('copies one session snapshot into every chunk and omits an empty snapshot', async () => {
