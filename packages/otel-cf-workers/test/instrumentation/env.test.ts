@@ -115,7 +115,7 @@ describe('instrumentEnv binding detection', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
     // Only the service-binding branch names the span this way, so this pins `isJSRPC` being
     // checked ahead of the KV, queue and D1 shapes that an RPC stub also satisfies.
-    expect(exporter.getFinishedSpans().map((span) => span.name)).toContain('Service Binding MY_SERVICE')
+    expect(exporter.getFinishedSpans().map((span) => span.name)).toEqual(['Service Binding MY_SERVICE'])
   })
 
   it('leaves an object alone when it matches no binding shape', () => {
