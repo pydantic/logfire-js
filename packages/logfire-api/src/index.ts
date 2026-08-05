@@ -610,10 +610,30 @@ function spanWithSettings<R>(
         )
         // we need this clunky detection because of zone.js promises
       } else if (typeof result === 'object' && result !== null && 'finally' in result && typeof result.finally === 'function') {
-        const resultWithFinally = result as { finally: (onFinally: () => void) => unknown }
-        resultWithFinally.finally(() => {
-          span.end()
-        })
+        // `finally` is only the gate, so arbitrary lazy thenables are still left alone. The
+        // settlement itself is observed through a single `then` subscription: two subscriptions
+        // would leave the chain returned by `finally` rejected and unhandled even when the caller
+        // handles the original. `result` is returned untouched, so the rejection still reaches
+        // the caller.
+        const resultWithFinally = result as {
+          finally: (onFinally: () => void) => unknown
+          then?: (onFulfilled: () => void, onRejected: (reason: unknown) => void) => unknown
+        }
+        if (typeof resultWithFinally.then === 'function') {
+          resultWithFinally.then(
+            () => {
+              span.end()
+            },
+            (reason: unknown) => {
+              recordSpanException(span, reason, serializationAttributes)
+              span.end()
+            }
+          )
+        } else {
+          resultWithFinally.finally(() => {
+            span.end()
+          })
+        }
       } else {
         span.end()
       }

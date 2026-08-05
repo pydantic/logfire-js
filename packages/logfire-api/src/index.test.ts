@@ -835,6 +835,46 @@ describe('span', () => {
     expect(spanMock.end).toHaveBeenCalledOnce()
   })
 
+  test('records the exception when a zone.js style promise rejects', async () => {
+    const error = new Error('zone-oops')
+    // zone.js patches the global Promise, so an intrinsic promise from a native async function
+    // fails `instanceof Promise` while still exposing `then` and `finally`.
+    // Typed as a bare thenable, not a Promise, so the callback is not treated as async.
+    type ZonePromiseLike = { finally: (onFinally: () => void) => unknown; then: (...args: never[]) => unknown }
+    const intrinsic = Promise.reject(error) as unknown as ZonePromiseLike
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    const OriginalPromise = globalThis.Promise
+    const ZoneAwarePromise = function ZoneAwarePromise() {
+      // Stands in for zone.js replacing the global Promise binding.
+    }
+    globalThis.Promise = ZoneAwarePromise as unknown as PromiseConstructor
+
+    let result: unknown
+    try {
+      result = span('test', { callback: () => intrinsic })
+    } finally {
+      globalThis.Promise = OriginalPromise
+    }
+
+    expect(result).toBe(intrinsic)
+    // The original rejection still reaches the caller.
+    await expect(intrinsic as unknown as Promise<never>).rejects.toBe(error)
+    await new OriginalPromise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+
+    expect(spanMock.recordException).toHaveBeenCalledWith(error)
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: zone-oops' })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+    // A second derived chain would leave the rejection unhandled.
+    expect(unhandled).toEqual([])
+    process.off('unhandledRejection', onUnhandled)
+  })
+
   test('thenable callback result is returned untouched', () => {
     const then = vi.fn<() => void>()
     const lazyThenable = { then }
