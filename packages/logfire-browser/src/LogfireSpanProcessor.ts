@@ -94,6 +94,21 @@ class LogfireConsoleSpanExporter implements SpanExporter {
   }
 }
 
+/**
+ * `onStart` runs for every span, so a `http.url` that is not an absolute URL must not throw out of
+ * it and break the caller's span creation. Anything unparseable just leaves the name as it was.
+ */
+function urlPathname(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  try {
+    return new URL(value).pathname
+  } catch {
+    return undefined
+  }
+}
+
 export class LogfireSpanProcessor implements SpanProcessor {
   private readonly console?: SpanProcessor
   private readonly wrapped: SpanProcessor
@@ -120,9 +135,9 @@ export class LogfireSpanProcessor implements SpanProcessor {
 
   onStart(span: Span, parentContext: Context): void {
     // make the fetch spans more descriptive
-    if (ATTR_HTTP_URL in span.attributes) {
-      const url = new URL(span.attributes[ATTR_HTTP_URL] as string)
-      Reflect.set(span, 'name', `${span.name} ${url.pathname}`)
+    const pathname = urlPathname(span.attributes[ATTR_HTTP_URL])
+    if (pathname !== undefined) {
+      Reflect.set(span, 'name', `${span.name} ${pathname}`)
     }
 
     // same for the interaction spans
