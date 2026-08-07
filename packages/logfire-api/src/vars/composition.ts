@@ -1,5 +1,5 @@
 import { VariableCompositionCycleError, VariableCompositionDepthError, VariableCompositionError } from './errors'
-import { HAS_REFERENCE, findReferencesAndErrorsInString, hasCompositionReferences, renderOnce } from './referenceSyntax'
+import { findReferencesAndErrorsInString, hasCompositionReferences, renderOnce } from './referenceSyntax'
 import type { ReferenceSyntaxError } from './referenceSyntax'
 import type { VariableResolutionReason } from './index'
 
@@ -310,7 +310,7 @@ async function expandReferenceSerializedValue(
     }
   }
 
-  if (!HAS_REFERENCE.test(serializedValue)) {
+  if (!hasReferences(parsed)) {
     return { composedFrom: [], serializedValue, value: parsed }
   }
 
