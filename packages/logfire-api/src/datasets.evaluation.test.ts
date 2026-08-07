@@ -430,6 +430,40 @@ describe('hosted evaluation datasets bridge', () => {
     ).rejects.toThrow('serializeValue returned the same unsupported bigint value')
   })
 
+  it('rejects invalid Dates with a path-aware message and lets serializeValue convert them', async () => {
+    const calls: CapturedRequest[] = []
+    const client = new LogfireAPIClient({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: fetchSequence(calls, [jsonResponse(hostedMetadata), jsonResponse([{ id: 'case-1' }]), jsonResponse(hostedMetadata)]),
+    })
+
+    await expect(
+      client.pushEvaluationDataset(
+        new Dataset({
+          cases: [new Case({ inputs: { seenAt: new Date('not-a-date') }, name: 'bad-date' })],
+          name: 'bad-json',
+        })
+      )
+    ).rejects.toThrow('$.cases[0].inputs.seenAt contains unsupported invalid Dates')
+
+    await client.pushEvaluationDataset(
+      new Dataset({
+        cases: [new Case({ inputs: { seenAt: new Date('not-a-date') }, name: 'bad-date' })],
+        name: 'serialized-date',
+      }),
+      {
+        serializeValue(value) {
+          return value instanceof Date && Number.isNaN(value.getTime()) ? null : undefined
+        },
+      }
+    )
+
+    expect(calls[1]?.body).toEqual({
+      cases: [{ evaluators: [], inputs: { seenAt: null }, name: 'bad-date' }],
+    })
+  })
+
   it('rejects unsupported pushed values with path-aware messages', async () => {
     const client = new LogfireAPIClient({
       apiKey: 'lf-api-key',

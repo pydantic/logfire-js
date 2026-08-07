@@ -29,6 +29,9 @@ function normalizeValue(
     return normalizeUnsupportedValue(value, context, serializeValue, ancestors, serializedValues, 'non-finite numbers')
   }
   if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      return normalizeUnsupportedValue(value, context, serializeValue, ancestors, serializedValues, 'invalid Dates')
+    }
     return value.toISOString()
   }
   if (Array.isArray(value)) {
