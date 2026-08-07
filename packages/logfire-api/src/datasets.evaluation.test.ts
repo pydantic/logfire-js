@@ -438,14 +438,22 @@ describe('hosted evaluation datasets bridge', () => {
       fetch: fetchSequence(calls, [jsonResponse(hostedMetadata), jsonResponse([{ id: 'case-1' }]), jsonResponse(hostedMetadata)]),
     })
 
-    await expect(
-      client.pushEvaluationDataset(
+    const error: unknown = await client
+      .pushEvaluationDataset(
         new Dataset({
           cases: [new Case({ inputs: { seenAt: new Date('not-a-date') }, name: 'bad-date' })],
           name: 'bad-json',
         })
       )
-    ).rejects.toThrow('$.cases[0].inputs.seenAt contains unsupported invalid Dates')
+      .then(
+        () => undefined,
+        (reason: unknown) => reason
+      )
+
+    expect(error).toBeInstanceOf(DatasetConfigurationError)
+    expect((error as Error).message).toBe(
+      'pushEvaluationDataset inputs for case "bad-date" at $.cases[0].inputs.seenAt contains unsupported invalid Dates; pass serializeValue to convert it'
+    )
 
     await client.pushEvaluationDataset(
       new Dataset({
