@@ -361,8 +361,11 @@ function reportProgress(progress: EvaluateOptions['progress'], event: { caseName
       reportProgressFailure(event, error)
       return
     }
-    if (isThenable(outcome)) {
-      outcome.then(undefined, (error: unknown) => {
+    if (outcome !== undefined && outcome !== null) {
+      // Promise.resolve performs the thenable assimilation, so a throwing `then`
+      // getter or `then()` becomes a rejection here rather than escaping upward.
+      const settled: { catch: (onRejected: (reason: unknown) => void) => unknown } = Promise.resolve(outcome)
+      settled.catch((error: unknown) => {
         reportProgressFailure(event, error)
       })
     }
@@ -373,10 +376,6 @@ function reportProgress(progress: EvaluateOptions['progress'], event: { caseName
 
 function reportProgressFailure(event: { caseName: string }, error: unknown): void {
   console.error(`[logfire] evaluate() progress callback failed for case ${event.caseName}:`, error)
-}
-
-function isThenable(value: unknown): value is { then: (onFulfilled: undefined, onRejected: (reason: unknown) => void) => unknown } {
-  return typeof value === 'object' && value !== null && 'then' in value && typeof (value as { then: unknown }).then === 'function'
 }
 
 async function runOneCase<Inputs, Output, Metadata>(args: {

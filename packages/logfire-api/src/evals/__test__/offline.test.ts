@@ -386,35 +386,68 @@ describe('offline evals — span attribute parity', () => {
     ])
   })
 
-  it('keeps evaluating when an async progress callback rejects', async () => {
+  // The option returns void, but these are all assignable to it in TypeScript, which
+  // is how a consumer reaches them. The casts reproduce that without tripping the lint
+  // rules this repo applies to its own call sites.
+  const asProgress = (fn: () => unknown): ((event: { caseName: string; done: number; total: number }) => void) =>
+    fn as unknown as (event: { caseName: string; done: number; total: number }) => void
+
+  const hostileProgressCallbacks: [string, () => unknown][] = [
+    [
+      'a rejecting async callback',
+      async () => {
+        await Promise.resolve()
+        throw new Error('async progress boom')
+      },
+    ],
+    [
+      'a thenable whose then getter throws',
+      () =>
+        Object.defineProperty({}, 'then', {
+          get() {
+            throw new Error('then getter boom')
+          },
+        }),
+    ],
+    [
+      'a thenable whose then throws',
+      () => ({
+        then() {
+          throw new Error('then boom')
+        },
+      }),
+    ],
+  ]
+
+  it.each(hostileProgressCallbacks)('keeps evaluating when the progress callback returns %s', async (_label, makeOutcome) => {
     const dataset = new Dataset<string, string>({
       cases: [new Case<string, string>({ expectedOutput: 'A', inputs: 'a', name: 'one' })],
       evaluators: [new EqualsExpected()],
-      name: 'progress-rejects',
+      name: 'progress-hostile',
     })
-
-    // The option returns void, but an async callback is assignable to it in
-    // TypeScript, which is how a consumer reaches this. The cast reproduces that
-    // without tripping the lint rules this repo applies to its own call sites.
-    const rejectingProgress = (async () => {
-      await Promise.resolve()
-      throw new Error('async progress boom')
-    }) as unknown as (event: { caseName: string; done: number; total: number }) => void
 
     const unhandled: unknown[] = []
     const onUnhandled = (reason: unknown): void => {
       unhandled.push(reason)
     }
     process.on('unhandledRejection', onUnhandled)
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    // Await the logged failure rather than a fixed delay, so the assertions do not
+    // depend on scheduler timing.
+    let signalLogged: () => void = () => undefined
+    const logged = new Promise<void>((resolve) => {
+      signalLogged = resolve
+    })
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {
+      signalLogged()
+    })
+
     const result = await (async () => {
       try {
         const { result: report } = await withMemoryExporter(async () =>
-          dataset.evaluate((s) => s.toUpperCase(), {
-            progress: rejectingProgress,
-          })
+          dataset.evaluate((s) => s.toUpperCase(), { progress: asProgress(makeOutcome) })
         )
-        await sleep(20)
+        await logged
         return { messages: error.mock.calls.map((call) => String(call[0])), report }
       } finally {
         error.mockRestore()
