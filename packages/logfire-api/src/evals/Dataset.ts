@@ -348,7 +348,13 @@ function isSignalAborted(signal: AbortSignal | undefined): boolean {
 
 function reportProgress(progress: EvaluateOptions['progress'], event: { caseName: string; done: number; total: number }): void {
   if (typeof progress === 'function') {
-    progress(event)
+    // Progress reporting is best effort. A throwing callback must not discard the
+    // results of cases that already ran, nor skip the report evaluators.
+    try {
+      progress(event)
+    } catch (error) {
+      console.error(`[logfire] evaluate() progress callback threw for case ${event.caseName}:`, error)
+    }
   } else if (progress === true) {
     console.error(`[${event.done.toString()}/${event.total.toString()}] ${event.caseName}`)
   }
