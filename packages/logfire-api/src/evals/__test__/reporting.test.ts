@@ -706,6 +706,30 @@ describe('report evaluator edge cases', () => {
     })
   })
 
+  it('ConfusionMatrixEvaluator treats a null expected_output as missing, like a null output', () => {
+    const report: EvaluationReport = {
+      analyses: [],
+      cases: [
+        makeReportCase({ expected_output: 'cat', name: 'counted', output: 'cat' }),
+        makeReportCase({ expected_output: null, name: 'null-expected', output: 'dog' }),
+        makeReportCase({ expected_output: 'dog', name: 'null-predicted', output: null }),
+      ],
+      failures: [],
+      name: 'matrix-nulls',
+      report_evaluator_failures: [],
+      span_id: null,
+      trace_id: null,
+    }
+
+    // Both null-sided cases drop out, so neither contributes a phantom "null" class.
+    expect(new ConfusionMatrixEvaluator().evaluate({ cases: report.cases, name: 'matrix-nulls', report })).toEqual({
+      class_labels: ['cat'],
+      matrix: [[1]],
+      title: 'Confusion Matrix',
+      type: 'confusion_matrix',
+    })
+  })
+
   it('threshold helpers support all sources, downsampling and empty AUC', () => {
     const cases = [
       makeReportCase({
