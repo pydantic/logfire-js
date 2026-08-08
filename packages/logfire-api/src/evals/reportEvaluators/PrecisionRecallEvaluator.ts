@@ -70,11 +70,27 @@ export class PrecisionRecallEvaluator extends ReportEvaluator {
     }
     const inputs = buildThresholdInputs(cases, thresholdOptions)
 
-    const thresholds = uniqueSortedThresholds(inputs.scores)
-    const points: { precision: number; recall: number; threshold: number }[] = []
-    if (inputs.scores.length > 0) {
-      points.push({ precision: 1, recall: 0, threshold: Math.max(...inputs.scores) })
+    const emptyResult: [PrecisionRecallAnalysis, ScalarAnalysis] = [
+      { curves: [], title: this.title, type: 'precision_recall' },
+      { title: `${this.title} AUC`, type: 'scalar', value: Number.NaN },
+    ]
+    if (inputs.scores.length === 0) {
+      return emptyResult
     }
+
+    // Precision-recall is undefined without both classes, so report it as not
+    // computable rather than as a score, matching ROCAUCEvaluator and
+    // KolmogorovSmirnovEvaluator.
+    const totalPositives = inputs.positives.filter(Boolean).length
+    const totalNegatives = inputs.positives.length - totalPositives
+    if (totalPositives === 0 || totalNegatives === 0) {
+      return emptyResult
+    }
+
+    const thresholds = uniqueSortedThresholds(inputs.scores)
+    const points: { precision: number; recall: number; threshold: number }[] = [
+      { precision: 1, recall: 0, threshold: Math.max(...inputs.scores) },
+    ]
     for (const t of thresholds) {
       let tp = 0
       let fp = 0
@@ -100,12 +116,12 @@ export class PrecisionRecallEvaluator extends ReportEvaluator {
     // Recall ascending → AUC under PR curve (a.k.a. average precision).
     const xs = points.map((p) => p.recall)
     const ys = points.map((p) => p.precision)
-    const auc = inputs.scores.length === 0 ? Number.NaN : trapezoidalAuc(xs, ys)
+    const auc = trapezoidalAuc(xs, ys)
     const displayPoints = downsample(points, this.nThresholds)
 
     return [
       {
-        curves: inputs.scores.length === 0 ? [] : [{ auc, name: ctx.name, points: displayPoints }],
+        curves: [{ auc, name: ctx.name, points: displayPoints }],
         title: this.title,
         type: 'precision_recall',
       },
