@@ -381,9 +381,50 @@ describe('offline evals — span attribute parity', () => {
     expect(result.report.failures).toEqual([])
     expect(result.report.analyses).toEqual([{ title: 'cases', type: 'scalar', value: 2 }])
     expect(result.messages.sort()).toEqual([
-      '[logfire] evaluate() progress callback threw for case one:',
-      '[logfire] evaluate() progress callback threw for case two:',
+      '[logfire] evaluate() progress callback failed for case one:',
+      '[logfire] evaluate() progress callback failed for case two:',
     ])
+  })
+
+  it('keeps evaluating when an async progress callback rejects', async () => {
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ expectedOutput: 'A', inputs: 'a', name: 'one' })],
+      evaluators: [new EqualsExpected()],
+      name: 'progress-rejects',
+    })
+
+    // The option returns void, but an async callback is assignable to it in
+    // TypeScript, which is how a consumer reaches this. The cast reproduces that
+    // without tripping the lint rules this repo applies to its own call sites.
+    const rejectingProgress = (async () => {
+      await Promise.resolve()
+      throw new Error('async progress boom')
+    }) as unknown as (event: { caseName: string; done: number; total: number }) => void
+
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const result = await (async () => {
+      try {
+        const { result: report } = await withMemoryExporter(async () =>
+          dataset.evaluate((s) => s.toUpperCase(), {
+            progress: rejectingProgress,
+          })
+        )
+        await sleep(20)
+        return { messages: error.mock.calls.map((call) => String(call[0])), report }
+      } finally {
+        error.mockRestore()
+        process.off('unhandledRejection', onUnhandled)
+      }
+    })()
+
+    expect(unhandled).toEqual([])
+    expect(result.report.cases.map((c) => c.name)).toEqual(['one'])
+    expect(result.messages).toEqual(['[logfire] evaluate() progress callback failed for case one:'])
   })
 
   it('records non-Error task failures without rejecting the experiment', async () => {

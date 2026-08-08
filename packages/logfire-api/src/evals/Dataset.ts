@@ -348,16 +348,35 @@ function isSignalAborted(signal: AbortSignal | undefined): boolean {
 
 function reportProgress(progress: EvaluateOptions['progress'], event: { caseName: string; done: number; total: number }): void {
   if (typeof progress === 'function') {
-    // Progress reporting is best effort. A throwing callback must not discard the
+    // Progress reporting is best effort. A failing callback must not discard the
     // results of cases that already ran, nor skip the report evaluators.
+    // The option is declared as returning void, but an async callback is assignable
+    // to it, so read the result as unknown and subscribe to any rejection. Otherwise
+    // it would surface as an unhandled rejection well after the case completed.
+    const callProgress = progress as (progressEvent: typeof event) => unknown
+    let outcome: unknown
     try {
-      progress(event)
+      outcome = callProgress(event)
     } catch (error) {
-      console.error(`[logfire] evaluate() progress callback threw for case ${event.caseName}:`, error)
+      reportProgressFailure(event, error)
+      return
+    }
+    if (isThenable(outcome)) {
+      outcome.then(undefined, (error: unknown) => {
+        reportProgressFailure(event, error)
+      })
     }
   } else if (progress === true) {
     console.error(`[${event.done.toString()}/${event.total.toString()}] ${event.caseName}`)
   }
+}
+
+function reportProgressFailure(event: { caseName: string }, error: unknown): void {
+  console.error(`[logfire] evaluate() progress callback failed for case ${event.caseName}:`, error)
+}
+
+function isThenable(value: unknown): value is { then: (onFulfilled: undefined, onRejected: (reason: unknown) => void) => unknown } {
+  return typeof value === 'object' && value !== null && 'then' in value && typeof (value as { then: unknown }).then === 'function'
 }
 
 async function runOneCase<Inputs, Output, Metadata>(args: {
