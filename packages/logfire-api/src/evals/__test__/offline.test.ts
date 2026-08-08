@@ -30,8 +30,10 @@ import {
   SPAN_NAME_CASE,
   SPAN_NAME_EVALUATOR_LITERAL,
   SPAN_NAME_EXECUTE,
+  ReportEvaluator,
   SPAN_NAME_EXPERIMENT,
 } from '../../evals'
+import type { ReportEvaluatorContext } from '../../evals'
 import { withMemoryExporter } from './withMemoryExporter'
 
 const sleep = async (ms: number): Promise<void> =>
@@ -339,6 +341,49 @@ describe('offline evals — span attribute parity', () => {
     expect(messages).toHaveLength(2)
     expect(messages.every((message) => /^\[\d\/2\] (?:one|two)$/u.test(message))).toBe(true)
     expect(messages.map((message) => message.replace(/^\[\d\/2\] /u, '')).sort()).toEqual(['one', 'two'])
+  })
+
+  it('keeps evaluating when the progress callback throws', async () => {
+    class CountCases extends ReportEvaluator {
+      static override evaluatorName = 'CountCases'
+      evaluate(ctx: ReportEvaluatorContext) {
+        return { title: 'cases', type: 'scalar' as const, value: ctx.report.cases.length }
+      }
+    }
+    const dataset = new Dataset<string, string>({
+      cases: [
+        new Case<string, string>({ expectedOutput: 'A', inputs: 'a', name: 'one' }),
+        new Case<string, string>({ expectedOutput: 'B', inputs: 'b', name: 'two' }),
+      ],
+      evaluators: [new EqualsExpected()],
+      name: 'progress-throws',
+      reportEvaluators: [new CountCases()],
+    })
+
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const result = await (async () => {
+      try {
+        const { result: report } = await withMemoryExporter(async () =>
+          dataset.evaluate((s) => s.toUpperCase(), {
+            progress: () => {
+              throw new Error('progress boom')
+            },
+          })
+        )
+        return { messages: error.mock.calls.map((call) => String(call[0])), report }
+      } finally {
+        error.mockRestore()
+      }
+    })()
+
+    // Every case still completes, and the report evaluators still run.
+    expect([...result.report.cases].map((c) => c.name).sort()).toEqual(['one', 'two'])
+    expect(result.report.failures).toEqual([])
+    expect(result.report.analyses).toEqual([{ title: 'cases', type: 'scalar', value: 2 }])
+    expect(result.messages.sort()).toEqual([
+      '[logfire] evaluate() progress callback threw for case one:',
+      '[logfire] evaluate() progress callback threw for case two:',
+    ])
   })
 
   it('records non-Error task failures without rejecting the experiment', async () => {
