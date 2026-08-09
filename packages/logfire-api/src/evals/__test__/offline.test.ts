@@ -417,6 +417,18 @@ describe('offline evals — span attribute parity', () => {
         },
       }),
     ],
+    [
+      // A function with a callable then is a thenable too, which a typeof 'object' guard misses.
+      'a callable thenable whose then throws',
+      () => {
+        const callable = (): void => undefined
+        return Object.assign(callable, {
+          then() {
+            throw new Error('callable then boom')
+          },
+        })
+      },
+    ],
   ]
 
   it.each(hostileProgressCallbacks)('keeps evaluating when the progress callback returns %s', async (_label, makeOutcome) => {
