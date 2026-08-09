@@ -191,6 +191,39 @@ describe('offline evals — span attribute parity', () => {
     expect(result.cases[0]?.assertions['duplicate_2']?.value).toBe(false)
   })
 
+  it('treats a result map containing a value key as a map, not as a single reason', async () => {
+    class MapWithValueKey extends Evaluator {
+      static override evaluatorName = 'MapWithValueKey'
+      evaluate(): Record<string, number> {
+        return { confidence: 0.9, value: 0.8 }
+      }
+    }
+    class ReasonEvaluator extends Evaluator {
+      static override evaluatorName = 'ReasonEvaluator'
+      evaluate(): { reason: string; value: number } {
+        return { reason: 'looks right', value: 0.5 }
+      }
+    }
+
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'x', name: 'case' })],
+      evaluators: [new MapWithValueKey(), new ReasonEvaluator()],
+      name: 'result-map-shapes',
+    })
+
+    const { result } = await withMemoryExporter(async () => dataset.evaluate((input) => input))
+    const scores = result.cases[0]!.scores
+
+    // Extra keys mean it is a map, so every entry survives under its own name.
+    expect(Object.keys(scores).sort()).toEqual(['ReasonEvaluator', 'confidence', 'value'])
+    expect(scores['value']?.value).toBe(0.8)
+    expect(scores['confidence']?.value).toBe(0.9)
+
+    // Only value and reason means it is a reason, so it stays one result named for the evaluator.
+    expect(scores['ReasonEvaluator']?.value).toBe(0.5)
+    expect(scores['ReasonEvaluator']?.reason).toBe('looks right')
+  })
+
   it('runs evaluators for a case concurrently', async () => {
     let fastStarted = false
     class SlowEvaluator extends Evaluator {

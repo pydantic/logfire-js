@@ -12,6 +12,15 @@ export function evaluationResultsFromOutput(
   return Object.entries(raw).map(([name, value]) => buildEvaluationResultJson(name, value, source, evaluatorVersion))
 }
 
+/**
+ * A result map and an `EvaluationReason` are both plain objects, so they can only be
+ * told apart by their keys. `EvaluationReason` declares exactly `value` and optional
+ * `reason`, so anything carrying other keys is a result map.
+ */
+function isSoleEvaluationReason(value: unknown): value is EvaluationReason {
+  return isEvaluationReason(value) && Object.keys(value).every((key) => key === 'reason' || key === 'value')
+}
+
 export function buildEvaluationResultJson(
   name: string,
   value: boolean | EvaluationReason | number | string,
@@ -59,5 +68,5 @@ export function isEvaluationReason(value: unknown): value is EvaluationReason {
 }
 
 function isEvaluationScalar(value: EvaluatorOutput): value is boolean | EvaluationReason | number | string {
-  return typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string' || isEvaluationReason(value)
+  return typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string' || isSoleEvaluationReason(value)
 }
