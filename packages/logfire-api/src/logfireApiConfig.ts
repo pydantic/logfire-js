@@ -151,6 +151,17 @@ export function resolveSendToLogfire(env: Env, option: SendToLogfire, token: str
       return false
     }
   } else {
+    // The env var arrives as a string, and `Boolean('false')` is true, so the
+    // documented values have to be read before falling back to truthiness.
+    if (typeof sendToLogfireConfig === 'string') {
+      const normalized = sendToLogfireConfig.trim().toLowerCase()
+      if (normalized === 'false') {
+        return false
+      }
+      if (normalized === 'true') {
+        return true
+      }
+    }
     return Boolean(sendToLogfireConfig)
   }
 }
