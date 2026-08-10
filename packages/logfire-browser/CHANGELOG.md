@@ -1,5 +1,18 @@
 # @pydantic/logfire-browser
 
+## 0.18.4
+
+### Patch Changes
+
+- 0e98cd5: Keep `http.url` out of Web Vital metric attributes. The low-cardinality guard already dropped `url.full`, but not `http.url`, which is the pre-stable name for the same value and still what the fetch and XHR instrumentations emit, so an attribute callback returning it put a full URL including any query string onto a metric label.
+- ad3c43d: Stop `LogfireSpanProcessor.onStart` throwing when a span carries an `http.url` that is not an absolute URL. The processor parsed the attribute with `new URL()` while renaming fetch spans, so a relative or non-string value raised `TypeError: Invalid URL` out of `onStart` and broke span creation for the application. Unparseable values now leave the span name unchanged.
+- Updated dependencies [4d4eb0a]
+- Updated dependencies [b9783a0]
+- Updated dependencies [7c294b8]
+- Updated dependencies [89a8eba]
+- Updated dependencies [a6ee773]
+  - logfire@0.21.7
+
 ## 0.18.3
 
 ### Patch Changes
