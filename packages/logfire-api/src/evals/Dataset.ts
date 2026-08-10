@@ -348,10 +348,34 @@ function isSignalAborted(signal: AbortSignal | undefined): boolean {
 
 function reportProgress(progress: EvaluateOptions['progress'], event: { caseName: string; done: number; total: number }): void {
   if (typeof progress === 'function') {
-    progress(event)
+    // Progress reporting is best effort. A failing callback must not discard the
+    // results of cases that already ran, nor skip the report evaluators.
+    // The option is declared as returning void, but an async callback is assignable
+    // to it, so read the result as unknown and subscribe to any rejection. Otherwise
+    // it would surface as an unhandled rejection well after the case completed.
+    const callProgress = progress as (progressEvent: typeof event) => unknown
+    let outcome: unknown
+    try {
+      outcome = callProgress(event)
+    } catch (error) {
+      reportProgressFailure(event, error)
+      return
+    }
+    if (outcome !== undefined && outcome !== null) {
+      // Promise.resolve performs the thenable assimilation, so a throwing `then`
+      // getter or `then()` becomes a rejection here rather than escaping upward.
+      const settled: { catch: (onRejected: (reason: unknown) => void) => unknown } = Promise.resolve(outcome)
+      settled.catch((error: unknown) => {
+        reportProgressFailure(event, error)
+      })
+    }
   } else if (progress === true) {
     console.error(`[${event.done.toString()}/${event.total.toString()}] ${event.caseName}`)
   }
+}
+
+function reportProgressFailure(event: { caseName: string }, error: unknown): void {
+  console.error(`[logfire] evaluate() progress callback failed for case ${event.caseName}:`, error)
 }
 
 async function runOneCase<Inputs, Output, Metadata>(args: {
