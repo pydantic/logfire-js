@@ -1,5 +1,15 @@
 # @pydantic/logfire-api
 
+## 0.21.7
+
+### Patch Changes
+
+- 4d4eb0a: Expand references in a referenced variable's value when they follow an even backslash run. The fast-path guard in `expandReferenceSerializedValue` tested the JSON-encoded text with a single-character lookbehind, so any `@{ref}@` preceded by a literal backslash was treated as escaped. A value such as `\\@{inner}@` therefore skipped composition entirely and `inner` was left unexpanded and absent from `composedFrom`, even though the same string expands when it appears at the top level.
+- b9783a0: Treat a null `expected_output` as missing in `ConfusionMatrixEvaluator` instead of as a class named `"null"`. A case with no expected output added a phantom row and column to the matrix, while a case with a null `output` was dropped, so the same absent value was counted on one axis and ignored on the other.
+- 7c294b8: Report an invalid `Date` in a pushed evaluation dataset as a `DatasetConfigurationError` instead of a bare `RangeError`. `normalizeHostedJsonValue` called `toISOString()` on any `Date`, which throws `RangeError: Invalid time value` for an unparseable one, losing the field, case and path that every other unsupported value reports and bypassing the `serializeValue` hook that can convert it.
+- 89a8eba: Stop a throwing `progress` callback from discarding an entire `Dataset.evaluate()` run. The callback ran unguarded inside the `Promise.all` over cases, so one throw rejected `evaluate()` and lost the results of every case that had already finished, along with the report evaluators, analyses, averages and the experiment span's closing attributes. An async callback was worse: its rejection escaped as an unhandled rejection, which terminates the process under Node's default. Progress reporting is now best effort for both, and logs the failure instead.
+- a6ee773: Report `PrecisionRecallEvaluator` as not computable when every case shares one class. With only positive cases it returned an AUC of 1, and with only negative cases an AUC of 0, so a dataset that carries no signal read as a perfect or a worthless model. `ROCAUCEvaluator` and `KolmogorovSmirnovEvaluator` already return `NaN` and no curve for the same input.
+
 ## 0.21.6
 
 ### Patch Changes
