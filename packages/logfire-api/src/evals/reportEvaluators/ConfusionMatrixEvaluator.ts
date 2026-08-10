@@ -132,7 +132,7 @@ function isReportCase(c: unknown): c is ReportCase {
 function extractLabel(c: ReportCase, opts: ExtractOpts): null | string {
   switch (opts.from) {
     case 'expected_output':
-      return c.expected_output === undefined ? null : safeStringify(c.expected_output)
+      return c.expected_output === undefined || c.expected_output === null ? null : safeStringify(c.expected_output)
     case 'labels': {
       if (opts.key === undefined) {
         throw new Error("'key' is required when from='labels'")
