@@ -2,8 +2,6 @@ import Handlebars from 'handlebars'
 
 import { createSafeHandlebarsContext } from './template'
 
-export const HAS_REFERENCE: RegExp = /(?<!\\)@\{/u
-
 export interface ReferenceSyntaxError {
   message: string
   type: 'parse_error'

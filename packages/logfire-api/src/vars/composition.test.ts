@@ -174,6 +174,37 @@ describe('variable composition', () => {
     })
   })
 
+  it('applies the backslash escape rule to referenced values the same way as to top-level values', async () => {
+    // An even backslash run leaves the reference live, so it expands on both paths.
+    const throughReference = await expandReferences(
+      JSON.stringify('@{ref}@'),
+      resolver({ inner: resolved('X'), ref: resolved('\\\\@{inner}@') })
+    )
+    const atTopLevel = await expandReferences(JSON.stringify('\\\\@{inner}@'), resolver({ inner: resolved('X') }))
+
+    expect(throughReference.serializedValue).toBe(JSON.stringify('\\X'))
+    expect(atTopLevel.serializedValue).toBe(JSON.stringify('\\X'))
+
+    // An odd backslash run escapes the reference, so it stays literal.
+    const escaped = await expandReferences(JSON.stringify('@{ref}@'), resolver({ inner: resolved('X'), ref: resolved('\\@{inner}@') }))
+
+    expect(escaped.serializedValue).toBe(JSON.stringify('\\@{inner}@'))
+  })
+
+  it('records nested references behind an escaped backslash in composition metadata', async () => {
+    const result = await expandReferences(JSON.stringify('@{ref}@'), resolver({ inner: resolved('X'), ref: resolved('\\\\@{inner}@') }))
+
+    expect(result.composedFrom).toEqual([
+      {
+        composedFrom: [{ fatal: false, name: 'inner', reason: 'resolved', value: '"X"' }],
+        fatal: false,
+        name: 'ref',
+        reason: 'resolved',
+        value: '"\\\\X"',
+      },
+    ])
+  })
+
   it('preserves JSON encoding for rendered reference values', async () => {
     const value = 'line 1\n"quoted" \\ slash café'
     const result = await expandReferences(JSON.stringify('Value: @{text}@'), resolver({ text: resolved(value) }))
