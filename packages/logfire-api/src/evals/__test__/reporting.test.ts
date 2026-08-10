@@ -753,6 +753,45 @@ describe('report evaluator edge cases', () => {
     expect(trapezoidalAuc([0, 0.5, 1], [0, 1, 1])).toBe(0.75)
   })
 
+  it('reports threshold evaluators as not computable when every case shares one class', () => {
+    const singleClassCtx = (positive: boolean) => {
+      const report: EvaluationReport = {
+        analyses: [],
+        cases: [0.9, 0.8, 0.7].map((score, index) =>
+          makeReportCase({
+            assertions: { p: resultJson('p', positive) },
+            name: `c${String(index)}`,
+            scores: { s: resultJson('s', score) },
+          })
+        ),
+        failures: [],
+        name: 'single-class',
+        report_evaluator_failures: [],
+        span_id: null,
+        trace_id: null,
+      }
+      return { cases: report.cases, name: report.name, report }
+    }
+    const options = { positiveFrom: 'assertions' as const, positiveKey: 'p', scoreKey: 's' }
+    const pr = new PrecisionRecallEvaluator(options)
+    const roc = new ROCAUCEvaluator(options)
+    const ks = new KolmogorovSmirnovEvaluator(options)
+
+    // Only positives: precision is 1 at every threshold by construction, so an AUC would read as a perfect score.
+    const allPositive = singleClassCtx(true)
+    expect(Number.isNaN(pr.evaluate(allPositive)[1].value)).toBe(true)
+    expect(pr.evaluate(allPositive)[0].curves).toEqual([])
+    expect(Number.isNaN(roc.evaluate(allPositive)[1].value)).toBe(true)
+    expect(Number.isNaN(ks.evaluate(allPositive)[1].value)).toBe(true)
+
+    // Only negatives: recall has no denominator, so an AUC would read as a worthless score.
+    const allNegative = singleClassCtx(false)
+    expect(Number.isNaN(pr.evaluate(allNegative)[1].value)).toBe(true)
+    expect(pr.evaluate(allNegative)[0].curves).toEqual([])
+    expect(Number.isNaN(roc.evaluate(allNegative)[1].value)).toBe(true)
+    expect(Number.isNaN(ks.evaluate(allNegative)[1].value)).toBe(true)
+  })
+
   it('computes PR/ROC AUC at full resolution before downsampling display points', () => {
     const report: EvaluationReport = {
       analyses: [],
