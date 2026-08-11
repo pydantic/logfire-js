@@ -142,28 +142,22 @@ function resolveScrubber(scrubbing: LogfireApiConfigOptions['scrubbing']) {
 }
 
 export function resolveSendToLogfire(env: Env, option: SendToLogfire, token: string | undefined): boolean {
-  const sendToLogfireConfig = option ?? env['LOGFIRE_SEND_TO_LOGFIRE'] ?? 'if-token-present'
+  const configured = option ?? env['LOGFIRE_SEND_TO_LOGFIRE'] ?? 'if-token-present'
+  // The env var arrives as a string, so normalize once before matching: every
+  // documented value has to be recognised the same way, and `Boolean('false')`
+  // is true, so truthiness alone cannot be the only test.
+  const sendToLogfireConfig = typeof configured === 'string' ? configured.trim().toLowerCase() : configured
 
   if (sendToLogfireConfig === 'if-token-present') {
-    if (token !== undefined && token !== '') {
-      return true
-    } else {
-      return false
-    }
-  } else {
-    // The env var arrives as a string, and `Boolean('false')` is true, so the
-    // documented values have to be read before falling back to truthiness.
-    if (typeof sendToLogfireConfig === 'string') {
-      const normalized = sendToLogfireConfig.trim().toLowerCase()
-      if (normalized === 'false') {
-        return false
-      }
-      if (normalized === 'true') {
-        return true
-      }
-    }
-    return Boolean(sendToLogfireConfig)
+    return token !== undefined && token !== ''
   }
+  if (sendToLogfireConfig === 'false') {
+    return false
+  }
+  if (sendToLogfireConfig === 'true') {
+    return true
+  }
+  return Boolean(sendToLogfireConfig)
 }
 
 export function resolveBaseUrl(env: Env, passedUrl: string | undefined, token: string): string {

@@ -34,10 +34,10 @@ For service metadata, precedence is code configuration, then `LOGFIRE_*`, then
 not accepted. Invalid values warn with `console.warn` and are ignored.
 
 `LOGFIRE_SEND_TO_LOGFIRE` accepts `true`, `false`, or `if-token-present`, which
-sends only when a token is present and is the default. Values are matched
+sends only when a token is present and is the default. All three are matched
 case-insensitively and surrounding whitespace is ignored. The Python SDK
-spellings `1`, `0`, `t`, and `f` are not recognised here, and any other value
-enables sending.
+spellings `1`, `0`, `t`, and `f` are not recognised here: an empty or blank
+value disables sending, and any other unrecognised value enables it.
 
 `LOGFIRE_CONSOLE=true` enables Node console output with the default console
 minimum level of `info`. Object-style console options such as
