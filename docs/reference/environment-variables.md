@@ -18,7 +18,7 @@ description: Environment variables used by the Logfire TypeScript SDK packages.
 | `LOGFIRE_ENVIRONMENT`         | Deployment environment resource metadata.                                |
 | `LOGFIRE_CONSOLE`             | Set to `true` to also print spans to the console. Boolean-only.          |
 | `LOGFIRE_MIN_LEVEL`           | Minimum manual Logfire level to emit.                                    |
-| `LOGFIRE_SEND_TO_LOGFIRE`     | Set sending behavior. `if-token-present` sends only when a token exists. |
+| `LOGFIRE_SEND_TO_LOGFIRE`     | Set sending behavior. `true`, `false`, or `if-token-present`.            |
 | `LOGFIRE_DISTRIBUTED_TRACING` | Set to `false` to suppress extraction of incoming trace context.         |
 | `LOGFIRE_TRACE_SAMPLE_RATE`   | Head sampling rate from `0` to `1`.                                      |
 | `LOGFIRE_BASE_URL`            | Override the Logfire API base URL.                                       |
@@ -32,6 +32,12 @@ For service metadata, precedence is code configuration, then `LOGFIRE_*`, then
 `LOGFIRE_MIN_LEVEL` accepts `trace`, `debug`, `info`, `notice`, `warning`,
 `error`, or `fatal`. Values are matched case-insensitively. Numeric strings are
 not accepted. Invalid values warn with `console.warn` and are ignored.
+
+`LOGFIRE_SEND_TO_LOGFIRE` accepts `true`, `false`, or `if-token-present`, which
+sends only when a token is present and is the default. All three are matched
+case-insensitively and surrounding whitespace is ignored. The Python SDK
+spellings `1`, `0`, `t`, and `f` are not recognised here: an empty or blank
+value disables sending, and any other unrecognised value enables it.
 
 `LOGFIRE_CONSOLE=true` enables Node console output with the default console
 minimum level of `info`. Object-style console options such as
