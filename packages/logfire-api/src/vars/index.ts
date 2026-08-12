@@ -3046,7 +3046,13 @@ function ignoreBackgroundError(): void {
 
 async function delay(ms: number): Promise<void> {
   await new Promise<void>((resolve) => {
-    setTimeout(resolve, ms)
+    const timer = setTimeout(resolve, ms)
+    // Match the polling and debounce timers: the reconnect backoff grows to a
+    // minute, and a pending one must not hold a Node process open after shutdown.
+    const maybeTimer = timer as { unref?: () => void }
+    if (typeof maybeTimer.unref === 'function') {
+      maybeTimer.unref()
+    }
   })
 }
 

@@ -494,4 +494,39 @@ describe('LogfireRemoteVariableProvider -- SSE and polling reliability', () => {
 
     provider.shutdown()
   })
+
+  // -------------------------------------------------------------------------
+  // Reconnect backoff must not hold the process open
+  // -------------------------------------------------------------------------
+  it('unrefs the SSE reconnect backoff timer', async () => {
+    vi.useRealTimers()
+    const handles: { unref: ReturnType<typeof vi.fn<() => void>> }[] = []
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((_fn: never, _ms: never) => {
+      const handle = { unref: vi.fn<() => void>() }
+      handles.push(handle)
+      return handle as never
+    }) as never)
+
+    const provider = new LogfireRemoteVariableProvider({
+      apiKey: 'test-key',
+      baseUrl: 'https://example.com',
+      fetch: vi.fn<typeof fetch>(async () => {
+        await Promise.resolve()
+        throw new Error('sse unavailable')
+      }),
+      polling: false,
+      sse: true,
+    })
+
+    provider.start()
+    // Let the failed connection reach the backoff, which is the only timer here
+    // because polling is disabled.
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    provider.shutdown()
+
+    expect(handles).toHaveLength(1)
+    expect(handles[0]?.unref.mock.calls.length).toBe(1)
+  })
 })
