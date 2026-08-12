@@ -12,6 +12,25 @@ export function evaluationResultsFromOutput(
   return Object.entries(raw).map(([name, value]) => buildEvaluationResultJson(name, value, source, evaluatorVersion))
 }
 
+/**
+ * A result map and an `EvaluationReason` are both plain objects, so they can only be
+ * told apart by their shape. `EvaluationReason` declares exactly a scalar `value` and
+ * an optional string `reason`, so anything else is a result map. Key names alone are
+ * not enough: `{ value: 0.8, reason: 0.9 }` is a legal map of scores.
+ */
+function isSoleEvaluationReason(value: unknown): value is EvaluationReason {
+  if (!isEvaluationReason(value)) {
+    return false
+  }
+  return Object.entries(value).every(
+    ([key, entry]) => (key === 'value' && isScalar(entry)) || (key === 'reason' && (typeof entry === 'string' || entry === undefined))
+  )
+}
+
+function isScalar(value: unknown): value is boolean | number | string {
+  return typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string'
+}
+
 export function buildEvaluationResultJson(
   name: string,
   value: boolean | EvaluationReason | number | string,
@@ -59,5 +78,5 @@ export function isEvaluationReason(value: unknown): value is EvaluationReason {
 }
 
 function isEvaluationScalar(value: EvaluatorOutput): value is boolean | EvaluationReason | number | string {
-  return typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string' || isEvaluationReason(value)
+  return typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string' || isSoleEvaluationReason(value)
 }
