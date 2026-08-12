@@ -1,5 +1,13 @@
 # @pydantic/logfire-api
 
+## 0.21.8
+
+### Patch Changes
+
+- d6631a8: Keep every entry of an evaluator result map that happens to contain a `value` key. A map such as `{ value: 0.8, confidence: 0.9 }` was read as a single `EvaluationReason`, so it produced one result named after the evaluator and the sibling keys were dropped without warning. A result map and an `EvaluationReason` are now told apart by shape rather than by key names alone: a lone `EvaluationReason` must carry only `value` and `reason`, with a scalar `value` and a string or absent `reason`. Key names by themselves were not enough, because `{ value: 0.8, reason: 0.9 }` is a legal map of scores.
+- 099f79b: Honour `LOGFIRE_SEND_TO_LOGFIRE=false`. The environment variable arrives as a string and was passed to `Boolean()`, and `Boolean('false')` is `true`, so the documented way to turn sending off left it on. Setting `sendToLogfire: false` in code was unaffected. `true`, `false` and `if-token-present` are now normalized once and matched explicitly, case-insensitively and trimmed, so a differently cased sentinel no longer falls through to truthiness either.
+- 49752da: Stop a pending SSE reconnect backoff from holding a Node process open. The remote variable provider unrefs its polling and debounce timers, but the reconnect backoff used a plain `setTimeout`. That backoff doubles up to a minute while the stream is unreachable, so after `shutdown()` the process could stay alive until it elapsed.
+
 ## 0.21.7
 
 ### Patch Changes
