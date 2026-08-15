@@ -165,6 +165,25 @@ describe('EvaluatorSpec encoding', () => {
     expect(text).toContain('"NullSchemaEvaluator"')
     expect(text).toContain('"properties":{"NullSchemaEvaluator":{}}')
   })
+
+  it('lists an evaluator once when it is both registered and passed as custom', () => {
+    class BothWaysEvaluator extends Evaluator {
+      static override evaluatorName = 'BothWaysEvaluator'
+      evaluate(): boolean {
+        return true
+      }
+    }
+    registerEvaluator(BothWaysEvaluator as never)
+
+    const schema = buildDatasetJsonSchema({ customEvaluators: [BothWaysEvaluator as never] }) as {
+      properties: { evaluators: { items: { oneOf: { const?: string }[] } } }
+    }
+    const branches = schema.properties.evaluators.items.oneOf.filter((branch) => branch.const === 'BothWaysEvaluator')
+
+    // oneOf requires exactly one match, so a duplicate branch makes a file naming
+    // this evaluator invalid.
+    expect(branches).toHaveLength(1)
+  })
 })
 
 describe('Dataset YAML round-trip', () => {

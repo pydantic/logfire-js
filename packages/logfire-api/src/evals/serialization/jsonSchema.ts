@@ -11,7 +11,7 @@
 
 import type { EvaluatorClass, ReportEvaluatorClass } from '../types'
 
-import { listRegisteredEvaluators, listRegisteredReportEvaluators } from '../registry'
+import { evaluatorRegistryKey, listRegisteredEvaluators, listRegisteredReportEvaluators } from '../registry'
 
 interface JsonSchemaOptions {
   customEvaluators?: readonly EvaluatorClass[]
@@ -29,8 +29,8 @@ interface HasSchemaDescriptor {
 }
 
 export function buildDatasetJsonSchema(opts: JsonSchemaOptions = {}): JsonSchema {
-  const evaluators = [...listRegisteredEvaluators(), ...(opts.customEvaluators ?? [])]
-  const reportEvaluators = [...listRegisteredReportEvaluators(), ...(opts.customReportEvaluators ?? [])]
+  const evaluators = dedupeByRegistryKey([...listRegisteredEvaluators(), ...(opts.customEvaluators ?? [])])
+  const reportEvaluators = dedupeByRegistryKey([...listRegisteredReportEvaluators(), ...(opts.customReportEvaluators ?? [])])
 
   const evaluatorOneOf = buildEvaluatorOneOf(evaluators)
   const reportOneOf = buildEvaluatorOneOf(reportEvaluators)
@@ -63,6 +63,19 @@ export function buildDatasetJsonSchema(opts: JsonSchemaOptions = {}): JsonSchema
     title: 'PydanticEvalsDataset',
     type: 'object',
   }
+}
+
+/**
+ * A class passed as a custom evaluator is often registered as well. Emitting it
+ * twice would put two identical branches in `oneOf`, which requires exactly one
+ * match, so a file naming that evaluator would fail to validate.
+ */
+function dedupeByRegistryKey<T extends { evaluatorName?: string; name: string }>(classes: readonly T[]): T[] {
+  const byKey = new Map<string, T>()
+  for (const cls of classes) {
+    byKey.set(evaluatorRegistryKey(cls), cls)
+  }
+  return [...byKey.values()]
 }
 
 function buildEvaluatorOneOf(classes: readonly (EvaluatorClass | ReportEvaluatorClass)[]): JsonSchema {
