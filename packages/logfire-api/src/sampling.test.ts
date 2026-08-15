@@ -243,6 +243,40 @@ describe('TailSamplingProcessor', () => {
     expect(downstream.calls).toHaveLength(0)
   })
 
+  test('discards a dropped trace span that ends after the root', () => {
+    const downstream = makeProcessor()
+    const processor = new TailSamplingProcessor(downstream, () => 0.0)
+
+    const root = makeSpan({ startTime: [1000, 0] })
+    processor.onStart(root, ROOT_CONTEXT)
+    // Detached child, still running when the root closes.
+    const child = makeSpan({ parentSpanContext: { spanId: '1234567890abcdef' }, spanId: 'child00000000000', startTime: [1001, 0] })
+    processor.onStart(child, ROOT_CONTEXT)
+
+    processor.onEnd(root as unknown as ReadableSpan)
+    expect(downstream.calls).toHaveLength(0)
+
+    processor.onEnd(child as unknown as ReadableSpan)
+    expect(downstream.calls).toHaveLength(0)
+  })
+
+  test('exports a sampled trace span that ends after the root through both processors', () => {
+    const downstream = makeProcessor()
+    const deferred = makeProcessor()
+    const processor = new TailSamplingProcessor(downstream, () => 1.0, { deferredProcessor: deferred })
+
+    const root = makeSpan({ startTime: [1000, 0] })
+    processor.onStart(root, ROOT_CONTEXT)
+    const child = makeSpan({ parentSpanContext: { spanId: '1234567890abcdef' }, spanId: 'child00000000000', startTime: [1001, 0] })
+    processor.onStart(child, ROOT_CONTEXT)
+
+    processor.onEnd(root as unknown as ReadableSpan)
+    processor.onEnd(child as unknown as ReadableSpan)
+
+    // The late child still reaches the deferred processor, not only the wrapped one.
+    expect(deferred.calls.filter((c) => c.event === 'end').map((c) => c.span)).toEqual([root, child])
+  })
+
   test('flushes buffered spans when a later span meets criteria', () => {
     const downstream = makeProcessor()
     const processor = new TailSamplingProcessor(downstream, (info) => {
