@@ -42,8 +42,16 @@ function hrTimeToSeconds(hrTime: HrTime): number {
   return hrTime[0] + hrTime[1] / 1e9
 }
 
+/**
+ * Cap on traces held past their root's end because spans are still open. A span
+ * that never ends would otherwise pin its trace forever.
+ */
+const MAX_TRACES_RETAINED_AFTER_ROOT = 1000
+
 export class TailSamplingProcessor implements SpanProcessor {
   private readonly buffers = new Map<string, TraceBuffer>()
+  /** Traces still held after their root ended, in insertion order for eviction. */
+  private readonly retainedAfterRoot = new Set<string>()
   private readonly deferredProcessor: SpanProcessor | undefined
   private readonly tail: TailCallback
   private readonly wrapped: SpanProcessor
@@ -86,6 +94,9 @@ export class TailSamplingProcessor implements SpanProcessor {
     // unbuffered path, which exports unconditionally.
     if (entry.rootEnded && entry.outstanding <= 0) {
       this.buffers.delete(traceId)
+      this.retainedAfterRoot.delete(traceId)
+    } else if (entry.rootEnded) {
+      this.retainAfterRoot(traceId)
     }
   }
 
@@ -128,7 +139,23 @@ export class TailSamplingProcessor implements SpanProcessor {
 
   async shutdown(): Promise<void> {
     this.buffers.clear()
+    this.retainedAfterRoot.clear()
     return this.wrapped.shutdown()
+  }
+
+  private retainAfterRoot(traceId: string): void {
+    if (this.retainedAfterRoot.has(traceId)) {
+      return
+    }
+    this.retainedAfterRoot.add(traceId)
+    if (this.retainedAfterRoot.size <= MAX_TRACES_RETAINED_AFTER_ROOT) {
+      return
+    }
+    const oldest = this.retainedAfterRoot.values().next().value
+    if (oldest !== undefined) {
+      this.retainedAfterRoot.delete(oldest)
+      this.buffers.delete(oldest)
+    }
   }
 
   private addStart(buffer: TraceBuffer, span: Span, context: Context): void {
@@ -179,5 +206,11 @@ export class TailSamplingProcessor implements SpanProcessor {
         this.deferredProcessor?.onEnd(span)
       }
     }
+
+    // Replayed events are never read again, so release them rather than hold
+    // them for as long as the trace stays open.
+    buffer.ended = []
+    buffer.events = []
+    buffer.started = []
   }
 }

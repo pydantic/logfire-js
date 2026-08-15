@@ -273,7 +273,8 @@ describe('TailSamplingProcessor', () => {
     processor.onEnd(root as unknown as ReadableSpan)
     processor.onEnd(child as unknown as ReadableSpan)
 
-    // The late child still reaches the deferred processor, not only the wrapped one.
+    // The late child reaches both processors, not just one of them.
+    expect(downstream.calls.filter((c) => c.event === 'end').map((c) => c.span)).toEqual([root, child])
     expect(deferred.calls.filter((c) => c.event === 'end').map((c) => c.span)).toEqual([root, child])
   })
 
