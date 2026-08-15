@@ -13,7 +13,7 @@
 import type { Context } from '@opentelemetry/api'
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
-import { context as ContextAPI, createContextKey, trace as TraceAPI } from '@opentelemetry/api'
+import { context as ContextAPI, createContextKey } from '@opentelemetry/api'
 
 import type { SpanTreeRecordingError } from './SpanTree'
 import { SpanTree } from './SpanTree'
@@ -103,14 +103,4 @@ export function buildSpanTree(spans: ReadableSpan[], recordingError: null | Span
     return SpanTree.fromError(recordingError)
   }
   return SpanTree.fromSpans(spans)
-}
-
-/**
- * Best-effort detection of whether the active TracerProvider can record spans.
- * If the provider is not the default no-op/proxy provider, assume callers wired
- * the evals processor or another recording provider.
- */
-export function isProcessorInstalledOnGlobal(): boolean {
-  const tp = TraceAPI.getTracerProvider()
-  return typeof tp === 'object' && tp.constructor.name !== 'NoopTracerProvider' && tp.constructor.name !== 'ProxyTracerProvider'
 }
