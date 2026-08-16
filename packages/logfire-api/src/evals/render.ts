@@ -93,7 +93,11 @@ function truncate(s: string, max: number): string {
   if (s.length <= max) {
     return s
   }
-  return `${s.slice(0, max - 1)}…`
+  // Slicing counts UTF-16 code units, so a cut between the halves of a surrogate
+  // pair leaves a lone surrogate in the rendered report.
+  const end = max - 1
+  const lastCode = s.charCodeAt(end - 1)
+  return `${s.slice(0, lastCode >= 0xd800 && lastCode <= 0xdbff ? end - 1 : end)}…`
 }
 
 function formatTable(headers: string[], rows: string[][]): string[] {

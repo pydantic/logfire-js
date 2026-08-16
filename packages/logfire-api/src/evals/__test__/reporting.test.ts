@@ -938,6 +938,25 @@ describe('renderReport', () => {
     expect(text).toContain('ok=✓')
   })
 
+  it('does not leave a lone surrogate when truncating a rendered input', () => {
+    // The repr is '"' + value + '"' and the limit is 30, so the cut lands on the
+    // emoji's high half.
+    const report: EvaluationReport = {
+      analyses: [],
+      cases: [makeReportCase({ inputs: `${'a'.repeat(27)}\u{1F600}${'b'.repeat(20)}`, name: 'one' })],
+      failures: [],
+      name: 'demo',
+      report_evaluator_failures: [],
+      span_id: 's',
+      trace_id: 't',
+    }
+
+    const text = renderReport(report, { includeInput: true })
+
+    // A lone surrogate has no UTF-8 encoding, so the round trip would not match.
+    expect(new TextDecoder().decode(new TextEncoder().encode(text))).toBe(text)
+  })
+
   it('renders optional inputs, outputs, failures, analyses and scalar formatting', () => {
     const report: EvaluationReport = {
       analyses: [{ title: 'Quality', type: 'scalar', value: 0.95 }],
