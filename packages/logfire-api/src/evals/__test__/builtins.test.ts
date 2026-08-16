@@ -181,8 +181,13 @@ describe('built-in evaluator edge cases', () => {
     const tail = `${'a'.repeat(80)}\u{1F600}${'b'.repeat(48)}`
 
     for (const value of [head, tail]) {
-      const result = new Contains({ value: 'ZZZNOTFOUND' }).evaluate(ctx(value)) as { reason?: string }
-      const reason = result.reason ?? ''
+      const result = new Contains({ value: 'ZZZNOTFOUND' }).evaluate(ctx(value)) as { reason?: string; value: boolean }
+
+      // The containment has to actually fail, otherwise there is no reason to check.
+      expect(result.value).toBe(false)
+      expect(typeof result.reason).toBe('string')
+
+      const reason = result.reason as string
       // A lone surrogate has no UTF-8 encoding, so encoding replaces it with
       // U+FFFD and the round trip stops matching.
       expect(new TextDecoder().decode(new TextEncoder().encode(reason))).toBe(reason)
