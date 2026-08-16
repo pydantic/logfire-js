@@ -334,9 +334,16 @@ function isHrTime(value: unknown): value is HrTime {
 }
 
 function isThenable<T>(value: T): value is T & PromiseLike<Awaited<T>> {
-  return (
-    (typeof value === 'object' || typeof value === 'function') && value !== null && typeof (value as { then?: unknown }).then === 'function'
-  )
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
+    return false
+  }
+  try {
+    return typeof (value as { then?: unknown }).then === 'function'
+  } catch {
+    // Reading `then` runs a getter, which belongs to the caller. Instrumentation
+    // must not turn a returned value into a thrown error.
+    return false
+  }
 }
 
 function getFunctionName(fn: InstrumentableFunction): string {

@@ -1254,6 +1254,25 @@ describe('instrument', () => {
     )
   })
 
+  test('recordReturn true does not rethrow when the returned value has a throwing then getter', () => {
+    const wrapped = instrument(
+      () => {
+        const result = { ok: true }
+        // A lazy proxy or ORM model can throw on an unknown property read.
+        Object.defineProperty(result, 'then', {
+          get() {
+            throw new Error('then getter boom')
+          },
+        })
+        return result
+      },
+      { recordReturn: true }
+    )
+
+    // Probing for a thenable must not turn a successful call into a failure.
+    expect(wrapped()).toEqual({ ok: true })
+  })
+
   test('recordReturn true preserves complex input schema when recording complex return values', () => {
     function processPayload(_payload: { value: string }) {
       return { status: 'ok' }
