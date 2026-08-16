@@ -53,6 +53,27 @@ describe('captureConsole', () => {
     }
   })
 
+  it('does not leave a lone surrogate when truncating an argument', () => {
+    const originalLog = console.log
+    console.log = vi.fn()
+    const emit = vi.fn()
+    const stop = captureConsole(emit)
+    try {
+      // The emoji straddles the 1024 unit boundary, so a code-unit slice would
+      // keep only its high half.
+      console.log(`${'x'.repeat(1_023)}\u{1F600}${'y'.repeat(50)}`)
+      const payload = emit.mock.calls[0]![1] as ConsolePayload
+      const arg = payload.args[0]!
+
+      expect(arg).toBe(`${'x'.repeat(1_023)}...(+52 chars)`)
+      // A lone surrogate has no UTF-8 encoding, so the round trip would not match.
+      expect(new TextDecoder().decode(new TextEncoder().encode(arg))).toBe(arg)
+    } finally {
+      stop()
+      console.log = originalLog
+    }
+  })
+
   it('restores console methods idempotently', () => {
     const realLog = console.log
     const originalLog = vi.fn()
