@@ -333,17 +333,26 @@ function isHrTime(value: unknown): value is HrTime {
   return Array.isArray(value) && value.length === 2 && typeof value[0] === 'number' && typeof value[1] === 'number'
 }
 
-function isThenable<T>(value: T): value is T & PromiseLike<Awaited<T>> {
+type ThenMethod = (onFulfilled: (value: never) => unknown) => unknown
+
+/**
+ * Returns the value's `then` method, or undefined when it has none.
+ *
+ * Reading `then` runs a getter belonging to the caller, so the read is guarded and
+ * the method is returned rather than re-read: a stateful getter can hand back a
+ * function once and throw on the next read.
+ */
+function getThenMethod(value: unknown): ThenMethod | undefined {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) {
-    return false
+    return undefined
   }
+  let then: unknown
   try {
-    return typeof (value as { then?: unknown }).then === 'function'
+    then = (value as { then?: unknown }).then
   } catch {
-    // Reading `then` runs a getter, which belongs to the caller. Instrumentation
-    // must not turn a returned value into a thrown error.
-    return false
+    return undefined
   }
+  return typeof then === 'function' ? (then as ThenMethod) : undefined
 }
 
 function getFunctionName(fn: InstrumentableFunction): string {
@@ -691,8 +700,9 @@ function instrumentWithSettings<F extends InstrumentableFunction>(
         if (options.recordReturn !== true) {
           return result
         }
-        if (isThenable(result)) {
-          return result.then((value: Awaited<ReturnType<F>>) => {
+        const thenMethod = getThenMethod(result)
+        if (thenMethod !== undefined) {
+          return thenMethod.call(result, (value: Awaited<ReturnType<F>>) => {
             recordReturnAttributes(activeSpan, spanSerializationAttributes ?? {}, value)
             return value
           }) as ReturnType<F>
