@@ -875,6 +875,45 @@ describe('span', () => {
     process.off('unhandledRejection', onUnhandled)
   })
 
+  test('falls back to finally when the then getter throws', () => {
+    let onFinally: (() => void) | undefined
+    const value = {
+      finally: (callback: () => void) => {
+        onFinally = callback
+        return undefined
+      },
+      // A lazy proxy or ORM model can throw on an unknown property read.
+      get then() {
+        throw new Error('then getter boom')
+      },
+    }
+
+    const result = span('test', { callback: () => value })
+
+    // Probing for a subscription must not turn a successful callback into a throw.
+    expect(result).toBe(value)
+    expect(spanMock.end).not.toHaveBeenCalled()
+    onFinally?.()
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
+  test('ends the span once when then throws after registering its handlers', () => {
+    const value = {
+      finally: () => {
+        throw new Error('finally must not be a second subscription')
+      },
+      then: (onFulfilled: () => void) => {
+        onFulfilled()
+        throw new Error('then call boom')
+      },
+    }
+
+    const result = span('test', { callback: () => value })
+
+    expect(result).toBe(value)
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
   test('thenable callback result is returned untouched', () => {
     const then = vi.fn<() => void>()
     const lazyThenable = { then }
