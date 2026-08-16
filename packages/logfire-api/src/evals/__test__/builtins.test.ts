@@ -172,4 +172,20 @@ describe('built-in evaluator edge cases', () => {
       LLMJudge_score: 0.8,
     })
   })
+
+  it('Contains does not leave a lone surrogate when truncating a reason', () => {
+    // repr is '"' + value + '"' and the string limit is 100, so the head cut lands
+    // at repr index 50, putting an emoji's halves either side of it.
+    const head = `${'a'.repeat(48)}\u{1F600}${'b'.repeat(80)}`
+    // The tail cut lands 50 units from the end, on the low half of this emoji.
+    const tail = `${'a'.repeat(80)}\u{1F600}${'b'.repeat(48)}`
+
+    for (const value of [head, tail]) {
+      const result = new Contains({ value: 'ZZZNOTFOUND' }).evaluate(ctx(value)) as { reason?: string }
+      const reason = result.reason ?? ''
+      // A lone surrogate has no UTF-8 encoding, so encoding replaces it with
+      // U+FFFD and the round trip stops matching.
+      expect(new TextDecoder().decode(new TextEncoder().encode(reason))).toBe(reason)
+    }
+  })
 })
