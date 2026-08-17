@@ -1,7 +1,9 @@
 /* eslint-disable @typescript-eslint/require-await -- test stubs satisfy async signatures without awaiting. */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Writable } from 'node:stream'
 
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
@@ -119,6 +121,20 @@ describe('CLI entrypoint', () => {
       project_url: 'fake_project_url',
       token: 'fake_token',
     })
+  })
+
+  it('runs when the bin is invoked through a symlink', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'logfire-cli-bin-'))
+    tmpDirs.push(dir)
+    const link = join(dir, 'logfire')
+    // npm installs the bin as a symlink into node_modules/.bin, which is the shape that made the
+    // entry-point guard miss and the CLI exit 0 without printing anything.
+    symlinkSync(fileURLToPath(new URL('../../dist/cli.js', import.meta.url)), link)
+
+    const result = spawnSync(process.execPath, [link, '--help'], { encoding: 'utf8' })
+
+    expect(result.status).toBe(0)
+    expect(result.stdout.split('\n')[0]).toBe('The CLI for Pydantic Logfire.')
   })
 
   function makeTmpDir(): string {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process'
+import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { Readable, Writable } from 'node:stream'
 import { pathToFileURL } from 'node:url'
@@ -223,7 +224,11 @@ function openBrowser(url: string, platform: NodeJS.Platform): void {
   }
 }
 
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// npm installs the bin as a symlink into `node_modules/.bin`. Node resolves `import.meta.url`
+// to the real file while `process.argv[1]` stays the symlink, so comparing them directly never
+// matches and the CLI exits 0 without running anything.
+const entryPath = process.argv[1]
+if (entryPath !== undefined && import.meta.url === pathToFileURL(realpathSync(entryPath)).href) {
   runCli()
     .then((exitCode) => {
       process.exitCode = exitCode
