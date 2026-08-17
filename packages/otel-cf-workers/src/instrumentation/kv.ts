@@ -91,7 +91,9 @@ function instrumentKVFn(fn: Function, name: string, operation: string) {
           if (operation === 'list') {
             const opts: KVNamespaceListOptions = argArray[0] || {}
             const { prefix } = opts
-            span.setAttribute(ATTR_DB_QUERY_TEXT, `${operation} ${prefix || undefined}`)
+            // `undefined` stringifies inside a template literal, so interpolating an absent prefix
+            // produced the literal text "list undefined" rather than omitting it.
+            span.setAttribute(ATTR_DB_QUERY_TEXT, prefix ? `${operation} ${prefix}` : operation)
           } else {
             span.setAttribute(ATTR_DB_QUERY_TEXT, `${operation} ${argArray[0]}`)
             span.setAttribute('db.cf.kv.key', argArray[0])
