@@ -1,5 +1,17 @@
 # @pydantic/logfire-api
 
+## 0.21.9
+
+### Patch Changes
+
+- 4e0af13: Run the `logfire` CLI when the bin is invoked through a symlink. The entrypoint check compared `import.meta.url` against `process.argv[1]` verbatim, but Node resolves the module URL to the real path while leaving `argv[1]` as the literal invocation path. Any symlink between the two made the check fail, so the command exited 0 without printing anything and without running. `argv[1]` is now resolved before the comparison.
+
+  This affected every install whose invocation path crossed a symlink: `npm install` and Yarn, where the bin itself is a symlink; pnpm with `node-linker=hoisted`; and pnpm workspace links, where the shim points through a symlinked package directory. Only pnpm's default isolated layout and `pnpm add -g` escaped, because their shims target the physical path.
+
+- 4e0af13: Report the correct package version at runtime. `PACKAGE_VERSION` was read from the ambient `npm_package_version` environment variable at build time, which resolves to whichever `package.json` the build was started from. Releases run `pnpm run build` from the repository root, so published artifacts were stamped with the private root version `1.0.0` instead of their own: `logfire@0.21.8` reported `Running Logfire 1.0.0` from `logfire --version` and `logfire info`, and sent `logfire-js/1.0.0` as its CLI user agent. `@pydantic/logfire-browser` reported the same wrong value as the `telemetry.sdk.version` resource attribute on every browser span.
+
+  Each package now reads the version from its own `package.json`, matching what `@pydantic/logfire-node`, `@pydantic/logfire-cf-workers`, and `@pydantic/otel-cf-workers` already did.
+
 ## 0.21.8
 
 ### Patch Changes
