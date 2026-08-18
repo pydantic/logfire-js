@@ -1,24 +1,13 @@
-import { copyFileSync, existsSync } from 'node:fs'
 import { defineConfig } from 'vite-plus'
 
-const packageDefines = {
-  PACKAGE_TIMESTAMP: String(Date.now()),
-  PACKAGE_VERSION: JSON.stringify(process.env['npm_package_version'] ?? '0.0.0'),
-}
+import { copyCjsDeclarations, packageDefines } from '../../vite.shared'
 
-const copyCjsDeclarations = (names: string[]) => {
-  for (const name of names) {
-    const src = `dist/${name}.d.ts`
-    if (existsSync(src)) {
-      copyFileSync(src, `dist/${name}.d.cts`)
-    }
-  }
-}
+const defines = packageDefines(import.meta.url)
 
 const config: ReturnType<typeof defineConfig> = defineConfig({
-  define: packageDefines,
+  define: defines,
   pack: {
-    define: packageDefines,
+    define: defines,
     dts: {
       resolver: 'tsc',
     },
