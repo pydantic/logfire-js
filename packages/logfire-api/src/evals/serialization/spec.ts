@@ -47,9 +47,11 @@ export function encodeEvaluatorSpec(evaluator: Evaluator | ReportEvaluator): Enc
   if (keys.length === 1) {
     const onlyKey = keys[0]!
     const onlyVal = args[onlyKey]
-    // Short form ONLY safe when value is NOT a string-keyed dict (otherwise round-trip
-    // is ambiguous with the long form). Matches `pydantic_ai/_spec.py:36–46`.
-    if (!isStringKeyedDict(onlyVal)) {
+    // Short form ONLY safe when the value is neither a string-keyed dict nor a list. A dict
+    // would come back as kwargs (`pydantic_ai/_spec.py:36-46`), and a list would come back as
+    // the multi-positional form that `decodeSpec` supports, so both are ambiguous encodings of
+    // a single argument and have to use the long form.
+    if (!isStringKeyedDict(onlyVal) && !Array.isArray(onlyVal)) {
       return { [name]: onlyVal }
     }
   }
