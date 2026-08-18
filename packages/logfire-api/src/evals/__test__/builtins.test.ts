@@ -64,6 +64,8 @@ describe('built-in evaluator edge cases', () => {
     const expected = new EqualsExpected({ evaluationName: 'expected-match' })
     expect(expected.toJSON()).toEqual({ evaluation_name: 'expected-match' })
     expect(expected.evaluate(ctx('x'))).toEqual({})
+    // A dataset file spells a missing expected output as `null`, which Python skips on.
+    expect(expected.evaluate(ctx('x', { expectedOutput: null }))).toEqual({})
     expect(expected.evaluate(ctx('x', { expectedOutput: 'x' }))).toBe(true)
   })
 

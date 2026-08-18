@@ -30,7 +30,9 @@ export class EqualsExpected extends Evaluator {
   }
 
   evaluate(ctx: EvaluatorContext): EvaluatorOutput {
-    if (ctx.expectedOutput === undefined) {
+    // Python has one absent value and skips on `expected_output is None`. JSON and YAML give
+    // us `null` for that, so both spellings have to mean "no expected output".
+    if (ctx.expectedOutput === undefined || ctx.expectedOutput === null) {
       return {}
     }
     return deepEqual(ctx.output, ctx.expectedOutput)
