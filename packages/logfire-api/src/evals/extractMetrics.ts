@@ -11,6 +11,8 @@
 
 import type { SpanTree } from './spanTree/SpanTree'
 
+import { incrementMetric } from './currentTaskRun'
+
 export function extractMetricsFromSpanTree(tree: SpanTree, into: Record<string, number>): void {
   for (const node of tree.all()) {
     const attrs = node.attributes
@@ -18,11 +20,11 @@ export function extractMetricsFromSpanTree(tree: SpanTree, into: Record<string, 
       continue
     }
     if (attrs['gen_ai.operation.name'] === 'chat') {
-      into['requests'] = (into['requests'] ?? 0) + 1
+      incrementMetric(into, 'requests', 1)
     }
     const cost = attrs['operation.cost']
     if (typeof cost === 'number') {
-      into['cost'] = (into['cost'] ?? 0) + cost
+      incrementMetric(into, 'cost', cost)
     }
     for (const [k, v] of Object.entries(attrs)) {
       if (typeof v !== 'number') {
@@ -31,11 +33,9 @@ export function extractMetricsFromSpanTree(tree: SpanTree, into: Record<string, 
       const usagePrefix = 'gen_ai.usage.'
       const detailsPrefix = 'gen_ai.usage.details.'
       if (k.startsWith(detailsPrefix)) {
-        const key = k.slice(detailsPrefix.length)
-        into[key] = (into[key] ?? 0) + v
+        incrementMetric(into, k.slice(detailsPrefix.length), v)
       } else if (k.startsWith(usagePrefix)) {
-        const key = k.slice(usagePrefix.length)
-        into[key] = (into[key] ?? 0) + v
+        incrementMetric(into, k.slice(usagePrefix.length), v)
       }
     }
   }

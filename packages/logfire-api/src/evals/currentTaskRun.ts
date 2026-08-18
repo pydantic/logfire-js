@@ -84,6 +84,23 @@ export function setEvalAttribute(name: string, value: unknown): void {
 }
 
 /**
+ * Add `amount` to a metric, leaving the key absent when the result is still zero.
+ *
+ * Mirrors pydantic-evals' `TaskRun.increment_metric`, which is the single place that
+ * writes metrics in the Python port and skips the write when both the current and the
+ * new value are zero. Every metric write here must go through this so a zero-valued
+ * usage attribute does not invent a metric key that Python omits.
+ */
+export function incrementMetric(metrics: Record<string, number>, name: string, amount: number): void {
+  const current = metrics[name] ?? 0
+  const next = current + amount
+  if (current === 0 && next === 0) {
+    return
+  }
+  metrics[name] = next
+}
+
+/**
  * Increment a metric on the current case. No-op outside a `Dataset.evaluate`
  * task. Mirrors pydantic-evals' `increment_eval_metric`.
  */
@@ -92,10 +109,5 @@ export function incrementEvalMetric(name: string, amount: number): void {
   if (state === undefined) {
     return
   }
-  const current = state.metrics[name] ?? 0
-  const next = current + amount
-  if (current === 0 && next === 0) {
-    return
-  }
-  state.metrics[name] = next
+  incrementMetric(state.metrics, name, amount)
 }
