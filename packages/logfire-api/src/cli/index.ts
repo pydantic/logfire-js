@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process'
+import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { Readable, Writable } from 'node:stream'
 import { pathToFileURL } from 'node:url'
@@ -223,7 +224,20 @@ function openBrowser(url: string, platform: NodeJS.Platform): void {
   }
 }
 
-if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Package managers expose the bin as a symlink, or as a shim pointing through a symlinked
+// package directory. Node leaves argv[1] as the literal invocation path but realpaths
+// import.meta.url, so the two only agree once argv[1] is resolved as well.
+function resolveEntryPath(entryPath: string): string {
+  try {
+    return realpathSync(entryPath)
+  } catch {
+    // An unresolvable path still compares correctly below.
+    return entryPath
+  }
+}
+
+const entryPath = process.argv[1]
+if (entryPath !== undefined && import.meta.url === pathToFileURL(resolveEntryPath(entryPath)).href) {
   runCli()
     .then((exitCode) => {
       process.exitCode = exitCode
