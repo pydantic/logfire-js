@@ -674,6 +674,30 @@ describe('offline evals — span attribute parity', () => {
     }
   })
 
+  it('reports an evaluator failure when any entry of a result map is non-finite', async () => {
+    class MixedScores extends Evaluator {
+      static override evaluatorName = 'MixedScores'
+      evaluate(): Record<string, number> {
+        return { finite: 1, unbounded: Number.POSITIVE_INFINITY }
+      }
+    }
+
+    const dataset = new Dataset<null, string>({
+      cases: [new Case<null, string>({ inputs: null, name: 'a' })],
+      evaluators: [new MixedScores()],
+      name: 'non-finite-map',
+    })
+
+    const { result } = await withMemoryExporter(async () => dataset.evaluate(() => 'x'))
+
+    // The whole evaluator fails, so the valid sibling entry is not recorded either. Python
+    // validates the entire output up front and discards it the same way.
+    expect(result.cases[0]?.scores).toEqual({})
+    expect(result.cases[0]?.evaluator_failures.map((f) => [f.name, f.error_message])).toEqual([
+      ['MixedScores', 'Evaluator returned a non-finite value for unbounded: Infinity'],
+    ])
+  })
+
   it('reports an evaluator failure instead of a non-finite score', async () => {
     class NanScore extends Evaluator {
       static override evaluatorName = 'NanScore'
