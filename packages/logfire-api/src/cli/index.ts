@@ -63,6 +63,11 @@ export async function runCli(argv: string[] = process.argv.slice(2), options: Cl
       return error.exitCode
     }
     throw error
+  } finally {
+    // A real TTY, unlike a pipe or a redirected file, never reaches EOF on its own -- so
+    // without this, an interactive terminal session would keep the process alive after
+    // the command above had nothing left to do.
+    context.prompt.dispose?.()
   }
 }
 

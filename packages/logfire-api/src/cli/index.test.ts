@@ -2,7 +2,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Writable } from 'node:stream'
+import { PassThrough, Writable } from 'node:stream'
 
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
 
@@ -85,6 +85,51 @@ describe('CLI entrypoint', () => {
       '[tokens."https://logfire-us.pydantic.dev"]\ntoken = "user-token"\nexpiration = "2099-12-31T23:59:59Z"\n'
     )
     expect(stderr.text()).toContain('Successfully authenticated!')
+  })
+
+  it('authenticates through the REAL prompt from one piped multi-line answer, region and Enter together', async () => {
+    // No `prompt` override: this drives `auth` through the actual `createPrompt`, not a
+    // fake, so it is the one test in this file that would have caught the original bug --
+    // a real agent, following the shipped prompt's literal `npx logfire auth`, found that
+    // `printf '1\n\n' | npx logfire auth` hung forever on the second (Enter) prompt.
+    await withTimeout(async () => {
+      const homeDir = makeTmpDir()
+      const stderr = new MemoryOutput()
+      const openBrowser = vi.fn<(_url: string) => void>()
+      const fetchImpl = fetchSequence([
+        jsonResponse({ device_code: 'DC', frontend_auth_url: 'https://example.com/auth' }),
+        jsonResponse({ expiration: '2099-12-31T23:59:59Z', token: 'user-token' }),
+      ])
+      const stdin = new PassThrough()
+      stdin.end('1\n\n')
+
+      await expect(runCli(['auth'], { fetch: fetchImpl, homeDir, openBrowser, stderr, stdin, stdout: new MemoryOutput() })).resolves.toBe(0)
+
+      expect(readFileSync(join(homeDir, '.logfire/default.toml'), 'utf8')).toBe(
+        '[tokens."https://logfire-us.pydantic.dev"]\ntoken = "user-token"\nexpiration = "2099-12-31T23:59:59Z"\n'
+      )
+    })
+  })
+
+  it('names the region commands instead of hanging when stdin has nothing to read', async () => {
+    // Mirrors pydantic/logfire#2275's own non-interactive test: no `--region`, and stdin
+    // closed immediately (matching `< /dev/null`, or the pipe Claude Code's own Bash tool
+    // gives a spawned command) -- the region choice has no default to fall back to, so
+    // this is the one case that has to fail, and it must fail by saying what to run.
+    await withTimeout(async () => {
+      const stderr = new MemoryOutput()
+      const fetchImpl = vi.fn<typeof fetch>()
+      const stdin = new PassThrough()
+      stdin.end('')
+
+      await expect(runCli(['auth'], { fetch: fetchImpl, homeDir: makeTmpDir(), stderr, stdin, stdout: new MemoryOutput() })).resolves.toBe(
+        1
+      )
+
+      expect(fetchImpl).not.toHaveBeenCalled()
+      expect(stderr.text()).toContain('logfire --region us auth')
+      expect(stderr.text()).toContain('logfire --region eu auth')
+    })
   })
 
   it('configures an existing project and writes local credentials', async () => {
@@ -560,4 +605,20 @@ function jsonResponse(data: unknown, status = 200): Response {
     headers: { 'content-type': 'application/json' },
     status,
   })
+}
+
+/** For tests that drive the REAL prompt (no `prompt` override): a hang there would
+ * otherwise fail as a generic test-runner timeout with no indication of which promise
+ * never settled. A short, generous race turns that into an assertion failure that names
+ * the case -- which is what caught the original bug (`npx logfire auth` hanging on a
+ * piped multi-line answer) in the first place. */
+async function withTimeout<T>(fn: () => Promise<T>, ms = 2000): Promise<T> {
+  return await Promise.race([
+    fn(),
+    new Promise<T>((_resolve, reject) => {
+      setTimeout(() => {
+        reject(new Error(`Timed out after ${String(ms)}ms -- a prompt call likely hung`))
+      }, ms)
+    }),
+  ])
 }
