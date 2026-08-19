@@ -6,6 +6,9 @@
  *   - copy `operation.cost` -> `cost`
  *   - copy any `gen_ai.usage.<x>` and `gen_ai.usage.details.<x>` keys to `<x>`
  *
+ * Writes go through `incrementMetric`, so a metric that would still be zero is
+ * omitted rather than recorded as `0`.
+ *
  * Mirrors pydantic-evals' `_task_run.extract_span_tree_metrics`.
  */
 
