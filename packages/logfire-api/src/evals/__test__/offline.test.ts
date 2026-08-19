@@ -673,4 +673,26 @@ describe('offline evals — span attribute parity', () => {
       expect(c.evaluator_failures).toMatchObject([{ error_message: 'Evaluator error', error_type: 'Error', name: 'FailingEvaluator' }])
     }
   })
+
+  it('reports an evaluator failure instead of a non-finite score', async () => {
+    class NanScore extends Evaluator {
+      static override evaluatorName = 'NanScore'
+      evaluate(): number {
+        return 0 / 0
+      }
+    }
+
+    const dataset = new Dataset<null, string>({
+      cases: [new Case<null, string>({ inputs: null, name: 'a' })],
+      evaluators: [new NanScore()],
+      name: 'non-finite',
+    })
+
+    const { result } = await withMemoryExporter(async () => dataset.evaluate(() => 'x'))
+
+    expect(result.cases[0]?.scores).toEqual({})
+    expect(result.cases[0]?.evaluator_failures.map((f) => [f.name, f.error_message])).toEqual([
+      ['NanScore', 'Evaluator returned a non-finite value for NanScore: NaN'],
+    ])
+  })
 })
