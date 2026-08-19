@@ -55,6 +55,18 @@ describe('EvaluatorSpec encoding', () => {
     expect(decodeSpec({ Equals: 1 })).toEqual({ arguments: [1], name: 'Equals' })
   })
 
+  it('round-trips an evaluator whose only argument is a list', () => {
+    // The short form `{Equals: [1, 2]}` would decode as the multi-positional form, so a list
+    // argument has to encode long even though it is a single argument.
+    const encoded = encodeEvaluatorSpec(new Equals({ value: [1, 2] }))
+
+    expect(encoded).toEqual({ Equals: { value: [1, 2] } })
+    expect(decodeSpec(encoded)).toEqual({ arguments: { value: [1, 2] }, name: 'Equals' })
+
+    const decoded = decodeEvaluator(encoded, new Map([['Equals', Equals]]), new Map([['Equals', 'value']]))
+    expect((decoded as Equals).value).toEqual([1, 2])
+  })
+
   it('decodeSpec parses kwargs long form', () => {
     expect(decodeSpec({ Contains: { value: 'foo' } })).toEqual({ arguments: { value: 'foo' }, name: 'Contains' })
   })
