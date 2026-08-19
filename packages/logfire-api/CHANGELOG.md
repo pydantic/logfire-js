@@ -1,5 +1,18 @@
 # @pydantic/logfire-api
 
+## 0.21.10
+
+### Patch Changes
+
+- d55df7a: Stop `Contains` leaving a lone surrogate in a truncated failure reason. The reason string was cut on UTF-16 code units at both ends, so an astral character straddling either boundary lost half of itself, and the resulting reason is not valid UTF-8 once the evaluation result is serialized.
+- dcdd0a8: List each evaluator once in the dataset JSON schema. An evaluator that was both registered and passed through `customEvaluators` produced two identical `oneOf` branches, and `oneOf` requires exactly one match, so a dataset file naming that evaluator failed to validate against its own schema.
+- 3a1be2e: Treat a null `expected_output` as missing in `EqualsExpected`. A dataset case written with `expected_output: null` produced a failing assertion instead of no assertion, which is what pydantic-evals records and what #219 already settled for the confusion matrix.
+- b2d6e2e: Stop recording zero-valued eval metrics that pydantic-evals omits. Span-tree metric extraction now goes through the same increment path as `incrementEvalMetric`, so a provider reporting `gen_ai.usage.cached_tokens: 0` no longer invents a `cached_tokens: 0` metric on the case.
+- f3d3427: Stop `instrument` with `recordReturn` rethrowing when the returned value has a throwing `then` getter. Detecting a thenable reads `then`, which runs caller code, so a successful call could surface to the caller as a thrown error and be recorded on the span as a failure. The probe now treats a throwing getter as not thenable.
+- 5bfe645: Stop `renderReport` leaving a lone surrogate in a truncated cell. Inputs and outputs were cut on UTF-16 code units at 30, so an astral character straddling that boundary kept only its high half, and the returned report string is no longer valid UTF-8.
+- c188c07: Encode an evaluator whose only argument is a list in the long form. `new Equals({ value: [1, 2] })` previously serialized to the short form `{Equals: [1, 2]}`, which reads back as two positional arguments and rebuilt the evaluator with the wrong ones. It now serializes to `{Equals: {value: [1, 2]}}`. Existing files that already contain the short form are unaffected by this change and still decode as positional arguments.
+- 487eaa8: Stop `truncateString` splitting a surrogate pair. Truncation cut on UTF-16 code units, so a message value or baggage value long enough to be truncated with an astral character straddling the boundary kept only the high half, leaving a lone surrogate that is not valid UTF-8 once the attribute is serialized. The whole character is dropped instead.
+
 ## 0.21.9
 
 ### Patch Changes
