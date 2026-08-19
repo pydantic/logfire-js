@@ -6,6 +6,8 @@
 
 import type { EvaluationReport, ReportCase, ReportCaseFailure } from './reporting'
 
+import { floorCodePointBoundary } from '../formatter'
+
 export interface RenderOptions {
   includeFailures?: boolean
   includeInput?: boolean
@@ -93,11 +95,7 @@ function truncate(s: string, max: number): string {
   if (s.length <= max) {
     return s
   }
-  // Slicing counts UTF-16 code units, so a cut between the halves of a surrogate
-  // pair leaves a lone surrogate in the rendered report.
-  const end = max - 1
-  const lastCode = s.charCodeAt(end - 1)
-  return `${s.slice(0, lastCode >= 0xd800 && lastCode <= 0xdbff ? end - 1 : end)}…`
+  return `${s.slice(0, floorCodePointBoundary(s, max - 1))}…`
 }
 
 function formatTable(headers: string[], rows: string[][]): string[] {

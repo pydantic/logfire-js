@@ -265,14 +265,26 @@ export function truncateString(str: string, maxLength: number): string {
     return str
   }
 
-  // `substring` counts UTF-16 code units, so cutting between the halves of a
-  // surrogate pair leaves a lone surrogate that is not valid UTF-8 once the
-  // attribute is serialized. Drop the whole character instead.
-  let end = maxLength - 3
-  const lastCode = str.charCodeAt(end - 1)
-  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
-    end -= 1
-  }
+  return str.substring(0, floorCodePointBoundary(str, maxLength - 3)) + '...'
+}
 
-  return str.substring(0, end) + '...'
+/**
+ * Largest index at or below `index` that does not fall between the halves of a
+ * surrogate pair. Slicing counts UTF-16 code units, so an unadjusted cut can keep
+ * only the high half of an astral character, and a lone surrogate has no UTF-8
+ * encoding once the value is serialized. Use for `str.slice(0, index)`.
+ */
+export function floorCodePointBoundary(str: string, index: number): number {
+  const code = str.charCodeAt(index - 1)
+  return code >= 0xd800 && code <= 0xdbff ? index - 1 : index
+}
+
+/**
+ * Smallest index at or above `index` that does not fall between the halves of a
+ * surrogate pair. The mirror of `floorCodePointBoundary`, for `str.slice(index)`,
+ * whose start can land on the low half of a pair.
+ */
+export function ceilCodePointBoundary(str: string, index: number): number {
+  const code = str.charCodeAt(index)
+  return code >= 0xdc00 && code <= 0xdfff ? index + 1 : index
 }

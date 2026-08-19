@@ -1,5 +1,6 @@
 import type { EvaluationReason, EvaluatorContext } from '../types'
 
+import { ceilCodePointBoundary, floorCodePointBoundary } from '../../formatter'
 import { Evaluator } from '../Evaluator'
 import { registerEvaluator } from '../registry'
 import { deepEqual } from './Equals'
@@ -132,19 +133,6 @@ function truncatedRepr(value: unknown, maxLength: number): string {
   if (repr.length <= maxLength) {
     return repr
   }
-  // Slicing counts UTF-16 code units, so a cut between the halves of a surrogate
-  // pair leaves a lone surrogate, which has no UTF-8 encoding once the reason is
-  // serialized. Drop the whole character at either boundary instead.
   const half = Math.floor(maxLength / 2)
-  const headEnd = isHighSurrogate(repr.charCodeAt(half - 1)) ? half - 1 : half
-  const tailStart = isLowSurrogate(repr.charCodeAt(repr.length - half)) ? repr.length - half + 1 : repr.length - half
-  return `${repr.slice(0, headEnd)}...${repr.slice(tailStart)}`
-}
-
-function isHighSurrogate(code: number): boolean {
-  return code >= 0xd800 && code <= 0xdbff
-}
-
-function isLowSurrogate(code: number): boolean {
-  return code >= 0xdc00 && code <= 0xdfff
+  return `${repr.slice(0, floorCodePointBoundary(repr, half))}...${repr.slice(ceilCodePointBoundary(repr, repr.length - half))}`
 }
