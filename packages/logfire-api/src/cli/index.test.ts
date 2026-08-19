@@ -121,6 +121,401 @@ describe('CLI entrypoint', () => {
     })
   })
 
+  it('read-tokens create --save writes the file and prints nothing, falling back to the linked project', async () => {
+    const cwd = makeTmpDir()
+    const homeDir = makeTmpDir()
+    mkdirSync(join(homeDir, '.logfire'))
+    writeFileSync(
+      join(homeDir, '.logfire/default.toml'),
+      '[tokens."https://logfire-us.pydantic.dev"]\ntoken = "user-token"\nexpiration = "2099-12-31T23:59:59Z"\n'
+    )
+    mkdirSync(join(cwd, '.logfire'), { recursive: true })
+    writeFileSync(
+      join(cwd, '.logfire/logfire_credentials.json'),
+      JSON.stringify({
+        logfire_api_url: 'https://logfire-us.pydantic.dev',
+        project_name: 'orders',
+        project_url: 'https://logfire-us.pydantic.dev/test-org/orders',
+        token: 'fake-write-token',
+      })
+    )
+
+    const stdout = new MemoryOutput()
+    const stderr = new MemoryOutput()
+    await expect(
+      runCli(['read-tokens', 'create', '--save'], {
+        cwd,
+        fetch: fetchSequence([jsonResponse({ token: 'saved-read-token' })]),
+        homeDir,
+        stderr,
+        stdout,
+      })
+    ).resolves.toBe(0)
+
+    expect(stdout.text()).toBe('')
+    expect(stderr.text()).not.toContain('saved-read-token')
+    expect(stderr.text()).toContain('test-org/orders')
+
+    const saved = JSON.parse(readFileSync(join(cwd, '.logfire/read_token.json'), 'utf8')) as Record<string, unknown>
+    expect(saved['token']).toBe('saved-read-token')
+    expect(saved['organization']).toBe('test-org')
+    expect(saved['project_name']).toBe('orders')
+    expect(saved['base_url']).toBe('https://logfire-us.pydantic.dev')
+  })
+
+  it('read-tokens create without --save prints the token and writes no file', async () => {
+    const cwd = makeTmpDir()
+    const homeDir = makeTmpDir()
+    mkdirSync(join(homeDir, '.logfire'))
+    writeFileSync(
+      join(homeDir, '.logfire/default.toml'),
+      '[tokens."https://logfire-us.pydantic.dev"]\ntoken = "user-token"\nexpiration = "2099-12-31T23:59:59Z"\n'
+    )
+
+    const stdout = new MemoryOutput()
+    await expect(
+      runCli(['read-tokens', '--project', 'test-org/orders', 'create'], {
+        cwd,
+        fetch: fetchSequence([jsonResponse({ token: 'printed-token' })]),
+        homeDir,
+        stderr: new MemoryOutput(),
+        stdout,
+      })
+    ).resolves.toBe(0)
+
+    expect(stdout.text()).toBe('printed-token\n')
+    expect(() => readFileSync(join(cwd, '.logfire/read_token.json'), 'utf8')).toThrow('ENOENT')
+  })
+
+  it('read-tokens create --save with an explicit --project needs no linked directory', async () => {
+    const cwd = makeTmpDir()
+    const homeDir = makeTmpDir()
+    mkdirSync(join(homeDir, '.logfire'))
+    writeFileSync(
+      join(homeDir, '.logfire/default.toml'),
+      '[tokens."https://logfire-us.pydantic.dev"]\ntoken = "user-token"\nexpiration = "2099-12-31T23:59:59Z"\n'
+    )
+    // Deliberately no `.logfire/logfire_credentials.json` in cwd: --project bypasses the
+    // linked-directory fallback entirely.
+
+    await expect(
+      runCli(['read-tokens', '--project', 'other-org/other-project', 'create', '--save'], {
+        cwd,
+        fetch: fetchSequence([jsonResponse({ token: 'explicit-project-token' })]),
+        homeDir,
+        stderr: new MemoryOutput(),
+        stdout: new MemoryOutput(),
+      })
+    ).resolves.toBe(0)
+
+    const saved = JSON.parse(readFileSync(join(cwd, '.logfire/read_token.json'), 'utf8')) as Record<string, unknown>
+    expect(saved['organization']).toBe('other-org')
+    expect(saved['project_name']).toBe('other-project')
+  })
+
+  it('read-tokens create --save run twice replaces the stale token, not merges with it', async () => {
+    const cwd = makeTmpDir()
+    const homeDir = makeTmpDir()
+    mkdirSync(join(homeDir, '.logfire'))
+    writeFileSync(
+      join(homeDir, '.logfire/default.toml'),
+      '[tokens."https://logfire-us.pydantic.dev"]\ntoken = "user-token"\nexpiration = "2099-12-31T23:59:59Z"\n'
+    )
+    mkdirSync(join(cwd, '.logfire'), { recursive: true })
+    writeFileSync(
+      join(cwd, '.logfire/logfire_credentials.json'),
+      JSON.stringify({
+        logfire_api_url: 'https://logfire-us.pydantic.dev',
+        project_name: 'orders',
+        project_url: 'https://logfire-us.pydantic.dev/test-org/orders',
+        token: 'fake-write-token',
+      })
+    )
+    // A long, stale token: dropping symlink-safe truncation would leave trailing bytes
+    // from this behind, and a same-length fresh token would not expose that.
+    writeFileSync(
+      join(cwd, '.logfire/read_token.json'),
+      JSON.stringify({
+        base_url: 'https://logfire-us.pydantic.dev',
+        organization: 'test-org',
+        project_name: 'orders',
+        token: `stale-token-${'x'.repeat(200)}`,
+      })
+    )
+
+    await expect(
+      runCli(['read-tokens', 'create', '--save'], {
+        cwd,
+        fetch: fetchSequence([jsonResponse({ token: 'fresh-token' })]),
+        homeDir,
+        stderr: new MemoryOutput(),
+        stdout: new MemoryOutput(),
+      })
+    ).resolves.toBe(0)
+
+    const saved = JSON.parse(readFileSync(join(cwd, '.logfire/read_token.json'), 'utf8')) as Record<string, unknown>
+    expect(saved['token']).toBe('fresh-token')
+  })
+
+  it('projects status without a saved token says what to run, without calling the API', async () => {
+    const cwd = makeTmpDir()
+    mkdirSync(join(cwd, '.logfire'), { recursive: true })
+    writeFileSync(
+      join(cwd, '.logfire/logfire_credentials.json'),
+      JSON.stringify({
+        logfire_api_url: 'https://logfire-us.pydantic.dev',
+        project_name: 'orders',
+        project_url: 'https://logfire-us.pydantic.dev/test-org/orders',
+        token: 'fake-write-token',
+      })
+    )
+
+    const stderr = new MemoryOutput()
+    const fetchImpl = vi.fn<typeof fetch>()
+    await expect(runCli(['projects', 'status'], { cwd, fetch: fetchImpl, stderr, stdout: new MemoryOutput() })).resolves.toBe(1)
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(stderr.text()).toContain('read-tokens create --save')
+  })
+
+  it('projects status renders one row per service and never displays the read token', async () => {
+    const cwd = makeTmpDir()
+    linkProject(cwd, { baseUrl: 'https://logfire-us.pydantic.dev', readToken: 'fake-read-token' })
+
+    const stderr = new MemoryOutput()
+    await expect(
+      runCli(['projects', 'status'], {
+        cwd,
+        fetch: fetchSequence([
+          jsonResponse({
+            data: [
+              { last_seen: '2026-08-19T01:00:00.000Z', records: 87, service_name: 'orders-web' },
+              { last_seen: '2026-08-19T01:00:05.000Z', records: 84, service_name: 'orders-worker' },
+            ],
+          }),
+        ]),
+        stderr,
+        stdout: new MemoryOutput(),
+      })
+    ).resolves.toBe(0)
+
+    const text = stderr.text()
+    expect(text).toContain('test-org/orders')
+    expect(text).toContain('orders-web')
+    expect(text).toContain('orders-worker')
+    expect(text).toContain('87')
+    expect(text).not.toContain('fake-read-token')
+  })
+
+  it('projects status --json puts the same data on stdout', async () => {
+    const cwd = makeTmpDir()
+    linkProject(cwd, { baseUrl: 'https://logfire-us.pydantic.dev', readToken: 'fake-read-token' })
+
+    const stdout = new MemoryOutput()
+    await expect(
+      runCli(['projects', 'status', '--json'], {
+        cwd,
+        fetch: fetchSequence([
+          jsonResponse({ data: [{ last_seen: '2026-08-19T01:00:00.000Z', records: 87, service_name: 'orders-web' }] }),
+        ]),
+        stderr: new MemoryOutput(),
+        stdout,
+      })
+    ).resolves.toBe(0)
+
+    expect(JSON.parse(stdout.text())).toEqual({
+      lookback_hours: 1,
+      organization: 'test-org',
+      project_name: 'orders',
+      project_url: 'https://logfire-us.pydantic.dev/test-org/orders',
+      services: [{ last_seen: '2026-08-19T01:00:00.000Z', records: 87, service_name: 'orders-web' }],
+    })
+  })
+
+  it('projects status reports "not yet" rather than failure when nothing has arrived', async () => {
+    const cwd = makeTmpDir()
+    linkProject(cwd, { baseUrl: 'https://logfire-us.pydantic.dev', readToken: 'fake-read-token' })
+
+    const stderr = new MemoryOutput()
+    await expect(
+      runCli(['projects', 'status'], { cwd, fetch: fetchSequence([jsonResponse({ data: [] })]), stderr, stdout: new MemoryOutput() })
+    ).resolves.toBe(0)
+
+    expect(stderr.text()).toContain('No telemetry in the last 1h')
+  })
+
+  it('ignores a malicious logfire_api_url and queries the host the token was saved with', async () => {
+    // `logfire_credentials.json` lives inside the project this command runs in, so a
+    // tampered repository can set `logfire_api_url` to anything. If that value controlled
+    // where the read token were sent, checking out an untrusted repo and running `projects
+    // status` in it would hand the token straight to an attacker.
+    const cwd = makeTmpDir()
+    mkdirSync(join(cwd, '.logfire'), { recursive: true })
+    writeFileSync(
+      join(cwd, '.logfire/logfire_credentials.json'),
+      JSON.stringify({
+        logfire_api_url: 'https://attacker.example.com',
+        project_name: 'orders',
+        project_url: 'https://logfire-us.pydantic.dev/test-org/orders',
+        token: 'fake-write-token',
+      })
+    )
+    writeFileSync(
+      join(cwd, '.logfire/read_token.json'),
+      JSON.stringify({
+        base_url: 'https://logfire-us.pydantic.dev',
+        organization: 'test-org',
+        project_name: 'orders',
+        token: 'fake-read-token',
+      })
+    )
+
+    const requestedHosts: string[] = []
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      requestedHosts.push(new URL(input instanceof Request ? input.url : input.toString()).host)
+      return jsonResponse({ data: [{ last_seen: '2026-08-19T01:00:00.000Z', records: 1, service_name: 'orders-web' }] })
+    })
+
+    await expect(
+      runCli(['projects', 'status'], { cwd, fetch: fetchImpl, stderr: new MemoryOutput(), stdout: new MemoryOutput() })
+    ).resolves.toBe(0)
+
+    expect(requestedHosts).toEqual(['logfire-us.pydantic.dev'])
+  })
+
+  it('queries a self-hosted deployment using the saved base URL, not a region guess', async () => {
+    // An earlier design derived the query host from the token's own region prefix, which
+    // closed the exfiltration path above but would have silently misrouted a self-hosted
+    // deployment: its base URL cannot be recovered from the token, only from where it was
+    // actually minted.
+    const cwd = makeTmpDir()
+    linkProject(cwd, {
+      baseUrl: 'https://logfire.example.com',
+      readToken: 'fake-read-token',
+      projectUrl: 'https://logfire.example.com/test-org/orders',
+    })
+
+    const requestedHosts: string[] = []
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      requestedHosts.push(new URL(input instanceof Request ? input.url : input.toString()).host)
+      return jsonResponse({ data: [{ last_seen: '2026-08-19T01:00:00.000Z', records: 1, service_name: 'orders-web' }] })
+    })
+
+    await expect(
+      runCli(['projects', 'status'], { cwd, fetch: fetchImpl, stderr: new MemoryOutput(), stdout: new MemoryOutput() })
+    ).resolves.toBe(0)
+
+    expect(requestedHosts).toEqual(['logfire.example.com'])
+  })
+
+  it('reports a network failure cleanly instead of an unhandled rejection', async () => {
+    const cwd = makeTmpDir()
+    linkProject(cwd, { baseUrl: 'https://logfire-us.pydantic.dev', readToken: 'fake-read-token' })
+
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      await Promise.resolve()
+      throw new Error('connect ECONNREFUSED')
+    })
+
+    const stderr = new MemoryOutput()
+    await expect(runCli(['projects', 'status'], { cwd, fetch: fetchImpl, stderr, stdout: new MemoryOutput() })).resolves.toBe(1)
+    expect(stderr.text()).toContain('Could not reach https://logfire-us.pydantic.dev')
+  })
+
+  it('rejects a non-200 response cleanly', async () => {
+    const cwd = makeTmpDir()
+    linkProject(cwd, { baseUrl: 'https://logfire-us.pydantic.dev', readToken: 'fake-read-token' })
+
+    const stderr = new MemoryOutput()
+    await expect(
+      runCli(['projects', 'status'], {
+        cwd,
+        fetch: fetchSequence([new Response(null, { status: 204 })]),
+        stderr,
+        stdout: new MemoryOutput(),
+      })
+    ).resolves.toBe(1)
+    expect(stderr.text()).toContain('Could not read the project: 204')
+  })
+
+  it('rejects a malformed 200 response body cleanly', async () => {
+    const cwd = makeTmpDir()
+    linkProject(cwd, { baseUrl: 'https://logfire-us.pydantic.dev', readToken: 'fake-read-token' })
+
+    const stderr = new MemoryOutput()
+    await expect(
+      runCli(['projects', 'status'], {
+        cwd,
+        fetch: fetchSequence([new Response('not json', { status: 200 })]),
+        stderr,
+        stdout: new MemoryOutput(),
+      })
+    ).resolves.toBe(1)
+    expect(stderr.text()).toContain('unexpected response shape')
+  })
+
+  it('strips control characters from a service name before writing to the terminal', async () => {
+    const cwd = makeTmpDir()
+    linkProject(cwd, { baseUrl: 'https://logfire-us.pydantic.dev', readToken: 'fake-read-token' })
+    const evilName = 'evil\x1b[2Korders-web\x9btest'
+
+    const stderr = new MemoryOutput()
+    await expect(
+      runCli(['projects', 'status'], {
+        cwd,
+        fetch: fetchSequence([jsonResponse({ data: [{ last_seen: '2026-08-19T01:00:00.000Z', records: 1, service_name: evilName }] })]),
+        stderr,
+        stdout: new MemoryOutput(),
+      })
+    ).resolves.toBe(0)
+
+    const text = stderr.text()
+    expect(text).not.toContain('\x1b')
+    expect(text).not.toContain('\x9b')
+  })
+
+  it('does not need control-character stripping in --json mode: JSON.stringify already escapes them', async () => {
+    // Pins that nobody "fixes" this by routing --json through the same stripping the
+    // table uses, which would mangle legitimate unicode service names for no reason: a
+    // JSON string escapes control characters (as `\u001b`, not a literal ESC byte) by
+    // construction, so the raw value is safe here without help.
+    const cwd = makeTmpDir()
+    linkProject(cwd, { baseUrl: 'https://logfire-us.pydantic.dev', readToken: 'fake-read-token' })
+    const evilName = 'evil\x1b[2Korders-web'
+
+    const stdout = new MemoryOutput()
+    await expect(
+      runCli(['projects', 'status', '--json'], {
+        cwd,
+        fetch: fetchSequence([jsonResponse({ data: [{ last_seen: '2026-08-19T01:00:00.000Z', records: 1, service_name: evilName }] })]),
+        stderr: new MemoryOutput(),
+        stdout,
+      })
+    ).resolves.toBe(0)
+
+    const raw = stdout.text()
+    expect(raw).not.toContain('\x1b')
+    expect(raw).toContain('\\u001b')
+    expect((JSON.parse(raw) as { services: { service_name: string }[] }).services[0]?.service_name).toBe(evilName)
+  })
+
+  function linkProject(cwd: string, options: { baseUrl: string; projectUrl?: string; readToken: string }): void {
+    mkdirSync(join(cwd, '.logfire'), { recursive: true })
+    writeFileSync(
+      join(cwd, '.logfire/logfire_credentials.json'),
+      JSON.stringify({
+        logfire_api_url: options.baseUrl,
+        project_name: 'orders',
+        project_url: options.projectUrl ?? `${options.baseUrl}/test-org/orders`,
+        token: 'fake-write-token',
+      })
+    )
+    writeFileSync(
+      join(cwd, '.logfire/read_token.json'),
+      JSON.stringify({ base_url: options.baseUrl, organization: 'test-org', project_name: 'orders', token: options.readToken })
+    )
+  }
+
   function makeTmpDir(): string {
     const dir = mkdtempSync(join(tmpdir(), 'logfire-cli-entry-'))
     tmpDirs.push(dir)

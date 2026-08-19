@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -8,12 +8,18 @@ import {
   UserTokenCollection,
   formatUserToken,
   isExpired,
+  loadSavedReadToken,
+  organizationFromProjectUrl,
   parseUserTokensToml,
   projectCredentialsPath,
   readProjectCredentials,
+  readTokenPath,
+  removeProjectCredentials,
+  saveReadToken,
   stringifyUserTokensToml,
   writeProjectCredentials,
 } from './credentials'
+import { LogfireCliError } from './errors'
 
 describe('CLI credentials', () => {
   const tmpDirs: string[] = []
@@ -96,6 +102,165 @@ token = "ignored"
     })
 
     expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toBe('node_modules\n')
+  })
+
+  it('saves and loads a read token, scoped to the org and project that issued it', () => {
+    const dir = makeTmpDir()
+    const expiresAt = new Date('2099-12-31T23:59:59.000Z')
+
+    const path = saveReadToken(dir, {
+      baseUrl: 'https://logfire-us.pydantic.dev',
+      expiresAt,
+      organization: 'test-org',
+      projectName: 'orders',
+      token: 'read-token',
+    })
+
+    expect(path).toBe(readTokenPath(dir))
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      base_url: 'https://logfire-us.pydantic.dev',
+      expires_at: '2099-12-31T23:59:59.000Z',
+      organization: 'test-org',
+      project_name: 'orders',
+      token: 'read-token',
+    })
+    expect(loadSavedReadToken(dir, { organization: 'test-org', projectName: 'orders' })).toEqual({
+      baseUrl: 'https://logfire-us.pydantic.dev',
+      token: 'read-token',
+    })
+    // A different project must not see it -- `projects use` repoints the directory, and a
+    // token left from the previous project would otherwise be sent for the new one.
+    expect(loadSavedReadToken(dir, { organization: 'test-org', projectName: 'other-project' })).toBeUndefined()
+  })
+
+  it('treats a missing expiry as unbounded, not invalid', () => {
+    const dir = makeTmpDir()
+    writeFileSync(
+      readTokenPath(dir),
+      JSON.stringify({ base_url: 'https://logfire-us.pydantic.dev', organization: 'test-org', project_name: 'orders', token: 'read-token' })
+    )
+
+    expect(loadSavedReadToken(dir, { organization: 'test-org', projectName: 'orders' })).toEqual({
+      baseUrl: 'https://logfire-us.pydantic.dev',
+      token: 'read-token',
+    })
+  })
+
+  it.each([
+    [{ organization: 'other-org' }, 'issued for a different organization'],
+    [{ project_name: 'other-project' }, 'issued for a different project'],
+    [{ expires_at: '2000-01-01T00:00:00Z' }, 'already expired'],
+    [{ expires_at: 'not-a-timestamp' }, 'unparseable expiry'],
+    [{ token: '' }, 'empty token'],
+    [{ token: undefined }, 'no token key'],
+    [{ base_url: undefined }, 'no base_url key'],
+  ])('rejects a saved token that is unusable: %j (%s)', (override, _reason) => {
+    const dir = makeTmpDir()
+    const base = {
+      base_url: 'https://logfire-us.pydantic.dev',
+      expires_at: '2099-12-31T23:59:59Z',
+      organization: 'test-org',
+      project_name: 'orders',
+      token: 'read-token',
+    }
+    writeFileSync(readTokenPath(dir), JSON.stringify({ ...base, ...override }))
+
+    expect(loadSavedReadToken(dir, { organization: 'test-org', projectName: 'orders' })).toBeUndefined()
+  })
+
+  it('writes the saved token readable only by its owner', () => {
+    const dir = makeTmpDir()
+    saveReadToken(dir, {
+      baseUrl: 'https://logfire-us.pydantic.dev',
+      expiresAt: new Date(),
+      organization: 'test-org',
+      projectName: 'orders',
+      token: 'read-token',
+    })
+
+    expect(statSync(readTokenPath(dir)).mode & 0o777).toBe(0o600)
+  })
+
+  it('refuses to follow a symlink at the saved-token destination', () => {
+    const dir = makeTmpDir()
+    const victim = join(dir, 'victim.txt')
+    writeFileSync(victim, 'important')
+    symlinkSync(victim, readTokenPath(dir))
+
+    expect(() =>
+      saveReadToken(dir, {
+        baseUrl: 'https://logfire-us.pydantic.dev',
+        expiresAt: new Date(),
+        organization: 'test-org',
+        projectName: 'orders',
+        token: 'read-token',
+      })
+    ).toThrow(LogfireCliError)
+    expect(readFileSync(victim, 'utf8')).toBe('important')
+  })
+
+  it('narrows an existing permissive file before writing, not after', () => {
+    const dir = makeTmpDir()
+    writeFileSync(readTokenPath(dir), '{}')
+    chmodSync(readTokenPath(dir), 0o644)
+
+    saveReadToken(dir, {
+      baseUrl: 'https://logfire-us.pydantic.dev',
+      expiresAt: new Date(),
+      organization: 'test-org',
+      projectName: 'orders',
+      token: 'read-token',
+    })
+
+    // The mode passed to `openSync` only applies when it CREATES the file, so a file that
+    // already existed keeps its old permissions unless something explicitly narrows them.
+    expect(statSync(readTokenPath(dir)).mode & 0o777).toBe(0o600)
+  })
+
+  it('removes the saved read token as part of removing project credentials', () => {
+    const dir = makeTmpDir()
+    writeProjectCredentials(dir, {
+      logfire_api_url: 'https://logfire-us.pydantic.dev',
+      project_name: 'orders',
+      project_url: 'https://logfire-us.pydantic.dev/test-org/orders',
+      token: 'write-token',
+    })
+    saveReadToken(dir, {
+      baseUrl: 'https://logfire-us.pydantic.dev',
+      expiresAt: new Date(),
+      organization: 'test-org',
+      projectName: 'orders',
+      token: 'read-token',
+    })
+
+    removeProjectCredentials(dir)
+
+    expect(readProjectCredentials(dir)).toBeUndefined()
+    expect(loadSavedReadToken(dir, { organization: 'test-org', projectName: 'orders' })).toBeUndefined()
+  })
+
+  it('seeds .gitignore when saveReadToken creates the data directory itself', () => {
+    // `saveReadToken` calls the same `ensureDataDir` as `writeProjectCredentials`, but
+    // exercised on its own: `read-tokens create --save` can run before `projects use` has
+    // ever created the directory (an explicit `--project` needs no linked directory at
+    // all), so this path has to seed `.gitignore` too, not only the project-credentials one.
+    const dir = join(makeTmpDir(), 'nested', '.logfire')
+    saveReadToken(dir, {
+      baseUrl: 'https://logfire-us.pydantic.dev',
+      expiresAt: new Date(),
+      organization: 'test-org',
+      projectName: 'orders',
+      token: 'read-token',
+    })
+
+    expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toBe('*')
+  })
+
+  it('derives the organization from a project URL', () => {
+    expect(organizationFromProjectUrl('https://logfire-us.pydantic.dev/test-org/orders')).toBe('test-org')
+    expect(organizationFromProjectUrl('https://logfire-us.pydantic.dev/test-org/orders/')).toBe('test-org')
+    expect(organizationFromProjectUrl('https://logfire-us.pydantic.dev/orders')).toBeUndefined()
+    expect(organizationFromProjectUrl('not a url')).toBeUndefined()
   })
 
   function makeTmpDir(): string {

@@ -112,10 +112,14 @@ export class LogfireApiClient {
     )
   }
 
-  async createReadToken(organization: string, projectName: string): Promise<{ token: string }> {
+  async createReadToken(organization: string, projectName: string, expiresAt?: Date): Promise<{ token: string }> {
+    const body: Record<string, string> = { description: 'Created by Logfire CLI' }
+    if (expiresAt !== undefined) {
+      body['expires_at'] = expiresAt.toISOString()
+    }
     return await this.postJson<{ token: string }>(
       `/v1/organizations/${encodeURIComponent(organization)}/projects/${encodeURIComponent(projectName)}/read-tokens`,
-      { description: 'Created by Logfire CLI' },
+      body,
       'Error creating project read token'
     )
   }
@@ -227,6 +231,77 @@ export async function getTokenInfo(
     return undefined
   }
   return (await response.json()) as TokenInfoResponse
+}
+
+export type QueryProjectRow = Record<string, unknown>
+
+export interface QueryProjectOptions {
+  fetch?: typeof fetch
+  limit?: number
+  minTimestamp?: Date
+}
+
+/**
+ * Run a SQL query against a project's telemetry, authenticated with a READ token rather
+ * than the CLI's own user session -- this is why it is a standalone function rather than
+ * a `LogfireApiClient` method, matching `getTokenInfo` above for the same reason.
+ *
+ * `baseUrl` must be the host the read token was actually minted against (recorded by
+ * `saveReadToken`), never re-derived from anywhere inside the project being queried -- see
+ * the doc comment on `saveReadToken` for why.
+ */
+export async function queryProject(
+  baseUrl: string,
+  readToken: string,
+  sql: string,
+  options: QueryProjectOptions = {}
+): Promise<QueryProjectRow[]> {
+  const fetchImpl = options.fetch ?? fetch
+  const body: Record<string, unknown> = { sql }
+  if (options.minTimestamp !== undefined) {
+    body['min_timestamp'] = options.minTimestamp.toISOString()
+  }
+  if (options.limit !== undefined) {
+    body['limit'] = options.limit
+  }
+
+  let response: Response
+  try {
+    response = await fetchImpl(urlFor(baseUrl, '/v2/query'), {
+      body: JSON.stringify(body),
+      headers: {
+        Authorization: readToken,
+        'Content-Type': 'application/json',
+        'User-Agent': USER_AGENT,
+      },
+      method: 'POST',
+    })
+  } catch (error) {
+    // A DNS failure, timeout, or refused connection rejects here rather than resolving a
+    // response, and would otherwise surface as a raw, unhandled rejection.
+    throw new LogfireCliError(`Could not reach ${baseUrl}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  // Exactly 200, not `response.ok`: a 204 or 3xx is "not an error" by that test and would
+  // then fail parsing the body as JSON instead of this message.
+  if (response.status !== 200) {
+    throw new LogfireCliError(`Could not read the project: ${String(response.status)} ${await response.text()}`)
+  }
+
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    throw new LogfireCliError('Could not read the project: unexpected response shape (not JSON)')
+  }
+  const data = isRecord(payload) ? payload['data'] : undefined
+  // A 200 whose body is not JSON, or JSON shaped unlike the query response, can happen
+  // without the backend ever seeing the request -- a proxy or WAF intercepting it -- and
+  // would otherwise fail below with a raw type error instead of this message.
+  if (!Array.isArray(data) || !data.every((row) => isRecord(row))) {
+    throw new LogfireCliError('Could not read the project: unexpected response shape ("data" is not a list of objects)')
+  }
+  return data as QueryProjectRow[]
 }
 
 export function urlFor(baseUrl: string, endpoint: string): string {
