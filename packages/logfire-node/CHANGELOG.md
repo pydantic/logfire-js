@@ -1,5 +1,19 @@
 # logfire
 
+## 0.18.15
+
+### Patch Changes
+
+- Updated dependencies [d55df7a]
+- Updated dependencies [dcdd0a8]
+- Updated dependencies [3a1be2e]
+- Updated dependencies [b2d6e2e]
+- Updated dependencies [f3d3427]
+- Updated dependencies [5bfe645]
+- Updated dependencies [c188c07]
+- Updated dependencies [487eaa8]
+  - logfire@0.21.10
+
 ## 0.18.14
 
 ### Patch Changes
