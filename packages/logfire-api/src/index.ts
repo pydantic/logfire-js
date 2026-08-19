@@ -333,7 +333,7 @@ function isHrTime(value: unknown): value is HrTime {
   return Array.isArray(value) && value.length === 2 && typeof value[0] === 'number' && typeof value[1] === 'number'
 }
 
-type ThenMethod = (onFulfilled: (value: never) => unknown) => unknown
+type ThenMethod = (onFulfilled: (value: never) => unknown, onRejected?: (reason: unknown) => unknown) => unknown
 
 /**
  * Returns the value's `then` method, or undefined when it has none.
@@ -631,22 +631,12 @@ function spanWithSettings<R>(
         // would leave the chain returned by `finally` rejected and unhandled even when the caller
         // handles the original. `result` is returned untouched, so the rejection still reaches
         // the caller.
-        const resultWithFinally = result as {
-          finally: (onFinally: () => void) => unknown
-          then?: (onFulfilled: () => void, onRejected: (reason: unknown) => void) => unknown
-        }
-        let then: unknown
-        try {
-          // Reading `then` runs a getter that belongs to the caller, so it must not turn a
-          // callback that already succeeded into a throw. `finally` gated this branch and was the
-          // only subscription before, so it stays the fallback when `then` is unusable.
-          then = resultWithFinally.then
-        } catch {
-          then = undefined
-        }
-        if (typeof then === 'function') {
-          // The cached reference is what gets called: a stateful getter can return a function on
-          // one read and throw on the next.
+        const resultWithFinally = result as { finally: (onFinally: () => void) => unknown }
+        // Reading `then` runs a getter that belongs to the caller, so it must not turn a callback
+        // that already succeeded into a throw. `finally` gated this branch and was the only
+        // subscription before, so it stays the fallback when `then` is unusable.
+        const thenMethod = getThenMethod(result)
+        if (thenMethod !== undefined) {
           let ended = false
           const endSpan = () => {
             if (!ended) {
@@ -655,7 +645,7 @@ function spanWithSettings<R>(
             }
           }
           try {
-            ;(then as NonNullable<typeof resultWithFinally.then>).call(result, endSpan, (reason: unknown) => {
+            thenMethod.call(result, endSpan, (reason: unknown) => {
               recordSpanException(span, reason, serializationAttributes)
               endSpan()
             })
