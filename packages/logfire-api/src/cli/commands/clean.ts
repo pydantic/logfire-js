@@ -2,7 +2,7 @@ import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { CliContext } from '../context'
-import { defaultDataDir, projectCredentialsPath, removeProjectCredentials } from '../credentials'
+import { defaultDataDir, projectCredentialsPath, readTokenPath, removeProjectCredentials } from '../credentials'
 import { LogfireCliError } from '../errors'
 import { writeLine } from '../output'
 
@@ -18,7 +18,7 @@ export async function runCleanCommand(args: string[], context: CliContext): Prom
     throw new LogfireCliError(`No Logfire data found in ${dataDir}`)
   }
 
-  const files = [join(dataDir, '.gitignore'), projectCredentialsPath(dataDir)].filter((path) => existsSync(path))
+  const files = [join(dataDir, '.gitignore'), projectCredentialsPath(dataDir), readTokenPath(dataDir)].filter((path) => existsSync(path))
   const confirmed = await context.prompt.confirm(`The following files will be deleted:\n${files.join('\n')}\nAre you sure?`, false)
   if (confirmed) {
     removeProjectCredentials(dataDir)

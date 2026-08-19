@@ -2,13 +2,23 @@ import { createInterface } from 'node:readline'
 
 import type { Readable, Writable } from 'node:stream'
 
+import { LogfireCliError } from './errors'
+
 /**
  * Thrown by `ask()` when there is nothing left to read and the caller passed no default
- * to fall back to. A caller that can say something more specific than "no answer" --
- * `promptForRegion` names the exact commands to run instead -- catches this and re-throws
- * its own `LogfireCliError`; one that cannot just lets it propagate.
+ * to fall back to. Extends `LogfireCliError`, not `Error`: `runCli()`'s top-level catch
+ * already turns any `LogfireCliError` into a clean message and exit code, so a caller with
+ * nothing more specific to say can simply not catch this at all and still avoid the raw,
+ * unhandled stack trace this whole file exists to get rid of. A caller that CAN say
+ * something more specific -- `promptForRegion` names the exact commands to run instead --
+ * catches it and throws its own `LogfireCliError` in its place.
  */
-export class NoAnswerAvailableError extends Error {}
+export class NoAnswerAvailableError extends LogfireCliError {
+  constructor() {
+    super('No answer available: not running in a terminal and nothing left to read from stdin.')
+    this.name = 'NoAnswerAvailableError'
+  }
+}
 
 export interface Prompt {
   choice(message: string, choices: readonly string[], defaultChoice?: string): Promise<string>

@@ -2,6 +2,7 @@ import { PassThrough, Writable } from 'node:stream'
 
 import { describe, expect, it } from 'vite-plus/test'
 
+import { LogfireCliError } from './errors'
 import { createPrompt, NoAnswerAvailableError } from './interactivePrompt'
 
 describe('CLI interactive prompt', () => {
@@ -59,6 +60,22 @@ describe('CLI interactive prompt', () => {
       await withTimeout(async () => {
         const { prompt } = makePrompt('')
         await expect(prompt.choice('Pick one', ['1', '2'])).rejects.toBeInstanceOf(NoAnswerAvailableError)
+      })
+    })
+
+    it('NoAnswerAvailableError is a LogfireCliError with a real message, not a bare Error', async () => {
+      // `runCli()`'s top-level catch only special-cases `LogfireCliError` -- anything else
+      // escapes as a raw, unhandled stack trace, which is exactly the failure mode this
+      // whole file exists to remove. A caller with nothing more specific to say than
+      // `promptForRegion` has (it names the exact commands to run) can therefore just NOT
+      // catch this at all and still get a clean exit code and an actionable message,
+      // rather than a blank one.
+      await withTimeout(async () => {
+        const { prompt } = makePrompt('')
+        const error: unknown = await prompt.choice('Pick one', ['1', '2']).catch((caught: unknown) => caught)
+        expect(error).toBeInstanceOf(LogfireCliError)
+        expect((error as LogfireCliError).message).not.toBe('')
+        expect((error as LogfireCliError).exitCode).toBe(1)
       })
     })
 

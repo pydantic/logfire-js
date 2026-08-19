@@ -12,7 +12,7 @@ import {
   writeProjectCredentials,
 } from '../credentials'
 import { LogfireCliError } from '../errors'
-import { prettyTable, writeLine } from '../output'
+import { prettyTable, sanitizeForTerminal, writeLine } from '../output'
 
 const PROJECT_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
 
@@ -146,8 +146,12 @@ async function projectStatus(options: StatusOptions, context: CliContext): Promi
     return
   }
 
-  writeLine(context.stderr, `Project  ${organization}/${credentials.project_name}`)
-  writeLine(context.stderr, `         ${credentials.project_url}`)
+  // `credentials` came from a file inside the project this command runs in (see
+  // `saveReadToken`'s doc comment for the same threat model), so its fields get the same
+  // stripping as a service name -- not JSON.stringify's escaping, because this is the
+  // stderr summary, not the `--json` path above, which is already safe by construction.
+  writeLine(context.stderr, `Project  ${sanitizeForTerminal(organization)}/${sanitizeForTerminal(credentials.project_name)}`)
+  writeLine(context.stderr, `         ${sanitizeForTerminal(credentials.project_url)}`)
   writeLine(context.stderr)
   if (services.length === 0) {
     // Deliberately not phrased as failure. Data takes a moment to arrive, and the common
@@ -191,8 +195,7 @@ function queryValueToString(value: unknown): string {
  * very table an operator is reading to decide whether their setup worked. */
 function printableCell(value: unknown, fallback: string): string {
   const text = value === undefined || value === null || value === '' ? fallback : queryValueToString(value)
-  // eslint-disable-next-line no-control-regex -- the control characters ARE the target.
-  return text.replace(/[\x00-\x1f\x7f-\x9f]/gu, '\ufffd')
+  return sanitizeForTerminal(text)
 }
 
 async function listProjects(client: LogfireApiClient, context: CliContext): Promise<void> {

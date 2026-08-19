@@ -3,11 +3,11 @@ import {
   constants,
   existsSync,
   fchmodSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
   writeSync,
 } from 'node:fs'
@@ -383,7 +383,18 @@ function ensureDataDir(dataDir: string): void {
   // Match Python's `ensure_data_dir_exists`: only seed `.gitignore` when creating the
   // directory, so an existing dir's ignore rules are never clobbered.
   if (existsSync(dataDir)) {
-    if (!statSync(dataDir).isDirectory()) {
+    // `lstatSync`, not `statSync`: the data directory lives inside the user's repository,
+    // so a symlink can arrive by being committed to it, the same way a symlinked
+    // `read_token.json` can -- `writeFileSecurely`'s `O_NOFOLLOW` only protects that final
+    // path component, not `dataDir` itself. `statSync` follows symlinks, so it would
+    // report a symlinked `.logfire` pointing at a tracked or artifact-collected directory
+    // as a perfectly ordinary directory, and every write meant for the ignored data
+    // directory would silently land wherever the symlink actually points.
+    const stat = lstatSync(dataDir)
+    if (stat.isSymbolicLink()) {
+      throw new LogfireCliError(`${dataDir} is a symlink; refusing to write Logfire data through it.`)
+    }
+    if (!stat.isDirectory()) {
       throw new LogfireCliError(`Data directory ${dataDir} exists but is not a directory`)
     }
     return

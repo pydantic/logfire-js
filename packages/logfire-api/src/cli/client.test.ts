@@ -159,6 +159,16 @@ describe('CLI client', () => {
     )
   })
 
+  it('strips control characters from a non-200 response body before it reaches the error message', async () => {
+    // The body of a non-200 response is whatever the server (or a proxy/WAF answering on
+    // its behalf) sent, not something this CLI generated -- the same untrusted-text
+    // reasoning `printableCell` applies to a telemetry-supplied service name.
+    const fetchImpl = fetchSequence([], [new Response('evil\x1b[2Kmessage', { status: 500 })])
+    await expect(queryProject('https://logfire-us.pydantic.dev', 'read-token', 'SELECT 1', { fetch: fetchImpl })).rejects.toEqual(
+      new LogfireCliError('Could not read the project: 500 evil�[2Kmessage')
+    )
+  })
+
   it.each([
     ['not json at all', 'not json at all'],
     ['{"no_data_key":[]}', '{"no_data_key":[]}'],

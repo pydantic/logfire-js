@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await -- test stubs satisfy async signatures without awaiting. */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
@@ -208,6 +208,47 @@ describe('CLI entrypoint', () => {
     expect(saved['base_url']).toBe('https://logfire-us.pydantic.dev')
   })
 
+  it('read-tokens create --save never mints a token if the destination cannot be reserved first', async () => {
+    // A read token cannot be revoked or displayed once created. If the destination is
+    // checked only AFTER minting, a symlinked `.logfire` (or a read-only data directory)
+    // leaves a real, orphaned server-side credential behind with no way to see or undo
+    // it. Reserving the destination first means that failure happens before the mint
+    // ever has a chance to run at all -- proven here by asserting `fetch` (the mint's
+    // only network call in this flow) is never even invoked.
+    const cwd = makeTmpDir()
+    const homeDir = makeTmpDir()
+    mkdirSync(join(homeDir, '.logfire'))
+    writeFileSync(
+      join(homeDir, '.logfire/default.toml'),
+      '[tokens."https://logfire-us.pydantic.dev"]\ntoken = "user-token"\nexpiration = "2099-12-31T23:59:59Z"\n'
+    )
+    // A symlinked data directory, with an explicit --project so `readProjectCredentials`
+    // is never consulted -- otherwise ITS OWN "no credentials found" failure (reading
+    // through the same symlink to a directory with nothing in it) would exit 1 and skip
+    // `fetch` regardless of ordering, and the test would pass without the fix it exists to
+    // pin down.
+    const victim = makeTmpDir()
+    symlinkSync(victim, join(cwd, '.logfire'))
+
+    // A real response, not a bare `vi.fn()`: if the mint DID run before the reserve
+    // check, an un-stubbed fetch would throw its own `TypeError` reading `.ok` off
+    // `undefined`, which fails this test for the wrong reason -- masking the ordering bug
+    // as a crash instead of a clean "fetch was called when it should not have been".
+    const fetchImpl = fetchSequence([jsonResponse({ token: 'newly-minted-token' })])
+    await expect(
+      runCli(['read-tokens', 'create', '--project', 'test-org/orders', '--save'], {
+        cwd,
+        fetch: fetchImpl,
+        homeDir,
+        stderr: new MemoryOutput(),
+        stdout: new MemoryOutput(),
+      })
+    ).resolves.toBe(1)
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(existsSync(join(victim, 'read_token.json'))).toBe(false)
+  })
+
   it('read-tokens create without --save prints the token and writes no file', async () => {
     const cwd = makeTmpDir()
     const homeDir = makeTmpDir()
@@ -300,6 +341,43 @@ describe('CLI entrypoint', () => {
 
     const saved = JSON.parse(readFileSync(join(cwd, '.logfire/read_token.json'), 'utf8')) as Record<string, unknown>
     expect(saved['token']).toBe('fresh-token')
+  })
+
+  it('clean lists the saved read token in the confirmation prompt, and removes it on confirm', async () => {
+    // Approving deletion should not silently remove a credential the prompt never
+    // mentioned -- the read token is deleted by `removeProjectCredentials` just like the
+    // write-token credentials file, so it has to be named alongside it.
+    const cwd = makeTmpDir()
+    mkdirSync(join(cwd, '.logfire'), { recursive: true })
+    writeFileSync(
+      join(cwd, '.logfire/logfire_credentials.json'),
+      JSON.stringify({
+        logfire_api_url: 'https://logfire-us.pydantic.dev',
+        project_name: 'orders',
+        project_url: 'https://logfire-us.pydantic.dev/test-org/orders',
+        token: 'fake-write-token',
+      })
+    )
+    writeFileSync(
+      join(cwd, '.logfire/read_token.json'),
+      JSON.stringify({ base_url: 'https://logfire-us.pydantic.dev', organization: 'test-org', project_name: 'orders', token: 'read-token' })
+    )
+
+    let confirmMessage = ''
+    const prompt: Prompt = {
+      ...promptWithDefaults(),
+      confirm: async (message) => {
+        confirmMessage = message
+        return true
+      },
+    }
+
+    await expect(
+      runCli(['clean'], { cwd, homeDir: makeTmpDir(), prompt, stderr: new MemoryOutput(), stdout: new MemoryOutput() })
+    ).resolves.toBe(0)
+
+    expect(confirmMessage).toContain('read_token.json')
+    expect(existsSync(join(cwd, '.logfire/read_token.json'))).toBe(false)
   })
 
   it('projects status without a saved token says what to run, without calling the API', async () => {
@@ -542,6 +620,41 @@ describe('CLI entrypoint', () => {
     expect(raw).not.toContain('\x1b')
     expect(raw).toContain('\\u001b')
     expect((JSON.parse(raw) as { services: { service_name: string }[] }).services[0]?.service_name).toBe(evilName)
+  })
+
+  it('strips control characters from the project name in the status header', async () => {
+    // `organization`/`project_name`/`project_url` come from `logfire_credentials.json`,
+    // a file inside the project this command runs in -- the same threat model
+    // `saveReadToken`'s own doc comment already applies to `base_url`, and the same
+    // untrusted-text reasoning as a telemetry-supplied service name.
+    const cwd = makeTmpDir()
+    const evilName = 'orders\x1b[2Kevil'
+    mkdirSync(join(cwd, '.logfire'), { recursive: true })
+    writeFileSync(
+      join(cwd, '.logfire/logfire_credentials.json'),
+      JSON.stringify({
+        logfire_api_url: 'https://logfire-us.pydantic.dev',
+        project_name: evilName,
+        project_url: 'https://logfire-us.pydantic.dev/test-org/orders',
+        token: 'fake-write-token',
+      })
+    )
+    writeFileSync(
+      join(cwd, '.logfire/read_token.json'),
+      JSON.stringify({
+        base_url: 'https://logfire-us.pydantic.dev',
+        organization: 'test-org',
+        project_name: evilName,
+        token: 'fake-read-token',
+      })
+    )
+
+    const stderr = new MemoryOutput()
+    await expect(
+      runCli(['projects', 'status'], { cwd, fetch: fetchSequence([jsonResponse({ data: [] })]), stderr, stdout: new MemoryOutput() })
+    ).resolves.toBe(0)
+
+    expect(stderr.text()).not.toContain('\x1b')
   })
 
   function linkProject(cwd: string, options: { baseUrl: string; projectUrl?: string; readToken: string }): void {

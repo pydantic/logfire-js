@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -197,6 +197,28 @@ token = "ignored"
       })
     ).toThrow(LogfireCliError)
     expect(readFileSync(victim, 'utf8')).toBe('important')
+  })
+
+  it('refuses to write through a symlinked data directory', () => {
+    // `O_NOFOLLOW` on the final `openSync` call only protects `read_token.json` itself --
+    // a committed `.logfire` that is ITSELF a symlink (to a tracked directory, or one CI
+    // collects artifacts from) would sail past that check entirely, since `dataDir`'s
+    // existence is checked with `statSync`, which follows symlinks.
+    const parent = makeTmpDir()
+    const victim = makeTmpDir()
+    const dataDir = join(parent, '.logfire')
+    symlinkSync(victim, dataDir)
+
+    expect(() =>
+      saveReadToken(dataDir, {
+        baseUrl: 'https://logfire-us.pydantic.dev',
+        expiresAt: new Date(),
+        organization: 'test-org',
+        projectName: 'orders',
+        token: 'read-token',
+      })
+    ).toThrow(LogfireCliError)
+    expect(existsSync(join(victim, 'read_token.json'))).toBe(false)
   })
 
   it('narrows an existing permissive file before writing, not after', () => {

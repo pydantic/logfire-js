@@ -2,6 +2,7 @@ import { hostname } from 'node:os'
 
 import type { UserToken, UserTokenData } from './credentials'
 import { LogfireCliError } from './errors'
+import { sanitizeForTerminal } from './output'
 
 export const USER_AGENT: string = `logfire-js/${PACKAGE_VERSION}`
 
@@ -285,7 +286,10 @@ export async function queryProject(
   // Exactly 200, not `response.ok`: a 204 or 3xx is "not an error" by that test and would
   // then fail parsing the body as JSON instead of this message.
   if (response.status !== 200) {
-    throw new LogfireCliError(`Could not read the project: ${String(response.status)} ${await response.text()}`)
+    // Sanitized: this reaches stderr via a thrown error message, and the body is
+    // whatever the server (or a proxy/WAF answering on its behalf) sent, not something
+    // this CLI generated.
+    throw new LogfireCliError(`Could not read the project: ${String(response.status)} ${sanitizeForTerminal(await response.text())}`)
   }
 
   let payload: unknown

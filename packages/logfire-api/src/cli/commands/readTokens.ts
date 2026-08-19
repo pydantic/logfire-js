@@ -53,6 +53,14 @@ export async function runReadTokensCommand(args: string[], globalOptions: Global
   }
 
   const expiresAt = new Date(Date.now() + READ_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000)
+  // Reserve the destination BEFORE minting. A real token cannot be revoked or displayed
+  // once created, so a failure writing it -- a symlinked destination, a read-only data
+  // directory -- must happen before the mint, not leave an orphaned server-side
+  // credential behind after. The placeholder token is an empty string, which
+  // `loadSavedReadToken`'s own validation already refuses to treat as usable, so an
+  // interrupted run between this call and the real one below leaves nothing a later
+  // `projects status` could mistake for a working credential.
+  saveReadToken(dataDir, { baseUrl: client.baseUrl, expiresAt, organization, projectName: project, token: '' })
   const response = await client.createReadToken(organization, project, expiresAt)
   const path = saveReadToken(dataDir, {
     baseUrl: client.baseUrl,
