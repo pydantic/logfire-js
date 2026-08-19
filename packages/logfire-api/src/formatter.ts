@@ -265,6 +265,14 @@ export function truncateString(str: string, maxLength: number): string {
     return str
   }
 
-  // Truncate and add ellipsis
-  return str.substring(0, maxLength - 3) + '...'
+  // `substring` counts UTF-16 code units, so cutting between the halves of a
+  // surrogate pair leaves a lone surrogate that is not valid UTF-8 once the
+  // attribute is serialized. Drop the whole character instead.
+  let end = maxLength - 3
+  const lastCode = str.charCodeAt(end - 1)
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    end -= 1
+  }
+
+  return str.substring(0, end) + '...'
 }

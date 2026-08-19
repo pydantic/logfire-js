@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vite-plus/test'
 
 import { NoopScrubber } from './AttributeScrubber'
-import { logfireFormatWithExtras } from './formatter'
+import { logfireFormatWithExtras, truncateString } from './formatter'
 
 function format(template: string, record: Record<string, unknown>): string {
   return logfireFormatWithExtras(template, record, NoopScrubber).formattedMessage
@@ -74,5 +74,22 @@ describe('message template nested field access', () => {
 
   test('a literal attribute key containing brackets keeps resolving', () => {
     expect(format('first item is {a[0]}', { 'a[0]': 'zero' })).toBe('first item is zero')
+  })
+})
+
+describe('truncateString', () => {
+  test('does not split a surrogate pair at the cut', () => {
+    // The emoji straddles the cut, so a code-unit slice would keep only its high half.
+    const value = `${'a'.repeat(96)}\u{1F600}${'b'.repeat(20)}`
+    const truncated = truncateString(value, 100)
+
+    expect(truncated).toBe(`${'a'.repeat(96)}...`)
+    expect(truncated.split('').some((char) => char >= '\uD800' && char <= '\uDFFF')).toBe(false)
+    expect(JSON.stringify(truncated).includes('\\ud')).toBe(false)
+  })
+
+  test('cuts at the limit when the boundary is not a surrogate', () => {
+    expect(truncateString('a'.repeat(120), 100)).toBe(`${'a'.repeat(97)}...`)
+    expect(truncateString('short', 100)).toBe('short')
   })
 })
