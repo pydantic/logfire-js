@@ -670,6 +670,26 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     expect(logs[0]?.attributes['tenant']).toBe('acme')
   })
 
+  it('propagates baggage keys that collide with object members', async () => {
+    const fn = withOnlineEvaluation(async (input: string) => input, {
+      evaluators: [new AlwaysPass()],
+      target: 'baggage-keys',
+    })
+    // Baggage arrives from the `baggage` header, so `toString` is an ordinary remote-supplied key.
+    const baggage = propagation.createBaggage({ plain: { value: 'plain-value' }, toString: { value: 'to-string-value' } })
+
+    const { logs } = await withMemoryLogExporter(async () =>
+      ContextAPI.with(propagation.setBaggage(ContextAPI.active(), baggage), async () => {
+        await expect(fn('x')).resolves.toBe('x')
+        await waitForEvaluations()
+      })
+    )
+
+    const attributes = logs[0]?.attributes ?? {}
+    const baggageKeys = Object.entries(attributes).filter(([key]) => key === 'plain' || key === 'toString')
+    expect(Object.fromEntries(baggageKeys)).toEqual({ plain: 'plain-value', toString: 'to-string-value' })
+  })
+
   it('uses independent per-evaluator sampling by default and names context inputs when possible', async () => {
     const random = vi.spyOn(Math, 'random').mockReturnValueOnce(0.4).mockReturnValueOnce(0.6).mockReturnValue(0.1)
     const sinkPayloads: SinkPayload[] = []
