@@ -439,7 +439,12 @@ function truncate(text: string): string {
   if (text.length <= MAX_ARG_LENGTH) {
     return text
   }
-  return `${text.slice(0, MAX_ARG_LENGTH)}...(+${String(text.length - MAX_ARG_LENGTH)} chars)`
+  // Slicing counts UTF-16 code units, so cutting between the halves of a
+  // surrogate pair leaves a lone surrogate, which has no UTF-8 encoding once the
+  // captured argument is sent. Drop the whole character instead.
+  const lastCode = text.charCodeAt(MAX_ARG_LENGTH - 1)
+  const end = lastCode >= 0xd800 && lastCode <= 0xdbff ? MAX_ARG_LENGTH - 1 : MAX_ARG_LENGTH
+  return `${text.slice(0, end)}...(+${String(text.length - end)} chars)`
 }
 
 function getFetchMethod(input: RequestInfo | URL, init: RequestInit | undefined): string {
