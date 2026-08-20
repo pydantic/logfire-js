@@ -42,7 +42,8 @@ describe('CLI regions', () => {
       // path only fires if that contract is ever violated -- guards against a future
       // regression there, not something a real prompt implementation can trigger today.
       const prompt = fakePrompt({ choice: async () => '99' })
-      await expect(promptForRegion(prompt)).rejects.toThrow('Invalid Logfire region selection.')
+      const error: unknown = await promptForRegion(prompt).catch((caught: unknown) => caught)
+      expect((error as Error).message).toBe('Invalid Logfire region selection.')
     })
 
     it('names the exact command to run for each region when there is no answer to read', async () => {
@@ -55,7 +56,8 @@ describe('CLI regions', () => {
         },
       })
 
-      await expect(promptForRegion(prompt)).rejects.toThrow(
+      const error: unknown = await promptForRegion(prompt).catch((caught: unknown) => caught)
+      expect((error as Error).message).toBe(
         [
           'Logfire is available in multiple data regions and no region was selected.',
           'Re-run in an interactive terminal to choose, or pass one:',
@@ -67,13 +69,14 @@ describe('CLI regions', () => {
     })
 
     it('lets an unrelated error from choice() propagate unchanged', async () => {
+      const originalError = new Error('the terminal caught fire')
       const prompt = fakePrompt({
         choice: async () => {
-          throw new Error('the terminal caught fire')
+          throw originalError
         },
       })
 
-      await expect(promptForRegion(prompt)).rejects.toThrow('the terminal caught fire')
+      await expect(promptForRegion(prompt)).rejects.toBe(originalError)
     })
   })
 })

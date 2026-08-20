@@ -784,12 +784,20 @@ function jsonResponse(data: unknown, status = 200): Response {
  * the case -- which is what caught the original bug (`npx logfire auth` hanging on a
  * piped multi-line answer) in the first place. */
 async function withTimeout<T>(fn: () => Promise<T>, ms = 2000): Promise<T> {
-  return await Promise.race([
-    fn(),
-    new Promise<T>((_resolve, reject) => {
-      setTimeout(() => {
-        reject(new Error(`Timed out after ${String(ms)}ms -- a prompt call likely hung`))
-      }, ms)
-    }),
-  ])
+  // `Promise.race` settles as soon as `fn()` does, but the losing `setTimeout` keeps
+  // running regardless -- left uncleared, it holds the event loop open for the rest of
+  // `ms` after every fast test and can fire into a promise nothing is awaiting anymore.
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`Timed out after ${String(ms)}ms -- a prompt call likely hung`))
+        }, ms)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
 }

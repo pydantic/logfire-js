@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import {
   closeSync,
   constants,
@@ -12,7 +13,7 @@ import {
   writeSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import { LOGFIRE_REGIONS, PYDANTIC_LOGFIRE_TOKEN_PATTERN } from '../tokenBaseUrl'
 import type { Prompt } from './interactivePrompt'
@@ -304,9 +305,39 @@ export function readTokenPath(dataDir: string): string {
  * silently breaks self-hosted deployments, whose base URL cannot be recovered from the
  * token -- only from where it was actually minted.
  */
+/**
+ * Whether `path` is tracked by the git repository it sits in, if any.
+ *
+ * `.gitignore` only stops an UNTRACKED file from being added; it does nothing for a path
+ * already in the index -- committed before this feature existed, or by mistake -- so
+ * writing a real, permanent credential through such a path would make the next `git
+ * commit -am` publish it. `execFileSync` throws both when the file is genuinely untracked
+ * (`git ls-files` exits non-zero) and when git itself is unavailable or the check times
+ * out, and `false` is the right answer for both: "definitely not tracked" and "cannot
+ * tell, so do not block a working setup over an environment quirk unrelated to the file's
+ * own tracked status" land on the same safe outcome here.
+ */
+function isGitTracked(path: string): boolean {
+  try {
+    execFileSync('git', ['ls-files', '--error-unmatch', '--', basename(path)], {
+      cwd: dirname(path),
+      stdio: 'ignore',
+      timeout: 5000,
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function saveReadToken(dataDir: string, options: SaveReadTokenOptions): string {
   ensureDataDir(dataDir)
   const path = readTokenPath(dataDir)
+  if (isGitTracked(path)) {
+    throw new LogfireCliError(
+      `${path} is already tracked by git, so .gitignore does not protect it. Writing the token there risks it reaching a commit. Untrack it first (\`git rm --cached ${path}\`) or remove it, then try again.`
+    )
+  }
   const payload: Record<string, string> = {
     base_url: options.baseUrl,
     organization: options.organization,

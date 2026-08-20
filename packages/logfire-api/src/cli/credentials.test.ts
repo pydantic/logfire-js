@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -203,8 +204,8 @@ token = "ignored"
   it('refuses to write through a symlinked data directory', () => {
     // `O_NOFOLLOW` on the final `openSync` call only protects `read_token.json` itself --
     // a committed `.logfire` that is ITSELF a symlink (to a tracked directory, or one CI
-    // collects artifacts from) would sail past that check entirely, since `dataDir`'s
-    // existence is checked with `statSync`, which follows symlinks.
+    // collects artifacts from) would sail past that check entirely, so `ensureDataDir`
+    // uses `lstatSync` and rejects the symlinked directory before any write.
     const parent = makeTmpDir()
     const victim = makeTmpDir()
     const dataDir = join(parent, '.logfire')
@@ -220,6 +221,28 @@ token = "ignored"
       })
     ).toThrow(LogfireCliError)
     expect(existsSync(join(victim, 'read_token.json'))).toBe(false)
+  })
+
+  it('refuses to save a read token through an already git-tracked file', () => {
+    // `.gitignore` does not protect a path already tracked -- committed before this
+    // feature existed, or by mistake. Writing a live, permanent credential into it would
+    // put that credential in the next `git commit -am`.
+    const dir = makeTmpDir()
+    const path = readTokenPath(dir)
+    writeFileSync(path, '{}')
+    execFileSync('git', ['init', '--quiet'], { cwd: dir })
+    execFileSync('git', ['add', '--force', path], { cwd: dir })
+
+    expect(() =>
+      saveReadToken(dir, {
+        baseUrl: 'https://logfire-us.pydantic.dev',
+        expiresAt: new Date(),
+        organization: 'test-org',
+        projectName: 'orders',
+        token: 'read-token',
+      })
+    ).toThrow(LogfireCliError)
+    expect(readFileSync(path, 'utf8')).toBe('{}')
   })
 
   it('narrows an existing permissive file before writing, not after', () => {

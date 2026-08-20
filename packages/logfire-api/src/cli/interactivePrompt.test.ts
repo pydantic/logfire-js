@@ -74,7 +74,9 @@ describe('CLI interactive prompt', () => {
         const { prompt } = makePrompt('')
         const error: unknown = await prompt.choice('Pick one', ['1', '2']).catch((caught: unknown) => caught)
         expect(error).toBeInstanceOf(LogfireCliError)
-        expect((error as LogfireCliError).message).not.toBe('')
+        expect((error as LogfireCliError).message).toBe(
+          'No answer available: not running in a terminal and nothing left to read from stdin.'
+        )
         expect((error as LogfireCliError).exitCode).toBe(1)
       })
     })
@@ -166,12 +168,20 @@ class DiscardingWritable extends Writable {
  * settled. Wrapping in a short, generous timeout turns that into an assertion failure
  * that names the case, which is what caught the original bug in the first place. */
 async function withTimeout<T>(fn: () => Promise<T>, ms = 2000): Promise<T> {
-  return await Promise.race([
-    fn(),
-    new Promise<T>((_resolve, reject) => {
-      setTimeout(() => {
-        reject(new Error(`Timed out after ${String(ms)}ms -- a prompt call likely hung`))
-      }, ms)
-    }),
-  ])
+  // `Promise.race` settles as soon as `fn()` does, but the losing `setTimeout` keeps
+  // running regardless -- left uncleared, it holds the event loop open for the rest of
+  // `ms` after every fast test and can fire into a promise nothing is awaiting anymore.
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`Timed out after ${String(ms)}ms -- a prompt call likely hung`))
+        }, ms)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
 }
