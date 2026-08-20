@@ -89,6 +89,25 @@ export class Contains extends Evaluator {
       }
       return { reason: `Output ${truncatedRepr(output, 200)} does not contain provided value`, value: false }
     }
+    // A Set or a Map reaches the object branch below and gets checked for property names, which
+    // it has none of. Python compares against set members and dict keys, so do the same before
+    // falling through. Both report their contents, since `JSON.stringify` renders either as `{}`.
+    if (output instanceof Set) {
+      for (const item of output) {
+        if (deepEqual(item, this.value)) {
+          return { value: true }
+        }
+      }
+      return { reason: `Output ${truncatedRepr([...output], 200)} does not contain provided value`, value: false }
+    }
+    if (output instanceof Map) {
+      for (const key of output.keys()) {
+        if (deepEqual(key, this.value)) {
+          return { value: true }
+        }
+      }
+      return { reason: `Output ${truncatedRepr([...output.keys()], 200)} does not contain provided value as a key`, value: false }
+    }
     if (output !== null && typeof output === 'object') {
       const obj = output as Record<string, unknown>
       if (isPlainRecord(this.value)) {
