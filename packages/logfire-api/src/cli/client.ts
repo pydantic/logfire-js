@@ -280,7 +280,8 @@ export async function queryProject(
   } catch (error) {
     // A DNS failure, timeout, or refused connection rejects here rather than resolving a
     // response, and would otherwise surface as a raw, unhandled rejection.
-    throw new LogfireCliError(`Could not reach ${baseUrl}: ${error instanceof Error ? error.message : String(error)}`)
+    const detail = `${baseUrl}: ${error instanceof Error ? error.message : String(error)}`
+    throw new LogfireCliError(`Could not reach ${sanitizeForTerminal(detail)}`)
   }
 
   // Exactly 200, not `response.ok`: a 204 or 3xx is "not an error" by that test and would
@@ -289,7 +290,14 @@ export async function queryProject(
     // Sanitized: this reaches stderr via a thrown error message, and the body is
     // whatever the server (or a proxy/WAF answering on its behalf) sent, not something
     // this CLI generated.
-    throw new LogfireCliError(`Could not read the project: ${String(response.status)} ${sanitizeForTerminal(await response.text())}`)
+    let responseText: string
+    try {
+      responseText = await response.text()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new LogfireCliError(`Could not read the project response: ${sanitizeForTerminal(detail)}`)
+    }
+    throw new LogfireCliError(`Could not read the project: ${String(response.status)} ${sanitizeForTerminal(responseText)}`)
   }
 
   let payload: unknown

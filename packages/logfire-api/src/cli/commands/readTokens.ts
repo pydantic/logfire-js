@@ -1,8 +1,8 @@
 import { createAuthenticatedClient } from '../authClient'
 import type { CliContext, GlobalOptions } from '../context'
-import { defaultDataDir, ensureDataDir, organizationFromProjectUrl, readProjectCredentials, saveReadToken } from '../credentials'
+import { defaultDataDir, organizationFromProjectUrl, readProjectCredentials, reserveReadTokenSave } from '../credentials'
 import { LogfireCliError } from '../errors'
-import { writeLine } from '../output'
+import { sanitizeForTerminal, writeLine } from '../output'
 
 // Only tokens this CLI writes to disk get an expiry. It cannot revoke a token, so one
 // sitting in a file needs some end; a token printed for the caller to paste elsewhere
@@ -40,41 +40,39 @@ export async function runReadTokensCommand(args: string[], globalOptions: Global
     organization = organization ?? organizationFromProjectUrl(credentials.project_url)
     project = project ?? credentials.project_name
     if (organization === undefined) {
-      throw new LogfireCliError(`Cannot tell which organization ${credentials.project_url} belongs to.`)
+      throw new LogfireCliError(`Cannot tell which organization ${sanitizeForTerminal(credentials.project_url)} belongs to.`)
     }
   }
 
-  const client = await createAuthenticatedClient(globalOptions, context)
-
   if (!parsed.save) {
+    const client = await createAuthenticatedClient(globalOptions, context)
     const response = await client.createReadToken(organization, project)
     writeLine(context.stdout, response.token)
     return
   }
 
   const expiresAt = new Date(Date.now() + READ_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000)
-  // Reserve the destination BEFORE minting: a real token cannot be revoked or displayed
-  // once created, so a failure writing it -- a symlinked `.logfire`, a read-only data
-  // directory -- must happen before the mint, not leave an orphaned server-side credential
-  // behind after. `ensureDataDir` alone is enough; it validates the DIRECTORY without
-  // touching `read_token.json` itself, so a run that already had a valid saved token keeps
-  // it if the mint below fails, rather than losing it to an empty placeholder that then
-  // never gets overwritten. `saveReadToken`'s own `O_NOFOLLOW` on the final write still
-  // catches a symlinked `read_token.json` FILE specifically -- a narrower case this reserve
-  // step does not need to duplicate, since that failure mode can't leave a half-written
-  // orphaned credential the way a torn-down directory write could.
-  ensureDataDir(dataDir)
-  const response = await client.createReadToken(organization, project, expiresAt)
-  const path = saveReadToken(dataDir, {
-    baseUrl: client.baseUrl,
-    expiresAt,
-    organization,
-    projectName: project,
-    token: response.token,
-  })
+  const reservation = reserveReadTokenSave(dataDir)
+  let path: string
+  try {
+    const client = await createAuthenticatedClient(globalOptions, context)
+    const response = await client.createReadToken(organization, project, expiresAt)
+    path = reservation.save({
+      baseUrl: client.baseUrl,
+      expiresAt,
+      organization,
+      projectName: project,
+      token: response.token,
+    })
+  } finally {
+    reservation.abort()
+  }
   // To stderr, and without the token. The whole point of `--save` is that the credential
   // never reaches a terminal, a log, or an agent's transcript.
-  writeLine(context.stderr, `Read token for ${organization}/${project} saved to ${path}.`)
+  writeLine(
+    context.stderr,
+    `Read token for ${sanitizeForTerminal(organization)}/${sanitizeForTerminal(project)} saved to ${sanitizeForTerminal(path)}.`
+  )
   writeLine(context.stderr, `It expires in ${String(READ_TOKEN_TTL_DAYS)} days. \`logfire projects status\` will use it.`)
 }
 

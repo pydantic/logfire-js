@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -16,6 +16,7 @@ import {
   readProjectCredentials,
   readTokenPath,
   removeProjectCredentials,
+  reserveReadTokenSave,
   saveReadToken,
   stringifyUserTokensToml,
   writeProjectCredentials,
@@ -103,6 +104,22 @@ token = "ignored"
     })
 
     expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toBe('node_modules\n')
+  })
+
+  it("adds the saved token to an existing data directory's ignore rules", () => {
+    const dir = makeTmpDir()
+    writeFileSync(join(dir, '.gitignore'), 'logfire_credentials.json\n')
+    execFileSync('git', ['init', '--quiet'], { cwd: dir })
+
+    saveReadToken(dir, {
+      baseUrl: 'https://logfire-us.pydantic.dev',
+      organization: 'test-org',
+      projectName: 'orders',
+      token: 'read-token',
+    })
+
+    expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toBe('logfire_credentials.json\nread_token.json\n')
+    expect(() => execFileSync('git', ['check-ignore', '--quiet', 'read_token.json'], { cwd: dir })).not.toThrow()
   })
 
   it('saves and loads a read token, scoped to the org and project that issued it', () => {
@@ -268,6 +285,18 @@ token = "ignored"
     // The mode passed to `openSync` only applies when it CREATES the file, so a file that
     // already existed keeps its old permissions unless something explicitly narrows them.
     expect(statSync(readTokenPath(dir)).mode & 0o777).toBe(0o600)
+  })
+
+  it('aborting a save reservation preserves the existing token and removes the staged file', () => {
+    const dir = makeTmpDir()
+    const path = readTokenPath(dir)
+    writeFileSync(path, 'existing-token')
+
+    const reservation = reserveReadTokenSave(dir)
+    reservation.abort()
+
+    expect(readFileSync(path, 'utf8')).toBe('existing-token')
+    expect(readdirSync(dir).sort()).toEqual(['.gitignore', 'read_token.json'])
   })
 
   it('removes the saved read token as part of removing project credentials', () => {

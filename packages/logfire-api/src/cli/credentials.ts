@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import {
   closeSync,
   constants,
@@ -8,9 +9,9 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -61,6 +62,11 @@ export interface SaveReadTokenOptions {
 export interface LoadSavedReadTokenOptions {
   organization: string
   projectName: string
+}
+
+export interface ReadTokenSaveReservation {
+  abort(): void
+  save(options: SaveReadTokenOptions): string
 }
 
 export function defaultAuthFilePath(homeDir: string = homedir()): string {
@@ -291,21 +297,6 @@ export function readTokenPath(dataDir: string): string {
 }
 
 /**
- * Save a read token for reuse by `projects status`, instead of creating one on every
- * invocation. Read tokens are permanent and this CLI has no way to revoke one, so a
- * command meant to be re-run while waiting for data would otherwise leave a live
- * credential behind on every poll.
- *
- * `baseUrl` must be the host the CREATE request actually used (`client.baseUrl` after
- * `createAuthenticatedClient`), never re-derived from `logfire_credentials.json` at query
- * time: that file lives inside the project this command runs in, so a tampered repository
- * could point it at an attacker's server and this command would hand over the read token
- * in the next request's Authorization header. Deriving the host from the token's own
- * region prefix instead (as an earlier version of the Python CLI did) closes that hole but
- * silently breaks self-hosted deployments, whose base URL cannot be recovered from the
- * token -- only from where it was actually minted.
- */
-/**
  * Whether `path` is tracked by the git repository it sits in, if any.
  *
  * `.gitignore` only stops an UNTRACKED file from being added; it does nothing for a path
@@ -330,7 +321,11 @@ function isGitTracked(path: string): boolean {
   }
 }
 
-export function saveReadToken(dataDir: string, options: SaveReadTokenOptions): string {
+/**
+ * Validate and reserve the saved-token destination before minting a token. The staged
+ * file stays empty until `save`, so aborting a failed mint preserves any existing token.
+ */
+export function reserveReadTokenSave(dataDir: string): ReadTokenSaveReservation {
   ensureDataDir(dataDir)
   const path = readTokenPath(dataDir)
   if (isGitTracked(path)) {
@@ -338,17 +333,99 @@ export function saveReadToken(dataDir: string, options: SaveReadTokenOptions): s
       `${path} is already tracked by git, so .gitignore does not protect it. Writing the token there risks it reaching a commit. Untrack it first (\`git rm --cached ${path}\`) or remove it, then try again.`
     )
   }
-  const payload: Record<string, string> = {
-    base_url: options.baseUrl,
-    organization: options.organization,
-    project_name: options.projectName,
-    token: options.token,
+
+  try {
+    ensureReadTokenIgnored(dataDir)
+    if (existsSync(path)) {
+      const stat = lstatSync(path)
+      if (stat.isSymbolicLink()) {
+        throw new LogfireCliError(`${path} is a symlink; refusing to write a Logfire read token through it.`)
+      }
+      if (!stat.isFile()) {
+        throw new LogfireCliError(`${path} exists but is not a regular file.`)
+      }
+    }
+  } catch (error) {
+    throw error instanceof LogfireCliError ? error : writeReadTokenError(path, error)
   }
-  if (options.expiresAt !== undefined) {
-    payload['expires_at'] = options.expiresAt.toISOString()
+
+  const temporaryPath = join(dataDir, `.${READ_TOKEN_FILENAME}.${randomUUID()}.tmp`)
+  let fd: number | undefined
+  const cleanupTemporaryFile = (): Error | undefined => {
+    let cleanupError: Error | undefined
+    if (fd !== undefined) {
+      try {
+        closeSync(fd)
+      } catch (error) {
+        cleanupError = error instanceof Error ? error : new Error(String(error))
+      }
+      fd = undefined
+    }
+    try {
+      rmSync(temporaryPath, { force: true })
+    } catch (error) {
+      cleanupError ??= error instanceof Error ? error : new Error(String(error))
+    }
+    return cleanupError
   }
-  writeFileSecurely(path, `${JSON.stringify(payload, null, 2)}\n`)
-  return path
+
+  try {
+    fd = openSync(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600)
+    fchmodSync(fd, 0o600)
+  } catch (error) {
+    throw writeReadTokenError(path, cleanupTemporaryFile() ?? error)
+  }
+
+  let active = true
+  const abort = (): void => {
+    if (!active) {
+      return
+    }
+    active = false
+    const error = cleanupTemporaryFile()
+    if (error !== undefined) {
+      throw writeReadTokenError(path, error)
+    }
+  }
+
+  return {
+    abort,
+    save(options) {
+      if (!active || fd === undefined) {
+        throw new LogfireCliError(`Could not write ${path}: the save reservation is no longer active.`)
+      }
+      try {
+        writeFileSync(fd, serializeReadToken(options))
+        closeSync(fd)
+        fd = undefined
+        renameSync(temporaryPath, path)
+        active = false
+        return path
+      } catch (error) {
+        let finalError = error
+        try {
+          abort()
+        } catch (cleanupError) {
+          finalError = cleanupError
+        }
+        throw finalError instanceof LogfireCliError ? finalError : writeReadTokenError(path, finalError)
+      }
+    },
+  }
+}
+
+/**
+ * Save a read token for reuse by `projects status`, instead of creating one on every
+ * invocation. `baseUrl` must be the host the create request actually used, because a
+ * self-hosted deployment cannot be reconstructed from the token.
+ */
+export function saveReadToken(dataDir: string, options: SaveReadTokenOptions): string {
+  const reservation = reserveReadTokenSave(dataDir)
+  try {
+    return reservation.save(options)
+  } finally {
+    reservation.abort()
+  }
 }
 
 /**
@@ -444,36 +521,43 @@ export function ensureDataDir(dataDir: string): void {
   writeFileSync(join(dataDir, '.gitignore'), '*')
 }
 
-/**
- * Write a file readable only by its owner, refusing to follow a symlink at the
- * destination. The data directory lives inside the user's repository, so a symlink can
- * arrive by being committed to it; following one would apply `O_TRUNC` and a permissions
- * change to whatever it points at instead of the intended file.
- *
- * The mode passed to `openSync` only applies when it CREATES the file, so an existing
- * file keeps whatever permissions it had -- `fchmodSync` runs before any bytes are
- * written, not after, so the content is never briefly sitting in a world-readable file.
- */
-function writeFileSecurely(path: string, contents: string): void {
-  // `O_NOFOLLOW` is not available on every platform (notably Windows, where creating a
-  // symlink needs a privilege most processes do not have); Node still exposes the
-  // constant as `undefined` there rather than throwing, so this falls back to 0. The
-  // `@types/node` type says `number`, not `number | undefined` -- that type is wrong on
-  // those platforms, not this fallback.
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- see above; the type is wrong on Windows.
-  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0)
-  let fd: number
-  try {
-    fd = openSync(path, flags, 0o600)
-  } catch (error) {
-    throw new LogfireCliError(`Could not write ${path}: ${error instanceof Error ? error.message : String(error)}`)
+function ensureReadTokenIgnored(dataDir: string): void {
+  const path = join(dataDir, '.gitignore')
+  let contents = ''
+  if (existsSync(path)) {
+    if (lstatSync(path).isSymbolicLink()) {
+      throw new LogfireCliError(`${path} is a symlink; refusing to update ignore rules through it.`)
+    }
+    contents = readFileSync(path, 'utf8')
   }
-  try {
-    fchmodSync(fd, 0o600)
-    writeSync(fd, contents)
-  } finally {
-    closeSync(fd)
+
+  const rules = contents
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'))
+  const lastRule = rules.at(-1)
+  if (lastRule === '*' || lastRule === READ_TOKEN_FILENAME || lastRule === `/${READ_TOKEN_FILENAME}`) {
+    return
   }
+  const separator = contents === '' || contents.endsWith('\n') ? '' : '\n'
+  writeFileSync(path, `${contents}${separator}${READ_TOKEN_FILENAME}\n`)
+}
+
+function serializeReadToken(options: SaveReadTokenOptions): string {
+  const payload: Record<string, string> = {
+    base_url: options.baseUrl,
+    organization: options.organization,
+    project_name: options.projectName,
+    token: options.token,
+  }
+  if (options.expiresAt !== undefined) {
+    payload['expires_at'] = options.expiresAt.toISOString()
+  }
+  return `${JSON.stringify(payload, null, 2)}\n`
+}
+
+function writeReadTokenError(path: string, error: unknown): LogfireCliError {
+  return new LogfireCliError(`Could not write ${path}: ${error instanceof Error ? error.message : String(error)}`)
 }
 
 function quoteTomlString(value: string): string {

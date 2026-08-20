@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/require-await -- test stubs satisfy async signatures without awaiting. */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
@@ -166,6 +167,33 @@ describe('CLI entrypoint', () => {
     })
   })
 
+  it('does not create a project by accepting prompt defaults at stdin EOF', async () => {
+    const cwd = makeTmpDir()
+    const homeDir = makeTmpDir()
+    mkdirSync(join(homeDir, '.logfire'))
+    writeFileSync(
+      join(homeDir, '.logfire/default.toml'),
+      '[tokens."https://logfire-us.pydantic.dev"]\ntoken = "user-token"\nexpiration = "2099-12-31T23:59:59Z"\n'
+    )
+    const stdin = new PassThrough()
+    stdin.end('')
+    const fetchImpl = fetchSequence([jsonResponse([{ organization_name: 'test-org' }])])
+
+    await expect(
+      runCli(['--region', 'us', 'projects', 'new'], {
+        cwd,
+        fetch: fetchImpl,
+        homeDir,
+        stderr: new MemoryOutput(),
+        stdin,
+        stdout: new MemoryOutput(),
+      })
+    ).resolves.toBe(1)
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(existsSync(join(cwd, '.logfire/logfire_credentials.json'))).toBe(false)
+  })
+
   it('read-tokens create --save writes the file and prints nothing, falling back to the linked project', async () => {
     const cwd = makeTmpDir()
     const homeDir = makeTmpDir()
@@ -206,6 +234,40 @@ describe('CLI entrypoint', () => {
     expect(saved['organization']).toBe('test-org')
     expect(saved['project_name']).toBe('orders')
     expect(saved['base_url']).toBe('https://logfire-us.pydantic.dev')
+  })
+
+  it('strips control characters from saved-token confirmation output', async () => {
+    const cwd = makeTmpDir()
+    const homeDir = makeTmpDir()
+    mkdirSync(join(homeDir, '.logfire'))
+    writeFileSync(
+      join(homeDir, '.logfire/default.toml'),
+      '[tokens."https://logfire-us.pydantic.dev"]\ntoken = "user-token"\nexpiration = "2099-12-31T23:59:59Z"\n'
+    )
+    mkdirSync(join(cwd, '.logfire'))
+    writeFileSync(
+      join(cwd, '.logfire/logfire_credentials.json'),
+      JSON.stringify({
+        logfire_api_url: 'https://logfire-us.pydantic.dev',
+        project_name: 'orders\x1b[2K',
+        project_url: 'https://logfire-us.pydantic.dev/test-org/orders',
+        token: 'fake-write-token',
+      })
+    )
+    const stderr = new MemoryOutput()
+
+    await expect(
+      runCli(['read-tokens', 'create', '--save'], {
+        cwd,
+        fetch: fetchSequence([jsonResponse({ token: 'saved-read-token' })]),
+        homeDir,
+        stderr,
+        stdout: new MemoryOutput(),
+      })
+    ).resolves.toBe(0)
+
+    expect(stderr.text()).not.toContain('\x1b')
+    expect(stderr.text()).toContain('orders�[2K')
   })
 
   it('read-tokens create --save never mints a token if the destination cannot be reserved first', async () => {
@@ -249,6 +311,51 @@ describe('CLI entrypoint', () => {
     expect(existsSync(join(victim, 'read_token.json'))).toBe(false)
   })
 
+  it('read-tokens create --save never mints through a symlinked token file', async () => {
+    const cwd = makeTmpDir()
+    const victim = join(makeTmpDir(), 'victim.txt')
+    mkdirSync(join(cwd, '.logfire'))
+    writeFileSync(victim, 'important')
+    symlinkSync(victim, join(cwd, '.logfire/read_token.json'))
+
+    const fetchImpl = fetchSequence([jsonResponse({ token: 'newly-minted-token' })])
+    await expect(
+      runCli(['read-tokens', 'create', '--project', 'test-org/orders', '--save'], {
+        cwd,
+        fetch: fetchImpl,
+        homeDir: makeTmpDir(),
+        stderr: new MemoryOutput(),
+        stdout: new MemoryOutput(),
+      })
+    ).resolves.toBe(1)
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(readFileSync(victim, 'utf8')).toBe('important')
+  })
+
+  it('read-tokens create --save never mints into an already tracked token file', async () => {
+    const cwd = makeTmpDir()
+    const dataDir = join(cwd, '.logfire')
+    mkdirSync(dataDir)
+    writeFileSync(join(dataDir, 'read_token.json'), '{}')
+    execFileSync('git', ['init', '--quiet'], { cwd })
+    execFileSync('git', ['add', '--force', '.logfire/read_token.json'], { cwd })
+
+    const fetchImpl = fetchSequence([jsonResponse({ token: 'newly-minted-token' })])
+    await expect(
+      runCli(['read-tokens', 'create', '--project', 'test-org/orders', '--save'], {
+        cwd,
+        fetch: fetchImpl,
+        homeDir: makeTmpDir(),
+        stderr: new MemoryOutput(),
+        stdout: new MemoryOutput(),
+      })
+    ).resolves.toBe(1)
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(readFileSync(join(dataDir, 'read_token.json'), 'utf8')).toBe('{}')
+  })
+
   it('read-tokens create --save keeps an existing valid token if the mint itself fails', async () => {
     // The reserve step only validates the DIRECTORY (`ensureDataDir`), never writing a
     // placeholder into `read_token.json` itself -- an earlier version reserved by writing
@@ -290,6 +397,7 @@ describe('CLI entrypoint', () => {
     ).resolves.toBe(1)
 
     expect(readFileSync(join(cwd, '.logfire/read_token.json'), 'utf8')).toBe(existingToken)
+    expect(readdirSync(join(cwd, '.logfire')).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 
   it('read-tokens create without --save prints the token and writes no file', async () => {

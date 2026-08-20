@@ -110,13 +110,13 @@ async function projectStatus(options: StatusOptions, context: CliContext): Promi
 
   const organization = organizationFromProjectUrl(credentials.project_url)
   if (organization === undefined) {
-    throw new LogfireCliError(`Cannot tell which organization ${credentials.project_url} belongs to.`)
+    throw new LogfireCliError(`Cannot tell which organization ${sanitizeForTerminal(credentials.project_url)} belongs to.`)
   }
 
   const saved = loadSavedReadToken(dataDir, { organization, projectName: credentials.project_name })
   if (saved === undefined) {
     throw new LogfireCliError(
-      `No usable read token for ${organization}/${credentials.project_name}.\n` +
+      `No usable read token for ${sanitizeForTerminal(organization)}/${sanitizeForTerminal(credentials.project_name)}.\n` +
         'Run `logfire read-tokens create --save` to create one, then try again.'
     )
   }

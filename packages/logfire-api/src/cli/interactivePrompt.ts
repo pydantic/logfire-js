@@ -5,8 +5,9 @@ import type { Readable, Writable } from 'node:stream'
 import { LogfireCliError } from './errors'
 
 /**
- * Thrown by `ask()` when there is nothing left to read and the caller passed no default
- * to fall back to. Extends `LogfireCliError`, not `Error`: `runCli()`'s top-level catch
+ * Thrown by a prompt when there is nothing left to read. EOF must not authorize a
+ * default action; an explicit blank line still selects the displayed default. Extends
+ * `LogfireCliError`, not `Error`: `runCli()`'s top-level catch
  * already turns any `LogfireCliError` into a clean message and exit code, so a caller with
  * nothing more specific to say can simply not catch this at all and still avoid the raw,
  * unhandled stack trace this whole file exists to get rid of. A caller that CAN say
@@ -81,11 +82,6 @@ export function createPrompt({ input, output }: PromptStreams): Prompt {
         // eslint-disable-next-line no-await-in-loop -- prompts are inherently sequential.
         const raw = await ask(`${message}${suffix}: `)
         if (raw === undefined) {
-          // A default answers for us; with none, looping on input that will never
-          // arrive is worse than failing loudly and saying so.
-          if (defaultChoice !== undefined) {
-            return defaultChoice
-          }
           throw new NoAnswerAvailableError()
         }
         const value = raw.trim() || defaultChoice
@@ -101,7 +97,7 @@ export function createPrompt({ input, output }: PromptStreams): Prompt {
         // eslint-disable-next-line no-await-in-loop -- prompts are inherently sequential.
         const raw = await ask(`${message}${suffix}`)
         if (raw === undefined) {
-          return defaultYes
+          throw new NoAnswerAvailableError()
         }
         const value = raw.trim().toLowerCase()
         if (value === '') {
@@ -119,7 +115,7 @@ export function createPrompt({ input, output }: PromptStreams): Prompt {
       const suffix = defaultValue !== undefined ? ` [${defaultValue}]` : ''
       const raw = await ask(`${message}${suffix}: `)
       if (raw === undefined) {
-        return defaultValue ?? ''
+        throw new NoAnswerAvailableError()
       }
       const trimmed = raw.trim()
       return trimmed === '' ? (defaultValue ?? '') : trimmed

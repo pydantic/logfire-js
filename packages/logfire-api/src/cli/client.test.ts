@@ -192,6 +192,32 @@ describe('CLI client', () => {
       new LogfireCliError('Could not reach https://logfire-us.pydantic.dev: connect ECONNREFUSED')
     )
   })
+
+  it('strips control characters from query connection errors', async () => {
+    const rejectedFetch = vi.fn<typeof fetch>(async () => Promise.reject(new Error('connect\x1b[2Kfailed')))
+    await expect(queryProject('https://logfire-us.pydantic.dev', 'read-token', 'SELECT 1', { fetch: rejectedFetch })).rejects.toEqual(
+      new LogfireCliError('Could not reach https://logfire-us.pydantic.dev: connect�[2Kfailed')
+    )
+
+    const unusedFetch = vi.fn<typeof fetch>()
+    await expect(queryProject('bad\x1b[2Kurl', 'read-token', 'SELECT 1', { fetch: unusedFetch })).rejects.toEqual(
+      new LogfireCliError('Could not reach bad�[2Kurl: Invalid URL')
+    )
+    expect(unusedFetch).not.toHaveBeenCalled()
+  })
+
+  it('wraps a failure while reading a non-200 response body', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      Promise.resolve({
+        status: 500,
+        text: async () => Promise.reject(new Error('terminated\x1b[2K')),
+      } as unknown as Response)
+    )
+
+    await expect(queryProject('https://logfire-us.pydantic.dev', 'read-token', 'SELECT 1', { fetch: fetchImpl })).rejects.toEqual(
+      new LogfireCliError('Could not read the project response: terminated�[2K')
+    )
+  })
 })
 
 interface CapturedRequest {

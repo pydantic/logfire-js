@@ -48,11 +48,19 @@ describe('CLI interactive prompt', () => {
     })
   })
 
+  it('accepts displayed defaults only from explicit blank answers', async () => {
+    const { prompt } = makePrompt('\n\n\n')
+
+    await expect(prompt.choice('Pick one', ['1', '2'], '1')).resolves.toBe('1')
+    await expect(prompt.confirm('Continue?', true)).resolves.toBe(true)
+    await expect(prompt.text('Name', 'fallback')).resolves.toBe('fallback')
+  })
+
   describe('when there is nothing left to read (stdin closed, no TTY)', () => {
-    it('choice falls back to its default instead of hanging', async () => {
+    it('choice rejects EOF instead of accepting its default without an answer', async () => {
       await withTimeout(async () => {
         const { prompt } = makePrompt('')
-        await expect(prompt.choice('Pick one', ['1', '2'], '1')).resolves.toBe('1')
+        await expect(prompt.choice('Pick one', ['1', '2'], '1')).rejects.toBeInstanceOf(NoAnswerAvailableError)
       })
     })
 
@@ -81,26 +89,26 @@ describe('CLI interactive prompt', () => {
       })
     })
 
-    it('confirm falls back to its default instead of hanging', async () => {
+    it('confirm rejects EOF instead of authorizing its default without an answer', async () => {
       await withTimeout(async () => {
         const { prompt: promptYes } = makePrompt('')
-        await expect(promptYes.confirm('Continue?', true)).resolves.toBe(true)
+        await expect(promptYes.confirm('Continue?', true)).rejects.toBeInstanceOf(NoAnswerAvailableError)
         const { prompt: promptNo } = makePrompt('')
-        await expect(promptNo.confirm('Continue?', false)).resolves.toBe(false)
+        await expect(promptNo.confirm('Continue?', false)).rejects.toBeInstanceOf(NoAnswerAvailableError)
       })
     })
 
-    it('text falls back to its default instead of hanging', async () => {
+    it('text rejects EOF instead of supplying its default without an answer', async () => {
       await withTimeout(async () => {
         const { prompt } = makePrompt('')
-        await expect(prompt.text('Name', 'fallback')).resolves.toBe('fallback')
+        await expect(prompt.text('Name', 'fallback')).rejects.toBeInstanceOf(NoAnswerAvailableError)
       })
     })
 
-    it('text with no default resolves to an empty string instead of hanging', async () => {
+    it('text with no default rejects EOF instead of supplying an empty answer', async () => {
       await withTimeout(async () => {
         const { prompt } = makePrompt('')
-        await expect(prompt.text('Name')).resolves.toBe('')
+        await expect(prompt.text('Name')).rejects.toBeInstanceOf(NoAnswerAvailableError)
       })
     })
 
