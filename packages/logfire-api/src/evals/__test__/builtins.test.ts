@@ -54,6 +54,23 @@ describe('built-in evaluator edge cases', () => {
     expect(deepEqual({ a: 1 }, { a: 2 })).toBe(false)
   })
 
+  it('Contains checks Set members and Map keys', () => {
+    // A task returns these in process, so they are not constrained by the dataset file format.
+    expect(new Contains({ value: 'a' }).evaluate(ctx(new Set(['a', 'b'])))).toEqual({ value: true })
+    expect(new Contains({ value: { id: 1 } }).evaluate(ctx(new Set([{ id: 1 }])))).toEqual({ value: true })
+    expect(new Contains({ value: 'k' }).evaluate(ctx(new Map([['k', 1]])))).toEqual({ value: true })
+
+    // The reason has to name the contents; `JSON.stringify` renders a Set or Map as `{}`.
+    expect(new Contains({ value: 'missing' }).evaluate(ctx(new Set(['a'])))).toEqual({
+      reason: 'Output ["a"] does not contain provided value',
+      value: false,
+    })
+    expect(new Contains({ value: 'missing' }).evaluate(ctx(new Map([['k', 1]])))).toEqual({
+      reason: 'Output ["k"] does not contain provided value as a key',
+      value: false,
+    })
+  })
+
   it('Equals and EqualsExpected preserve custom result names and empty-output behavior', () => {
     const eq = new Equals({ evaluationName: 'exact', value: { nested: ['x'] } })
     expect(eq.getResultName()).toBe('exact')
