@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from 'vite-plus/test'
 
-import { LogfireApiClient, InvalidProjectNameError, ProjectAlreadyExistsError, pollForToken, requestDeviceCode, urlFor } from './client'
+import {
+  LogfireApiClient,
+  InvalidProjectNameError,
+  ProjectAlreadyExistsError,
+  pollForToken,
+  queryProject,
+  requestDeviceCode,
+  urlFor,
+} from './client'
+import { LogfireCliError } from './errors'
 
 describe('CLI client', () => {
   it('uses Python-compatible device auth endpoints', async () => {
@@ -98,6 +107,116 @@ describe('CLI client', () => {
   it('joins endpoint URLs against base URLs with or without trailing slashes', () => {
     expect(urlFor('https://example.com', '/v1/info')).toBe('https://example.com/v1/info')
     expect(urlFor('https://example.com/', '/v1/info')).toBe('https://example.com/v1/info')
+  })
+
+  it('includes an expiry on createReadToken only when one is passed', async () => {
+    const calls: CapturedRequest[] = []
+    const client = new LogfireApiClient({
+      fetch: fetchSequence(calls, [jsonResponse({ token: 'read-token' }), jsonResponse({ token: 'read-token' })]),
+      userToken: { baseUrl: 'https://logfire-us.pydantic.dev', expiration: '2099-12-31T23:59:59Z', token: 'user-token' },
+    })
+
+    await client.createReadToken('org', 'project')
+    await client.createReadToken('org', 'project', new Date('2099-01-01T00:00:00.000Z'))
+
+    expect(calls.map((call) => call.body)).toEqual([
+      '{"description":"Created by Logfire CLI"}',
+      '{"description":"Created by Logfire CLI","expires_at":"2099-01-01T00:00:00.000Z"}',
+    ])
+  })
+
+  it('queries a project with the read token, not the class auth headers', async () => {
+    const calls: CapturedRequest[] = []
+    const fetchImpl = fetchSequence(calls, [
+      jsonResponse({ data: [{ last_seen: '2026-08-19T01:00:00.000Z', records: 87, service_name: 'orders-web' }] }),
+    ])
+
+    await expect(
+      queryProject('https://logfire-us.pydantic.dev', 'read-token', 'SELECT 1', {
+        fetch: fetchImpl,
+        limit: 10_000,
+        minTimestamp: new Date('2026-08-19T00:00:00.000Z'),
+      })
+    ).resolves.toEqual([{ last_seen: '2026-08-19T01:00:00.000Z', records: 87, service_name: 'orders-web' }])
+
+    expect(calls).toEqual([
+      {
+        authorization: 'read-token',
+        body: '{"sql":"SELECT 1","min_timestamp":"2026-08-19T00:00:00.000Z","limit":10000}',
+        method: 'POST',
+        url: 'https://logfire-us.pydantic.dev/v2/query',
+      },
+    ])
+  })
+
+  it('rejects a query with a status other than exactly 200', async () => {
+    // Not `response.ok`: a 204 is "not an error" by that test and would then fail parsing
+    // the body as JSON instead of surfacing this message. 204 is a "null body status", so
+    // the Response constructor requires `null`, not an empty string, as the body.
+    const fetchImpl = fetchSequence([], [new Response(null, { status: 204 })])
+    await expect(queryProject('https://logfire-us.pydantic.dev', 'read-token', 'SELECT 1', { fetch: fetchImpl })).rejects.toEqual(
+      new LogfireCliError('Could not read the project: 204 ')
+    )
+  })
+
+  it('strips control characters from a non-200 response body before it reaches the error message', async () => {
+    // The body of a non-200 response is whatever the server (or a proxy/WAF answering on
+    // its behalf) sent, not something this CLI generated -- the same untrusted-text
+    // reasoning `printableCell` applies to a telemetry-supplied service name.
+    const fetchImpl = fetchSequence([], [new Response('evil\x1b[2Kmessage', { status: 500 })])
+    await expect(queryProject('https://logfire-us.pydantic.dev', 'read-token', 'SELECT 1', { fetch: fetchImpl })).rejects.toEqual(
+      new LogfireCliError('Could not read the project: 500 evil�[2Kmessage')
+    )
+  })
+
+  it.each([
+    ['not json at all', 'not json at all'],
+    ['{"no_data_key":[]}', '{"no_data_key":[]}'],
+    ['{"data":"not a list"}', '{"data":"not a list"}'],
+    ['{"data":["not","objects"]}', '{"data":["not","objects"]}'],
+  ])('rejects a malformed 200 response body: %s', async (_label, body) => {
+    // A 200 does not guarantee the real backend produced the body -- a proxy or WAF can
+    // intercept the request and answer with its own page.
+    const fetchImpl = fetchSequence([], [new Response(body, { status: 200 })])
+    await expect(queryProject('https://logfire-us.pydantic.dev', 'read-token', 'SELECT 1', { fetch: fetchImpl })).rejects.toBeInstanceOf(
+      LogfireCliError
+    )
+  })
+
+  it('reports a network failure cleanly instead of an unhandled rejection', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      await Promise.resolve()
+      throw new Error('connect ECONNREFUSED')
+    })
+    await expect(queryProject('https://logfire-us.pydantic.dev', 'read-token', 'SELECT 1', { fetch: fetchImpl })).rejects.toEqual(
+      new LogfireCliError('Could not reach https://logfire-us.pydantic.dev: connect ECONNREFUSED')
+    )
+  })
+
+  it('strips control characters from query connection errors', async () => {
+    const rejectedFetch = vi.fn<typeof fetch>(async () => Promise.reject(new Error('connect\x1b[2Kfailed')))
+    await expect(queryProject('https://logfire-us.pydantic.dev', 'read-token', 'SELECT 1', { fetch: rejectedFetch })).rejects.toEqual(
+      new LogfireCliError('Could not reach https://logfire-us.pydantic.dev: connect�[2Kfailed')
+    )
+
+    const unusedFetch = vi.fn<typeof fetch>()
+    await expect(queryProject('bad\x1b[2Kurl', 'read-token', 'SELECT 1', { fetch: unusedFetch })).rejects.toEqual(
+      new LogfireCliError('Could not reach bad�[2Kurl: Invalid URL')
+    )
+    expect(unusedFetch).not.toHaveBeenCalled()
+  })
+
+  it('wraps a failure while reading a non-200 response body', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () =>
+      Promise.resolve({
+        status: 500,
+        text: async () => Promise.reject(new Error('terminated\x1b[2K')),
+      } as unknown as Response)
+    )
+
+    await expect(queryProject('https://logfire-us.pydantic.dev', 'read-token', 'SELECT 1', { fetch: fetchImpl })).rejects.toEqual(
+      new LogfireCliError('Could not read the project response: terminated�[2K')
+    )
   })
 })
 

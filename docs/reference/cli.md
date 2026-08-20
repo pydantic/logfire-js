@@ -18,7 +18,9 @@ Supported commands:
 - `projects list`: list projects where the current user can create write tokens.
 - `projects new [project-name]`: create a project and write local project credentials.
 - `projects use [project-name]`: create a write token for an existing project and write local project credentials.
+- `projects status`: show what telemetry has actually reached the project this directory is linked to.
 - `read-tokens --project <org>/<project> create`: create a read token and print it to stdout.
+- `read-tokens create --save`: create a read token and store it in the data directory instead of printing it.
 - `whoami`: show configured user and project information.
 - `clean`: remove local project credentials.
 - `info`: print SDK and runtime information.
@@ -78,6 +80,50 @@ Both commands write `.logfire/logfire_credentials.json` and `.logfire/.gitignore
 
 Pass `--data-dir <dir>` to write credentials somewhere other than `.logfire`.
 
+## Status
+
+To see what telemetry has actually reached the project this directory is linked to, run:
+
+```bash
+npx logfire projects status
+```
+
+```
+Project  my-org/orders
+         https://logfire-us.pydantic.dev/my-org/orders
+
+ Service         | Records | Last seen
+-----------------|---------|---------------------------------
+ orders-web      | 87      | 2026-08-19T01:01:29.717170+00:00
+ orders-worker   | 84      | 2026-08-19T01:01:29.716577+00:00
+```
+
+One row per service, so a partly-instrumented system shows up as one: if you instrumented a web app and a worker but only the web app appears, the worker is not reporting.
+
+This needs a saved read token — see below — and reports the last hour. Add `--json` for machine-readable output.
+
+## Read tokens
+
+To create a read token for a project and print it to stdout, run:
+
+```bash
+npx logfire read-tokens --project <org>/<project> create
+```
+
+### Saving a token instead of printing it
+
+To store the token in the data directory rather than printing it, use `--save`:
+
+```bash
+npx logfire read-tokens create --save
+```
+
+With no `--project`, this uses the project the current directory is linked to. The token is written to `.logfire/read_token.json`, readable only by you, in the same gitignored directory that already holds your write credentials — and it is never printed, so it cannot end up in your terminal history, a CI log, or a coding agent's transcript.
+
+`npx logfire projects status` uses this token. A saved token expires after 30 days; run the command again to replace it.
+
+> A read token can read everything in the project, which may include personal data captured in span attributes. Keep `.logfire/` out of version control — the CLI adds a `.gitignore` for you — and use `npx logfire clean` to remove stored credentials.
+
 ## Whoami and clean
 
 Show the configured user and project for the current directory:
@@ -86,7 +132,7 @@ Show the configured user and project for the current directory:
 npx logfire whoami
 ```
 
-Remove the local project credentials written by `projects use/new`:
+Remove the local project credentials written by `projects use/new`, and any saved read token:
 
 ```bash
 npx logfire clean

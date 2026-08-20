@@ -116,12 +116,13 @@ Now requests through Express and Fastify, queries to PostgreSQL, MySQL, and Redi
 
 ## Troubleshooting
 
-| Symptom                                   | Likely cause                                    | Fix                                                                                                                                     |
-| ----------------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Nothing appears in the Live view          | No credentials set                              | Run `npx logfire auth`, or set `LOGFIRE_TOKEN` from **Settings > Write tokens**                                                         |
-| A short script sends nothing              | The process exited before telemetry was flushed | Call `await logfire.shutdown()` before exiting                                                                                          |
-| Automatic traces are missing              | The app loaded before instrumentation did       | Load the instrumentation file first, for example `npx tsx --import ./instrumentation.ts server.ts`, and keep `configure()` in that file |
-| A `.ts` file won't run, or `import` fails | No TypeScript runner, or a CommonJS project     | Run with `npx tsx`, which handles TypeScript and ES modules in any project                                                              |
+| Symptom                                        | Likely cause                                    | Fix                                                                                                                                     |
+| ---------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Nothing appears in the Live view               | No credentials set                              | Run `npx logfire auth`, or set `LOGFIRE_TOKEN` from **Settings > Write tokens**                                                         |
+| Need to confirm data arrived without a browser | e.g. checking from a CI job or a coding agent   | Run `npx logfire read-tokens create --save` once, then `npx logfire projects status` to see what's arrived, per service                 |
+| A short script sends nothing                   | The process exited before telemetry was flushed | Call `await logfire.shutdown()` before exiting                                                                                          |
+| Automatic traces are missing                   | The app loaded before instrumentation did       | Load the instrumentation file first, for example `npx tsx --import ./instrumentation.ts server.ts`, and keep `configure()` in that file |
+| A `.ts` file won't run, or `import` fails      | No TypeScript runner, or a CommonJS project     | Run with `npx tsx`, which handles TypeScript and ES modules in any project                                                              |
 
 ## Next steps
 
