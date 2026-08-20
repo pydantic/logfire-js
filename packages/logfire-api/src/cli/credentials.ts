@@ -29,6 +29,7 @@ export const PROJECT_CREDENTIALS_FILENAME = 'logfire_credentials.json'
 // filename on both sides is also what lets a project set up by one SDK's CLI be read by
 // the other.
 export const READ_TOKEN_FILENAME = 'read_token.json'
+const READ_TOKEN_IGNORE_PATTERN = `${READ_TOKEN_FILENAME}*`
 
 export interface UserTokenData {
   token: string
@@ -349,6 +350,7 @@ function hasExitStatus(error: unknown, status: number): boolean {
 export function reserveReadTokenSave(dataDir: string): ReadTokenSaveReservation {
   ensureDataDir(dataDir)
   const path = readTokenPath(dataDir)
+  const lockPath = join(dataDir, `${READ_TOKEN_FILENAME}.lock`)
   try {
     if (isGitTracked(path)) {
       throw new LogfireCliError(
@@ -376,9 +378,11 @@ export function reserveReadTokenSave(dataDir: string): ReadTokenSaveReservation 
     throw error instanceof LogfireCliError ? error : writeReadTokenError(path, error)
   }
 
-  const temporaryPath = join(dataDir, `.${READ_TOKEN_FILENAME}.${randomUUID()}.tmp`)
+  const temporaryPath = join(dataDir, `${READ_TOKEN_FILENAME}.${randomUUID()}.tmp`)
   let fd: number | undefined
-  const cleanupTemporaryFile = (): Error | undefined => {
+  let lockFd: number | undefined
+  let ownsLock = false
+  const cleanupReservationFiles = (): Error | undefined => {
     let cleanupError: Error | undefined
     if (fd !== undefined) {
       try {
@@ -388,19 +392,44 @@ export function reserveReadTokenSave(dataDir: string): ReadTokenSaveReservation 
       }
       fd = undefined
     }
+    if (lockFd !== undefined) {
+      try {
+        closeSync(lockFd)
+      } catch (error) {
+        cleanupError ??= error instanceof Error ? error : new Error(String(error))
+      }
+      lockFd = undefined
+    }
     try {
       rmSync(temporaryPath, { force: true })
     } catch (error) {
       cleanupError ??= error instanceof Error ? error : new Error(String(error))
     }
+    if (ownsLock) {
+      try {
+        rmSync(lockPath, { force: true })
+        ownsLock = false
+      } catch (error) {
+        cleanupError ??= error instanceof Error ? error : new Error(String(error))
+      }
+    }
     return cleanupError
   }
 
   try {
+    lockFd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600)
+    ownsLock = true
+    fchmodSync(lockFd, 0o600)
     fd = openSync(temporaryPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600)
     fchmodSync(fd, 0o600)
   } catch (error) {
-    throw writeReadTokenError(path, cleanupTemporaryFile() ?? error)
+    const cleanupError = cleanupReservationFiles()
+    if (hasErrorCode(error, 'EEXIST')) {
+      throw new LogfireCliError(
+        `Another read-token save is already in progress for ${path}. If no other command is running, remove ${lockPath} and try again.`
+      )
+    }
+    throw writeReadTokenError(path, cleanupError ?? error)
   }
 
   let active = true
@@ -409,7 +438,7 @@ export function reserveReadTokenSave(dataDir: string): ReadTokenSaveReservation 
       return
     }
     active = false
-    const error = cleanupTemporaryFile()
+    const error = cleanupReservationFiles()
     if (error !== undefined) {
       throw writeReadTokenError(path, error)
     }
@@ -426,6 +455,10 @@ export function reserveReadTokenSave(dataDir: string): ReadTokenSaveReservation 
         closeSync(fd)
         fd = undefined
         renameSync(temporaryPath, path)
+        const cleanupError = cleanupReservationFiles()
+        if (cleanupError !== undefined) {
+          throw cleanupError
+        }
         active = false
         return path
       } catch (error) {
@@ -562,11 +595,15 @@ function ensureReadTokenIgnored(dataDir: string): void {
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'))
   const lastRule = rules.at(-1)
-  if (lastRule === '*' || lastRule === READ_TOKEN_FILENAME || lastRule === `/${READ_TOKEN_FILENAME}`) {
+  if (lastRule === '*' || lastRule === READ_TOKEN_IGNORE_PATTERN || lastRule === `/${READ_TOKEN_IGNORE_PATTERN}`) {
     return
   }
   const separator = contents === '' || contents.endsWith('\n') ? '' : '\n'
-  writeFileSync(path, `${contents}${separator}${READ_TOKEN_FILENAME}\n`)
+  writeFileSync(path, `${contents}${separator}${READ_TOKEN_IGNORE_PATTERN}\n`)
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === code
 }
 
 function serializeReadToken(options: SaveReadTokenOptions): string {

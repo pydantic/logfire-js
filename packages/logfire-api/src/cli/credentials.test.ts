@@ -118,7 +118,7 @@ token = "ignored"
       token: 'read-token',
     })
 
-    expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toBe('logfire_credentials.json\nread_token.json\n')
+    expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toBe('logfire_credentials.json\nread_token.json*\n')
     expect(() => execFileSync('git', ['check-ignore', '--quiet', 'read_token.json'], { cwd: dir })).not.toThrow()
   })
 
@@ -331,6 +331,20 @@ token = "ignored"
 
     expect(readFileSync(path, 'utf8')).toBe('existing-token')
     expect(readdirSync(dir).sort()).toEqual(['.gitignore', 'read_token.json'])
+  })
+
+  it('allows only one active save reservation', () => {
+    const dir = makeTmpDir()
+    const first = reserveReadTokenSave(dir)
+
+    expect(() => reserveReadTokenSave(dir)).toThrow(
+      new LogfireCliError(
+        `Another read-token save is already in progress for ${readTokenPath(dir)}. If no other command is running, remove ${join(dir, 'read_token.json.lock')} and try again.`
+      )
+    )
+
+    first.abort()
+    expect(readdirSync(dir)).toEqual(['.gitignore'])
   })
 
   it('removes the saved read token as part of removing project credentials', () => {
