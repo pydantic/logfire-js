@@ -302,13 +302,13 @@ export function readTokenPath(dataDir: string): string {
  * `.gitignore` only stops an UNTRACKED file from being added; it does nothing for a path
  * already in the index -- committed before this feature existed, or by mistake -- so
  * writing a real, permanent credential through such a path would make the next `git
- * commit -am` publish it. `execFileSync` throws both when the file is genuinely untracked
- * (`git ls-files` exits non-zero) and when git itself is unavailable or the check times
- * out, and `false` is the right answer for both: "definitely not tracked" and "cannot
- * tell, so do not block a working setup over an environment quirk unrelated to the file's
- * own tracked status" land on the same safe outcome here.
+ * commit -am` publish it. Operational failures must fail closed: only Git's documented
+ * no-match exit means the path is untracked.
  */
 function isGitTracked(path: string): boolean {
+  if (!hasGitMetadata(dirname(path))) {
+    return false
+  }
   try {
     execFileSync('git', ['ls-files', '--error-unmatch', '--', basename(path)], {
       cwd: dirname(path),
@@ -316,9 +316,30 @@ function isGitTracked(path: string): boolean {
       timeout: 5000,
     })
     return true
-  } catch {
-    return false
+  } catch (error) {
+    if (hasExitStatus(error, 1)) {
+      return false
+    }
+    throw error
   }
+}
+
+function hasGitMetadata(path: string): boolean {
+  let current = path
+  for (;;) {
+    if (existsSync(join(current, '.git'))) {
+      return true
+    }
+    const parent = dirname(current)
+    if (parent === current) {
+      return false
+    }
+    current = parent
+  }
+}
+
+function hasExitStatus(error: unknown, status: number): boolean {
+  return typeof error === 'object' && error !== null && 'status' in error && error.status === status
 }
 
 /**
@@ -328,10 +349,16 @@ function isGitTracked(path: string): boolean {
 export function reserveReadTokenSave(dataDir: string): ReadTokenSaveReservation {
   ensureDataDir(dataDir)
   const path = readTokenPath(dataDir)
-  if (isGitTracked(path)) {
-    throw new LogfireCliError(
-      `${path} is already tracked by git, so .gitignore does not protect it. Writing the token there risks it reaching a commit. Untrack it first (\`git rm --cached ${path}\`) or remove it, then try again.`
-    )
+  try {
+    if (isGitTracked(path)) {
+      throw new LogfireCliError(
+        `${path} is already tracked by git, so .gitignore does not protect it. Writing the token there risks it reaching a commit. Untrack it first (\`git rm --cached ${path}\`) or remove it, then try again.`
+      )
+    }
+  } catch (error) {
+    throw error instanceof LogfireCliError
+      ? error
+      : new LogfireCliError(`${path} could not be checked against the git index; refusing to save a read token there.`)
   }
 
   try {
@@ -440,12 +467,11 @@ export function saveReadToken(dataDir: string, options: SaveReadTokenOptions): s
  */
 export function loadSavedReadToken(dataDir: string, options: LoadSavedReadTokenOptions): SavedReadToken | undefined {
   const path = readTokenPath(dataDir)
-  if (!existsSync(path)) {
-    return undefined
-  }
-
   let raw: unknown
   try {
+    if (!lstatSync(path).isFile() || isGitTracked(path)) {
+      return undefined
+    }
     raw = JSON.parse(readFileSync(path, 'utf8')) as unknown
   } catch {
     return undefined

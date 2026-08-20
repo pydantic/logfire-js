@@ -164,6 +164,30 @@ token = "ignored"
     })
   })
 
+  it('does not load a saved token through a symlink', () => {
+    const dir = makeTmpDir()
+    const target = join(dir, 'target.json')
+    writeFileSync(
+      target,
+      JSON.stringify({ base_url: 'http://127.0.0.1', organization: 'test-org', project_name: 'orders', token: 'read-token' })
+    )
+    symlinkSync(target, readTokenPath(dir))
+
+    expect(loadSavedReadToken(dir, { organization: 'test-org', projectName: 'orders' })).toBeUndefined()
+  })
+
+  it('does not load a git-tracked saved token', () => {
+    const dir = makeTmpDir()
+    writeFileSync(
+      readTokenPath(dir),
+      JSON.stringify({ base_url: 'http://127.0.0.1', organization: 'test-org', project_name: 'orders', token: 'read-token' })
+    )
+    execFileSync('git', ['init', '--quiet'], { cwd: dir })
+    execFileSync('git', ['add', '--force', 'read_token.json'], { cwd: dir })
+
+    expect(loadSavedReadToken(dir, { organization: 'test-org', projectName: 'orders' })).toBeUndefined()
+  })
+
   it.each([
     [{ organization: 'other-org' }, 'issued for a different organization'],
     [{ project_name: 'other-project' }, 'issued for a different project'],
@@ -216,6 +240,16 @@ token = "ignored"
       })
     ).toThrow(LogfireCliError)
     expect(readFileSync(victim, 'utf8')).toBe('important')
+  })
+
+  it('fails closed when the git index cannot be checked', () => {
+    const dir = makeTmpDir()
+    writeFileSync(join(dir, '.git'), 'not a git directory')
+
+    expect(() => reserveReadTokenSave(dir)).toThrow(
+      new LogfireCliError(`${readTokenPath(dir)} could not be checked against the git index; refusing to save a read token there.`)
+    )
+    expect(readdirSync(dir)).toEqual(['.git'])
   })
 
   it('refuses to write through a symlinked data directory', () => {

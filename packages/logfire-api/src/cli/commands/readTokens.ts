@@ -127,7 +127,7 @@ function parseOrgProject(value: string): [string, string] {
 
 function readRequiredValue(args: string[], index: number, option: string): string {
   const value = args[index]
-  if (value === undefined) {
+  if (value === undefined || value.startsWith('-')) {
     throw new LogfireCliError(`Missing value for ${option}`)
   }
   return value

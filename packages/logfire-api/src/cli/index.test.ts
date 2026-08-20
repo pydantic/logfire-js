@@ -311,6 +311,25 @@ describe('CLI entrypoint', () => {
     expect(existsSync(join(victim, 'read_token.json'))).toBe(false)
   })
 
+  it('read-tokens create rejects a missing --data-dir value before minting', async () => {
+    const fetchImpl = fetchSequence([jsonResponse({ token: 'newly-minted-token' })])
+    const stdout = new MemoryOutput()
+    const stderr = new MemoryOutput()
+
+    await expect(
+      runCli(['read-tokens', 'create', '--data-dir', '--save', '--project', 'test-org/orders'], {
+        fetch: fetchImpl,
+        homeDir: makeTmpDir(),
+        stderr,
+        stdout,
+      })
+    ).resolves.toBe(1)
+
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(stdout.text()).toBe('')
+    expect(stderr.text()).toBe('Missing value for --data-dir\n')
+  })
+
   it('read-tokens create --save never mints through a symlinked token file', async () => {
     const cwd = makeTmpDir()
     const victim = join(makeTmpDir(), 'victim.txt')
