@@ -1,5 +1,12 @@
 # logfire
 
+## 0.18.16
+
+### Patch Changes
+
+- Updated dependencies [4962803]
+  - logfire@0.22.0
+
 ## 0.18.15
 
 ### Patch Changes
