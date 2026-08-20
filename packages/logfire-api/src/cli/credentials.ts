@@ -356,12 +356,22 @@ export function loadSavedReadToken(dataDir: string, options: LoadSavedReadTokenO
   }
 
   const expiresAt = raw['expires_at']
-  // No `expires_at` means unbounded, not invalid: this CLI always writes one, so a file
-  // without it was written by a different version or edited by hand. Refusing it would
-  // break a working setup over a field we added -- the expiry exists to bound a leak, not
-  // to gate the happy path.
-  if (typeof expiresAt === 'string' && isExpired(expiresAt)) {
-    return undefined
+  // Absent (`undefined`) means unbounded, not invalid: this CLI always writes the key, so
+  // a file without it was written by a different version or edited by hand. Refusing it
+  // would break a working setup over a field we added -- the expiry exists to bound a
+  // leak, not to gate the happy path. PRESENT but not a string is different: this file
+  // always writes a string, so `null`/a number/etc. did not come from a normal run, and
+  // treating it the same as absent -- which a bare `typeof expiresAt === 'string'` check
+  // does, since it is also false for a present `null` -- would let a tampered file defeat
+  // the TTL entirely instead of merely losing it. `JSON.parse` keeps a `null` present key
+  // distinct from a missing one (`undefined`), so this can tell them apart.
+  if (expiresAt !== undefined) {
+    if (typeof expiresAt !== 'string') {
+      return undefined
+    }
+    if (isExpired(expiresAt)) {
+      return undefined
+    }
   }
 
   return { baseUrl, token }
@@ -379,7 +389,7 @@ function writeUserTokensFile(path: string, tokens: ReadonlyMap<string, UserToken
   writeFileSync(path, stringifyUserTokensToml(tokens))
 }
 
-function ensureDataDir(dataDir: string): void {
+export function ensureDataDir(dataDir: string): void {
   // Match Python's `ensure_data_dir_exists`: only seed `.gitignore` when creating the
   // directory, so an existing dir's ignore rules are never clobbered.
   if (existsSync(dataDir)) {

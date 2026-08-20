@@ -249,6 +249,49 @@ describe('CLI entrypoint', () => {
     expect(existsSync(join(victim, 'read_token.json'))).toBe(false)
   })
 
+  it('read-tokens create --save keeps an existing valid token if the mint itself fails', async () => {
+    // The reserve step only validates the DIRECTORY (`ensureDataDir`), never writing a
+    // placeholder into `read_token.json` itself -- an earlier version reserved by writing
+    // an empty-string placeholder there first, which meant a mint failure after a
+    // successful reserve left the user WORSE off than before the command ran: an
+    // already-working saved token got overwritten with an unusable placeholder and never
+    // restored. Proven here by a mint that fails over the network after the directory
+    // reserve succeeds, while a real, valid token already sits on disk. A non-2xx HTTP
+    // response, not a rejected fetch: `postJson` only wraps THAT case in a clean
+    // `LogfireCliError` today, and exercising the other (a network exception escaping
+    // uncaught) would pin down a real but separate gap this test is not about.
+    const cwd = makeTmpDir()
+    const homeDir = makeTmpDir()
+    mkdirSync(join(homeDir, '.logfire'))
+    writeFileSync(
+      join(homeDir, '.logfire/default.toml'),
+      '[tokens."https://logfire-us.pydantic.dev"]\ntoken = "user-token"\nexpiration = "2099-12-31T23:59:59Z"\n'
+    )
+    mkdirSync(join(cwd, '.logfire'), { recursive: true })
+    const existingToken = JSON.stringify({
+      base_url: 'https://logfire-us.pydantic.dev',
+      expires_at: '2099-12-31T23:59:59.000Z',
+      organization: 'test-org',
+      project_name: 'orders',
+      token: 'still-good-read-token',
+    })
+    writeFileSync(join(cwd, '.logfire/read_token.json'), existingToken)
+
+    const fetchImpl = fetchSequence([new Response('server error', { status: 500 })])
+
+    await expect(
+      runCli(['read-tokens', 'create', '--project', 'test-org/orders', '--save'], {
+        cwd,
+        fetch: fetchImpl,
+        homeDir,
+        stderr: new MemoryOutput(),
+        stdout: new MemoryOutput(),
+      })
+    ).resolves.toBe(1)
+
+    expect(readFileSync(join(cwd, '.logfire/read_token.json'), 'utf8')).toBe(existingToken)
+  })
+
   it('read-tokens create without --save prints the token and writes no file', async () => {
     const cwd = makeTmpDir()
     const homeDir = makeTmpDir()
@@ -378,6 +421,21 @@ describe('CLI entrypoint', () => {
 
     expect(confirmMessage).toContain('read_token.json')
     expect(existsSync(join(cwd, '.logfire/read_token.json'))).toBe(false)
+  })
+
+  it('clean refuses to follow a symlinked data directory', async () => {
+    // `.logfire` lives inside the user's repository, so a symlink can arrive by being
+    // committed to it. Following one would list and delete through it -- reading a
+    // directory the user never meant to touch, and telling them their real
+    // `read_token.json` was cleaned when it never existed at that path at all.
+    const cwd = makeTmpDir()
+    const victim = makeTmpDir()
+    writeFileSync(join(victim, 'read_token.json'), 'important')
+    symlinkSync(victim, join(cwd, '.logfire'))
+
+    await expect(runCli(['clean'], { cwd, homeDir: makeTmpDir(), stderr: new MemoryOutput(), stdout: new MemoryOutput() })).resolves.toBe(1)
+
+    expect(existsSync(join(victim, 'read_token.json'))).toBe(true)
   })
 
   it('projects status without a saved token says what to run, without calling the API', async () => {

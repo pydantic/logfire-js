@@ -1,6 +1,6 @@
 import { createAuthenticatedClient } from '../authClient'
 import type { CliContext, GlobalOptions } from '../context'
-import { defaultDataDir, organizationFromProjectUrl, readProjectCredentials, saveReadToken } from '../credentials'
+import { defaultDataDir, ensureDataDir, organizationFromProjectUrl, readProjectCredentials, saveReadToken } from '../credentials'
 import { LogfireCliError } from '../errors'
 import { writeLine } from '../output'
 
@@ -53,14 +53,17 @@ export async function runReadTokensCommand(args: string[], globalOptions: Global
   }
 
   const expiresAt = new Date(Date.now() + READ_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000)
-  // Reserve the destination BEFORE minting. A real token cannot be revoked or displayed
-  // once created, so a failure writing it -- a symlinked destination, a read-only data
-  // directory -- must happen before the mint, not leave an orphaned server-side
-  // credential behind after. The placeholder token is an empty string, which
-  // `loadSavedReadToken`'s own validation already refuses to treat as usable, so an
-  // interrupted run between this call and the real one below leaves nothing a later
-  // `projects status` could mistake for a working credential.
-  saveReadToken(dataDir, { baseUrl: client.baseUrl, expiresAt, organization, projectName: project, token: '' })
+  // Reserve the destination BEFORE minting: a real token cannot be revoked or displayed
+  // once created, so a failure writing it -- a symlinked `.logfire`, a read-only data
+  // directory -- must happen before the mint, not leave an orphaned server-side credential
+  // behind after. `ensureDataDir` alone is enough; it validates the DIRECTORY without
+  // touching `read_token.json` itself, so a run that already had a valid saved token keeps
+  // it if the mint below fails, rather than losing it to an empty placeholder that then
+  // never gets overwritten. `saveReadToken`'s own `O_NOFOLLOW` on the final write still
+  // catches a symlinked `read_token.json` FILE specifically -- a narrower case this reserve
+  // step does not need to duplicate, since that failure mode can't leave a half-written
+  // orphaned credential the way a torn-down directory write could.
+  ensureDataDir(dataDir)
   const response = await client.createReadToken(organization, project, expiresAt)
   const path = saveReadToken(dataDir, {
     baseUrl: client.baseUrl,

@@ -151,6 +151,7 @@ token = "ignored"
     [{ project_name: 'other-project' }, 'issued for a different project'],
     [{ expires_at: '2000-01-01T00:00:00Z' }, 'already expired'],
     [{ expires_at: 'not-a-timestamp' }, 'unparseable expiry'],
+    [{ expires_at: null }, 'expiry present but not a string -- must not be treated as absent'],
     [{ token: '' }, 'empty token'],
     [{ token: undefined }, 'no token key'],
     [{ base_url: undefined }, 'no base_url key'],

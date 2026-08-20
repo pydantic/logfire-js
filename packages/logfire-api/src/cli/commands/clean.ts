@@ -1,4 +1,4 @@
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, lstatSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { CliContext } from '../context'
@@ -14,7 +14,19 @@ export async function runCleanCommand(args: string[], context: CliContext): Prom
     writeLine(context.stderr, 'No JavaScript Logfire CLI log files are created; --logs has nothing to remove.')
   }
 
-  if (!existsSync(dataDir) || !statSync(dataDir).isDirectory()) {
+  if (!existsSync(dataDir)) {
+    throw new LogfireCliError(`No Logfire data found in ${dataDir}`)
+  }
+  // `lstatSync`, not `statSync`: the data directory lives inside the user's repository, so
+  // a symlink can arrive by being committed to it. `statSync` follows symlinks, so it
+  // would report a symlinked `.logfire` as an ordinary directory, and `removeProjectCredentials`
+  // below would then list and delete through it -- exactly the risk `ensureDataDir` already
+  // guards against on the write path.
+  const dataDirStat = lstatSync(dataDir)
+  if (dataDirStat.isSymbolicLink()) {
+    throw new LogfireCliError(`${dataDir} is a symlink; refusing to clean through it.`)
+  }
+  if (!dataDirStat.isDirectory()) {
     throw new LogfireCliError(`No Logfire data found in ${dataDir}`)
   }
 
