@@ -233,7 +233,8 @@ token = "ignored"
     execFileSync('git', ['init', '--quiet'], { cwd: dir })
     execFileSync('git', ['add', '--force', path], { cwd: dir })
 
-    expect(() =>
+    let error: unknown
+    try {
       saveReadToken(dir, {
         baseUrl: 'https://logfire-us.pydantic.dev',
         expiresAt: new Date(),
@@ -241,7 +242,13 @@ token = "ignored"
         projectName: 'orders',
         token: 'read-token',
       })
-    ).toThrow(LogfireCliError)
+    } catch (caught: unknown) {
+      error = caught
+    }
+    expect(error).toBeInstanceOf(LogfireCliError)
+    expect((error as LogfireCliError).message).toBe(
+      `${path} is already tracked by git, so .gitignore does not protect it. Writing the token there risks it reaching a commit. Untrack it first (\`git rm --cached ${path}\`) or remove it, then try again.`
+    )
     expect(readFileSync(path, 'utf8')).toBe('{}')
   })
 
