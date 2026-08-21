@@ -13,13 +13,13 @@
     "format": "vp fmt . --write",
     "format-check": "vp fmt --check",
     "check": "pnpm run build && vp check && pnpm run typecheck && pnpm run test && pnpm run test:release-tooling",
-    "release": "pnpm run build && pnpm changeset publish",
+    "release": "pnpm run build && pnpm publish -r --access public",
     "changeset-add": "pnpm changeset add",
     "test:release-tooling": "node scripts/create-npm-token.test.mjs",
     "verify:browser-rum-release-plan": "node scripts/verify-browser-release-plan.mjs"
   },
   "devDependencies": {
-    "@changesets/cli": "^3.0.1",
+    "@changesets/cli": "^2.27.12",
     "@voidzero-dev/vite-plus-core": "0.2.1",
     "typescript": "catalog:",
     "vite-plus": "0.2.1"
