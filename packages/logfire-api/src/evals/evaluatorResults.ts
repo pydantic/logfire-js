@@ -39,6 +39,13 @@ export function buildEvaluationResultJson(
 ): EvaluationResultJson {
   const reason = isEvaluationReason(value) ? (value.reason ?? null) : null
   const scalar = isEvaluationReason(value) ? value.value : value
+  if (typeof scalar === 'number' && !Number.isFinite(scalar)) {
+    // `EvaluationScalar` is `bool | int | Annotated[float, Field(allow_inf_nan=False)] | str`, so
+    // pydantic-evals rejects these and reports an evaluator failure. Both callers here run inside
+    // a try that does the same, and a non-finite score would otherwise make every aggregate over
+    // that key NaN.
+    throw new Error(`Evaluator returned a non-finite value for ${name}: ${String(scalar)}`)
+  }
   const out: EvaluationResultJson = {
     name,
     reason,
