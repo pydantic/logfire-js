@@ -1,3 +1,5 @@
+/// <reference types="@cloudflare/workers-types" />
+
 import type { Span, Tracer } from '@opentelemetry/api'
 import { SpanStatusCode, trace } from '@opentelemetry/api'
 import { describe, expect, it, vitest } from 'vitest'
@@ -30,6 +32,28 @@ describe('KV attributes', () => {
         'db.cf.kv.list_response_cursor': 'response-cursor',
       }
     )
+  })
+
+  it('omits the prefix from the list query text when there is none', async () => {
+    const attributes: Record<string, unknown> = {}
+    const span = createSpan()
+    span.setAttribute = ((key: string, value: unknown) => {
+      attributes[key] = value
+    }) as unknown as typeof span.setAttribute
+    const getTracer = vitest.spyOn(trace, 'getTracer').mockReturnValue(mockTracer(span as unknown as Span))
+    const kv = {
+      list: vitest.fn<() => Promise<unknown>>(async () => Promise.resolve({ keys: [], list_complete: true })),
+    } as unknown as KVNamespace
+
+    try {
+      await instrumentKV(kv, 'CACHE').list()
+      expect(attributes['db.query.text']).toBe('list')
+
+      await instrumentKV(kv, 'CACHE').list({ prefix: 'user:' })
+      expect(attributes['db.query.text']).toBe('list user:')
+    } finally {
+      getTracer.mockRestore()
+    }
   })
 
   it('records errors and ends spans when KV operations reject', async () => {
