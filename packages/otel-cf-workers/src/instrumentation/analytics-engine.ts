@@ -1,6 +1,6 @@
 import type { Attributes, Exception, SpanOptions } from '@opentelemetry/api'
 import { SpanKind, SpanStatusCode, trace } from '@opentelemetry/api'
-import { ATTR_DB_NAMESPACE, ATTR_DB_OPERATION_NAME, ATTR_DB_QUERY_TEXT, ATTR_DB_SYSTEM_NAME } from '@opentelemetry/semantic-conventions'
+import { ATTR_DB_NAMESPACE, ATTR_DB_OPERATION_NAME, ATTR_DB_SYSTEM_NAME } from '@opentelemetry/semantic-conventions'
 import { wrap } from '../wrap.js'
 
 type ExtraAttributeFn = (argArray: any[], result: any) => Attributes
@@ -44,7 +44,6 @@ function instrumentAEFn(fn: Function, name: string, operation: string) {
           const extraAttrsFn = AEAttributes[operation]
           const extraAttrs = extraAttrsFn ? extraAttrsFn(argArray, result) : {}
           span.setAttributes(extraAttrs)
-          span.setAttribute(ATTR_DB_QUERY_TEXT, `${operation} ${argArray[0]}`)
           return result
         } catch (error) {
           span.recordException(error as Exception)

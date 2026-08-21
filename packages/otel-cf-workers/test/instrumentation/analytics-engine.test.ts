@@ -63,6 +63,23 @@ describe('Analytics Engine instrumentation', () => {
     expect(spans[0]?.attributes['db.cf.ae.indexes']).toBe(1)
   })
 
+  it('records only the data point summary, not a stringified data point', async () => {
+    const instrument = instrumentAsync('my-dataset')
+    await expect(instrument.writeDataPoint({ blobs: ['b'], doubles: [1], indexes: ['idx'] })).resolves.toBe(undefined)
+
+    const spans = exporter.getFinishedSpans()
+    expect(spans[0]?.attributes).toEqual({
+      binding_type: 'AnalyticsEngine',
+      'db.cf.ae.blobs': 1,
+      'db.cf.ae.doubles': 1,
+      'db.cf.ae.index': 'idx',
+      'db.cf.ae.indexes': 1,
+      'db.namespace': 'my-dataset',
+      'db.operation.name': 'writeDataPoint',
+      'db.system.name': 'Cloudflare Analytics Engine',
+    })
+  })
+
   it('ends the span and records the error when the write rejects', async () => {
     const error = new Error('write failed')
     ;(dataset.writeDataPoint as ReturnType<typeof vitest.fn<() => Promise<void>>>).mockRejectedValue(error)
