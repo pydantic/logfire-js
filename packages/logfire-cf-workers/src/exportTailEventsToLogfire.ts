@@ -18,14 +18,20 @@ export async function exportTailEventsToLogfire(
     return undefined
   }
   const url = resolveBaseUrl(env, undefined, token)
-  const traceEntry = findTraceEntry(events)
-  if (traceEntry === null) {
+  const traceEntries = findTraceEntries(events)
+  if (traceEntries.length === 0) {
     return undefined
   }
+  // A tail batch carries one payload per producing invocation, and OTLP takes
+  // resourceSpans as a repeated field, so merge them into a single request.
+  const resourceSpans = traceEntries.flatMap((entry) => {
+    const spans = entry['resourceSpans']
+    return Array.isArray(spans) ? (spans as unknown[]) : []
+  })
 
   try {
     return await fetch(`${url}/v1/traces`, {
-      body: JSON.stringify(traceEntry),
+      body: JSON.stringify({ resourceSpans }),
       headers: {
         Authorization: token,
         'Content-Type': 'application/json',
@@ -39,19 +45,20 @@ export async function exportTailEventsToLogfire(
   }
 }
 
-function findTraceEntry(events: TraceItem[]): Record<string, unknown> | null {
+function findTraceEntries(events: TraceItem[]): Record<string, unknown>[] {
+  const entries: Record<string, unknown>[] = []
   for (const event of events) {
     for (const log of event.logs) {
       if (Array.isArray(log.message)) {
         for (const entry of log.message) {
           if (isTraceEntry(entry)) {
-            return entry
+            entries.push(entry)
           }
         }
       }
     }
   }
-  return null
+  return entries
 }
 
 function isTraceEntry(entry: unknown): entry is Record<string, unknown> {
