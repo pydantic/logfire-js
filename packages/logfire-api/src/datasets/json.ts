@@ -53,11 +53,16 @@ function normalizeValue(
     }
     ancestors.add(value)
     try {
-      const result: Record<string, unknown> = {}
-      for (const [key, item] of Object.entries(value)) {
-        result[key] = normalizeValue(item, { ...context, path: objectPath(context.path, key) }, serializeValue, ancestors, serializedValues)
-      }
-      return result
+      // Assigning into a plain object would invoke the `__proto__` setter rather than create an
+      // own property, so a JSON-parsed value carrying an own `__proto__` key would lose it here
+      // without any error. `Object.fromEntries` defines own properties, as `vars/template.ts`
+      // already does for the same reason.
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [
+          key,
+          normalizeValue(item, { ...context, path: objectPath(context.path, key) }, serializeValue, ancestors, serializedValues),
+        ])
+      )
     } finally {
       ancestors.delete(value)
     }

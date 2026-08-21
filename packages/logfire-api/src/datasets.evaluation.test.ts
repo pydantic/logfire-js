@@ -324,6 +324,30 @@ describe('hosted evaluation datasets bridge', () => {
     })
   })
 
+  it('keeps an own __proto__ key from a JSON-parsed case value', async () => {
+    const calls: CapturedRequest[] = []
+    const client = new LogfireAPIClient({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: fetchSequence(calls, [jsonResponse(hostedMetadata), jsonResponse([{ id: 'case-1' }]), jsonResponse(hostedMetadata)]),
+    })
+
+    // A hosted export or a dataset file reaches us through JSON.parse, which does create an own
+    // `__proto__` property rather than setting the prototype the way an object literal would.
+    const inputs = JSON.parse('{"a":1,"__proto__":{"nested":true}}') as Record<string, unknown>
+
+    await client.pushEvaluationDataset(
+      new Dataset({
+        cases: [new Case({ inputs, name: 'proto-key' })],
+        name: 'proto-normalized',
+      })
+    )
+
+    const pushed = (calls[1]?.body as { cases: { inputs: Record<string, unknown> }[] }).cases[0]?.inputs
+    expect(Object.keys(pushed as object).sort()).toEqual(['__proto__', 'a'])
+    expect((pushed as Record<string, unknown>)['__proto__']).toEqual({ nested: true })
+  })
+
   it('serializes shared unsupported values without treating sibling references as cycles', async () => {
     const calls: CapturedRequest[] = []
     const client = new LogfireAPIClient({
