@@ -2008,7 +2008,9 @@ function collectReferenceDiagnosticsFromSource(
   referenceCycles: Set<string>,
   depth: number
 ): void {
-  if (depth > MAX_COMPOSITION_DEPTH) {
+  // `expandNamedReference` refuses at `depth >= MAX_COMPOSITION_DEPTH`, so validating with `>`
+  // would accept one hop more than composition can expand and report the config as valid.
+  if (depth >= MAX_COMPOSITION_DEPTH) {
     referenceErrors.add(
       `Variable '${rootVariable}' reference graph exceeded maximum depth of ${String(MAX_COMPOSITION_DEPTH)} via ${referencePath.join(' -> ')}`
     )
@@ -2087,7 +2089,7 @@ function collectTemplateFieldIssuesFromSource(
   issues: TemplateFieldIssue[],
   depth: number
 ): void {
-  if (depth > MAX_COMPOSITION_DEPTH) {
+  if (depth >= MAX_COMPOSITION_DEPTH) {
     return
   }
 

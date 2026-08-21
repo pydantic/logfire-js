@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { configureVariables, defineVar, getVariableProvider, variablesClear } from './index'
+import { configureVariables, defineVar, getVariableProvider, variablesClear, variablesValidate } from './index'
 import type { VariableCodec, VariablesConfig } from './index'
 
 const config = (variables: VariablesConfig['variables']): VariablesConfig => ({ variables })
@@ -180,5 +180,31 @@ describe('variable runtime composition parity', () => {
     expect(resolved.exception).toBeInstanceOf(Error)
     expect(calls).toBe(1)
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('code default raised'))
+  })
+  it('validates the reference depth limit that composition enforces', async () => {
+    const chain = (n: number): VariablesConfig['variables'] => {
+      const variables: VariablesConfig['variables'] = {}
+      for (let i = 0; i < n; i++) {
+        variables[`v${String(i)}`] = {
+          labels: { prod: { serialized_value: JSON.stringify(i === n - 1 ? 'end' : `@{v${String(i + 1)}}@`), version: 1 } },
+          name: `v${String(i)}`,
+          overrides: [],
+          rollout: { labels: { prod: 1 } },
+        }
+      }
+      return variables
+    }
+    const depthErrors = async (links: number): Promise<string[]> => {
+      variablesClear()
+      configureVariables({ config: config(chain(links)), instrument: false })
+      const report = await variablesValidate([defineVar('v0', { default: 'x' })])
+      return report.referenceErrors.filter((error) => error.includes('maximum depth'))
+    }
+
+    // 20 links is what `expandNamedReference` will expand, so validation must accept it.
+    expect(await depthErrors(20)).toEqual([])
+    // 21 is one more than composition can expand, so validation has to say so rather than
+    // reporting the config as valid and failing later at resolve time.
+    expect(await depthErrors(21)).toHaveLength(1)
   })
 })
