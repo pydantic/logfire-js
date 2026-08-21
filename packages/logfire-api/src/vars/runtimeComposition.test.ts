@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { configureVariables, defineVar, getVariableProvider, variablesClear, variablesValidate } from './index'
+import { configureVariables, defineTemplateVar, defineVar, getVariableProvider, variablesClear, variablesValidate } from './index'
 import type { VariableCodec, VariablesConfig } from './index'
 
 const config = (variables: VariablesConfig['variables']): VariablesConfig => ({ variables })
@@ -194,17 +194,50 @@ describe('variable runtime composition parity', () => {
       }
       return variables
     }
-    const depthErrors = async (links: number): Promise<string[]> => {
+    const referenceErrors = async (links: number): Promise<string[]> => {
       variablesClear()
       configureVariables({ config: config(chain(links)), instrument: false })
       const report = await variablesValidate([defineVar('v0', { default: 'x' })])
-      return report.referenceErrors.filter((error) => error.includes('maximum depth'))
+      return report.referenceErrors
     }
 
     // 20 links is what `expandNamedReference` will expand, so validation must accept it.
-    expect(await depthErrors(20)).toEqual([])
+    expect(await referenceErrors(20)).toEqual([])
     // 21 is one more than composition can expand, so validation has to say so rather than
     // reporting the config as valid and failing later at resolve time.
-    expect(await depthErrors(21)).toHaveLength(1)
+    expect(await referenceErrors(21)).toEqual([
+      `Variable 'v0' reference graph exceeded maximum depth of 20 via ${Array.from({ length: 21 }, (_unused, index) => `v${String(index)}`).join(' -> ')}`,
+    ])
+  })
+  it('stops the template-field walk where composition stops', async () => {
+    // Same chain, but the deepest link carries a template path the root schema does not declare.
+    const templateChain = (links: number): VariablesConfig['variables'] => {
+      const variables: VariablesConfig['variables'] = {}
+      for (let i = 0; i < links; i++) {
+        const value = i === links - 1 ? 'Hello {{missing}}' : `@{v${String(i + 1)}}@`
+        variables[`v${String(i)}`] = {
+          labels: { prod: { serialized_value: JSON.stringify(value), version: 1 } },
+          name: `v${String(i)}`,
+          overrides: [],
+          rollout: { labels: { prod: 1 } },
+        }
+      }
+      return variables
+    }
+    const fieldNames = async (links: number): Promise<string[]> => {
+      variablesClear()
+      configureVariables({ config: config(templateChain(links)), instrument: false })
+      const root = defineTemplateVar<string, { name: string }>('v0', {
+        default: 'Hello {{name}}',
+        templateInputsSchema: { properties: { name: { type: 'string' } }, type: 'object' },
+      })
+      const report = await variablesValidate([root])
+      return report.templateFieldIssues.map((issue) => issue.fieldName)
+    }
+
+    // Reachable, so the unknown template path is reported.
+    expect(await fieldNames(20)).toEqual(['missing'])
+    // One hop past what composition will expand, so there is nothing to report about it.
+    expect(await fieldNames(21)).toEqual([])
   })
 })
