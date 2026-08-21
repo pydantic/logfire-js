@@ -105,6 +105,9 @@ describe('built-in evaluator edge cases', () => {
     expect(new Contains({ value: 'a' }).evaluate(ctx(new Set(['a', 'b'])))).toEqual({ value: true })
     expect(new Contains({ value: { id: 1 } }).evaluate(ctx(new Set([{ id: 1 }])))).toEqual({ value: true })
     expect(new Contains({ value: 'k' }).evaluate(ctx(new Map([['k', 1]])))).toEqual({ value: true })
+    // Native membership is SameValueZero, so NaN matches; `deepEqual` compares with `===`.
+    expect(new Contains({ value: Number.NaN }).evaluate(ctx(new Set([Number.NaN])))).toEqual({ value: true })
+    expect(new Contains({ value: Number.NaN }).evaluate(ctx(new Map([[Number.NaN, 1]])))).toEqual({ value: true })
 
     // The reason has to name the contents; `JSON.stringify` renders a Set or Map as `{}`.
     expect(new Contains({ value: 'missing' }).evaluate(ctx(new Set(['a'])))).toEqual({

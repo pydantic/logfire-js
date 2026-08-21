@@ -93,6 +93,11 @@ export class Contains extends Evaluator {
     // it has none of. Python compares against set members and dict keys, so do the same before
     // falling through. Both report their contents, since `JSON.stringify` renders either as `{}`.
     if (output instanceof Set) {
+      // `has` is SameValueZero, so it matches NaN and is the semantics a Set caller expects.
+      // `deepEqual` compares with `===` and cannot see NaN as equal to itself.
+      if (output.has(this.value)) {
+        return { value: true }
+      }
       for (const item of output) {
         if (deepEqual(item, this.value)) {
           return { value: true }
@@ -101,6 +106,9 @@ export class Contains extends Evaluator {
       return { reason: `Output ${truncatedRepr([...output], 200)} does not contain provided value`, value: false }
     }
     if (output instanceof Map) {
+      if (output.has(this.value)) {
+        return { value: true }
+      }
       for (const key of output.keys()) {
         if (deepEqual(key, this.value)) {
           return { value: true }
