@@ -75,7 +75,11 @@ export function emitEvaluatorFailure(failure: EvaluatorFailureRecord, opts: Emit
     [GEN_AI_EVAL_NAME]: failure.name,
     [GEN_AI_EVAL_TARGET]: opts.target,
     [GEN_AI_EVALUATOR_SOURCE]: JSON.stringify(failure.source),
-    [GEN_AI_EXPLANATION]: errorMessage,
+  }
+  // `_emit_failure` omits the attribute for an empty message rather than sending one, so a
+  // failure without a message has no explanation instead of an empty one.
+  if (errorMessage !== '') {
+    attrs[GEN_AI_EXPLANATION] = errorMessage
   }
   if (failure.evaluator_version !== undefined) {
     attrs[GEN_AI_EVALUATOR_VERSION] = failure.evaluator_version
