@@ -53,12 +53,15 @@ describe('startRecording', () => {
     const options = lastOptions()
     expect(options['recordCanvas']).toBe(false)
     expect(options['collectFonts']).toBe(false)
+    expect(options['inlineImages']).toBe(false)
+    expect(options['recordCrossOriginIframes']).toBe(false)
+    expect(options['slimDOMOptions']).toBe(true)
     expect(options['maskAllInputs']).toBe(true)
     expect(options['maskTextSelector']).toBe('*')
     expect(options['sampling']).toEqual({
-      mousemove: true,
+      mousemove: 100,
       mouseInteraction: true,
-      scroll: 150,
+      scroll: 250,
       media: 800,
       input: 'last',
     })

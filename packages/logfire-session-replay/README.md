@@ -164,8 +164,10 @@ This preserves the batch, but compression may briefly use the main thread.
 
 The recorder masks all rendered text and input values by default
 (`maskAllText: true`, `maskAllInputs: true`). It also disables canvas recording
-and font collection, throttles media sampling, never captures request or
-response bodies, and leaves console capture off (`captureConsole: false`).
+and font collection, skips inlined images and cross-origin iframe recording,
+omits nonvisual DOM metadata, throttles pointer, scroll, and media sampling,
+never captures request or response bodies, and leaves console capture off
+(`captureConsole: false`).
 Network and navigation capture remain on, but query strings and fragments are
 removed from rrweb page metadata and captured network/navigation URLs by the
 default `redactUrlPatterns` value. Replay envelope `meta.urls` contains those
