@@ -14,7 +14,7 @@ You're now set up to start contributing!
 Install Chromium once, build the packages, and run the browser acceptance suite:
 
 ```bash
-vp exec --filter @pydantic/logfire-session-replay -- playwright install chromium
+pnpm --filter @pydantic/logfire-session-replay exec playwright install chromium
 pnpm run build
 pnpm run test:browser
 ```
