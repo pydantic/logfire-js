@@ -2,7 +2,7 @@ import { gzip, gzipSync, strToU8 } from 'fflate'
 
 import { computeChunkMeta } from './extract'
 import { safeSessionStorage } from './session'
-import { CHUNK_ENVELOPE_VERSION, EventType } from './types'
+import { CHUNK_ENVELOPE_VERSION, EventType, IncrementalSource } from './types'
 import type { ChunkEnvelope, ResolvedSessionReplayConfig, RrwebEvent, SessionAttributes } from './types'
 
 export const SEQ_STORAGE_KEY = 'lf_session_replay_seq'
@@ -13,6 +13,19 @@ const REPLAY_UPLOAD_TIMEOUT_MS = 10_000
 const MAX_RETRY_AFTER_MS = 10_000
 const MAX_KEEPALIVE_RESERVED_BYTES = 48_000
 const MAX_KEEPALIVE_CHUNK_BYTES = 48_000
+const USER_ACTIVITY_TIMEOUT_MS = 30_000
+const IDLE_FLUSH_INTERVAL_MS = 60_000
+const USER_ACTIVITY_SOURCES = new Set<number>([
+  IncrementalSource.MouseMove,
+  IncrementalSource.MouseInteraction,
+  IncrementalSource.Scroll,
+  IncrementalSource.ViewportResize,
+  IncrementalSource.Input,
+  IncrementalSource.TouchMove,
+  IncrementalSource.MediaInteraction,
+  IncrementalSource.Drag,
+  IncrementalSource.Selection,
+])
 
 interface Compression {
   gzip: typeof gzip
@@ -36,7 +49,10 @@ export class ReplayTransport {
   private buffer: RrwebEvent[] = []
   private pendingBytes = 0
   private seq = 0
-  private timer: ReturnType<typeof setInterval> | undefined
+  private timer: ReturnType<typeof setTimeout> | undefined
+  private nextFlushAt: number | undefined
+  private lastUserActivityAt: number
+  private started = false
   private mode: 'full' | 'buffer'
   private flushing: Promise<void> | undefined
   private reservedKeepaliveBytes = 0
@@ -62,18 +78,21 @@ export class ReplayTransport {
     this.storage = storage
     this.compression = compression
     this.seq = this.loadSeq(sessionId)
+    this.lastUserActivityAt = this.config.now()
   }
 
   start(): void {
-    if (this.timer !== undefined || this.mode !== 'full') {
+    if (this.started || this.mode !== 'full') {
       return
     }
-    this.timer = setInterval(() => {
-      this.flushAndReport()
-    }, this.config.flushIntervalMs)
+    this.started = true
+    this.scheduleFlush()
   }
 
   add(event: RrwebEvent): void {
+    if (isUserActivityEvent(event)) {
+      this.lastUserActivityAt = this.config.now()
+    }
     const eventBytes = estimateBytes(event)
     if (this.mode === 'buffer') {
       if (event.type === EventType.FullSnapshot) {
@@ -97,6 +116,8 @@ export class ReplayTransport {
 
     if (this.mode === 'full' && this.pendingBytes >= this.config.maxBufferBytes) {
       this.flushAndReport()
+    } else {
+      this.scheduleFlush()
     }
   }
 
@@ -113,6 +134,7 @@ export class ReplayTransport {
       return
     }
 
+    this.clearScheduledFlush()
     const events = this.buffer
     this.buffer = []
     this.pendingBytes = 0
@@ -150,19 +172,15 @@ export class ReplayTransport {
   }
 
   async shutdown(options: { keepalive?: boolean } = {}): Promise<void> {
-    if (this.timer !== undefined) {
-      clearInterval(this.timer)
-      this.timer = undefined
-    }
+    this.started = false
+    this.clearScheduledFlush()
     await this.flush(options)
     await this.flushing
   }
 
   discard(): void {
-    if (this.timer !== undefined) {
-      clearInterval(this.timer)
-      this.timer = undefined
-    }
+    this.started = false
+    this.clearScheduledFlush()
     this.buffer = []
     this.pendingBytes = 0
   }
@@ -175,6 +193,34 @@ export class ReplayTransport {
     this.flush().catch((error: unknown) => {
       safeReportError(this.config.onError, error)
     })
+  }
+
+  private scheduleFlush(): void {
+    if (!this.started || this.mode !== 'full' || this.buffer.length === 0) {
+      return
+    }
+    const now = this.config.now()
+    const recentlyActive = now - this.lastUserActivityAt < USER_ACTIVITY_TIMEOUT_MS
+    const interval = recentlyActive ? this.config.flushIntervalMs : Math.max(this.config.flushIntervalMs, IDLE_FLUSH_INTERVAL_MS)
+    const flushAt = now + interval
+    if (this.timer !== undefined && this.nextFlushAt !== undefined && this.nextFlushAt <= flushAt) {
+      return
+    }
+    this.clearScheduledFlush()
+    this.nextFlushAt = flushAt
+    this.timer = setTimeout(() => {
+      this.timer = undefined
+      this.nextFlushAt = undefined
+      this.flushAndReport()
+    }, interval)
+  }
+
+  private clearScheduledFlush(): void {
+    if (this.timer !== undefined) {
+      clearTimeout(this.timer)
+      this.timer = undefined
+    }
+    this.nextFlushAt = undefined
   }
 
   private createEnvelope(events: RrwebEvent[], seq: number): ChunkEnvelope {
@@ -366,6 +412,13 @@ export class ReplayTransport {
       // Cross-page sequence resume is best-effort.
     }
   }
+}
+
+function isUserActivityEvent(event: RrwebEvent): boolean {
+  if (event.type !== EventType.IncrementalSnapshot || typeof event.data !== 'object' || event.data === null || !('source' in event.data)) {
+    return false
+  }
+  return typeof event.data.source === 'number' && USER_ACTIVITY_SOURCES.has(event.data.source)
 }
 
 function safeReportError(onError: ((error: unknown) => void) | undefined, error: unknown): void {

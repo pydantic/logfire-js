@@ -291,13 +291,11 @@ describe('startSessionReplay full mode', () => {
     expect(getSessionAttributes).toHaveBeenCalledTimes(2)
   })
 
-  it('starts interval flushing in full mode', async () => {
+  it('flushes recent activity after five seconds', async () => {
     vi.useFakeTimers()
     const { calls, fetchImpl } = recordingFetch()
-    const setSpy = vi.spyOn(globalThis, 'setInterval')
     const replay = startSessionReplay(baseConfig(fetchImpl))
     const sessionId = replay.getSessionId()
-    expect(setSpy.mock.calls.map((call) => call[1])).toEqual([5_000, 1_000])
     emit(fullSnapshot)
     await vi.advanceTimersByTimeAsync(5_000)
     await vi.waitFor(() => {

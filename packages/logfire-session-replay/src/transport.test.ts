@@ -13,6 +13,11 @@ const click: RrwebEvent = {
   data: { source: IncrementalSource.MouseInteraction, type: MouseInteractions.Click },
   timestamp: 2,
 }
+const mutation: RrwebEvent = {
+  type: EventType.IncrementalSnapshot,
+  data: { source: IncrementalSource.Mutation },
+  timestamp: 3,
+}
 const REPLAY_UPLOAD_TIMEOUT_MS = 10_000
 
 function makeConfig(fetchImpl: typeof fetch): ResolvedSessionReplayConfig {
@@ -201,6 +206,48 @@ describe('ReplayTransport full mode', () => {
       'https://app.example.com/replay-proxy/sess-1?seq=0',
       'https://app.example.com/replay-proxy/sess-1?seq=1',
     ])
+  })
+
+  it('backs off background uploads while idle and resumes quickly on user activity', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = new ReplayTransport({ ...makeConfig(fetchImpl), now: () => Date.now() }, 'sess-adaptive', 'full', null)
+      transport.start()
+      transport.add(fullSnapshot)
+      await vi.advanceTimersByTimeAsync(5_000)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+
+      vi.setSystemTime(31_000)
+      transport.add(mutation)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(calls).toHaveLength(1)
+
+      transport.add(click)
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(calls).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(2)
+      })
+      expect(decodeBody(calls[1]!.init.body).events).toEqual([mutation, click])
+
+      vi.setSystemTime(72_000)
+      transport.add(mutation)
+      await vi.advanceTimersByTimeAsync(59_999)
+      expect(calls).toHaveLength(2)
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(3)
+      })
+      expect(decodeBody(calls[2]!.init.body).events).toEqual([mutation])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

@@ -21,6 +21,10 @@ export const IncrementalSource = {
   Scroll: 3,
   ViewportResize: 4,
   Input: 5,
+  TouchMove: 6,
+  MediaInteraction: 7,
+  Drag: 12,
+  Selection: 14,
 } as const
 
 export const MouseInteractions = {
@@ -134,6 +138,7 @@ export interface SessionReplayConfig {
   maskTextSelector?: string
   blockSelector?: string
 
+  /** Maximum upload delay while the user is active. Defaults to 5 seconds. */
   flushIntervalMs?: number
   maxBufferBytes?: number
 
