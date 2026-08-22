@@ -1,15 +1,11 @@
-import { record } from 'rrweb'
+import { record } from '@rrweb/record'
 
 import { redactUrl } from './privacy'
 import { EventType, IncrementalSource } from './types'
 import type { RrwebEvent } from './types'
 
-type RrwebRecord = ((options: unknown) => (() => void) | undefined) & {
-  addCustomEvent?: (tag: string, payload: unknown) => void
-}
-
-const rrwebRecord = record as unknown as RrwebRecord
 const URL_ATTRIBUTE_NAMES = new Set(['action', 'formaction', 'href', 'src'])
+type RrwebRecordOptions = NonNullable<Parameters<typeof record<RrwebEvent>>[0]>
 
 export interface RecorderHandle {
   stop(): void
@@ -27,9 +23,9 @@ export interface RecorderOptions {
 }
 
 export function startRecording(options: RecorderOptions): RecorderHandle {
-  const recordOptions: Record<string, unknown> = {
-    emit: (event: unknown) => {
-      options.emit(sanitizeRecorderEvent(event as RrwebEvent, options.redactUrlPatterns))
+  const recordOptions: RrwebRecordOptions = {
+    emit: (event) => {
+      options.emit(sanitizeRecorderEvent(event, options.redactUrlPatterns))
     },
     maskAllInputs: options.maskAllInputs,
     recordCanvas: false,
@@ -47,18 +43,18 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
   }
 
   if (options.maskAllText) {
-    recordOptions['maskTextSelector'] = '*'
+    recordOptions.maskTextSelector = '*'
   } else if (options.maskTextSelector !== undefined && options.maskTextSelector.length > 0) {
-    recordOptions['maskTextSelector'] = options.maskTextSelector
+    recordOptions.maskTextSelector = options.maskTextSelector
   }
   if (options.blockSelector !== undefined && options.blockSelector.length > 0) {
-    recordOptions['blockSelector'] = options.blockSelector
+    recordOptions.blockSelector = options.blockSelector
   }
   if (options.checkoutEveryNms !== undefined && options.checkoutEveryNms > 0) {
-    recordOptions['checkoutEveryNms'] = options.checkoutEveryNms
+    recordOptions.checkoutEveryNms = options.checkoutEveryNms
   }
 
-  const stop = rrwebRecord(recordOptions)
+  const stop = record(recordOptions)
   if (stop === undefined) {
     throw new Error('logfire session replay: rrweb failed to start recording')
   }
@@ -68,7 +64,7 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
       stop()
     },
     addCustomEvent: (tag, payload) => {
-      rrwebRecord.addCustomEvent?.(tag, payload)
+      record.addCustomEvent(tag, payload)
     },
   }
 }

@@ -14,7 +14,7 @@ const { record, stopFn } = vi.hoisted(() => {
   return { record, stopFn }
 })
 
-vi.mock('rrweb', () => ({ record }))
+vi.mock('@rrweb/record', () => ({ record }))
 
 import { startRecording } from './recorder'
 import type { RecorderOptions } from './recorder'

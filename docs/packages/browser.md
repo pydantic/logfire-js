@@ -332,8 +332,9 @@ When testing replay locally, browser privacy extensions or ad blockers may block
 requests or dynamic imports whose URLs contain terms such as `session-replay`.
 If replay fails to start with `ERR_BLOCKED_BY_CLIENT`, test in a clean profile
 or disable the extension for the local app. Vite workspace examples may also
-need to load rrweb's browser ESM build (`rrweb/dist/rrweb.js`) rather than its
-CommonJS build when importing unpublished workspace output directly.
+need to load `@rrweb/record`'s browser ESM build
+(`@rrweb/record/dist/record.js`) rather than its CommonJS build when importing
+unpublished workspace output directly.
 
 ## Custom Span Processors
 

@@ -9,7 +9,7 @@ general availability.
 
 This package records rrweb events, batches them into Logfire replay chunks, and
 uploads gzip-compressed JSON envelopes to a replay upload endpoint. It is
-standalone on purpose: `rrweb` and `fflate` are not dependencies of the core
+standalone on purpose: `@rrweb/record` and `fflate` are not dependencies of the core
 `logfire` API package or `@pydantic/logfire-browser`.
 
 ## Usage
@@ -256,7 +256,7 @@ whose URLs contain terms such as `session-replay`. If replay fails to start with
 the local app.
 
 When a Vite workspace example imports unpublished package output directly from
-`dist`, make sure rrweb resolves to its browser ESM build
-(`rrweb/dist/rrweb.js`). Resolving rrweb to `rrweb.cjs` can fail at runtime
+`dist`, make sure `@rrweb/record` resolves to its browser ESM build
+(`@rrweb/record/dist/record.js`). Resolving it to `record.cjs` can fail at runtime
 because that build does not provide the named `record` export used by this
 package.

@@ -25,7 +25,7 @@ const fixtureDirectory = dirname(fileURLToPath(import.meta.url))
 const packageDirectory = resolve(fixtureDirectory, '../..')
 const recorderEntrypoint = resolve(packageDirectory, 'dist/index.js')
 const require = createRequire(recorderEntrypoint)
-const rrwebEntrypoint = require.resolve('rrweb').replace(/dist\/rrweb\.cjs$/u, 'dist/rrweb.js')
+const rrwebEntrypoint = require.resolve('@rrweb/record').replace(/dist\/record\.cjs$/u, 'dist/record.js')
 const fflateEntrypoint = resolve(dirname(require.resolve('fflate/package.json')), 'esm/browser.js')
 const moduleId = 'lf-replay-delivery'
 const resolvedModuleId = `\0${moduleId}`
@@ -37,7 +37,7 @@ let unloadReleasedAt: number | undefined
 
 function loadRecorderModule(): string {
   return readFileSync(recorderEntrypoint, 'utf8')
-    .replaceAll('from"rrweb"', `from${JSON.stringify(rrwebEntrypoint)}`)
+    .replaceAll('from"@rrweb/record"', `from${JSON.stringify(rrwebEntrypoint)}`)
     .replaceAll('from"fflate"', `from${JSON.stringify(fflateEntrypoint)}`)
 }
 

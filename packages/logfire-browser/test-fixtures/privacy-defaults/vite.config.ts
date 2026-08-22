@@ -15,7 +15,7 @@ const fixtureDirectory = dirname(fileURLToPath(import.meta.url))
 const packageDirectory = resolve(fixtureDirectory, '../..')
 const recorderEntrypoint = resolve(packageDirectory, '../logfire-session-replay/dist/index.js')
 const require = createRequire(recorderEntrypoint)
-const rrwebEntrypoint = require.resolve('rrweb').replace(/dist\/rrweb\.cjs$/u, 'dist/rrweb.js')
+const rrwebEntrypoint = require.resolve('@rrweb/record').replace(/dist\/record\.cjs$/u, 'dist/record.js')
 const fflateEntrypoint = resolve(dirname(require.resolve('fflate/package.json')), 'esm/browser.js')
 const recorderModuleId = 'lf-privacy-recorder'
 const resolvedRecorderModuleId = `\0${recorderModuleId}`
@@ -23,7 +23,7 @@ const receipts: Receipt[] = []
 
 function loadRecorderModule(): string {
   return readFileSync(recorderEntrypoint, 'utf8')
-    .replaceAll('from"rrweb"', `from${JSON.stringify(rrwebEntrypoint)}`)
+    .replaceAll('from"@rrweb/record"', `from${JSON.stringify(rrwebEntrypoint)}`)
     .replaceAll('from"fflate"', `from${JSON.stringify(fflateEntrypoint)}`)
 }
 
