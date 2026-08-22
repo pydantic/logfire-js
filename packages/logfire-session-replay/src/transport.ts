@@ -1,6 +1,6 @@
 import { gzip, gzipSync, strToU8 } from 'fflate'
 
-import { isUserActivityEvent } from './activity'
+import { isUserActivityEvent, resolveFlushInterval } from './activity'
 import { computeChunkMeta } from './extract'
 import { safeSessionStorage } from './session'
 import { CHUNK_ENVELOPE_VERSION, EventType } from './types'
@@ -14,8 +14,6 @@ const REPLAY_UPLOAD_TIMEOUT_MS = 10_000
 const MAX_RETRY_AFTER_MS = 10_000
 const MAX_KEEPALIVE_RESERVED_BYTES = 48_000
 const MAX_KEEPALIVE_CHUNK_BYTES = 48_000
-const USER_ACTIVITY_TIMEOUT_MS = 30_000
-const IDLE_FLUSH_INTERVAL_MS = 60_000
 interface Compression {
   gzip: typeof gzip
   gzipSync: typeof gzipSync
@@ -228,8 +226,7 @@ export class ReplayTransport {
       return
     }
     const now = this.config.now()
-    const recentlyActive = now - this.lastUserActivityAt < USER_ACTIVITY_TIMEOUT_MS
-    const interval = recentlyActive ? this.config.flushIntervalMs : Math.max(this.config.flushIntervalMs, IDLE_FLUSH_INTERVAL_MS)
+    const interval = resolveFlushInterval(this.config.flushIntervalMs, now - this.lastUserActivityAt)
     const flushAt = now + interval
     if (this.timer !== undefined && this.nextFlushAt !== undefined && this.nextFlushAt <= flushAt) {
       return

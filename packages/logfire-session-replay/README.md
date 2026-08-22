@@ -141,7 +141,9 @@ Replay events use the configured `flushIntervalMs` while the user is active (5
 seconds by default). After 30 seconds without recorded pointer, input, touch,
 scroll, media, resize, drag, or selection activity, background events use the
 greater of `flushIntervalMs` and 60 seconds. New user activity restores the
-configured cadence. Reaching `maxBufferBytes` still flushes immediately.
+configured cadence. After five minutes without activity, background events use
+the greater of `flushIntervalMs` and five minutes. Reaching `maxBufferBytes`
+still flushes immediately.
 
 Full-mode replay requests best-effort keepalive uploads when the page becomes
 hidden or receives `pagehide`. Lifecycle chunks start independently of an

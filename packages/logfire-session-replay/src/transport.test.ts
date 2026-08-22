@@ -304,6 +304,36 @@ describe('ReplayTransport full mode', () => {
     }
   })
 
+  it('uses a five-minute cadence after five minutes without activity', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = new ReplayTransport(
+        { ...makeConfig(fetchImpl), now: () => Date.now() },
+        'sess-deep-idle',
+        'full',
+        null,
+        immediateCompression()
+      )
+      transport.start()
+
+      vi.setSystemTime(5 * 60_000)
+      transport.add(mutation)
+      await vi.advanceTimersByTimeAsync(5 * 60_000 - 1)
+      expect(calls).toHaveLength(0)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([mutation])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not shorten a configured flush interval while idle', async () => {
     vi.useFakeTimers()
     try {
