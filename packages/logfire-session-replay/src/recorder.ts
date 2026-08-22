@@ -32,7 +32,7 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
     collectFonts: false,
     inlineImages: false,
     recordCrossOriginIframes: false,
-    slimDOMOptions: true,
+    slimDOMOptions: 'all',
     sampling: {
       mousemove: 100,
       mouseInteraction: true,

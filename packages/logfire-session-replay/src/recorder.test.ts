@@ -74,7 +74,7 @@ describe('startRecording', () => {
     expect(options.collectFonts).toBe(false)
     expect(options.inlineImages).toBe(false)
     expect(options.recordCrossOriginIframes).toBe(false)
-    expect(options.slimDOMOptions).toBe(true)
+    expect(options.slimDOMOptions).toBe('all')
     expect(options.maskAllInputs).toBe(true)
     expect(options.maskTextSelector).toBe('*')
     expect(options.sampling).toEqual({
