@@ -145,8 +145,15 @@ configured cadence. After five minutes without activity, background events use
 the greater of `flushIntervalMs` and five minutes. Reaching `maxBufferBytes`
 still flushes immediately.
 
-Full-mode replay requests best-effort keepalive uploads when the page becomes
-hidden or receives `pagehide`. Lifecycle chunks start independently of an
+Replays must reach `minSessionDurationMs` (5 seconds by default) before they are
+uploaded. An earlier flush keeps the events buffered for the remaining time,
+while stopping the recorder before the minimum discards them. Set the option to
+`0` when an application must upload a shorter replay. The `maxBufferBytes`
+memory bound still takes precedence over the duration floor.
+
+After a replay reaches the minimum duration, full mode requests best-effort
+keepalive uploads when the page becomes hidden or receives `pagehide`.
+Lifecycle chunks start independently of an
 ordinary upload that is still in flight. The transport admits the earliest
 contiguous prefix whose compressed bodies fit its 48,000-byte aggregate budget
 across its own unfinished keepalive requests. Remaining lifecycle chunks are
@@ -160,8 +167,9 @@ event also cannot be split safely.
 `headers` and functional `token` values are resolved during each upload. An
 asynchronous credential callback can therefore delay the final request beyond
 the browser's page-freeze boundary. Prefer synchronously available proxy
-credentials, and call `flush()` before a controlled navigation when delivery is
-critical.
+credentials. Before a controlled navigation, call `flush()` early enough to
+reach `minSessionDurationMs`, or explicitly set the minimum to `0` when delivery
+of shorter replays is critical.
 
 Ordinary uploads use asynchronous gzip when available. If a restrictive Content
 Security Policy blocks fflate's worker compressor, replay retries the same batch

@@ -36,6 +36,7 @@ describe('installed fetch instrumentation and public standalone replay', () => {
           captureNavigation: false,
           captureNetwork: true,
           flushIntervalMs: 60_000,
+          minSessionDurationMs: 0,
           getSessionId: () => 'browser-session',
           ignoreUrlPatterns: [/\/client-traces(?:[?#]|$)/u, /\/client-metrics(?:[?#]|$)/u, /\/client-replay\/[^/?#]+(?:\?|$)/u],
           onErrorSampleRate: 0,

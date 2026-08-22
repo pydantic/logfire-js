@@ -135,6 +135,7 @@ describe('public browser configure startup ordering', () => {
           captureNavigation: false,
           captureNetwork: true,
           flushIntervalMs: 60_000,
+          minSessionDurationMs: 0,
           load: async () => {
             if (order === 'auto-first') {
               await replayModuleGate

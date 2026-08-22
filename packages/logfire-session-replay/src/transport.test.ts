@@ -35,6 +35,7 @@ function makeConfig(fetchImpl: typeof fetch): ResolvedSessionReplayConfig {
     blockSelector: '',
     flushIntervalMs: 5_000,
     maxBufferBytes: 1_000_000,
+    minSessionDurationMs: 0,
     sessionIdleTimeoutMs: 1_000,
     maxSessionDurationMs: 10_000,
     distinctId: 'user-1',
@@ -241,6 +242,73 @@ describe('ReplayTransport full mode', () => {
     expect(decodeBody(calls[0]!.init.body).events.map((event) => event.timestamp)).toEqual([1, 2])
     await transport.shutdown()
     expect(calls).toHaveLength(1)
+  })
+
+  it('waits until the minimum session duration before uploading', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = timedTransport(fetchImpl, 'sess-minimum', {
+        flushIntervalMs: 1_000,
+        minSessionDurationMs: 5_000,
+      })
+      transport.start()
+      transport.add(fullSnapshot)
+
+      await transport.flush({ keepalive: true })
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(calls).toHaveLength(0)
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(calls).toHaveLength(1)
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('discards a replay stopped before the minimum session duration', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = timedTransport(fetchImpl, 'sess-short', { minSessionDurationMs: 5_000 })
+      transport.start()
+      transport.add(fullSnapshot)
+
+      await vi.advanceTimersByTimeAsync(4_999)
+      await transport.shutdown()
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(calls).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('flushes at the buffer limit before the minimum session duration', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = timedTransport(fetchImpl, 'sess-short-cap', {
+        maxBufferBytes: 80,
+        minSessionDurationMs: 5_000,
+      })
+      transport.start()
+      transport.add(fullSnapshot)
+      transport.add(click)
+
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, click])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('uses UTF-8 bytes rather than UTF-16 code units for the buffer threshold', async () => {
@@ -925,6 +993,38 @@ describe('ReplayTransport Retry-After policy', () => {
 })
 
 describe('ReplayTransport buffer mode', () => {
+  it('waits until the minimum session duration after error promotion', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = new ReplayTransport(
+        {
+          ...makeConfig(fetchImpl),
+          minSessionDurationMs: 5_000,
+          now: () => Date.now(),
+        },
+        'sess-short-error',
+        'buffer',
+        null,
+        immediateCompression()
+      )
+      transport.add(fullSnapshot)
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      await transport.triggerFlush()
+      await vi.advanceTimersByTimeAsync(3_999)
+      expect(calls).toHaveLength(0)
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(calls).toHaveLength(1)
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not upload until triggered', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-2', 'buffer', null)

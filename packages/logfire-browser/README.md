@@ -317,14 +317,20 @@ logfire.configure({
 })
 ```
 
-When the document becomes hidden or receives `pagehide`, replay makes a bounded
-best-effort start of the earliest compressed chunks. Its 48,000-byte aggregate
+After a replay reaches the minimum duration, hiding the document or receiving
+`pagehide` makes a bounded best-effort start of the earliest compressed chunks.
+Its 48,000-byte aggregate
 budget is shared across its own unfinished keepalive requests, while the
 browser's keepalive quota is also shared with unrelated page traffic. Delivery
 after page freeze or termination is therefore not guaranteed. Functional
 `headers` and `token` values are resolved for every upload; an asynchronous
 resolver can finish too late for a lifecycle request, so prefer credentials that
 are synchronously available from your same-origin proxy flow.
+
+Replays shorter than `minSessionDurationMs` are not uploaded (5 seconds by
+default). An earlier flush remains buffered until the minimum is reached, and
+stopping earlier discards the replay. Set `minSessionDurationMs: 0` only when
+shorter replays must be delivered.
 
 Ordinary replay uploads automatically fall back to synchronous gzip if a
 restrictive Content Security Policy blocks the compressor worker. The fallback

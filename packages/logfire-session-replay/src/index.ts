@@ -390,6 +390,7 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     blockSelector: config.blockSelector ?? DEFAULTS.blockSelector,
     flushIntervalMs: config.flushIntervalMs ?? DEFAULTS.flushIntervalMs,
     maxBufferBytes: config.maxBufferBytes ?? DEFAULTS.maxBufferBytes,
+    minSessionDurationMs: config.minSessionDurationMs ?? DEFAULTS.minSessionDurationMs,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs ?? DEFAULTS.sessionIdleTimeoutMs,
     maxSessionDurationMs: config.maxSessionDurationMs ?? DEFAULTS.maxSessionDurationMs,
     distinctId: config.distinctId ?? DEFAULTS.distinctId,

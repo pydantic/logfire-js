@@ -43,6 +43,7 @@ export class ReplayTransport {
   private timer: ReturnType<typeof setTimeout> | undefined
   private nextFlushAt: number | undefined
   private lastUserActivityAt: number
+  private readonly startedAt: number
   private started = false
   private held: boolean
   private heldBufferIncomplete = false
@@ -73,7 +74,8 @@ export class ReplayTransport {
     this.compression = compression
     this.held = options.holdUntilActivity === true && mode === 'full'
     this.seq = this.loadSeq(sessionId)
-    this.lastUserActivityAt = this.config.now()
+    this.startedAt = this.config.now()
+    this.lastUserActivityAt = this.startedAt
   }
 
   start(): void {
@@ -113,7 +115,7 @@ export class ReplayTransport {
     this.pendingBytes += eventBytes
 
     if (this.mode === 'full' && this.pendingBytes >= this.config.maxBufferBytes) {
-      this.flushAndReport()
+      this.flushAndReport({ ignoreMinimumDuration: true })
     } else {
       this.scheduleFlush()
     }
@@ -128,7 +130,15 @@ export class ReplayTransport {
   }
 
   async flush(options: { keepalive?: boolean } = {}): Promise<void> {
+    return this.flushInternal(options)
+  }
+
+  private async flushInternal(options: { ignoreMinimumDuration?: boolean; keepalive?: boolean }): Promise<void> {
     if (this.mode === 'buffer' || this.held || this.buffer.length === 0) {
+      return
+    }
+    if (options.ignoreMinimumDuration !== true && !this.minimumDurationReached()) {
+      this.scheduleMinimumDurationFlush()
       return
     }
 
@@ -177,6 +187,11 @@ export class ReplayTransport {
       await this.flushing
       return
     }
+    if (!this.minimumDurationReached()) {
+      this.discard()
+      await this.flushing
+      return
+    }
     await this.flush(options)
     await this.flushing
   }
@@ -209,24 +224,35 @@ export class ReplayTransport {
     }
     this.held = false
     if (this.pendingBytes >= this.config.maxBufferBytes) {
-      this.flushAndReport()
+      this.flushAndReport({ ignoreMinimumDuration: true })
     } else {
       this.scheduleFlush()
     }
   }
 
-  private flushAndReport(): void {
-    this.flush().catch((error: unknown) => {
+  private flushAndReport(options: { ignoreMinimumDuration?: boolean } = {}): void {
+    this.flushInternal(options).catch((error: unknown) => {
       safeReportError(this.config.onError, error)
     })
   }
 
   private scheduleFlush(): void {
+    const now = this.config.now()
+    const minimumDelay = Math.max(0, this.config.minSessionDurationMs - (now - this.startedAt))
+    const interval = Math.max(resolveFlushInterval(this.config.flushIntervalMs, now - this.lastUserActivityAt), minimumDelay)
+    this.scheduleFlushIn(now, interval)
+  }
+
+  private scheduleMinimumDurationFlush(): void {
+    const now = this.config.now()
+    const interval = Math.max(0, this.config.minSessionDurationMs - (now - this.startedAt))
+    this.scheduleFlushIn(now, interval)
+  }
+
+  private scheduleFlushIn(now: number, interval: number): void {
     if (!this.started || this.mode !== 'full' || this.held || this.buffer.length === 0) {
       return
     }
-    const now = this.config.now()
-    const interval = resolveFlushInterval(this.config.flushIntervalMs, now - this.lastUserActivityAt)
     const flushAt = now + interval
     if (this.timer !== undefined && this.nextFlushAt !== undefined && this.nextFlushAt <= flushAt) {
       return
@@ -246,6 +272,10 @@ export class ReplayTransport {
       this.timer = undefined
     }
     this.nextFlushAt = undefined
+  }
+
+  private minimumDurationReached(): boolean {
+    return this.config.now() - this.startedAt >= this.config.minSessionDurationMs
   }
 
   private createEnvelope(events: RrwebEvent[], seq: number): ChunkEnvelope {

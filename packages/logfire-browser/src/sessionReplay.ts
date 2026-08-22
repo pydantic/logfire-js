@@ -37,6 +37,8 @@ export interface BrowserSessionReplayPackageConfig {
   blockSelector?: string
   flushIntervalMs?: number
   maxBufferBytes?: number
+  /** Minimum recording duration before a replay is uploaded. Defaults to 5 seconds. */
+  minSessionDurationMs?: number
   distinctId?: string
   getDistinctId?: () => string | undefined
   captureConsole?: boolean
@@ -90,6 +92,8 @@ export interface BrowserSessionReplayOptions {
 
   flushIntervalMs?: number
   maxBufferBytes?: number
+  /** Minimum recording duration before a replay is uploaded. Defaults to 5 seconds. */
+  minSessionDurationMs?: number
 
   distinctId?: string
   getDistinctId?: () => string | undefined
@@ -223,6 +227,9 @@ function createReplayConfig(
   }
   if (options.maxBufferBytes !== undefined) {
     config.maxBufferBytes = options.maxBufferBytes
+  }
+  if (options.minSessionDurationMs !== undefined) {
+    config.minSessionDurationMs = options.minSessionDurationMs
   }
   if (options.distinctId !== undefined) {
     config.distinctId = options.distinctId

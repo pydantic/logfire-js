@@ -233,6 +233,27 @@ describe('startSessionReplay controller ownership', () => {
 })
 
 describe('startSessionReplay full mode', () => {
+  it('defaults to a five-second minimum session duration', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const { calls, fetchImpl } = recordingFetch()
+    const config = baseConfig(fetchImpl, { flushIntervalMs: 1_000, now: () => Date.now() })
+    delete config.minSessionDurationMs
+    const replay = startSessionReplay(config)
+    emit(fullSnapshot)
+
+    await replay.flush()
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(calls).toHaveLength(0)
+
+    await vi.advanceTimersByTimeAsync(1)
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(1)
+    })
+    expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot])
+    await replay.stop()
+  })
+
   it('flushes a chunk through the proxy URL and returns an internal session id', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl))
@@ -938,6 +959,7 @@ function baseConfig(fetchImpl: typeof fetch, overrides: Partial<SessionReplayCon
     onErrorSampleRate: 1,
     random: () => 0,
     now: () => 1_000,
+    minSessionDurationMs: 0,
     fetchImpl,
     captureConsole: false,
     captureNetwork: false,
