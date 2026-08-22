@@ -8,6 +8,7 @@
     "build": "vp run --filter \"./packages/*\" build",
     "dev": "vp run --filter \"./packages/*\" --parallel dev",
     "test": "vp run --filter \"./packages/*\" test",
+    "test:browser": "vp run @pydantic/logfire-session-replay#test:browser",
     "typecheck": "vp run --filter \"./packages/*\" typecheck",
     "lint": "vp lint",
     "format": "vp fmt . --write",

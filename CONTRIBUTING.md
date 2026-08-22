@@ -8,3 +8,13 @@
 6. Submit a pull request.
 
 You're now set up to start contributing!
+
+## Session replay browser tests
+
+Install Chromium once, build the packages, and run the browser acceptance suite:
+
+```bash
+vp exec --filter @pydantic/logfire-session-replay -- playwright install chromium
+pnpm run build
+pnpm run test:browser
+```

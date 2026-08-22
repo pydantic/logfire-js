@@ -7,10 +7,10 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite-plus'
 
 interface ReplayReceipt {
-  authorization?: string
+  authorization: string | undefined
   body: string
   byteLength: number
-  marker?: string
+  marker: string | undefined
   receivedAt: number
   seq: number
   url: string
@@ -66,7 +66,7 @@ export default defineConfig({
             next()
             return
           }
-          const scenario = url.searchParams.get('scenario') ?? scenarioFromReplayPath(url.pathname)
+          const scenario = url.searchParams.get('scenario') ?? scenarioFromReplayPath(url.pathname) ?? 'unknown'
           if (request.method === 'POST' && url.pathname === '/fixture/reset') {
             receipts.set(scenario, [])
             applicationReceipts.set(scenario, [])
@@ -168,8 +168,8 @@ function readBody(request: NodeJS.ReadableStream, done: (body: Buffer) => void):
   })
 }
 
-function scenarioFromReplayPath(pathname: string): string {
-  return /^\/replay\/([^/]+)(?:\/|$)/u.exec(pathname)?.[1] ?? 'unknown'
+function scenarioFromReplayPath(pathname: string): string | undefined {
+  return /^\/replay\/([^/]+)(?:\/|$)/u.exec(pathname)?.[1]
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {

@@ -37,6 +37,21 @@ jobs:
       - name: Test
         run: vp run --filter "./packages/*" test
 
+      - name: Install Chromium
+        run: vp exec --filter @pydantic/logfire-session-replay -- playwright install --with-deps chromium
+
+      - name: Browser acceptance
+        id: browser-acceptance
+        run: vp run @pydantic/logfire-session-replay#test:browser
+
+      - name: Upload browser failure artifacts
+        if: failure() && steps.browser-acceptance.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-acceptance-results
+          path: test-results
+          retention-days: 7
+
       - name: Test release tooling
         run: node scripts/create-npm-token.test.mjs
 

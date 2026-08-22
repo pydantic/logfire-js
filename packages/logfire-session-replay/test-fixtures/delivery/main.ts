@@ -42,6 +42,7 @@ async function run(): Promise<void> {
     getSessionId: () => `delivery-${scenario}`,
     headers: () => ({ 'X-Replay-Marker': scenario }),
     ignoreUrlPatterns: [/\/fixture\//u, /\/replay\//u],
+    maskAllText: false,
     maxBufferBytes: 1_000_000,
     onError: (error: unknown) => {
       state.errors.push(error instanceof Error ? error.message : String(error))
@@ -66,8 +67,8 @@ async function run(): Promise<void> {
   } else if (scenario === 'retry-after') {
     await replay.flush()
   } else {
-    await fetch('/application/fetch', { method: 'POST', body: 'é🚀' })
-    await sendXhr('/application/xhr', 'é🚀')
+    await fetch(`/application/fetch?scenario=${scenario}`, { method: 'POST', body: 'é🚀' })
+    await sendXhr(`/application/xhr?scenario=${scenario}`, 'é🚀')
     await delay(50)
     await replay.flush()
   }
