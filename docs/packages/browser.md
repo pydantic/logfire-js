@@ -64,9 +64,8 @@ logfire.configure({
 
 The session is stored in `sessionStorage`, so it is scoped to the current tab
 and survives page reloads. It rotates after 30 minutes of inactivity or 4 hours
-of total duration by default. Each span gets `session.id` and
-`browser.session.id`; `session.id` is the OpenTelemetry semantic attribute and
-`browser.session.id` is emitted for Logfire Platform compatibility.
+of total duration by default. Each span gets the OpenTelemetry `session.id`
+semantic attribute.
 
 Use `getRouteName` for the application's normalized route template and
 `getSessionAttributes` for low-cardinality dimensions that should remain stable
@@ -217,8 +216,8 @@ uses unit `1`.
 
 Metric data point attributes are intentionally low-cardinality:
 `web_vital.name` and `web_vital.rating` by default. They do not include
-`session.id`, `browser.session.id`, `logfire.page.url.full`,
-`logfire.page.url.path`, `logfire.page.route`, `logfire.session.*`, Web Vital
+`session.id`, `logfire.page.url.full`, `logfire.page.url.path`,
+`logfire.page.route`, `logfire.session.*`, Web Vital
 ids/deltas, DOM selectors, attribution fields, or raw PerformanceEntry data. Use
 spans for raw-sample drilldown, session/replay correlation, exact page context,
 and attribution selectors. When metrics are configured, Logfire Platform should
@@ -268,7 +267,7 @@ await cleanup() // full SDK cleanup
 ```
 
 `sessionReplay` implies default RUM session behavior. Replay chunks and browser
-spans share `session.id` / `browser.session.id`. Spans started after replay has
+spans share `session.id`. Spans started after replay has
 loaded and sampled into `full` or `buffer` mode include
 `logfire.session_replay.active` and `logfire.session_replay.mode`. Those active
 attributes are truthful best-effort annotations, not the primary correlation
