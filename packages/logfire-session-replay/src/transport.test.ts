@@ -73,6 +73,16 @@ function immediateCompression() {
   }
 }
 
+function timedTransport(fetchImpl: typeof fetch, sessionId: string, overrides: Partial<ResolvedSessionReplayConfig> = {}) {
+  return new ReplayTransport(
+    { ...makeConfig(fetchImpl), ...overrides, now: () => Date.now() },
+    sessionId,
+    'full',
+    null,
+    immediateCompression()
+  )
+}
+
 function pseudoRandomText(length: number, seed: number): string {
   let state = seed >>> 0
   let value = ''
@@ -267,7 +277,7 @@ describe('ReplayTransport full mode', () => {
     try {
       vi.setSystemTime(0)
       const { calls, fetchImpl } = recordingFetch()
-      const transport = new ReplayTransport({ ...makeConfig(fetchImpl), now: () => Date.now() }, 'sess-adaptive', 'full', null)
+      const transport = timedTransport(fetchImpl, 'sess-adaptive')
       transport.start()
       transport.add(fullSnapshot)
       await vi.advanceTimersByTimeAsync(5_000)
@@ -309,13 +319,7 @@ describe('ReplayTransport full mode', () => {
     try {
       vi.setSystemTime(0)
       const { calls, fetchImpl } = recordingFetch()
-      const transport = new ReplayTransport(
-        { ...makeConfig(fetchImpl), now: () => Date.now() },
-        'sess-deep-idle',
-        'full',
-        null,
-        immediateCompression()
-      )
+      const transport = timedTransport(fetchImpl, 'sess-deep-idle')
       transport.start()
 
       vi.setSystemTime(5 * 60_000)
@@ -334,18 +338,90 @@ describe('ReplayTransport full mode', () => {
     }
   })
 
+  it('does not postpone a deep-idle upload when more background events arrive', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = timedTransport(fetchImpl, 'sess-deep-idle-deadline')
+      transport.start()
+
+      vi.setSystemTime(5 * 60_000)
+      transport.add(mutation)
+      await vi.advanceTimersByTimeAsync(4 * 60_000)
+      const laterMutation = { ...mutation, timestamp: 4 }
+      transport.add(laterMutation)
+
+      await vi.advanceTimersByTimeAsync(60_000 - 1)
+      expect(calls).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([mutation, laterMutation])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('restores the active cadence when activity resumes during deep idle', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = timedTransport(fetchImpl, 'sess-deep-idle-activity')
+      transport.start()
+
+      vi.setSystemTime(5 * 60_000)
+      transport.add(mutation)
+      await vi.advanceTimersByTimeAsync(60_000)
+      transport.add(click)
+
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(calls).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([mutation, click])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('flushes at the buffer limit during deep idle without a later timer upload', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const maxBufferBytes = strToU8(JSON.stringify(fullSnapshot)).byteLength + strToU8(JSON.stringify(mutation)).byteLength
+      const transport = timedTransport(fetchImpl, 'sess-deep-idle-cap', { maxBufferBytes })
+      transport.start()
+
+      vi.setSystemTime(5 * 60_000)
+      transport.add(fullSnapshot)
+      transport.add(mutation)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, mutation])
+
+      await vi.advanceTimersByTimeAsync(5 * 60_000)
+      expect(calls).toHaveLength(1)
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not shorten a configured flush interval while idle', async () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(31_000)
       const { calls, fetchImpl } = recordingFetch()
-      const transport = new ReplayTransport(
-        { ...makeConfig(fetchImpl), flushIntervalMs: 90_000, now: () => Date.now() },
-        'sess-slow-cadence',
-        'full',
-        null,
-        immediateCompression()
-      )
+      const transport = timedTransport(fetchImpl, 'sess-slow-cadence', { flushIntervalMs: 90_000 })
       transport.start()
       vi.setSystemTime(62_000)
       transport.add(mutation)

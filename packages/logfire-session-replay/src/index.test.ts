@@ -354,6 +354,33 @@ describe('startSessionReplay full mode', () => {
     await replay.stop()
   })
 
+  it('uploads a released rotated session on the active cadence', async () => {
+    vi.useFakeTimers()
+    let now = 0
+    let sessionId = 'external-1'
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId, now: () => now }))
+    emit(fullSnapshot)
+    await replay.flush()
+
+    sessionId = 'external-2'
+    await vi.advanceTimersByTimeAsync(1_000)
+    await replay.flush()
+    emit(fullSnapshot)
+
+    now = 5 * 60_000
+    emitActivity(click)
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(calls).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(2)
+    })
+
+    expect(decodeBody(calls[1]!.init.body).events).toEqual([fullSnapshot, click])
+    await replay.stop()
+  })
+
   it('discards a held session that is superseded at the first interaction', async () => {
     vi.useFakeTimers()
     let sessionId = 'external-1'
