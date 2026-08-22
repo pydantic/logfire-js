@@ -28,8 +28,30 @@ describe('variable template validation', () => {
     configureVariables(false)
   })
 
+  it('does not report item fields inside an each block as missing template inputs', () => {
+    const schema = {
+      properties: { items: { items: { properties: { name: { type: 'string' } }, type: 'object' }, type: 'array' } },
+      type: 'object',
+    }
+
+    expect(validateTemplateInputs(JSON.stringify('{{#each items}}{{name}}{{/each}}'), schema, 'v', undefined)).toEqual([])
+    // The inverse block runs against the enclosing context, so an unknown path there is still reported.
+    expect(
+      validateTemplateInputs(JSON.stringify('{{#each items}}{{name}}{{else}}{{missing}}{{/each}}'), schema, 'v', undefined).map(
+        (issue) => issue.path
+      )
+    ).toEqual(['missing'])
+  })
+
   it('extracts common Handlebars paths from templates', () => {
     expect(extractTemplatePaths('Hello {{user.name}} {{#if beta}}yes{{/if}}')).toEqual(['user.name', 'beta'])
+    // `each` and `with` shift the context, so a bare path in the program body belongs to the item,
+    // not to the template inputs. The inverse block still runs against the enclosing context.
+    expect(extractTemplatePaths('{{#each items}}{{name}}{{/each}}')).toEqual(['items'])
+    expect(extractTemplatePaths('{{#with brand}}{{tagline}}{{/with}}')).toEqual(['brand'])
+    expect(extractTemplatePaths('{{#each items}}{{name}}{{else}}{{fallback}}{{/each}}')).toEqual(['items', 'fallback'])
+    // A parent-scoped path is still dropped by shouldValidatePath, unchanged by the depth model.
+    expect(extractTemplatePaths('{{#each items}}{{../heading}}{{/each}}')).toEqual(['items'])
   })
 
   it('allows template paths covered by object-valued additionalProperties', () => {
