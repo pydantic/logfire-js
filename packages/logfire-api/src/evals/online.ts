@@ -24,7 +24,7 @@ import { emitEvaluationResult, emitEvaluatorFailure, spanReferenceFromSpan } fro
 import type { SpanReference } from './otelEmit'
 import { Semaphore } from './Semaphore'
 import type { SpanTree } from './spanTree'
-import { buildSpanTree, getEvalsSpanProcessor, isProcessorInstalledOnGlobal, SpanTreeRecordingError } from './spanTree'
+import { buildSpanTree, getEvalsSpanProcessor, SpanTreeRecordingError } from './spanTree'
 
 export type SamplingMode = 'correlated' | 'independent'
 
@@ -307,10 +307,7 @@ export function withOnlineEvaluation<F extends (...args: never[]) => Promise<unk
     }
 
     const capturedSpans = evalsProcessor.drainBucket(exporterContextId)
-    const spanTree =
-      capturedSpans.length === 0 && !isProcessorInstalledOnGlobal()
-        ? buildSpanTree([], new SpanTreeRecordingError())
-        : buildSpanTree(capturedSpans, null)
+    const spanTree = capturedSpans.length === 0 ? buildSpanTree([], new SpanTreeRecordingError()) : buildSpanTree(capturedSpans, null)
     const metrics: Record<string, number> = {}
     extractMetricsFromSpanTree(spanTree, metrics)
 

@@ -59,7 +59,7 @@ import { Semaphore } from './Semaphore'
 import { buildDatasetJsonSchema, datasetFromObject, datasetToObject, parseYaml, stringifyYaml } from './serialization'
 import type { FromOptions, JsonSchema, ToOptions } from './serialization'
 import type { SpanTree } from './spanTree'
-import { buildSpanTree, getEvalsSpanProcessor, isProcessorInstalledOnGlobal, SpanTreeRecordingError } from './spanTree'
+import { buildSpanTree, getEvalsSpanProcessor, SpanTreeRecordingError } from './spanTree'
 
 export interface DatasetOptions<Inputs, Output, Metadata = unknown> {
   cases?: readonly Case<Inputs, Output, Metadata>[]
@@ -474,7 +474,7 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
     // Build span tree and auto-extract metrics
     const capturedSpans = evalsProcessor.drainBucket(exporterContextId)
     let spanTree: SpanTree
-    if (capturedSpans.length === 0 && !isProcessorInstalledOnGlobal()) {
+    if (capturedSpans.length === 0) {
       spanTree = buildSpanTree([], new SpanTreeRecordingError())
     } else {
       spanTree = buildSpanTree(capturedSpans, null)
