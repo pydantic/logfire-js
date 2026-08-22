@@ -137,11 +137,11 @@ Use `replayUrl + headers` with a backend proxy when possible.
 
 ## Lifecycle Delivery
 
-Replay events upload after the configured 5-second `flushIntervalMs` while the
-user is active. After 30 seconds without pointer, keyboard, touch, scroll, media,
-resize, drag, or selection activity, background events batch for up to 60
-seconds. New user activity restores the faster cadence. Reaching
-`maxBufferBytes` still flushes immediately.
+Replay events use the configured `flushIntervalMs` while the user is active (5
+seconds by default). After 30 seconds without recorded pointer, input, touch,
+scroll, media, resize, drag, or selection activity, background events use the
+greater of `flushIntervalMs` and 60 seconds. New user activity restores the
+configured cadence. Reaching `maxBufferBytes` still flushes immediately.
 
 Full-mode replay requests best-effort keepalive uploads when the page becomes
 hidden or receives `pagehide`. Lifecycle chunks start independently of an

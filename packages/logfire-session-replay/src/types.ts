@@ -138,7 +138,7 @@ export interface SessionReplayConfig {
   maskTextSelector?: string
   blockSelector?: string
 
-  /** Maximum upload delay while the user is active. Defaults to 5 seconds. */
+  /** Batching interval while the user is active. Defaults to 5 seconds. */
   flushIntervalMs?: number
   maxBufferBytes?: number
 

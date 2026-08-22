@@ -249,6 +249,35 @@ describe('ReplayTransport full mode', () => {
       vi.useRealTimers()
     }
   })
+
+  it('does not shorten a configured flush interval while idle', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(31_000)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = new ReplayTransport(
+        { ...makeConfig(fetchImpl), flushIntervalMs: 90_000, now: () => Date.now() },
+        'sess-slow-cadence',
+        'full',
+        null,
+        immediateCompression()
+      )
+      transport.start()
+      vi.setSystemTime(62_000)
+      transport.add(mutation)
+
+      await vi.advanceTimersByTimeAsync(89_999)
+      expect(calls).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([mutation])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('ReplayTransport retries', () => {
