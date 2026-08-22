@@ -1,7 +1,7 @@
 import { startSessionReplay } from 'lf-replay-delivery'
 import type { SessionReplay } from '@pydantic/logfire-session-replay'
 
-type Scenario = 'csp' | 'retry-after' | 'unload' | 'utf8'
+type Scenario = 'csp' | 'retry-after' | 'short' | 'unload' | 'utf8'
 type Phase = 'starting' | 'ready' | 'complete' | 'failed'
 
 interface DeliveryState {
@@ -44,6 +44,7 @@ async function run(): Promise<void> {
     ignoreUrlPatterns: [/\/fixture\//u, /\/replay\//u],
     maskAllText: false,
     maxBufferBytes: 1_000_000,
+    minSessionDurationMs: scenario === 'short' ? 5_000 : 0,
     onError: (error: unknown) => {
       state.errors.push(error instanceof Error ? error.message : String(error))
     },
@@ -53,6 +54,12 @@ async function run(): Promise<void> {
 
   if (scenario === 'unload') {
     await prepareUnload()
+    state.phase = 'ready'
+    setStatus('ready')
+    await saveState()
+    return
+  }
+  if (scenario === 'short') {
     state.phase = 'ready'
     setStatus('ready')
     await saveState()
@@ -140,6 +147,9 @@ function scenarioFromPath(pathname: string): Scenario {
   }
   if (pathname.startsWith('/retry-after/')) {
     return 'retry-after'
+  }
+  if (pathname.startsWith('/short/')) {
+    return 'short'
   }
   if (pathname.startsWith('/utf8/')) {
     return 'utf8'

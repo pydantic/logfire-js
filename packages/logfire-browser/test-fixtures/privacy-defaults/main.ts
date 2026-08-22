@@ -46,6 +46,7 @@ const cleanup = logfire.configure({
       : {}),
     flushIntervalMs: 60_000,
     ignoreUrlPatterns: [/\/receipts(?:\/|$)/u],
+    minSessionDurationMs: 0,
     load: async () => {
       const replayModule = await import('lf-privacy-recorder')
       return {
