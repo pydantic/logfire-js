@@ -215,7 +215,7 @@ not automatically promote the replay buffer.
 Use `getSessionId` to share a session id with another SDK layer. The
 `@pydantic/logfire-browser` integration passes its browser RUM session id through
 this hook when top-level `sessionReplay` is configured. Other integrations must
-record the same value as `browser.session.id` on their browser spans so Logfire
+record the same value as `session.id` on their browser spans so Logfire
 can correlate those spans with the replay over its time bounds.
 
 ## Browser SDK Integration
