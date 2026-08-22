@@ -1,8 +1,9 @@
 import { gzip, gzipSync, strToU8 } from 'fflate'
 
+import { isUserActivityEvent } from './activity'
 import { computeChunkMeta } from './extract'
 import { safeSessionStorage } from './session'
-import { CHUNK_ENVELOPE_VERSION, EventType, IncrementalSource } from './types'
+import { CHUNK_ENVELOPE_VERSION, EventType } from './types'
 import type { ChunkEnvelope, ResolvedSessionReplayConfig, RrwebEvent, SessionAttributes } from './types'
 
 export const SEQ_STORAGE_KEY = 'lf_session_replay_seq'
@@ -15,18 +16,6 @@ const MAX_KEEPALIVE_RESERVED_BYTES = 48_000
 const MAX_KEEPALIVE_CHUNK_BYTES = 48_000
 const USER_ACTIVITY_TIMEOUT_MS = 30_000
 const IDLE_FLUSH_INTERVAL_MS = 60_000
-const USER_ACTIVITY_SOURCES = new Set<number>([
-  IncrementalSource.MouseMove,
-  IncrementalSource.MouseInteraction,
-  IncrementalSource.Scroll,
-  IncrementalSource.ViewportResize,
-  IncrementalSource.Input,
-  IncrementalSource.TouchMove,
-  IncrementalSource.MediaInteraction,
-  IncrementalSource.Drag,
-  IncrementalSource.Selection,
-])
-
 interface Compression {
   gzip: typeof gzip
   gzipSync: typeof gzipSync
@@ -43,6 +32,10 @@ interface PreparedUpload {
 
 type RetryAfter = { kind: 'delay'; milliseconds: number } | { kind: 'fallback' } | { kind: 'too-long' }
 
+interface ReplayTransportOptions {
+  holdUntilActivity?: boolean
+}
+
 const DEFAULT_COMPRESSION: Compression = { gzip, gzipSync }
 
 export class ReplayTransport {
@@ -53,6 +46,8 @@ export class ReplayTransport {
   private nextFlushAt: number | undefined
   private lastUserActivityAt: number
   private started = false
+  private held: boolean
+  private heldBufferIncomplete = false
   private mode: 'full' | 'buffer'
   private flushing: Promise<void> | undefined
   private reservedKeepaliveBytes = 0
@@ -69,7 +64,8 @@ export class ReplayTransport {
     mode: 'full' | 'buffer',
     storage: Storage | null = safeSessionStorage(),
     compression: Compression = DEFAULT_COMPRESSION,
-    sessionAttributes: SessionAttributes = {}
+    sessionAttributes: SessionAttributes = {},
+    options: ReplayTransportOptions = {}
   ) {
     this.config = config
     this.sessionId = sessionId
@@ -77,6 +73,7 @@ export class ReplayTransport {
     this.mode = mode
     this.storage = storage
     this.compression = compression
+    this.held = options.holdUntilActivity === true && mode === 'full'
     this.seq = this.loadSeq(sessionId)
     this.lastUserActivityAt = this.config.now()
   }
@@ -94,19 +91,22 @@ export class ReplayTransport {
       this.lastUserActivityAt = this.config.now()
     }
     const eventBytes = estimateBytes(event)
-    if (this.mode === 'buffer') {
+    if (this.mode === 'buffer' || this.held) {
       if (event.type === EventType.FullSnapshot) {
         this.buffer = [event]
         this.pendingBytes = eventBytes
+        this.heldBufferIncomplete = false
         return
       }
       // Incremental rrweb events are only useful after a full-snapshot anchor.
       // Keep the earliest contiguous prefix so later events never depend on a
       // state transition that was trimmed from the buffer.
       if (this.buffer.length === 0 || eventBytes > this.config.maxBufferBytes) {
+        this.heldBufferIncomplete ||= this.held
         return
       }
       if (this.pendingBytes + eventBytes > this.config.maxBufferBytes) {
+        this.heldBufferIncomplete ||= this.held
         return
       }
     }
@@ -130,7 +130,7 @@ export class ReplayTransport {
   }
 
   async flush(options: { keepalive?: boolean } = {}): Promise<void> {
-    if (this.mode === 'buffer' || this.buffer.length === 0) {
+    if (this.mode === 'buffer' || this.held || this.buffer.length === 0) {
       return
     }
 
@@ -174,6 +174,11 @@ export class ReplayTransport {
   async shutdown(options: { keepalive?: boolean } = {}): Promise<void> {
     this.started = false
     this.clearScheduledFlush()
+    if (this.held) {
+      this.discard()
+      await this.flushing
+      return
+    }
     await this.flush(options)
     await this.flushing
   }
@@ -189,6 +194,29 @@ export class ReplayTransport {
     return this.mode
   }
 
+  isHeld(): boolean {
+    return this.held
+  }
+
+  releaseHeld(takeFullSnapshot: () => void): void {
+    if (!this.held) {
+      return
+    }
+    if (this.heldBufferIncomplete) {
+      // rrweb calls the release hook before emitting the interaction. A fresh
+      // anchor keeps its node ids valid after background mutations were dropped.
+      this.buffer = []
+      this.pendingBytes = 0
+      takeFullSnapshot()
+    }
+    this.held = false
+    if (this.pendingBytes >= this.config.maxBufferBytes) {
+      this.flushAndReport()
+    } else {
+      this.scheduleFlush()
+    }
+  }
+
   private flushAndReport(): void {
     this.flush().catch((error: unknown) => {
       safeReportError(this.config.onError, error)
@@ -196,7 +224,7 @@ export class ReplayTransport {
   }
 
   private scheduleFlush(): void {
-    if (!this.started || this.mode !== 'full' || this.buffer.length === 0) {
+    if (!this.started || this.mode !== 'full' || this.held || this.buffer.length === 0) {
       return
     }
     const now = this.config.now()
@@ -412,13 +440,6 @@ export class ReplayTransport {
       // Cross-page sequence resume is best-effort.
     }
   }
-}
-
-function isUserActivityEvent(event: RrwebEvent): boolean {
-  if (event.type !== EventType.IncrementalSnapshot || typeof event.data !== 'object' || event.data === null || !('source' in event.data)) {
-    return false
-  }
-  return typeof event.data.source === 'number' && USER_ACTIVITY_SOURCES.has(event.data.source)
 }
 
 function safeReportError(onError: ((error: unknown) => void) | undefined, error: unknown): void {

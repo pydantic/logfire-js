@@ -10,10 +10,12 @@ type RrwebRecordOptions = NonNullable<Parameters<typeof record<RrwebEvent>>[0]>
 export interface RecorderHandle {
   stop(): void
   addCustomEvent(tag: string, payload: unknown): void
+  takeFullSnapshot(): void
 }
 
 export interface RecorderOptions {
   emit: (event: RrwebEvent) => void
+  beforeUserActivity?: () => void
   maskAllText: boolean
   maskAllInputs: boolean
   maskTextSelector?: string
@@ -23,6 +25,9 @@ export interface RecorderOptions {
 }
 
 export function startRecording(options: RecorderOptions): RecorderHandle {
+  const beforeUserActivity = () => {
+    options.beforeUserActivity?.()
+  }
   const recordOptions: RrwebRecordOptions = {
     emit: (event) => {
       options.emit(sanitizeRecorderEvent(event, options.redactUrlPatterns))
@@ -33,6 +38,15 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
     inlineImages: false,
     recordCrossOriginIframes: false,
     slimDOMOptions: 'all',
+    hooks: {
+      input: beforeUserActivity,
+      mediaInteaction: beforeUserActivity,
+      mouseInteraction: beforeUserActivity,
+      mousemove: beforeUserActivity,
+      scroll: beforeUserActivity,
+      selection: beforeUserActivity,
+      viewportResize: beforeUserActivity,
+    },
     sampling: {
       mousemove: 100,
       mouseInteraction: true,
@@ -65,6 +79,9 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
     },
     addCustomEvent: (tag, payload) => {
       record.addCustomEvent(tag, payload)
+    },
+    takeFullSnapshot: () => {
+      record.takeFullSnapshot(true)
     },
   }
 }

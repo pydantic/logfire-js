@@ -17,6 +17,7 @@ const { record, stopFn } = vi.hoisted(() => {
     vi.fn<RrwebRecordCall>(() => stopFn),
     {
       addCustomEvent: vi.fn<typeof RrwebRecord.addCustomEvent>(),
+      takeFullSnapshot: vi.fn<typeof RrwebRecord.takeFullSnapshot>(),
     }
   )
   return { record, stopFn }
@@ -60,6 +61,7 @@ beforeEach(() => {
   record.mockReturnValue(stopFn)
   stopFn.mockClear()
   record.addCustomEvent.mockClear()
+  record.takeFullSnapshot.mockClear()
 })
 
 afterEach(() => {
@@ -84,6 +86,14 @@ describe('startRecording', () => {
       media: 800,
       input: 'last',
     })
+    const hooks = options.hooks
+    expect(hooks?.input).toBeTypeOf('function')
+    expect(hooks?.mediaInteaction).toBe(hooks?.input)
+    expect(hooks?.mouseInteraction).toBe(hooks?.input)
+    expect(hooks?.mousemove).toBe(hooks?.input)
+    expect(hooks?.scroll).toBe(hooks?.input)
+    expect(hooks?.selection).toBe(hooks?.input)
+    expect(hooks?.viewportResize).toBe(hooks?.input)
   })
 
   it('omits optional selectors and checkoutEveryNms when unset', () => {
@@ -191,6 +201,25 @@ describe('startRecording', () => {
     const handle = startRecordingForTest({ emit: () => {}, maskAllInputs: true })
     handle.addCustomEvent('logfire.error', { message: 'x' })
     expect(record.addCustomEvent).toHaveBeenCalledWith('logfire.error', { message: 'x' })
+  })
+
+  it('runs the activity callback before rrweb emits the interaction', () => {
+    const calls: string[] = []
+    startRecordingForTest({
+      beforeUserActivity: () => calls.push('activity'),
+      emit: () => calls.push('emit'),
+    })
+
+    lastOptions().hooks?.mouseInteraction?.({ id: 1, type: 2, x: 0, y: 0 })
+    emitFromRrweb({ type: EventType.IncrementalSnapshot, data: { source: IncrementalSource.MouseInteraction }, timestamp: 1 })
+
+    expect(calls).toEqual(['activity', 'emit'])
+  })
+
+  it('takes a checkout snapshot through the rrweb static', () => {
+    const handle = startRecordingForTest({ emit: () => {} })
+    handle.takeFullSnapshot()
+    expect(record.takeFullSnapshot).toHaveBeenCalledWith(true)
   })
 
   it('stops the rrweb recorder when a stop function is returned', () => {

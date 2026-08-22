@@ -1,3 +1,4 @@
+import { isUserActivityEvent } from './activity'
 import { captureConsole, captureNavigation, captureNetwork } from './capture'
 import { startRecording } from './recorder'
 import { decideSamplingMode } from './sampling'
@@ -99,6 +100,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           onSessionChanged: observeSession,
           samplingModeStorage,
           sessionId,
+          holdUntilActivity: !initial,
         })
       } catch (error) {
         runtime = undefined
@@ -191,12 +193,13 @@ function createActiveRuntime(options: {
   onSessionChanged: (sessionId: string) => void
   samplingModeStorage: Storage | null
   sessionId: string
+  holdUntilActivity: boolean
 }): ActiveRuntime {
-  const { config, getSessionId, mode, onSessionChanged, samplingModeStorage, sessionId } = options
+  const { config, getSessionId, holdUntilActivity, mode, onSessionChanged, samplingModeStorage, sessionId } = options
   const sessionAttributes = snapshotSessionAttributes(config.getSessionAttributes, (error) => {
     safeReportError(config.onError, error)
   })
-  const transport = new ReplayTransport(config, sessionId, mode, undefined, undefined, sessionAttributes)
+  const transport = new ReplayTransport(config, sessionId, mode, undefined, undefined, sessionAttributes, { holdUntilActivity })
   const cleanup: (() => void)[] = []
   let active = true
   const isRuntimeActive = () => active
@@ -204,12 +207,29 @@ function createActiveRuntime(options: {
 
   try {
     const recorder = startRecording({
+      beforeUserActivity: () => {
+        if (!active || !transport.isHeld()) {
+          return
+        }
+        try {
+          const observedSessionId = getSessionId(true)
+          if (observedSessionId !== sessionId) {
+            onSessionChanged(observedSessionId)
+            return
+          }
+          transport.releaseHeld(() => {
+            recorder.takeFullSnapshot()
+          })
+        } catch (error) {
+          safeReportError(config.onError, error)
+        }
+      },
       emit: (event) => {
         if (!active) {
           return
         }
         try {
-          const observedSessionId = getSessionId(true)
+          const observedSessionId = getSessionId(isUserActivityEvent(event))
           if (observedSessionId !== sessionId) {
             onSessionChanged(observedSessionId)
             return
@@ -244,6 +264,9 @@ function createActiveRuntime(options: {
       if (!isRuntimeActive()) {
         return
       }
+      transport.releaseHeld(() => {
+        recorder.takeFullSnapshot()
+      })
       addCustomEvent(CustomTag.Error, payload)
       if (!isRuntimeActive()) {
         return

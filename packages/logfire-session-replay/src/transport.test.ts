@@ -93,6 +93,60 @@ function largeEvent(timestamp: number, seed: number, length = 30_000): RrwebEven
 }
 
 describe('ReplayTransport full mode', () => {
+  it('keeps a rotated session bounded and unshipped until activity', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const firstIncremental = { ...click, timestamp: 2 }
+    const secondIncremental = { ...click, timestamp: 3 }
+    const replacementSnapshot = { ...fullSnapshot, timestamp: 10 }
+    const releasedClick = { ...click, timestamp: 11 }
+    const maxBufferBytes = strToU8(JSON.stringify(fullSnapshot)).byteLength + strToU8(JSON.stringify(firstIncremental)).byteLength
+    const transport = new ReplayTransport(
+      { ...makeConfig(fetchImpl), maxBufferBytes },
+      'sess-held',
+      'full',
+      null,
+      immediateCompression(),
+      {},
+      { holdUntilActivity: true }
+    )
+    transport.start()
+    transport.add(fullSnapshot)
+    transport.add(firstIncremental)
+    transport.add(secondIncremental)
+    await transport.flush({ keepalive: true })
+    expect(calls).toHaveLength(0)
+
+    transport.releaseHeld(() => {
+      transport.add(replacementSnapshot)
+    })
+    transport.add(releasedClick)
+    await transport.shutdown()
+
+    expect(calls).toHaveLength(1)
+    expect(decodeBody(calls[0]!.init.body).events).toEqual([replacementSnapshot, releasedClick])
+  })
+
+  it('discards an unreleased rotated session on shutdown', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport(
+      makeConfig(fetchImpl),
+      'sess-held-stop',
+      'full',
+      null,
+      immediateCompression(),
+      {},
+      {
+        holdUntilActivity: true,
+      }
+    )
+    transport.start()
+    transport.add(fullSnapshot)
+
+    await transport.shutdown()
+
+    expect(calls).toHaveLength(0)
+  })
+
   it('uploads one gzipped envelope to the proxy URL with seq=0', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-1', 'full', null)
