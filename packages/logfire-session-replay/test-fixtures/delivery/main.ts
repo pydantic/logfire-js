@@ -55,14 +55,14 @@ async function run(): Promise<void> {
   if (scenario === 'unload') {
     await prepareUnload()
     state.phase = 'ready'
-    setStatus('ready')
     await saveState()
+    setStatus('ready')
     return
   }
   if (scenario === 'short') {
     state.phase = 'ready'
-    setStatus('ready')
     await saveState()
+    setStatus('ready')
     return
   }
   if (scenario === 'csp') {
@@ -81,8 +81,8 @@ async function run(): Promise<void> {
   }
 
   state.phase = 'complete'
-  setStatus('complete')
   await saveState()
+  setStatus('complete')
 }
 
 async function prepareUnload(): Promise<void> {
