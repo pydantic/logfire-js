@@ -45,6 +45,19 @@ test.describe('session replay delivery in Chromium', () => {
     expect(replayedText?.slice(0, 18)).toBe('unload-marker-two:')
     expect(replayedText?.length).toBe(26_018)
   })
+
+  test('navigation drops a replay shorter than five seconds', async ({ page, request }) => {
+    await page.goto('http://127.0.0.1:4177/short/')
+    await expect(page.locator('#status')).toHaveText('ready')
+    await page.locator('#leave').click()
+    await expect(page).toHaveURL('http://127.0.0.1:4177/after-unload.html')
+    await page.waitForTimeout(500)
+
+    const response = await request.get('http://127.0.0.1:4177/fixture/status?scenario=short')
+    expect(response.ok()).toBe(true)
+    const evidence = parseRecord(await response.text(), 'short-session evidence')
+    expect(evidence['receipts']).toEqual([])
+  })
 })
 
 test.describe('session replay privacy', () => {
