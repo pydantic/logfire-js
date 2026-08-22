@@ -1,28 +1,48 @@
 /**
  * @vitest-environment jsdom
  */
-/* eslint-disable import/first, @typescript-eslint/no-non-null-assertion, @typescript-eslint/strict-void-return, no-empty-function, vitest/require-mock-type-parameters */
+/* eslint-disable import/first, @typescript-eslint/strict-void-return, no-empty-function */
+import type { record as RrwebRecord } from '@rrweb/record'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Mock } from 'vitest'
+
+import type { RrwebEvent } from './types'
+
+type RrwebRecordFunction = typeof RrwebRecord<RrwebEvent>
+type RrwebRecordOptions = NonNullable<Parameters<RrwebRecordFunction>[0]>
+type RrwebRecordCall = (...args: Parameters<RrwebRecordFunction>) => ReturnType<RrwebRecordFunction>
 
 const { record, stopFn } = vi.hoisted(() => {
   const stopFn = vi.fn<() => void>()
-  const record = vi.fn<(options: unknown) => typeof stopFn | undefined>(() => stopFn) as Mock<
-    (options: unknown) => typeof stopFn | undefined
-  > & { addCustomEvent: Mock<(tag: string, payload: unknown) => void> }
-  record.addCustomEvent = vi.fn()
+  const record = Object.assign(
+    vi.fn<RrwebRecordCall>(() => stopFn),
+    {
+      addCustomEvent: vi.fn<typeof RrwebRecord.addCustomEvent>(),
+      takeFullSnapshot: vi.fn<typeof RrwebRecord.takeFullSnapshot>(),
+    }
+  )
   return { record, stopFn }
 })
 
-vi.mock('rrweb', () => ({ record }))
+vi.mock('@rrweb/record', () => ({ record }))
 
 import { startRecording } from './recorder'
 import type { RecorderOptions } from './recorder'
 import { EventType, IncrementalSource } from './types'
-import type { RrwebEvent } from './types'
 
-function lastOptions(): Record<string, unknown> {
-  return record.mock.calls.at(-1)![0] as Record<string, unknown>
+function lastOptions(): RrwebRecordOptions {
+  const options = record.mock.calls.at(-1)?.[0]
+  if (options === undefined) {
+    throw new Error('expected rrweb record options')
+  }
+  return options
+}
+
+function emitFromRrweb(event: RrwebEvent): void {
+  const emit = lastOptions().emit
+  if (emit === undefined) {
+    throw new Error('expected rrweb emit callback')
+  }
+  emit(event)
 }
 
 function startRecordingForTest(
@@ -41,6 +61,7 @@ beforeEach(() => {
   record.mockReturnValue(stopFn)
   stopFn.mockClear()
   record.addCustomEvent.mockClear()
+  record.takeFullSnapshot.mockClear()
 })
 
 afterEach(() => {
@@ -51,17 +72,28 @@ describe('startRecording', () => {
   it('passes conservative privacy and performance options to rrweb', () => {
     startRecordingForTest({ emit: () => {}, maskAllInputs: true, maskAllText: true })
     const options = lastOptions()
-    expect(options['recordCanvas']).toBe(false)
-    expect(options['collectFonts']).toBe(false)
-    expect(options['maskAllInputs']).toBe(true)
-    expect(options['maskTextSelector']).toBe('*')
-    expect(options['sampling']).toEqual({
-      mousemove: true,
+    expect(options.recordCanvas).toBe(false)
+    expect(options.collectFonts).toBe(false)
+    expect(options.inlineImages).toBe(false)
+    expect(options.recordCrossOriginIframes).toBe(false)
+    expect(options.slimDOMOptions).toBe('all')
+    expect(options.maskAllInputs).toBe(true)
+    expect(options.maskTextSelector).toBe('*')
+    expect(options.sampling).toEqual({
+      mousemove: 100,
       mouseInteraction: true,
-      scroll: 150,
+      scroll: 250,
       media: 800,
       input: 'last',
     })
+    const hooks = options.hooks
+    expect(hooks?.input).toBeTypeOf('function')
+    expect(hooks?.mediaInteaction).toBe(hooks?.input)
+    expect(hooks?.mouseInteraction).toBe(hooks?.input)
+    expect(hooks?.mousemove).toBe(hooks?.input)
+    expect(hooks?.scroll).toBe(hooks?.input)
+    expect(hooks?.selection).toBe(hooks?.input)
+    expect(hooks?.viewportResize).toBe(hooks?.input)
   })
 
   it('omits optional selectors and checkoutEveryNms when unset', () => {
@@ -89,32 +121,34 @@ describe('startRecording', () => {
 
   it('requires maskAllText false before applying a selective text selector', () => {
     startRecordingForTest({ emit: () => {}, maskAllText: true, maskTextSelector: '.secret' })
-    expect(lastOptions()['maskTextSelector']).toBe('*')
+    expect(lastOptions().maskTextSelector).toBe('*')
 
     startRecordingForTest({ emit: () => {}, maskAllText: false, maskTextSelector: '.secret' })
-    expect(lastOptions()['maskTextSelector']).toBe('.secret')
+    expect(lastOptions().maskTextSelector).toBe('.secret')
   })
 
   it('forwards rrweb emitted events to the caller', () => {
     const emitted: RrwebEvent[] = []
     startRecordingForTest({ emit: (event) => emitted.push(event), maskAllInputs: true })
-    const rrwebEmit = lastOptions()['emit'] as (event: unknown) => void
-    const event = { type: 2, data: { node: {} }, timestamp: 5 }
-    rrwebEmit(event)
+    const event = { type: 2, data: { node: {} }, timestamp: 5 } satisfies RrwebEvent
+    emitFromRrweb(event)
     expect(emitted).toEqual([event])
   })
 
   it('sanitizes matching URL attributes in rrweb metadata and DOM snapshots without mutating input', () => {
     const emitted: RrwebEvent[] = []
     startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [/.+/u] })
-    const rrwebEmit = lastOptions()['emit'] as (event: unknown) => void
-    const meta: RrwebEvent = {
+    const meta = {
       type: EventType.Meta,
       data: { href: 'https://app.example.test/orders?token=secret#details', width: 800 },
       timestamp: 5,
-    }
-    const snapshot: RrwebEvent = { type: EventType.FullSnapshot, data: { node: { href: '?token=attribute' } }, timestamp: 6 }
-    const fullSnapshot: RrwebEvent = {
+    } satisfies RrwebEvent
+    const snapshot = {
+      type: EventType.FullSnapshot,
+      data: { node: { href: '?token=attribute' } },
+      timestamp: 6,
+    } satisfies RrwebEvent
+    const fullSnapshot = {
       type: EventType.FullSnapshot,
       data: {
         node: {
@@ -123,8 +157,8 @@ describe('startRecording', () => {
         },
       },
       timestamp: 7,
-    }
-    const mutation: RrwebEvent = {
+    } satisfies RrwebEvent
+    const mutation = {
       type: EventType.IncrementalSnapshot,
       data: {
         source: IncrementalSource.Mutation,
@@ -132,12 +166,12 @@ describe('startRecording', () => {
         attributes: [{ attributes: { formaction: '/buy?token=mutation', title: 'Buy' }, id: 1 }],
       },
       timestamp: 8,
-    }
+    } satisfies RrwebEvent
 
-    rrwebEmit(meta)
-    rrwebEmit(snapshot)
-    rrwebEmit(fullSnapshot)
-    rrwebEmit(mutation)
+    emitFromRrweb(meta)
+    emitFromRrweb(snapshot)
+    emitFromRrweb(fullSnapshot)
+    emitFromRrweb(mutation)
 
     expect(emitted[0]).toEqual({ ...meta, data: { href: 'https://app.example.test/orders', width: 800 } })
     expect(emitted[1]).toBe(snapshot)
@@ -159,16 +193,33 @@ describe('startRecording', () => {
       },
     })
     expect(meta.data).toEqual({ href: 'https://app.example.test/orders?token=secret#details', width: 800 })
-    expect((fullSnapshot.data as { node: { attributes: { href: string } } }).node.attributes.href).toBe('/orders?token=full#details')
-    expect((mutation.data as { adds: { node: { attributes: { action: string } } }[] }).adds[0]?.node.attributes.action).toBe(
-      '/checkout?token=add'
-    )
+    expect(fullSnapshot.data.node.attributes.href).toBe('/orders?token=full#details')
+    expect(mutation.data.adds[0]?.node.attributes.action).toBe('/checkout?token=add')
   })
 
   it('forwards custom events through rrweb statics', () => {
     const handle = startRecordingForTest({ emit: () => {}, maskAllInputs: true })
     handle.addCustomEvent('logfire.error', { message: 'x' })
     expect(record.addCustomEvent).toHaveBeenCalledWith('logfire.error', { message: 'x' })
+  })
+
+  it('runs the activity callback before rrweb emits the interaction', () => {
+    const calls: string[] = []
+    startRecordingForTest({
+      beforeUserActivity: () => calls.push('activity'),
+      emit: () => calls.push('emit'),
+    })
+
+    lastOptions().hooks?.mouseInteraction?.({ id: 1, type: 2, x: 0, y: 0 })
+    emitFromRrweb({ type: EventType.IncrementalSnapshot, data: { source: IncrementalSource.MouseInteraction }, timestamp: 1 })
+
+    expect(calls).toEqual(['activity', 'emit'])
+  })
+
+  it('takes a checkout snapshot through the rrweb static', () => {
+    const handle = startRecordingForTest({ emit: () => {} })
+    handle.takeFullSnapshot()
+    expect(record.takeFullSnapshot).toHaveBeenCalledWith(true)
   })
 
   it('stops the rrweb recorder when a stop function is returned', () => {

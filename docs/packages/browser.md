@@ -280,14 +280,20 @@ stopped, the facade reports `mode: 'off'` and `recording: false`. Its `stop()`
 method is idempotent and generation-scoped. Session identity remains available
 through `getBrowserSessionId()`, not the replay facade.
 
+Replays shorter than `minSessionDurationMs` are not uploaded (5 seconds by
+default). An earlier flush remains buffered until the minimum is reached, and
+stopping earlier discards the replay. Set `minSessionDurationMs: 0` only when
+shorter replays must be delivered.
+
 Browser-session inactivity currently means span inactivity: replay startup
 initializes and touches the session once before loading the optional peer, but
 subsequent replay events only peek at the session id and do not refresh the
 timeout. Span starts are the ongoing automatic activity;
 `getBrowserSessionId()` also explicitly touches the session.
 
-When the document becomes hidden or receives `pagehide`, replay makes a bounded
-best-effort start of the earliest compressed chunks. Its 48,000-byte aggregate
+After a replay reaches the minimum duration, hiding the document or receiving
+`pagehide` makes a bounded best-effort start of the earliest compressed chunks.
+Its 48,000-byte aggregate
 budget is shared across its own unfinished keepalive requests, while the
 browser's keepalive quota is also shared with unrelated page traffic. Delivery
 after page freeze or termination is therefore not guaranteed. Functional
@@ -332,8 +338,9 @@ When testing replay locally, browser privacy extensions or ad blockers may block
 requests or dynamic imports whose URLs contain terms such as `session-replay`.
 If replay fails to start with `ERR_BLOCKED_BY_CLIENT`, test in a clean profile
 or disable the extension for the local app. Vite workspace examples may also
-need to load rrweb's browser ESM build (`rrweb/dist/rrweb.js`) rather than its
-CommonJS build when importing unpublished workspace output directly.
+need to load `@rrweb/record`'s browser ESM build
+(`@rrweb/record/dist/record.js`) rather than its CommonJS build when importing
+unpublished workspace output directly.
 
 ## Custom Span Processors
 

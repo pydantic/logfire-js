@@ -21,6 +21,10 @@ export const IncrementalSource = {
   Scroll: 3,
   ViewportResize: 4,
   Input: 5,
+  TouchMove: 6,
+  MediaInteraction: 7,
+  Drag: 12,
+  Selection: 14,
 } as const
 
 export const MouseInteractions = {
@@ -134,9 +138,12 @@ export interface SessionReplayConfig {
   maskTextSelector?: string
   blockSelector?: string
 
+  /** Batching interval while the user is active. Defaults to 5 seconds. */
   flushIntervalMs?: number
   maxBufferBytes?: number
 
+  /** Minimum recording duration before a replay is uploaded. Defaults to 5 seconds. */
+  minSessionDurationMs?: number
   sessionIdleTimeoutMs?: number
   maxSessionDurationMs?: number
 
@@ -169,6 +176,7 @@ export interface ResolvedSessionReplayConfig {
   blockSelector: string
   flushIntervalMs: number
   maxBufferBytes: number
+  minSessionDurationMs: number
   sessionIdleTimeoutMs: number
   maxSessionDurationMs: number
   distinctId: string
@@ -193,6 +201,7 @@ export const DEFAULTS = {
   blockSelector: '',
   flushIntervalMs: 5_000,
   maxBufferBytes: 1_000_000,
+  minSessionDurationMs: 5_000,
   sessionIdleTimeoutMs: 1_800_000,
   maxSessionDurationMs: 14_400_000,
   distinctId: '',

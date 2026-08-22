@@ -52,8 +52,8 @@
     "test": "vp test"
   },
   "dependencies": {
-    "fflate": "catalog:",
-    "rrweb": "catalog:"
+    "@rrweb/record": "catalog:",
+    "fflate": "catalog:"
   },
   "devDependencies": {
     "jsdom": "catalog:",

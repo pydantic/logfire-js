@@ -16,6 +16,7 @@ let captured: recorderMod.RecorderOptions
 let handle: {
   stop: Mock<() => void>
   addCustomEvent: Mock<(tag: string, payload: unknown) => void>
+  takeFullSnapshot: Mock<() => void>
 }
 let handles: (typeof handle)[]
 
@@ -30,6 +31,11 @@ function emit(event: RrwebEvent): void {
   captured.emit(event)
 }
 
+function emitActivity(event: RrwebEvent): void {
+  captured.beforeUserActivity?.()
+  captured.emit(event)
+}
+
 beforeEach(() => {
   sessionStorage.clear()
   handles = []
@@ -38,6 +44,7 @@ beforeEach(() => {
     handle = {
       stop: vi.fn<() => void>(),
       addCustomEvent: vi.fn<(tag: string, payload: unknown) => void>(),
+      takeFullSnapshot: vi.fn<() => void>(),
     }
     handles.push(handle)
     return handle
@@ -226,6 +233,27 @@ describe('startSessionReplay controller ownership', () => {
 })
 
 describe('startSessionReplay full mode', () => {
+  it('defaults to a five-second minimum session duration', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const { calls, fetchImpl } = recordingFetch()
+    const config = baseConfig(fetchImpl, { flushIntervalMs: 1_000, now: () => Date.now() })
+    delete config.minSessionDurationMs
+    const replay = startSessionReplay(config)
+    emit(fullSnapshot)
+
+    await replay.flush()
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(calls).toHaveLength(0)
+
+    await vi.advanceTimersByTimeAsync(1)
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(1)
+    })
+    expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot])
+    await replay.stop()
+  })
+
   it('flushes a chunk through the proxy URL and returns an internal session id', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl))
@@ -271,12 +299,13 @@ describe('startSessionReplay full mode', () => {
 
     accountTier = 'enterprise'
     sessionId = 'external-2'
-    emit(click)
+    emitActivity(click)
     expect(replay.recording).toBe(false)
     await replay.flush()
     expect(replay.recording).toBe(true)
     expect(start).toHaveBeenCalledTimes(2)
     emit(fullSnapshot)
+    emitActivity(click)
     await replay.flush()
     await replay.stop()
 
@@ -291,13 +320,120 @@ describe('startSessionReplay full mode', () => {
     expect(getSessionAttributes).toHaveBeenCalledTimes(2)
   })
 
-  it('starts interval flushing in full mode', async () => {
+  it('does not upload rotation-only sessions during 24 hours of inactivity', async () => {
+    vi.useFakeTimers()
+    let now = 0
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        maxSessionDurationMs: 24 * 60 * 60 * 1_000,
+        now: () => now,
+        sessionIdleTimeoutMs: 30 * 60 * 1_000,
+      })
+    )
+    emit(fullSnapshot)
+    await replay.flush()
+    expect(calls).toHaveLength(1)
+
+    for (let rotation = 0; rotation < 48; rotation += 1) {
+      now += 30 * 60 * 1_000 + 1
+      // eslint-disable-next-line no-await-in-loop -- each rotation must settle before advancing the session clock again.
+      await vi.advanceTimersByTimeAsync(1_000)
+      emit(fullSnapshot)
+    }
+    await replay.flush()
+
+    expect(handles).toHaveLength(49)
+    expect(calls).toHaveLength(1)
+    await replay.stop()
+    expect(calls).toHaveLength(1)
+  })
+
+  it('releases a rotated full session on the first interaction', async () => {
+    vi.useFakeTimers()
+    let sessionId = 'external-1'
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId }))
+    emit(fullSnapshot)
+    await replay.flush()
+
+    sessionId = 'external-2'
+    await vi.advanceTimersByTimeAsync(1_000)
+    await replay.flush()
+    emit(fullSnapshot)
+    await replay.flush()
+    expect(calls).toHaveLength(1)
+
+    emitActivity(click)
+    await replay.flush()
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://app.example.com/replay/external-1?seq=0',
+      'https://app.example.com/replay/external-2?seq=0',
+    ])
+    expect(decodeBody(calls[1]!.init.body).events).toEqual([fullSnapshot, click])
+    await replay.stop()
+  })
+
+  it('uploads a released rotated session on the active cadence', async () => {
+    vi.useFakeTimers()
+    let now = 0
+    let sessionId = 'external-1'
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId, now: () => now }))
+    emit(fullSnapshot)
+    await replay.flush()
+
+    sessionId = 'external-2'
+    await vi.advanceTimersByTimeAsync(1_000)
+    await replay.flush()
+    emit(fullSnapshot)
+
+    now = 5 * 60_000
+    emitActivity(click)
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(calls).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(2)
+    })
+
+    expect(decodeBody(calls[1]!.init.body).events).toEqual([fullSnapshot, click])
+    await replay.stop()
+  })
+
+  it('discards a held session that is superseded at the first interaction', async () => {
+    vi.useFakeTimers()
+    let sessionId = 'external-1'
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId }))
+    emit(fullSnapshot)
+    await replay.flush()
+
+    sessionId = 'external-2'
+    await vi.advanceTimersByTimeAsync(1_000)
+    await replay.flush()
+    emit(fullSnapshot)
+
+    sessionId = 'external-3'
+    emitActivity(click)
+    await replay.flush()
+    emit(fullSnapshot)
+    emitActivity(click)
+    await replay.flush()
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://app.example.com/replay/external-1?seq=0',
+      'https://app.example.com/replay/external-3?seq=0',
+    ])
+    await replay.stop()
+  })
+
+  it('flushes recent activity after five seconds', async () => {
     vi.useFakeTimers()
     const { calls, fetchImpl } = recordingFetch()
-    const setSpy = vi.spyOn(globalThis, 'setInterval')
     const replay = startSessionReplay(baseConfig(fetchImpl))
     const sessionId = replay.getSessionId()
-    expect(setSpy.mock.calls.map((call) => call[1])).toEqual([5_000, 1_000])
     emit(fullSnapshot)
     await vi.advanceTimersByTimeAsync(5_000)
     await vi.waitFor(() => {
@@ -680,6 +816,7 @@ describe('startSessionReplay lifecycle', () => {
     expect(onError).toHaveBeenCalledTimes(1)
 
     emit(fullSnapshot)
+    emitActivity(click)
     await replay.flush()
     await replay.stop()
     expect(calls).toEqual(['https://app.example.com/replay/session-old?seq=0', 'https://app.example.com/replay/session-new?seq=0'])
@@ -822,6 +959,7 @@ function baseConfig(fetchImpl: typeof fetch, overrides: Partial<SessionReplayCon
     onErrorSampleRate: 1,
     random: () => 0,
     now: () => 1_000,
+    minSessionDurationMs: 0,
     fetchImpl,
     captureConsole: false,
     captureNetwork: false,
