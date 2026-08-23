@@ -10,5 +10,8 @@ export function omit<T extends object, K extends keyof T>(obj: T, keys: K[]): Om
 }
 
 export function removeEmptyKeys<T extends Record<string, unknown>>(dict: T): T {
-  return Object.fromEntries(Object.entries(dict).filter(([, value]) => value !== undefined && value !== null)) as T
+  // An empty string is as absent as null here: the Python SDK guards each of these resource
+  // fields with `if self.environment:` and friends, so a blank value has to leave the attribute
+  // off rather than stamp an empty one on every span.
+  return Object.fromEntries(Object.entries(dict).filter(([, value]) => value !== undefined && value !== null && value !== '')) as T
 }

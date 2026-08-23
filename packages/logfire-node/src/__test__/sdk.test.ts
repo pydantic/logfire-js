@@ -1094,6 +1094,21 @@ describe('sdk lifecycle helpers', () => {
     })
   })
 
+  it('leaves a blank first-class resource option off rather than stamping an empty value', () => {
+    // `LOGFIRE_ENVIRONMENT=` in a compose file or CI matrix reaches here as an empty string.
+    // Python guards each of these with `if self.environment:`, so the attribute is simply absent.
+    Object.assign(logfireConfig, {
+      deploymentEnvironment: '',
+      serviceVersion: '',
+    })
+
+    start()
+
+    const attributes = getLatestResourceAttributes()
+    expect('deployment.environment.name' in attributes).toBe(false)
+    expect('service.version' in attributes).toBe(false)
+  })
+
   it('keeps first-class resource options ahead of generic resource attributes', () => {
     Object.assign(logfireConfig, {
       deploymentEnvironment: 'production',
