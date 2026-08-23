@@ -85,6 +85,31 @@ describe('User-Agent', () => {
     })
   })
 
+  it('omits the environment when the binding is declared without a value', async () => {
+    vi.resetModules()
+
+    type InProcessConfigFn = (env: Record<string, string | undefined>) => { environment?: string }
+    let capturedConfigFn: InProcessConfigFn | undefined
+
+    vi.doMock('@pydantic/otel-cf-workers', () => ({
+      instrument: (handler: unknown, configFn: InProcessConfigFn): unknown => {
+        capturedConfigFn = configFn
+        return handler
+      },
+      instrumentDO: (doClass: unknown): unknown => doClass,
+      OTLP_EXPORTER_USER_AGENT: 'otel-cf-workers/0.0.0',
+    }))
+
+    const { instrumentInProcess } = await import('./index')
+    instrumentInProcess({}, { service: { name: 'test-service' } })
+
+    const blank = capturedConfigFn?.({ LOGFIRE_ENVIRONMENT: '', LOGFIRE_TOKEN: 'test-token' })
+    expect(blank !== undefined && 'environment' in blank).toBe(false)
+
+    const set = capturedConfigFn?.({ LOGFIRE_ENVIRONMENT: 'staging', LOGFIRE_TOKEN: 'test-token' })
+    expect(set?.environment).toBe('staging')
+  })
+
   it('exportTailEventsToLogfire sends the two-product User-Agent header', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response('ok'))
     vi.stubGlobal('fetch', fetchMock)

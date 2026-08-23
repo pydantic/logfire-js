@@ -102,7 +102,10 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
       },
       idGenerator: new ULIDGenerator(),
       postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(spans),
-      ...(resolvedEnvironment !== undefined ? { environment: resolvedEnvironment } : {}),
+      // A binding declared without a value arrives as an empty string, and an empty
+      // `deployment.environment.name` on every span is worse than no attribute at all. The Python
+      // SDK guards the same field with `if self.environment:`.
+      ...(resolvedEnvironment !== undefined && resolvedEnvironment !== '' ? { environment: resolvedEnvironment } : {}),
     } satisfies TraceConfig
   }
 }
