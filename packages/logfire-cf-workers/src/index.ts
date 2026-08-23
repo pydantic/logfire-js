@@ -79,12 +79,14 @@ function configureScrubbing(config: InProcessConfigOptions): void {
 }
 
 function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => TraceConfig {
+  // `environment` is pulled out so the spread below cannot reintroduce an empty one.
+  const { environment: configEnvironment, ...configRest } = config
   return (env: Env): TraceConfig => {
     const token = envString(env, 'LOGFIRE_TOKEN') ?? ''
     const envDeploymentEnvironment = envString(env, 'LOGFIRE_ENVIRONMENT')
 
     const baseUrl = resolveBaseUrl(env as LogfireEnv, config.baseUrl, token)
-    const resolvedEnvironment = config.environment ?? envDeploymentEnvironment
+    const resolvedEnvironment = configEnvironment ?? envDeploymentEnvironment
 
     const additionalSpanProcessors = config.additionalSpanProcessors ?? []
 
@@ -93,7 +95,7 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
     }
 
     return {
-      ...config,
+      ...configRest,
       additionalSpanProcessors,
       exporter: {
         headers: { Authorization: token },
