@@ -179,6 +179,31 @@ describe('span tree capture + HasMatchingSpan', () => {
     expect(tree.any({ maxDescendantCount: 2, nameEquals: 'root-op' })).toBe(false)
   })
 
+  it('matches attributes that OTel could only carry as an array or a JSON string', () => {
+    const tree = SpanTree.fromSpans([
+      fakeSpan({
+        attributes: { count: '1', 'logfire.tags': ['a', 'b'], plain: 'text', user: '{"id":1,"name":"ada"}' },
+        name: 'op',
+        spanId: 'op',
+      }),
+    ])
+
+    // `serializeAttributes` writes an object attribute as JSON, so the query object has to be
+    // compared against the decoded value.
+    expect(tree.any({ hasAttributes: { user: { id: 1, name: 'ada' } } })).toBe(true)
+    expect(tree.any({ hasAttributes: { user: { id: 2, name: 'ada' } } })).toBe(false)
+    expect(tree.any({ hasAttributes: { user: '{"id":1,"name":"ada"}' } })).toBe(true)
+    // A sequence attribute stays a real array on the span.
+    expect(tree.any({ hasAttributes: { 'logfire.tags': ['a', 'b'] } })).toBe(true)
+    expect(tree.any({ hasAttributes: { 'logfire.tags': ['a'] } })).toBe(false)
+    expect(tree.any({ hasAttributes: { plain: 'text' } })).toBe(true)
+    expect(tree.any({ hasAttributes: { plain: { id: 1 } } })).toBe(false)
+    expect(tree.any({ hasAttributes: { missing: { id: 1 } } })).toBe(false)
+    // Decoding is only for structured queries; a string attribute is not a number.
+    expect(tree.any({ hasAttributes: { count: 1 } })).toBe(false)
+    expect(tree.any({ hasAttributes: { count: '1' } })).toBe(true)
+  })
+
   it('serializes HasMatchingSpan queries with snake_case field names', () => {
     expect(new HasMatchingSpan({ query: { maxDuration: 0.1, someChildHas: { nameEquals: 'child' } } }).toJSON()).toEqual({
       query: {
