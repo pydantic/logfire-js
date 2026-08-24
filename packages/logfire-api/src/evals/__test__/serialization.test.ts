@@ -22,6 +22,13 @@ import {
   stringifyYaml,
 } from '../../evals'
 
+function evaluatorBranches(schema: Record<string, unknown>, name: string): Record<string, unknown>[] {
+  const properties = schema['properties'] as { evaluators: { items: { anyOf: Record<string, unknown>[] } } }
+  return properties.evaluators.items.anyOf.filter(
+    (branch) => branch['const'] === name || Object.hasOwn((branch['properties'] ?? {}) as object, name)
+  )
+}
+
 const sleep = async (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms)
@@ -178,6 +185,43 @@ describe('EvaluatorSpec encoding', () => {
     expect(text).toContain('"properties":{"NullSchemaEvaluator":{}}')
   })
 
+  it('accepts the short evaluator form that the serializer writes', () => {
+    const dataset = new Dataset({ cases: [new Case({ evaluators: [new Equals({ value: 1 })], inputs: 'x' })], name: 'd' })
+    expect(dataset.toObject()['cases']).toEqual([{ evaluators: [{ Equals: 1 }], inputs: 'x' }])
+
+    // The first branch is the one that form validates against; the second is the kwargs form.
+    expect(evaluatorBranches(dataset.jsonSchema(), 'Equals')).toEqual([
+      { additionalProperties: false, properties: { Equals: {} }, required: ['Equals'], type: 'object' },
+      {
+        additionalProperties: false,
+        properties: {
+          Equals: {
+            additionalProperties: false,
+            properties: { evaluation_name: { type: 'string' }, value: {} },
+            required: ['value'],
+            type: 'object',
+          },
+        },
+        required: ['Equals'],
+        type: 'object',
+      },
+    ])
+  })
+
+  it('offers the bare name only for an evaluator that needs no arguments', () => {
+    const schema = buildDatasetJsonSchema()
+    // `new Equals()` throws, so a file naming it with no arguments must not validate.
+    expect(evaluatorBranches(schema, 'Equals').map((branch) => branch['const'])).toEqual([undefined, undefined])
+    expect(evaluatorBranches(schema, 'EqualsExpected')[0]).toEqual({ const: 'EqualsExpected', type: 'string' })
+    // MaxDuration takes one required number, so the short form carries that number's schema.
+    expect(evaluatorBranches(schema, 'MaxDuration')[0]).toEqual({
+      additionalProperties: false,
+      properties: { MaxDuration: { type: 'number' } },
+      required: ['MaxDuration'],
+      type: 'object',
+    })
+  })
+
   it('lists an evaluator once when it is both registered and passed as custom', () => {
     class BothWaysEvaluator extends Evaluator {
       static override evaluatorName = 'BothWaysEvaluator'
@@ -188,12 +232,10 @@ describe('EvaluatorSpec encoding', () => {
     registerEvaluator(BothWaysEvaluator as never)
 
     const schema = buildDatasetJsonSchema({ customEvaluators: [BothWaysEvaluator as never] }) as {
-      properties: { evaluators: { items: { oneOf: { const?: string }[] } } }
+      properties: { evaluators: { items: { anyOf: { const?: string }[] } } }
     }
-    const branches = schema.properties.evaluators.items.oneOf.filter((branch) => branch.const === 'BothWaysEvaluator')
+    const branches = schema.properties.evaluators.items.anyOf.filter((branch) => branch.const === 'BothWaysEvaluator')
 
-    // oneOf requires exactly one match, so a duplicate branch makes a file naming
-    // this evaluator invalid.
     expect(branches).toHaveLength(1)
   })
 })
