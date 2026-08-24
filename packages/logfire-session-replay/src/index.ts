@@ -87,7 +87,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
     let transition = Promise.resolve()
     let stopPromise: Promise<void> | undefined
 
-    const activate = (sessionId: string, initial: boolean): void => {
+    const activate = (sessionId: string, initial: boolean, holdUntilActivity = !initial): void => {
       const mode = resolveSamplingMode(resolvedConfig, sessionId, samplingModeStorage)
       if (mode === 'off' || stopped || sessionId !== currentSessionId) {
         return
@@ -100,7 +100,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           onSessionChanged: observeSession,
           samplingModeStorage,
           sessionId,
-          holdUntilActivity: !initial,
+          holdUntilActivity,
         })
       } catch (error) {
         runtime = undefined
@@ -111,7 +111,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       }
     }
 
-    const observeSession = (sessionId: string): void => {
+    const observeSession = (sessionId: string, holdUntilActivity = true): void => {
       if (stopped || sessionId === currentSessionId) {
         return
       }
@@ -122,7 +122,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       transition = transition.then(async () => {
         await reportPromise(oldShutdown, resolvedConfig.onError)
         if (!stopped && currentSessionId === sessionId) {
-          activate(sessionId, false)
+          activate(sessionId, false, holdUntilActivity)
         }
       })
     }
@@ -190,7 +190,7 @@ function createActiveRuntime(options: {
   config: ResolvedSessionReplayConfig
   getSessionId: (touch: boolean) => string
   mode: 'full' | 'buffer'
-  onSessionChanged: (sessionId: string) => void
+  onSessionChanged: (sessionId: string, holdUntilActivity?: boolean) => void
   samplingModeStorage: Storage | null
   sessionId: string
   holdUntilActivity: boolean
@@ -214,7 +214,7 @@ function createActiveRuntime(options: {
         try {
           const observedSessionId = getSessionId(true)
           if (observedSessionId !== sessionId) {
-            onSessionChanged(observedSessionId)
+            onSessionChanged(observedSessionId, false)
             return
           }
           transport.releaseHeld(() => {
@@ -231,7 +231,7 @@ function createActiveRuntime(options: {
         try {
           const observedSessionId = getSessionId(isUserActivityEvent(event))
           if (observedSessionId !== sessionId) {
-            onSessionChanged(observedSessionId)
+            onSessionChanged(observedSessionId, false)
             return
           }
           transport.add(event)

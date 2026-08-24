@@ -38,6 +38,7 @@ const DEFAULT_COMPRESSION: Compression = { gzip, gzipSync }
 
 export class ReplayTransport {
   private buffer: RrwebEvent[] = []
+  private bufferHasFullSnapshot = false
   private pendingBytes = 0
   private seq = 0
   private timer: ReturnType<typeof setTimeout> | undefined
@@ -92,16 +93,25 @@ export class ReplayTransport {
     }
     const eventBytes = estimateBytes(event)
     if (this.mode === 'buffer' || this.held) {
-      if (event.type === EventType.FullSnapshot) {
+      if (event.type === EventType.Meta) {
         this.buffer = [event]
+        this.bufferHasFullSnapshot = false
         this.pendingBytes = eventBytes
+        return
+      }
+      if (event.type === EventType.FullSnapshot) {
+        const retainedMeta =
+          !this.bufferHasFullSnapshot && this.buffer.length === 1 && this.buffer[0]?.type === EventType.Meta ? this.buffer[0] : undefined
+        this.buffer = retainedMeta === undefined ? [event] : [retainedMeta, event]
+        this.bufferHasFullSnapshot = true
+        this.pendingBytes = eventBytes + (retainedMeta === undefined ? 0 : estimateBytes(retainedMeta))
         this.heldBufferIncomplete = false
         return
       }
       // Incremental rrweb events are only useful after a full-snapshot anchor.
       // Keep the earliest contiguous prefix so later events never depend on a
       // state transition that was trimmed from the buffer.
-      if (this.buffer.length === 0 || eventBytes > this.config.maxBufferBytes) {
+      if (!this.bufferHasFullSnapshot || eventBytes > this.config.maxBufferBytes) {
         this.heldBufferIncomplete ||= this.held
         return
       }
@@ -123,6 +133,10 @@ export class ReplayTransport {
 
   async triggerFlush(): Promise<void> {
     if (this.mode === 'buffer') {
+      if (!this.bufferHasFullSnapshot) {
+        this.buffer = []
+        this.pendingBytes = 0
+      }
       this.mode = 'full'
       this.start()
     }
@@ -145,6 +159,7 @@ export class ReplayTransport {
     this.clearScheduledFlush()
     const events = this.buffer
     this.buffer = []
+    this.bufferHasFullSnapshot = false
     this.pendingBytes = 0
     const eventChunks = options.keepalive === true ? splitKeepaliveEventChunks(events) : [events]
     const seq = this.seq
@@ -200,6 +215,7 @@ export class ReplayTransport {
     this.started = false
     this.clearScheduledFlush()
     this.buffer = []
+    this.bufferHasFullSnapshot = false
     this.pendingBytes = 0
   }
 
@@ -215,10 +231,11 @@ export class ReplayTransport {
     if (!this.held) {
       return
     }
-    if (this.heldBufferIncomplete) {
+    if (this.heldBufferIncomplete || !this.bufferHasFullSnapshot) {
       // rrweb calls the release hook before emitting the interaction. A fresh
       // anchor keeps its node ids valid after background mutations were dropped.
       this.buffer = []
+      this.bufferHasFullSnapshot = false
       this.pendingBytes = 0
       takeFullSnapshot()
     }

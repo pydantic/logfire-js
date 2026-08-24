@@ -151,6 +151,11 @@ while stopping the recorder before the minimum discards them. Set the option to
 `0` when an application must upload a shorter replay. The `maxBufferBytes`
 memory bound still takes precedence over the duration floor.
 
+Sessions created only by background timeout monitoring remain held until the
+next user activity. Calling `flush()`, hiding the page, or stopping the recorder
+before that activity discards the held session instead of uploading an idle-only
+replay.
+
 After a replay reaches the minimum duration, full mode requests best-effort
 keepalive uploads when the page becomes hidden or receives `pagehide`.
 Lifecycle chunks start independently of an

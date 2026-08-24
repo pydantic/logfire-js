@@ -7,6 +7,11 @@ import { ReplayTransport, SEQ_STORAGE_KEY } from './transport'
 import { CHUNK_ENVELOPE_VERSION, EventType, IncrementalSource, MouseInteractions } from './types'
 import type { ChunkEnvelope, ResolvedSessionReplayConfig, RrwebEvent } from './types'
 
+const meta: RrwebEvent = {
+  type: EventType.Meta,
+  data: { href: 'https://app.example.com/orders', height: 720, width: 1_280 },
+  timestamp: 0,
+}
 const fullSnapshot: RrwebEvent = { type: EventType.FullSnapshot, data: { node: {} }, timestamp: 1 }
 const click: RrwebEvent = {
   type: EventType.IncrementalSnapshot,
@@ -104,13 +109,48 @@ function largeEvent(timestamp: number, seed: number, length = 30_000): RrwebEven
 }
 
 describe('ReplayTransport full mode', () => {
+  it('retains metadata when releasing a complete held session', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport(
+      makeConfig(fetchImpl),
+      'sess-held-complete',
+      'full',
+      null,
+      immediateCompression(),
+      {},
+      { holdUntilActivity: true }
+    )
+    transport.start()
+    transport.add(meta)
+    transport.add(fullSnapshot)
+
+    const takeFullSnapshot = vi.fn<() => void>()
+    transport.releaseHeld(takeFullSnapshot)
+    transport.add(click)
+    await transport.shutdown()
+
+    expect(takeFullSnapshot).not.toHaveBeenCalled()
+    expect(calls).toHaveLength(1)
+    const envelope = decodeBody(calls[0]!.init.body)
+    expect(envelope.events).toEqual([meta, fullSnapshot, click])
+    expect(envelope.meta.urls).toEqual(['https://app.example.com/orders'])
+  })
+
   it('keeps a rotated session bounded and unshipped until activity', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const firstIncremental = { ...click, timestamp: 2 }
     const secondIncremental = { ...click, timestamp: 3 }
+    const replacementMeta = {
+      ...meta,
+      data: { href: 'https://app.example.com/account', height: 720, width: 1_280 },
+      timestamp: 9,
+    }
     const replacementSnapshot = { ...fullSnapshot, timestamp: 10 }
     const releasedClick = { ...click, timestamp: 11 }
-    const maxBufferBytes = strToU8(JSON.stringify(fullSnapshot)).byteLength + strToU8(JSON.stringify(firstIncremental)).byteLength
+    const maxBufferBytes =
+      strToU8(JSON.stringify(meta)).byteLength +
+      strToU8(JSON.stringify(fullSnapshot)).byteLength +
+      strToU8(JSON.stringify(firstIncremental)).byteLength
     const transport = new ReplayTransport(
       { ...makeConfig(fetchImpl), maxBufferBytes },
       'sess-held',
@@ -121,6 +161,7 @@ describe('ReplayTransport full mode', () => {
       { holdUntilActivity: true }
     )
     transport.start()
+    transport.add(meta)
     transport.add(fullSnapshot)
     transport.add(firstIncremental)
     transport.add(secondIncremental)
@@ -128,13 +169,16 @@ describe('ReplayTransport full mode', () => {
     expect(calls).toHaveLength(0)
 
     transport.releaseHeld(() => {
+      transport.add(replacementMeta)
       transport.add(replacementSnapshot)
     })
     transport.add(releasedClick)
     await transport.shutdown()
 
     expect(calls).toHaveLength(1)
-    expect(decodeBody(calls[0]!.init.body).events).toEqual([replacementSnapshot, releasedClick])
+    const envelope = decodeBody(calls[0]!.init.body)
+    expect(envelope.events).toEqual([replacementMeta, replacementSnapshot, releasedClick])
+    expect(envelope.meta.urls).toEqual(['https://app.example.com/account'])
   })
 
   it('discards an unreleased rotated session on shutdown', async () => {
@@ -1041,11 +1085,20 @@ describe('ReplayTransport buffer mode', () => {
   it('drops buffered events before the latest full snapshot', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-3', 'buffer', null)
+    const latestMeta = {
+      ...meta,
+      data: { href: 'https://app.example.com/latest', height: 720, width: 1_280 },
+      timestamp: 9,
+    }
+    transport.add(meta)
     transport.add(fullSnapshot)
     transport.add(click)
+    transport.add(latestMeta)
     transport.add({ ...fullSnapshot, timestamp: 10 })
     await transport.triggerFlush()
-    expect(decodeBody(calls[0]!.init.body).events.map((event) => event.timestamp)).toEqual([10])
+    const envelope = decodeBody(calls[0]!.init.body)
+    expect(envelope.events.map((event) => event.timestamp)).toEqual([9, 10])
+    expect(envelope.meta.urls).toEqual(['https://app.example.com/latest'])
   })
 
   it('keeps the earliest contiguous incrementals within the buffer cap', async () => {

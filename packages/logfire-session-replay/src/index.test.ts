@@ -305,7 +305,6 @@ describe('startSessionReplay full mode', () => {
     expect(replay.recording).toBe(true)
     expect(start).toHaveBeenCalledTimes(2)
     emit(fullSnapshot)
-    emitActivity(click)
     await replay.flush()
     await replay.stop()
 
