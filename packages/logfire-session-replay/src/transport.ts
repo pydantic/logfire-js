@@ -1,5 +1,6 @@
 import { gzip, gzipSync, strToU8 } from 'fflate'
 
+import { isUserActivityEvent, resolveFlushInterval } from './activity'
 import { computeChunkMeta } from './extract'
 import { safeSessionStorage } from './session'
 import { CHUNK_ENVELOPE_VERSION, EventType } from './types'
@@ -13,7 +14,6 @@ const REPLAY_UPLOAD_TIMEOUT_MS = 10_000
 const MAX_RETRY_AFTER_MS = 10_000
 const MAX_KEEPALIVE_RESERVED_BYTES = 48_000
 const MAX_KEEPALIVE_CHUNK_BYTES = 48_000
-
 interface Compression {
   gzip: typeof gzip
   gzipSync: typeof gzipSync
@@ -30,13 +30,24 @@ interface PreparedUpload {
 
 type RetryAfter = { kind: 'delay'; milliseconds: number } | { kind: 'fallback' } | { kind: 'too-long' }
 
+interface ReplayTransportOptions {
+  holdUntilActivity?: boolean
+}
+
 const DEFAULT_COMPRESSION: Compression = { gzip, gzipSync }
 
 export class ReplayTransport {
   private buffer: RrwebEvent[] = []
+  private bufferHasFullSnapshot = false
   private pendingBytes = 0
   private seq = 0
-  private timer: ReturnType<typeof setInterval> | undefined
+  private timer: ReturnType<typeof setTimeout> | undefined
+  private nextFlushAt: number | undefined
+  private lastUserActivityAt: number
+  private readonly startedAt: number
+  private started = false
+  private held: boolean
+  private heldBufferIncomplete = false
   private mode: 'full' | 'buffer'
   private flushing: Promise<void> | undefined
   private reservedKeepaliveBytes = 0
@@ -53,7 +64,8 @@ export class ReplayTransport {
     mode: 'full' | 'buffer',
     storage: Storage | null = safeSessionStorage(),
     compression: Compression = DEFAULT_COMPRESSION,
-    sessionAttributes: SessionAttributes = {}
+    sessionAttributes: SessionAttributes = {},
+    options: ReplayTransportOptions = {}
   ) {
     this.config = config
     this.sessionId = sessionId
@@ -61,33 +73,50 @@ export class ReplayTransport {
     this.mode = mode
     this.storage = storage
     this.compression = compression
+    this.held = options.holdUntilActivity === true && mode === 'full'
     this.seq = this.loadSeq(sessionId)
+    this.startedAt = this.config.now()
+    this.lastUserActivityAt = this.startedAt
   }
 
   start(): void {
-    if (this.timer !== undefined || this.mode !== 'full') {
+    if (this.started || this.mode !== 'full') {
       return
     }
-    this.timer = setInterval(() => {
-      this.flushAndReport()
-    }, this.config.flushIntervalMs)
+    this.started = true
+    this.scheduleFlush()
   }
 
   add(event: RrwebEvent): void {
+    if (isUserActivityEvent(event)) {
+      this.lastUserActivityAt = this.config.now()
+    }
     const eventBytes = estimateBytes(event)
-    if (this.mode === 'buffer') {
-      if (event.type === EventType.FullSnapshot) {
+    if (this.mode === 'buffer' || this.held) {
+      if (event.type === EventType.Meta) {
         this.buffer = [event]
+        this.bufferHasFullSnapshot = false
         this.pendingBytes = eventBytes
+        return
+      }
+      if (event.type === EventType.FullSnapshot) {
+        const retainedMeta =
+          !this.bufferHasFullSnapshot && this.buffer.length === 1 && this.buffer[0]?.type === EventType.Meta ? this.buffer[0] : undefined
+        this.buffer = retainedMeta === undefined ? [event] : [retainedMeta, event]
+        this.bufferHasFullSnapshot = true
+        this.pendingBytes = eventBytes + (retainedMeta === undefined ? 0 : estimateBytes(retainedMeta))
+        this.heldBufferIncomplete = false
         return
       }
       // Incremental rrweb events are only useful after a full-snapshot anchor.
       // Keep the earliest contiguous prefix so later events never depend on a
       // state transition that was trimmed from the buffer.
-      if (this.buffer.length === 0 || eventBytes > this.config.maxBufferBytes) {
+      if (!this.bufferHasFullSnapshot || eventBytes > this.config.maxBufferBytes) {
+        this.heldBufferIncomplete ||= this.held
         return
       }
       if (this.pendingBytes + eventBytes > this.config.maxBufferBytes) {
+        this.heldBufferIncomplete ||= this.held
         return
       }
     }
@@ -96,12 +125,18 @@ export class ReplayTransport {
     this.pendingBytes += eventBytes
 
     if (this.mode === 'full' && this.pendingBytes >= this.config.maxBufferBytes) {
-      this.flushAndReport()
+      this.flushAndReport({ ignoreMinimumDuration: true })
+    } else {
+      this.scheduleFlush()
     }
   }
 
   async triggerFlush(): Promise<void> {
     if (this.mode === 'buffer') {
+      if (!this.bufferHasFullSnapshot) {
+        this.buffer = []
+        this.pendingBytes = 0
+      }
       this.mode = 'full'
       this.start()
     }
@@ -109,12 +144,22 @@ export class ReplayTransport {
   }
 
   async flush(options: { keepalive?: boolean } = {}): Promise<void> {
-    if (this.mode === 'buffer' || this.buffer.length === 0) {
+    return this.flushInternal(options)
+  }
+
+  private async flushInternal(options: { ignoreMinimumDuration?: boolean; keepalive?: boolean }): Promise<void> {
+    if (this.mode === 'buffer' || this.held || this.buffer.length === 0) {
+      return
+    }
+    if (options.ignoreMinimumDuration !== true && !this.minimumDurationReached()) {
+      this.scheduleMinimumDurationFlush()
       return
     }
 
+    this.clearScheduledFlush()
     const events = this.buffer
     this.buffer = []
+    this.bufferHasFullSnapshot = false
     this.pendingBytes = 0
     const eventChunks = options.keepalive === true ? splitKeepaliveEventChunks(events) : [events]
     const seq = this.seq
@@ -150,20 +195,27 @@ export class ReplayTransport {
   }
 
   async shutdown(options: { keepalive?: boolean } = {}): Promise<void> {
-    if (this.timer !== undefined) {
-      clearInterval(this.timer)
-      this.timer = undefined
+    this.started = false
+    this.clearScheduledFlush()
+    if (this.held) {
+      this.discard()
+      await this.flushing
+      return
+    }
+    if (!this.minimumDurationReached()) {
+      this.discard()
+      await this.flushing
+      return
     }
     await this.flush(options)
     await this.flushing
   }
 
   discard(): void {
-    if (this.timer !== undefined) {
-      clearInterval(this.timer)
-      this.timer = undefined
-    }
+    this.started = false
+    this.clearScheduledFlush()
     this.buffer = []
+    this.bufferHasFullSnapshot = false
     this.pendingBytes = 0
   }
 
@@ -171,10 +223,76 @@ export class ReplayTransport {
     return this.mode
   }
 
-  private flushAndReport(): void {
-    this.flush().catch((error: unknown) => {
+  isHeld(): boolean {
+    return this.held
+  }
+
+  releaseHeld(takeFullSnapshot: () => void): void {
+    if (!this.held) {
+      return
+    }
+    if (this.heldBufferIncomplete || !this.bufferHasFullSnapshot) {
+      // rrweb calls the release hook before emitting the interaction. A fresh
+      // anchor keeps its node ids valid after background mutations were dropped.
+      this.buffer = []
+      this.bufferHasFullSnapshot = false
+      this.pendingBytes = 0
+      takeFullSnapshot()
+    }
+    this.held = false
+    if (this.pendingBytes >= this.config.maxBufferBytes) {
+      this.flushAndReport({ ignoreMinimumDuration: true })
+    } else {
+      this.scheduleFlush()
+    }
+  }
+
+  private flushAndReport(options: { ignoreMinimumDuration?: boolean } = {}): void {
+    this.flushInternal(options).catch((error: unknown) => {
       safeReportError(this.config.onError, error)
     })
+  }
+
+  private scheduleFlush(): void {
+    const now = this.config.now()
+    const minimumDelay = Math.max(0, this.config.minSessionDurationMs - (now - this.startedAt))
+    const interval = Math.max(resolveFlushInterval(this.config.flushIntervalMs, now - this.lastUserActivityAt), minimumDelay)
+    this.scheduleFlushIn(now, interval)
+  }
+
+  private scheduleMinimumDurationFlush(): void {
+    const now = this.config.now()
+    const interval = Math.max(0, this.config.minSessionDurationMs - (now - this.startedAt))
+    this.scheduleFlushIn(now, interval)
+  }
+
+  private scheduleFlushIn(now: number, interval: number): void {
+    if (!this.started || this.mode !== 'full' || this.held || this.buffer.length === 0) {
+      return
+    }
+    const flushAt = now + interval
+    if (this.timer !== undefined && this.nextFlushAt !== undefined && this.nextFlushAt <= flushAt) {
+      return
+    }
+    this.clearScheduledFlush()
+    this.nextFlushAt = flushAt
+    this.timer = setTimeout(() => {
+      this.timer = undefined
+      this.nextFlushAt = undefined
+      this.flushAndReport()
+    }, interval)
+  }
+
+  private clearScheduledFlush(): void {
+    if (this.timer !== undefined) {
+      clearTimeout(this.timer)
+      this.timer = undefined
+    }
+    this.nextFlushAt = undefined
+  }
+
+  private minimumDurationReached(): boolean {
+    return this.config.now() - this.startedAt >= this.config.minSessionDurationMs
   }
 
   private createEnvelope(events: RrwebEvent[], seq: number): ChunkEnvelope {

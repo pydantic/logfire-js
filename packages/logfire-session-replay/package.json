@@ -46,16 +46,20 @@
     "build": "vp pack",
     "lint": "vp lint",
     "preview": "vp preview",
-    "typecheck": "tsc",
+    "typecheck": "tsc && tsc --project browser-tests/tsconfig.json",
     "prepack": "cp ../../LICENSE .",
     "postpublish": "rm LICENSE",
-    "test": "vp test"
+    "test": "vp test",
+    "test:browser": "playwright test --config browser-tests/playwright.config.ts"
   },
   "dependencies": {
-    "fflate": "catalog:",
-    "rrweb": "catalog:"
+    "@rrweb/record": "catalog:",
+    "fflate": "catalog:"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@rrweb/replay": "2.1.1",
+    "@types/node": "^22.5.1",
     "jsdom": "catalog:",
     "vitest": "catalog:"
   },

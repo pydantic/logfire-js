@@ -9,7 +9,7 @@ general availability.
 
 This package records rrweb events, batches them into Logfire replay chunks, and
 uploads gzip-compressed JSON envelopes to a replay upload endpoint. It is
-standalone on purpose: `rrweb` and `fflate` are not dependencies of the core
+standalone on purpose: `@rrweb/record` and `fflate` are not dependencies of the core
 `logfire` API package or `@pydantic/logfire-browser`.
 
 ## Usage
@@ -137,8 +137,28 @@ Use `replayUrl + headers` with a backend proxy when possible.
 
 ## Lifecycle Delivery
 
-Full-mode replay requests best-effort keepalive uploads when the page becomes
-hidden or receives `pagehide`. Lifecycle chunks start independently of an
+Replay events use the configured `flushIntervalMs` while the user is active (5
+seconds by default). After 30 seconds without recorded pointer, input, touch,
+scroll, media, resize, drag, or selection activity, background events use the
+greater of `flushIntervalMs` and 60 seconds. New user activity restores the
+configured cadence. After five minutes without activity, background events use
+the greater of `flushIntervalMs` and five minutes. Reaching `maxBufferBytes`
+still flushes immediately.
+
+Replays must reach `minSessionDurationMs` (5 seconds by default) before they are
+uploaded. An earlier flush keeps the events buffered for the remaining time,
+while stopping the recorder before the minimum discards them. Set the option to
+`0` when an application must upload a shorter replay. The `maxBufferBytes`
+memory bound still takes precedence over the duration floor.
+
+Sessions created only by background timeout monitoring remain held until the
+next user activity. Calling `flush()`, hiding the page, or stopping the recorder
+before that activity discards the held session instead of uploading an idle-only
+replay.
+
+After a replay reaches the minimum duration, full mode requests best-effort
+keepalive uploads when the page becomes hidden or receives `pagehide`.
+Lifecycle chunks start independently of an
 ordinary upload that is still in flight. The transport admits the earliest
 contiguous prefix whose compressed bodies fit its 48,000-byte aggregate budget
 across its own unfinished keepalive requests. Remaining lifecycle chunks are
@@ -152,8 +172,9 @@ event also cannot be split safely.
 `headers` and functional `token` values are resolved during each upload. An
 asynchronous credential callback can therefore delay the final request beyond
 the browser's page-freeze boundary. Prefer synchronously available proxy
-credentials, and call `flush()` before a controlled navigation when delivery is
-critical.
+credentials. Before a controlled navigation, call `flush()` early enough to
+reach `minSessionDurationMs`, or explicitly set the minimum to `0` when delivery
+of shorter replays is critical.
 
 Ordinary uploads use asynchronous gzip when available. If a restrictive Content
 Security Policy blocks fflate's worker compressor, replay retries the same batch
@@ -164,8 +185,10 @@ This preserves the batch, but compression may briefly use the main thread.
 
 The recorder masks all rendered text and input values by default
 (`maskAllText: true`, `maskAllInputs: true`). It also disables canvas recording
-and font collection, throttles media sampling, never captures request or
-response bodies, and leaves console capture off (`captureConsole: false`).
+and font collection, skips inlined images and cross-origin iframe recording,
+omits nonvisual DOM metadata, throttles pointer, scroll, and media sampling,
+never captures request or response bodies, and leaves console capture off
+(`captureConsole: false`).
 Network and navigation capture remain on, but query strings and fragments are
 removed from rrweb page metadata and captured network/navigation URLs by the
 default `redactUrlPatterns` value. Replay envelope `meta.urls` contains those
@@ -248,7 +271,7 @@ whose URLs contain terms such as `session-replay`. If replay fails to start with
 the local app.
 
 When a Vite workspace example imports unpublished package output directly from
-`dist`, make sure rrweb resolves to its browser ESM build
-(`rrweb/dist/rrweb.js`). Resolving rrweb to `rrweb.cjs` can fail at runtime
+`dist`, make sure `@rrweb/record` resolves to its browser ESM build
+(`@rrweb/record/dist/record.js`). Resolving it to `record.cjs` can fail at runtime
 because that build does not provide the named `record` export used by this
 package.

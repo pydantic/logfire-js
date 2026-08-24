@@ -7,11 +7,21 @@ import { ReplayTransport, SEQ_STORAGE_KEY } from './transport'
 import { CHUNK_ENVELOPE_VERSION, EventType, IncrementalSource, MouseInteractions } from './types'
 import type { ChunkEnvelope, ResolvedSessionReplayConfig, RrwebEvent } from './types'
 
+const meta: RrwebEvent = {
+  type: EventType.Meta,
+  data: { href: 'https://app.example.com/orders', height: 720, width: 1_280 },
+  timestamp: 0,
+}
 const fullSnapshot: RrwebEvent = { type: EventType.FullSnapshot, data: { node: {} }, timestamp: 1 }
 const click: RrwebEvent = {
   type: EventType.IncrementalSnapshot,
   data: { source: IncrementalSource.MouseInteraction, type: MouseInteractions.Click },
   timestamp: 2,
+}
+const mutation: RrwebEvent = {
+  type: EventType.IncrementalSnapshot,
+  data: { source: IncrementalSource.Mutation },
+  timestamp: 3,
 }
 const REPLAY_UPLOAD_TIMEOUT_MS = 10_000
 
@@ -30,6 +40,7 @@ function makeConfig(fetchImpl: typeof fetch): ResolvedSessionReplayConfig {
     blockSelector: '',
     flushIntervalMs: 5_000,
     maxBufferBytes: 1_000_000,
+    minSessionDurationMs: 0,
     sessionIdleTimeoutMs: 1_000,
     maxSessionDurationMs: 10_000,
     distinctId: 'user-1',
@@ -68,6 +79,16 @@ function immediateCompression() {
   }
 }
 
+function timedTransport(fetchImpl: typeof fetch, sessionId: string, overrides: Partial<ResolvedSessionReplayConfig> = {}) {
+  return new ReplayTransport(
+    { ...makeConfig(fetchImpl), ...overrides, now: () => Date.now() },
+    sessionId,
+    'full',
+    null,
+    immediateCompression()
+  )
+}
+
 function pseudoRandomText(length: number, seed: number): string {
   let state = seed >>> 0
   let value = ''
@@ -88,6 +109,99 @@ function largeEvent(timestamp: number, seed: number, length = 30_000): RrwebEven
 }
 
 describe('ReplayTransport full mode', () => {
+  it('retains metadata when releasing a complete held session', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport(
+      makeConfig(fetchImpl),
+      'sess-held-complete',
+      'full',
+      null,
+      immediateCompression(),
+      {},
+      { holdUntilActivity: true }
+    )
+    transport.start()
+    transport.add(meta)
+    transport.add(fullSnapshot)
+
+    const takeFullSnapshot = vi.fn<() => void>()
+    transport.releaseHeld(takeFullSnapshot)
+    transport.add(click)
+    await transport.shutdown()
+
+    expect(takeFullSnapshot).not.toHaveBeenCalled()
+    expect(calls).toHaveLength(1)
+    const envelope = decodeBody(calls[0]!.init.body)
+    expect(envelope.events).toEqual([meta, fullSnapshot, click])
+    expect(envelope.meta.urls).toEqual(['https://app.example.com/orders'])
+  })
+
+  it('keeps a rotated session bounded and unshipped until activity', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const firstIncremental = { ...click, timestamp: 2 }
+    const secondIncremental = { ...click, timestamp: 3 }
+    const replacementMeta = {
+      ...meta,
+      data: { href: 'https://app.example.com/account', height: 720, width: 1_280 },
+      timestamp: 9,
+    }
+    const replacementSnapshot = { ...fullSnapshot, timestamp: 10 }
+    const releasedClick = { ...click, timestamp: 11 }
+    const maxBufferBytes =
+      strToU8(JSON.stringify(meta)).byteLength +
+      strToU8(JSON.stringify(fullSnapshot)).byteLength +
+      strToU8(JSON.stringify(firstIncremental)).byteLength
+    const transport = new ReplayTransport(
+      { ...makeConfig(fetchImpl), maxBufferBytes },
+      'sess-held',
+      'full',
+      null,
+      immediateCompression(),
+      {},
+      { holdUntilActivity: true }
+    )
+    transport.start()
+    transport.add(meta)
+    transport.add(fullSnapshot)
+    transport.add(firstIncremental)
+    transport.add(secondIncremental)
+    await transport.flush({ keepalive: true })
+    expect(calls).toHaveLength(0)
+
+    transport.releaseHeld(() => {
+      transport.add(replacementMeta)
+      transport.add(replacementSnapshot)
+    })
+    transport.add(releasedClick)
+    await transport.shutdown()
+
+    expect(calls).toHaveLength(1)
+    const envelope = decodeBody(calls[0]!.init.body)
+    expect(envelope.events).toEqual([replacementMeta, replacementSnapshot, releasedClick])
+    expect(envelope.meta.urls).toEqual(['https://app.example.com/account'])
+  })
+
+  it('discards an unreleased rotated session on shutdown', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport(
+      makeConfig(fetchImpl),
+      'sess-held-stop',
+      'full',
+      null,
+      immediateCompression(),
+      {},
+      {
+        holdUntilActivity: true,
+      }
+    )
+    transport.start()
+    transport.add(fullSnapshot)
+
+    await transport.shutdown()
+
+    expect(calls).toHaveLength(0)
+  })
+
   it('uploads one gzipped envelope to the proxy URL with seq=0', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-1', 'full', null)
@@ -174,6 +288,73 @@ describe('ReplayTransport full mode', () => {
     expect(calls).toHaveLength(1)
   })
 
+  it('waits until the minimum session duration before uploading', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = timedTransport(fetchImpl, 'sess-minimum', {
+        flushIntervalMs: 1_000,
+        minSessionDurationMs: 5_000,
+      })
+      transport.start()
+      transport.add(fullSnapshot)
+
+      await transport.flush({ keepalive: true })
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(calls).toHaveLength(0)
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(calls).toHaveLength(1)
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('discards a replay stopped before the minimum session duration', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = timedTransport(fetchImpl, 'sess-short', { minSessionDurationMs: 5_000 })
+      transport.start()
+      transport.add(fullSnapshot)
+
+      await vi.advanceTimersByTimeAsync(4_999)
+      await transport.shutdown()
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(calls).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('flushes at the buffer limit before the minimum session duration', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = timedTransport(fetchImpl, 'sess-short-cap', {
+        maxBufferBytes: 80,
+        minSessionDurationMs: 5_000,
+      })
+      transport.start()
+      transport.add(fullSnapshot)
+      transport.add(click)
+
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, click])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('uses UTF-8 bytes rather than UTF-16 code units for the buffer threshold', async () => {
     const event = { ...click, data: { text: 'é🚀'.repeat(20) } } satisfies RrwebEvent
     const json = JSON.stringify(event)
@@ -201,6 +382,173 @@ describe('ReplayTransport full mode', () => {
       'https://app.example.com/replay-proxy/sess-1?seq=0',
       'https://app.example.com/replay-proxy/sess-1?seq=1',
     ])
+  })
+
+  it('backs off background uploads while idle and resumes quickly on user activity', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = timedTransport(fetchImpl, 'sess-adaptive')
+      transport.start()
+      transport.add(fullSnapshot)
+      await vi.advanceTimersByTimeAsync(5_000)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+
+      vi.setSystemTime(31_000)
+      transport.add(mutation)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(calls).toHaveLength(1)
+
+      transport.add(click)
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(calls).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(2)
+      })
+      expect(decodeBody(calls[1]!.init.body).events).toEqual([mutation, click])
+
+      vi.setSystemTime(72_000)
+      transport.add(mutation)
+      await vi.advanceTimersByTimeAsync(59_999)
+      expect(calls).toHaveLength(2)
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(3)
+      })
+      expect(decodeBody(calls[2]!.init.body).events).toEqual([mutation])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('uses a five-minute cadence after five minutes without activity', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = timedTransport(fetchImpl, 'sess-deep-idle')
+      transport.start()
+
+      vi.setSystemTime(5 * 60_000)
+      transport.add(mutation)
+      await vi.advanceTimersByTimeAsync(5 * 60_000 - 1)
+      expect(calls).toHaveLength(0)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([mutation])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not postpone a deep-idle upload when more background events arrive', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = timedTransport(fetchImpl, 'sess-deep-idle-deadline')
+      transport.start()
+
+      vi.setSystemTime(5 * 60_000)
+      transport.add(mutation)
+      await vi.advanceTimersByTimeAsync(4 * 60_000)
+      const laterMutation = { ...mutation, timestamp: 4 }
+      transport.add(laterMutation)
+
+      await vi.advanceTimersByTimeAsync(60_000 - 1)
+      expect(calls).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([mutation, laterMutation])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('restores the active cadence when activity resumes during deep idle', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = timedTransport(fetchImpl, 'sess-deep-idle-activity')
+      transport.start()
+
+      vi.setSystemTime(5 * 60_000)
+      transport.add(mutation)
+      await vi.advanceTimersByTimeAsync(60_000)
+      transport.add(click)
+
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(calls).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([mutation, click])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('flushes at the buffer limit during deep idle without a later timer upload', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const maxBufferBytes = strToU8(JSON.stringify(fullSnapshot)).byteLength + strToU8(JSON.stringify(mutation)).byteLength
+      const transport = timedTransport(fetchImpl, 'sess-deep-idle-cap', { maxBufferBytes })
+      transport.start()
+
+      vi.setSystemTime(5 * 60_000)
+      transport.add(fullSnapshot)
+      transport.add(mutation)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, mutation])
+
+      await vi.advanceTimersByTimeAsync(5 * 60_000)
+      expect(calls).toHaveLength(1)
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not shorten a configured flush interval while idle', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(31_000)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = timedTransport(fetchImpl, 'sess-slow-cadence', { flushIntervalMs: 90_000 })
+      transport.start()
+      vi.setSystemTime(62_000)
+      transport.add(mutation)
+
+      await vi.advanceTimersByTimeAsync(89_999)
+      expect(calls).toHaveLength(0)
+      await vi.advanceTimersByTimeAsync(1)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([mutation])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -689,6 +1037,38 @@ describe('ReplayTransport Retry-After policy', () => {
 })
 
 describe('ReplayTransport buffer mode', () => {
+  it('waits until the minimum session duration after error promotion', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = new ReplayTransport(
+        {
+          ...makeConfig(fetchImpl),
+          minSessionDurationMs: 5_000,
+          now: () => Date.now(),
+        },
+        'sess-short-error',
+        'buffer',
+        null,
+        immediateCompression()
+      )
+      transport.add(fullSnapshot)
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      await transport.triggerFlush()
+      await vi.advanceTimersByTimeAsync(3_999)
+      expect(calls).toHaveLength(0)
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(calls).toHaveLength(1)
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not upload until triggered', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-2', 'buffer', null)
@@ -705,11 +1085,20 @@ describe('ReplayTransport buffer mode', () => {
   it('drops buffered events before the latest full snapshot', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-3', 'buffer', null)
+    const latestMeta = {
+      ...meta,
+      data: { href: 'https://app.example.com/latest', height: 720, width: 1_280 },
+      timestamp: 9,
+    }
+    transport.add(meta)
     transport.add(fullSnapshot)
     transport.add(click)
+    transport.add(latestMeta)
     transport.add({ ...fullSnapshot, timestamp: 10 })
     await transport.triggerFlush()
-    expect(decodeBody(calls[0]!.init.body).events.map((event) => event.timestamp)).toEqual([10])
+    const envelope = decodeBody(calls[0]!.init.body)
+    expect(envelope.events.map((event) => event.timestamp)).toEqual([9, 10])
+    expect(envelope.meta.urls).toEqual(['https://app.example.com/latest'])
   })
 
   it('keeps the earliest contiguous incrementals within the buffer cap', async () => {

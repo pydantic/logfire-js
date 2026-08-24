@@ -7,13 +7,7 @@ if (!['unload', 'csp', 'retry-after', 'utf8'].includes(scenario)) {
 }
 
 try {
-  const response = await fetch(`http://127.0.0.1:4177/fixture/status?scenario=${scenario}`)
-  assert(response.ok, `status request failed: ${String(response.status)}`)
-  const evidence = await response.json()
-  const decoded = evidence.receipts.map((receipt) => ({
-    ...receipt,
-    envelope: JSON.parse(gunzipSync(Buffer.from(receipt.body, 'base64')).toString('utf8')),
-  }))
+  const { decoded, evidence } = await pollForEvidence(Date.now() + 10_000)
   if (scenario !== 'unload') {
     assert(evidence.state?.phase === 'complete', `fixture failed: ${String(evidence.state?.error ?? evidence.state?.phase)}`)
   }
@@ -36,6 +30,28 @@ try {
   if (scenario === 'unload') {
     await fetch('http://127.0.0.1:4177/fixture/release?scenario=unload', { method: 'POST' })
   }
+}
+
+async function pollForEvidence(deadline) {
+  const response = await fetch(`http://127.0.0.1:4177/fixture/status?scenario=${scenario}`)
+  assert(response.ok, `status request failed: ${String(response.status)}`)
+  const evidence = await response.json()
+  const decoded = evidence.receipts.map((receipt) => ({
+    ...receipt,
+    envelope: JSON.parse(gunzipSync(Buffer.from(receipt.body, 'base64')).toString('utf8')),
+  }))
+  if (scenario !== 'unload' || unloadMarkersPresent(decoded) || Date.now() >= deadline) {
+    return { decoded, evidence }
+  }
+  await new Promise((resolve) => {
+    setTimeout(resolve, 50)
+  })
+  return pollForEvidence(deadline)
+}
+
+function unloadMarkersPresent(decoded) {
+  const bodies = decoded.map((receipt) => JSON.stringify(receipt.envelope))
+  return bodies.some((body) => body.includes('unload-marker-one')) && bodies.some((body) => body.includes('unload-marker-two'))
 }
 
 function verifyUnload(evidence, decoded) {

@@ -1,3 +1,4 @@
+import { isUserActivityEvent } from './activity'
 import { captureConsole, captureNavigation, captureNetwork } from './capture'
 import { startRecording } from './recorder'
 import { decideSamplingMode } from './sampling'
@@ -86,7 +87,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
     let transition = Promise.resolve()
     let stopPromise: Promise<void> | undefined
 
-    const activate = (sessionId: string, initial: boolean): void => {
+    const activate = (sessionId: string, initial: boolean, holdUntilActivity = !initial): void => {
       const mode = resolveSamplingMode(resolvedConfig, sessionId, samplingModeStorage)
       if (mode === 'off' || stopped || sessionId !== currentSessionId) {
         return
@@ -99,6 +100,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           onSessionChanged: observeSession,
           samplingModeStorage,
           sessionId,
+          holdUntilActivity,
         })
       } catch (error) {
         runtime = undefined
@@ -109,7 +111,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       }
     }
 
-    const observeSession = (sessionId: string): void => {
+    const observeSession = (sessionId: string, holdUntilActivity = true): void => {
       if (stopped || sessionId === currentSessionId) {
         return
       }
@@ -120,7 +122,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       transition = transition.then(async () => {
         await reportPromise(oldShutdown, resolvedConfig.onError)
         if (!stopped && currentSessionId === sessionId) {
-          activate(sessionId, false)
+          activate(sessionId, false, holdUntilActivity)
         }
       })
     }
@@ -188,15 +190,16 @@ function createActiveRuntime(options: {
   config: ResolvedSessionReplayConfig
   getSessionId: (touch: boolean) => string
   mode: 'full' | 'buffer'
-  onSessionChanged: (sessionId: string) => void
+  onSessionChanged: (sessionId: string, holdUntilActivity?: boolean) => void
   samplingModeStorage: Storage | null
   sessionId: string
+  holdUntilActivity: boolean
 }): ActiveRuntime {
-  const { config, getSessionId, mode, onSessionChanged, samplingModeStorage, sessionId } = options
+  const { config, getSessionId, holdUntilActivity, mode, onSessionChanged, samplingModeStorage, sessionId } = options
   const sessionAttributes = snapshotSessionAttributes(config.getSessionAttributes, (error) => {
     safeReportError(config.onError, error)
   })
-  const transport = new ReplayTransport(config, sessionId, mode, undefined, undefined, sessionAttributes)
+  const transport = new ReplayTransport(config, sessionId, mode, undefined, undefined, sessionAttributes, { holdUntilActivity })
   const cleanup: (() => void)[] = []
   let active = true
   const isRuntimeActive = () => active
@@ -204,14 +207,31 @@ function createActiveRuntime(options: {
 
   try {
     const recorder = startRecording({
-      emit: (event) => {
-        if (!active) {
+      beforeUserActivity: () => {
+        if (!active || !transport.isHeld()) {
           return
         }
         try {
           const observedSessionId = getSessionId(true)
           if (observedSessionId !== sessionId) {
-            onSessionChanged(observedSessionId)
+            onSessionChanged(observedSessionId, false)
+            return
+          }
+          transport.releaseHeld(() => {
+            recorder.takeFullSnapshot()
+          })
+        } catch (error) {
+          safeReportError(config.onError, error)
+        }
+      },
+      emit: (event) => {
+        if (!active) {
+          return
+        }
+        try {
+          const observedSessionId = getSessionId(isUserActivityEvent(event))
+          if (observedSessionId !== sessionId) {
+            onSessionChanged(observedSessionId, false)
             return
           }
           transport.add(event)
@@ -244,6 +264,9 @@ function createActiveRuntime(options: {
       if (!isRuntimeActive()) {
         return
       }
+      transport.releaseHeld(() => {
+        recorder.takeFullSnapshot()
+      })
       addCustomEvent(CustomTag.Error, payload)
       if (!isRuntimeActive()) {
         return
@@ -367,6 +390,7 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     blockSelector: config.blockSelector ?? DEFAULTS.blockSelector,
     flushIntervalMs: config.flushIntervalMs ?? DEFAULTS.flushIntervalMs,
     maxBufferBytes: config.maxBufferBytes ?? DEFAULTS.maxBufferBytes,
+    minSessionDurationMs: config.minSessionDurationMs ?? DEFAULTS.minSessionDurationMs,
     sessionIdleTimeoutMs: config.sessionIdleTimeoutMs ?? DEFAULTS.sessionIdleTimeoutMs,
     maxSessionDurationMs: config.maxSessionDurationMs ?? DEFAULTS.maxSessionDurationMs,
     distinctId: config.distinctId ?? DEFAULTS.distinctId,

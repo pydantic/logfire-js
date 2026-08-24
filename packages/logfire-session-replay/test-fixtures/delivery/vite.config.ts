@@ -7,10 +7,10 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite-plus'
 
 interface ReplayReceipt {
-  authorization?: string
+  authorization: string | undefined
   body: string
   byteLength: number
-  marker?: string
+  marker: string | undefined
   receivedAt: number
   seq: number
   url: string
@@ -25,7 +25,7 @@ const fixtureDirectory = dirname(fileURLToPath(import.meta.url))
 const packageDirectory = resolve(fixtureDirectory, '../..')
 const recorderEntrypoint = resolve(packageDirectory, 'dist/index.js')
 const require = createRequire(recorderEntrypoint)
-const rrwebEntrypoint = require.resolve('rrweb').replace(/dist\/rrweb\.cjs$/u, 'dist/rrweb.js')
+const rrwebEntrypoint = require.resolve('@rrweb/record').replace(/dist\/record\.cjs$/u, 'dist/record.js')
 const fflateEntrypoint = resolve(dirname(require.resolve('fflate/package.json')), 'esm/browser.js')
 const moduleId = 'lf-replay-delivery'
 const resolvedModuleId = `\0${moduleId}`
@@ -37,7 +37,7 @@ let unloadReleasedAt: number | undefined
 
 function loadRecorderModule(): string {
   return readFileSync(recorderEntrypoint, 'utf8')
-    .replaceAll('from"rrweb"', `from${JSON.stringify(rrwebEntrypoint)}`)
+    .replaceAll('from"@rrweb/record"', `from${JSON.stringify(rrwebEntrypoint)}`)
     .replaceAll('from"fflate"', `from${JSON.stringify(fflateEntrypoint)}`)
 }
 
@@ -66,7 +66,7 @@ export default defineConfig({
             next()
             return
           }
-          const scenario = url.searchParams.get('scenario') ?? scenarioFromReplayPath(url.pathname)
+          const scenario = url.searchParams.get('scenario') ?? scenarioFromReplayPath(url.pathname) ?? 'unknown'
           if (request.method === 'POST' && url.pathname === '/fixture/reset') {
             receipts.set(scenario, [])
             applicationReceipts.set(scenario, [])
@@ -168,8 +168,8 @@ function readBody(request: NodeJS.ReadableStream, done: (body: Buffer) => void):
   })
 }
 
-function scenarioFromReplayPath(pathname: string): string {
-  return /^\/replay\/([^/]+)(?:\/|$)/u.exec(pathname)?.[1] ?? 'unknown'
+function scenarioFromReplayPath(pathname: string): string | undefined {
+  return /^\/replay\/([^/]+)(?:\/|$)/u.exec(pathname)?.[1]
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {
