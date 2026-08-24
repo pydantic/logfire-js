@@ -5,7 +5,6 @@ import type { BrowserSessionManager } from './browserSession'
 import type { BrowserSessionReplayState } from './sessionReplay'
 
 const ATTR_SESSION_ID = 'session.id'
-const ATTR_BROWSER_SESSION_ID = 'browser.session.id'
 const ATTR_SESSION_REPLAY_ACTIVE = 'logfire.session_replay.active'
 const ATTR_SESSION_REPLAY_MODE = 'logfire.session_replay.mode'
 const ATTR_LOGFIRE_PAGE_ROUTE = 'logfire.page.route'
@@ -50,7 +49,6 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
   onStart(span: Span, _parentContext: Context): void {
     const session = this.sessionManager.touch()
     span.setAttribute(ATTR_SESSION_ID, session.id)
-    span.setAttribute(ATTR_BROWSER_SESSION_ID, session.id)
     for (const [key, value] of Object.entries(session.sessionAttributes ?? {})) {
       span.setAttribute(`logfire.session.${key}`, value)
     }

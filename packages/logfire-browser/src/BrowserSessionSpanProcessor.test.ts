@@ -103,11 +103,11 @@ describe('BrowserSessionSpanProcessor', () => {
     startSpan(createProcessor(), span)
 
     expect(span.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'logfire.page.url.full': 'https://example.com/dashboard',
       'logfire.page.url.path': '/dashboard',
       'session.id': 'session-1',
     })
+    expect(span.attributes).not.toHaveProperty('browser.session.id')
   })
 
   it('stamps session dimensions and evaluates the route for each span', () => {
@@ -131,7 +131,6 @@ describe('BrowserSessionSpanProcessor', () => {
     startSpan(processor, secondSpan)
 
     expect(firstSpan.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'logfire.page.route': '/products/:id',
       'logfire.session.account_tier': 'pro',
       'logfire.session.beta_user': true,
@@ -158,7 +157,6 @@ describe('BrowserSessionSpanProcessor', () => {
     )
 
     expect(span.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'logfire.page.route': '/dashboard',
       'session.id': 'session-1',
     })
@@ -192,7 +190,6 @@ describe('BrowserSessionSpanProcessor', () => {
     )
 
     expect(span.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'logfire.session.tier': 'pro',
       'logfire.session_replay.active': true,
       'logfire.session_replay.mode': 'full',
@@ -207,7 +204,6 @@ describe('BrowserSessionSpanProcessor', () => {
     startSpan(createProcessor({ urlAttributes: false }), span)
 
     expect(span.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'session.id': 'session-1',
     })
   })
@@ -227,7 +223,6 @@ describe('BrowserSessionSpanProcessor', () => {
     )
 
     expect(span.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'logfire.page.url.full': 'https://example.com/dashboard',
       'logfire.page.url.path': '/sanitized',
       'session.id': 'session-1',
@@ -241,7 +236,6 @@ describe('BrowserSessionSpanProcessor', () => {
     startSpan(createProcessor(), span)
 
     expect(span.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'logfire.page.url.full': 'https://example.com/products/123',
       'logfire.page.url.path': '/products/123',
       'session.id': 'session-1',
@@ -260,7 +254,6 @@ describe('BrowserSessionSpanProcessor', () => {
     )
 
     expect(span.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'logfire.page.url.full': 'https://example.com/products/123?token=secret#details',
       'logfire.page.url.path': '/products/123',
       'session.id': 'session-1',
@@ -275,7 +268,6 @@ describe('BrowserSessionSpanProcessor', () => {
       startSpan(createProcessor(), span)
     }).not.toThrow()
     expect(span.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'session.id': 'session-1',
     })
   })
@@ -295,7 +287,6 @@ describe('BrowserSessionSpanProcessor', () => {
       )
     }).not.toThrow()
     expect(span.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'session.id': 'session-1',
     })
   })
@@ -308,7 +299,6 @@ describe('BrowserSessionSpanProcessor', () => {
     startSpan(createProcessor({}, replayState), span)
 
     expect(span.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'logfire.session_replay.active': true,
       'logfire.session_replay.mode': 'full',
       'session.id': 'session-1',
@@ -335,13 +325,11 @@ describe('BrowserSessionSpanProcessor', () => {
     startSpan(processor, secondSpan)
 
     expect(firstSpan.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'logfire.session_replay.active': true,
       'logfire.session_replay.mode': 'buffer',
       'session.id': 'session-1',
     })
     expect(secondSpan.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'logfire.session_replay.active': true,
       'logfire.session_replay.mode': 'full',
       'session.id': 'session-1',
@@ -353,7 +341,6 @@ describe('BrowserSessionSpanProcessor', () => {
     const beforeReplay = createSpan()
     startSpan(createProcessor({}, replayState), beforeReplay)
     expect(beforeReplay.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'session.id': 'session-1',
     })
 
@@ -361,7 +348,6 @@ describe('BrowserSessionSpanProcessor', () => {
     const sampledOff = createSpan()
     startSpan(createProcessor({}, replayState), sampledOff)
     expect(sampledOff.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'session.id': 'session-1',
     })
 
@@ -370,7 +356,6 @@ describe('BrowserSessionSpanProcessor', () => {
     const afterStop = createSpan()
     startSpan(createProcessor({}, replayState), afterStop)
     expect(afterStop.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'session.id': 'session-1',
     })
   })
@@ -393,7 +378,6 @@ describe('BrowserSessionSpanProcessor', () => {
       startSpan(createProcessor({}, replayState), span)
     }).not.toThrow()
     expect(span.attributes).toEqual({
-      'browser.session.id': 'session-1',
       'session.id': 'session-1',
     })
   })
