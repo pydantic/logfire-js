@@ -74,6 +74,25 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   if (Array.isArray(b)) {
     return false
   }
+  // Everything below compares own enumerable keys, and a Date, RegExp, Set or Map keeps its
+  // contents in internal slots instead. Any two of them have no keys at all, so they compared
+  // equal to each other, a Date to a Map included.
+  const tag = Object.prototype.toString.call(a)
+  if (tag !== Object.prototype.toString.call(b)) {
+    return false
+  }
+  if (tag === '[object Date]') {
+    return (a as Date).getTime() === (b as Date).getTime()
+  }
+  if (tag === '[object RegExp]') {
+    return (a as RegExp).source === (b as RegExp).source && (a as RegExp).flags === (b as RegExp).flags
+  }
+  if (tag === '[object Set]') {
+    return setsEqual(a as Set<unknown>, b as Set<unknown>)
+  }
+  if (tag === '[object Map]') {
+    return mapsEqual(a as Map<unknown, unknown>, b as Map<unknown, unknown>)
+  }
   const ka = Object.keys(a as Record<string, unknown>)
   const kb = Object.keys(b as Record<string, unknown>)
   if (ka.length !== kb.length) {
@@ -81,6 +100,32 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   }
   for (const k of ka) {
     if (!deepEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) {
+      return false
+    }
+  }
+  return true
+}
+
+/** Members are matched with `has`, so membership is SameValueZero, the semantics a Set caller expects. */
+function setsEqual(a: Set<unknown>, b: Set<unknown>): boolean {
+  if (a.size !== b.size) {
+    return false
+  }
+  for (const item of a) {
+    if (!b.has(item)) {
+      return false
+    }
+  }
+  return true
+}
+
+/** Keys are matched with `has` for the same reason; values still compare structurally. */
+function mapsEqual(a: Map<unknown, unknown>, b: Map<unknown, unknown>): boolean {
+  if (a.size !== b.size) {
+    return false
+  }
+  for (const [key, value] of a) {
+    if (!b.has(key) || !deepEqual(value, b.get(key))) {
       return false
     }
   }
