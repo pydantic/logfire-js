@@ -81,17 +81,20 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   if (tag !== Object.prototype.toString.call(b)) {
     return false
   }
+  // `Symbol.toStringTag` is writable, so a plain object can claim any of these tags. Each branch
+  // checks the prototype as well, which makes a spoofed value unequal rather than a TypeError
+  // thrown out of the evaluator by a method the object does not have.
   if (tag === '[object Date]') {
-    return (a as Date).getTime() === (b as Date).getTime()
+    return a instanceof Date && b instanceof Date && a.getTime() === b.getTime()
   }
   if (tag === '[object RegExp]') {
-    return (a as RegExp).source === (b as RegExp).source && (a as RegExp).flags === (b as RegExp).flags
+    return a instanceof RegExp && b instanceof RegExp && a.source === b.source && a.flags === b.flags
   }
   if (tag === '[object Set]') {
-    return setsEqual(a as Set<unknown>, b as Set<unknown>)
+    return a instanceof Set && b instanceof Set && setsEqual(a, b)
   }
   if (tag === '[object Map]') {
-    return mapsEqual(a as Map<unknown, unknown>, b as Map<unknown, unknown>)
+    return a instanceof Map && b instanceof Map && mapsEqual(a, b)
   }
   const ka = Object.keys(a as Record<string, unknown>)
   const kb = Object.keys(b as Record<string, unknown>)
