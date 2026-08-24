@@ -3,6 +3,8 @@ node_modules
 packages/*/*.tgz
 coverage
 packages/*/coverage
+playwright-report
+test-results
 .env
 scratch/
 **/.turbo

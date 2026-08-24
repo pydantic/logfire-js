@@ -1,7 +1,7 @@
 import { startSessionReplay } from 'lf-replay-delivery'
 import type { SessionReplay } from '@pydantic/logfire-session-replay'
 
-type Scenario = 'csp' | 'retry-after' | 'unload' | 'utf8'
+type Scenario = 'csp' | 'retry-after' | 'short' | 'unload' | 'utf8'
 type Phase = 'starting' | 'ready' | 'complete' | 'failed'
 
 interface DeliveryState {
@@ -42,7 +42,9 @@ async function run(): Promise<void> {
     getSessionId: () => `delivery-${scenario}`,
     headers: () => ({ 'X-Replay-Marker': scenario }),
     ignoreUrlPatterns: [/\/fixture\//u, /\/replay\//u],
+    maskAllText: false,
     maxBufferBytes: 1_000_000,
+    minSessionDurationMs: scenario === 'short' ? 5_000 : 0,
     onError: (error: unknown) => {
       state.errors.push(error instanceof Error ? error.message : String(error))
     },
@@ -53,8 +55,14 @@ async function run(): Promise<void> {
   if (scenario === 'unload') {
     await prepareUnload()
     state.phase = 'ready'
-    setStatus('ready')
     await saveState()
+    setStatus('ready')
+    return
+  }
+  if (scenario === 'short') {
+    state.phase = 'ready'
+    await saveState()
+    setStatus('ready')
     return
   }
   if (scenario === 'csp') {
@@ -66,15 +74,15 @@ async function run(): Promise<void> {
   } else if (scenario === 'retry-after') {
     await replay.flush()
   } else {
-    await fetch('/application/fetch', { method: 'POST', body: 'é🚀' })
-    await sendXhr('/application/xhr', 'é🚀')
+    await fetch(`/application/fetch?scenario=${scenario}`, { method: 'POST', body: 'é🚀' })
+    await sendXhr(`/application/xhr?scenario=${scenario}`, 'é🚀')
     await delay(50)
     await replay.flush()
   }
 
   state.phase = 'complete'
-  setStatus('complete')
   await saveState()
+  setStatus('complete')
 }
 
 async function prepareUnload(): Promise<void> {
@@ -139,6 +147,9 @@ function scenarioFromPath(pathname: string): Scenario {
   }
   if (pathname.startsWith('/retry-after/')) {
     return 'retry-after'
+  }
+  if (pathname.startsWith('/short/')) {
+    return 'short'
   }
   if (pathname.startsWith('/utf8/')) {
     return 'utf8'
