@@ -1,5 +1,17 @@
 # @pydantic/logfire-session-replay
 
+## 0.3.2
+
+### Patch Changes
+
+- 118b480: Reduce session replay recording and upload overhead by slowing background event
+  uploads to one minute after 30 seconds of inactivity, then five minutes after
+  five minutes of inactivity. Omit nonvisual DOM metadata and sample pointer and
+  scroll activity less frequently. Do not upload replay sessions that rotate
+  during inactivity unless an error or later user interaction makes them useful.
+  Discard replay sessions shorter than five seconds by default. Use the dedicated
+  `@rrweb/record` package for recording.
+
 ## 0.3.1
 
 ### Patch Changes
