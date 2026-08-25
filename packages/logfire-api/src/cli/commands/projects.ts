@@ -13,6 +13,7 @@ import {
 } from '../credentials'
 import { LogfireCliError } from '../errors'
 import { prettyTable, sanitizeForTerminal, writeLine } from '../output'
+import { readRequiredValue } from '../args'
 
 const PROJECT_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
 
@@ -426,12 +427,4 @@ function parseStatusOptions(args: string[]): StatusOptions {
     }
   }
   return options
-}
-
-function readRequiredValue(args: string[], index: number, option: string): string {
-  const value = args[index]
-  if (value === undefined) {
-    throw new LogfireCliError(`Missing value for ${option}`)
-  }
-  return value
 }

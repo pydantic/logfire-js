@@ -5,6 +5,7 @@ import { defaultDataDir, readProjectCredentials } from '../credentials'
 import { LogfireCliError } from '../errors'
 import { writeLine } from '../output'
 import { getBaseUrlFromToken } from '../../tokenBaseUrl'
+import { readRequiredValue } from '../args'
 
 export async function runWhoamiCommand(args: string[], globalOptions: GlobalOptions, context: CliContext): Promise<void> {
   const dataDir = parseDataDir(args) ?? defaultDataDir(context.cwd)
@@ -76,12 +77,4 @@ function parseDataDir(args: string[]): string | undefined {
     }
   }
   return dataDir
-}
-
-function readRequiredValue(args: string[], index: number, option: string): string {
-  const value = args[index]
-  if (value === undefined) {
-    throw new LogfireCliError(`Missing value for ${option}`)
-  }
-  return value
 }

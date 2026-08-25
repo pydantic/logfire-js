@@ -5,6 +5,7 @@ import type { CliContext } from '../context'
 import { defaultDataDir, projectCredentialsPath, readTokenPath, removeProjectCredentials } from '../credentials'
 import { LogfireCliError } from '../errors'
 import { writeLine } from '../output'
+import { readRequiredValue } from '../args'
 
 export async function runCleanCommand(args: string[], context: CliContext): Promise<void> {
   const options = parseCleanArgs(args)
@@ -60,12 +61,4 @@ function parseCleanArgs(args: string[]): CleanOptions {
     }
   }
   return options
-}
-
-function readRequiredValue(args: string[], index: number, option: string): string {
-  const value = args[index]
-  if (value === undefined) {
-    throw new LogfireCliError(`Missing value for ${option}`)
-  }
-  return value
 }
