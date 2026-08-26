@@ -289,6 +289,15 @@ describe('logfire config', () => {
     expect(logfireConfig.console).toBe(true)
   })
 
+  it('accepts the boolean env spellings the Python SDK accepts', () => {
+    // `_check_bool` in the Python SDK lowercases and takes 1/true/t, so these have to work here.
+    for (const value of ['TRUE', ' true ', '1', 't']) {
+      process.env['LOGFIRE_CONSOLE'] = value
+      configure()
+      expect(logfireConfig.console).toBe(true)
+    }
+  })
+
   it('does not parse LOGFIRE_CONSOLE as object-style console config', () => {
     process.env['LOGFIRE_CONSOLE'] = '{"enabled":true}'
 
@@ -530,6 +539,21 @@ describe('logfire config', () => {
       process.env['LOGFIRE_DISTRIBUTED_TRACING'] = 'false'
       configure({ distributedTracing: true, sendToLogfire: false })
       expect(logfireConfig.distributedTracing).toBe(true)
+    })
+
+    it('does not disable distributed tracing for an uppercase LOGFIRE_DISTRIBUTED_TRACING', () => {
+      // The worst spelling to get wrong: TRUE previously matched neither branch and turned the
+      // feature off, which is the opposite of what setting it asks for.
+      for (const value of ['TRUE', ' true ', '1', 't']) {
+        process.env['LOGFIRE_DISTRIBUTED_TRACING'] = value
+        configure({ sendToLogfire: false })
+        expect(logfireConfig.distributedTracing).toBe(true)
+      }
+      for (const value of ['FALSE', '0', 'f']) {
+        process.env['LOGFIRE_DISTRIBUTED_TRACING'] = value
+        configure({ sendToLogfire: false })
+        expect(logfireConfig.distributedTracing).toBe(false)
+      }
     })
 
     it('LOGFIRE_DISTRIBUTED_TRACING=false disables distributed tracing when the option is omitted', () => {

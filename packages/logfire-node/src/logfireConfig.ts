@@ -187,6 +187,16 @@ const DEFAULT_AUTO_INSTRUMENTATION_CONFIG: InstrumentationConfigMap = {
   },
 }
 
+/**
+ * Recognise the boolean spellings the Python SDK accepts. `_check_bool` in `config_params.py`
+ * lowercases and takes `1`/`true`/`t`, so `LOGFIRE_DISTRIBUTED_TRACING=TRUE` has to mean the same
+ * thing here. Anything unrecognised stays falsy, as it was before.
+ */
+function parseBooleanEnv(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase()
+  return normalized === '1' || normalized === 't' || normalized === 'true'
+}
+
 function readNonEmptyEnv(env: NodeJS.ProcessEnv, key: string): string | undefined {
   const value = env[key]
   return value === undefined || value.trim() === '' ? undefined : value
@@ -272,7 +282,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
 
   const env = process.env
   const envMinLevel = env['LOGFIRE_MIN_LEVEL']
-  const console = 'console' in cnf ? cnf.console : env['LOGFIRE_CONSOLE'] === 'true'
+  const console = 'console' in cnf ? cnf.console : parseBooleanEnv(env['LOGFIRE_CONSOLE'])
   const shouldReadLocalCredentials =
     cnf.token === undefined && readNonEmptyEnv(env, 'LOGFIRE_TOKEN') === undefined && cnf.sendToLogfire !== false
 
@@ -455,7 +465,7 @@ function resolveDistributedTracing(option: LogfireConfigOptions['distributedTrac
   }
   const envDistributedTracing = readNonEmptyEnv(process.env, 'LOGFIRE_DISTRIBUTED_TRACING')
   if (envDistributedTracing !== undefined) {
-    return envDistributedTracing === 'true'
+    return parseBooleanEnv(envDistributedTracing)
   }
   return true
 }
