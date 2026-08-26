@@ -44,7 +44,15 @@ test('reads LOGFIRE_SEND_TO_LOGFIRE=false as disabled', () => {
   expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: 'FALSE' }, undefined, token)).toBe(false)
   expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: ' false ' }, undefined, token)).toBe(false)
 
+  // The Python SDK reads 0/f and 1/t as booleans; string truthiness would
+  // read '0' as enabled.
+  expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: '0' }, undefined, token)).toBe(false)
+  expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: 'f' }, undefined, token)).toBe(false)
+  expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: 'F' }, undefined, token)).toBe(false)
+
   expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: 'true' }, undefined, undefined)).toBe(true)
+  expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: '1' }, undefined, undefined)).toBe(true)
+  expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: 't' }, undefined, undefined)).toBe(true)
   expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: 'if-token-present' }, undefined, token)).toBe(true)
   expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: 'if-token-present' }, undefined, undefined)).toBe(false)
 

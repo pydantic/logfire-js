@@ -151,10 +151,13 @@ export function resolveSendToLogfire(env: Env, option: SendToLogfire, token: str
   if (sendToLogfireConfig === 'if-token-present') {
     return token !== undefined && token !== ''
   }
-  if (sendToLogfireConfig === 'false') {
+  // Match the spellings the Python SDK accepts for boolean settings, so
+  // LOGFIRE_SEND_TO_LOGFIRE=0 disables sending instead of enabling it via
+  // string truthiness.
+  if (sendToLogfireConfig === 'false' || sendToLogfireConfig === 'f' || sendToLogfireConfig === '0') {
     return false
   }
-  if (sendToLogfireConfig === 'true') {
+  if (sendToLogfireConfig === 'true' || sendToLogfireConfig === 't' || sendToLogfireConfig === '1') {
     return true
   }
   return Boolean(sendToLogfireConfig)
