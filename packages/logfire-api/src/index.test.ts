@@ -847,32 +847,35 @@ describe('span', () => {
       unhandled.push(reason)
     }
     process.on('unhandledRejection', onUnhandled)
-    const OriginalPromise = globalThis.Promise
-    const ZoneAwarePromise = function ZoneAwarePromise() {
-      // Stands in for zone.js replacing the global Promise binding.
-    }
-    globalThis.Promise = ZoneAwarePromise as unknown as PromiseConstructor
-
-    let result: unknown
     try {
-      result = span('test', { callback: () => intrinsic })
+      const OriginalPromise = globalThis.Promise
+      const ZoneAwarePromise = function ZoneAwarePromise() {
+        // Stands in for zone.js replacing the global Promise binding.
+      }
+      globalThis.Promise = ZoneAwarePromise as unknown as PromiseConstructor
+
+      let result: unknown
+      try {
+        result = span('test', { callback: () => intrinsic })
+      } finally {
+        globalThis.Promise = OriginalPromise
+      }
+
+      expect(result).toBe(intrinsic)
+      // The original rejection still reaches the caller.
+      await expect(intrinsic as unknown as Promise<never>).rejects.toBe(error)
+      await new OriginalPromise<void>((resolve) => {
+        setTimeout(resolve, 0)
+      })
+
+      expect(spanMock.recordException).toHaveBeenCalledWith(error)
+      expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: zone-oops' })
+      expect(spanMock.end).toHaveBeenCalledOnce()
+      // A second derived chain would leave the rejection unhandled.
+      expect(unhandled).toEqual([])
     } finally {
-      globalThis.Promise = OriginalPromise
+      process.off('unhandledRejection', onUnhandled)
     }
-
-    expect(result).toBe(intrinsic)
-    // The original rejection still reaches the caller.
-    await expect(intrinsic as unknown as Promise<never>).rejects.toBe(error)
-    await new OriginalPromise<void>((resolve) => {
-      setTimeout(resolve, 0)
-    })
-
-    expect(spanMock.recordException).toHaveBeenCalledWith(error)
-    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: zone-oops' })
-    expect(spanMock.end).toHaveBeenCalledOnce()
-    // A second derived chain would leave the rejection unhandled.
-    expect(unhandled).toEqual([])
-    process.off('unhandledRejection', onUnhandled)
   })
 
   test('falls back to finally when the then getter throws', () => {
