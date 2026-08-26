@@ -368,6 +368,8 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     expect(logs).toHaveLength(1)
     expect(logs[0]?.body).toBe('evaluation: MissingFailureFields failed')
     expect(logs[0]?.attributes[ERROR_TYPE]).toBe('pydantic_evals.EvaluatorFailure')
+    // Python leaves the attribute off entirely rather than sending an empty one.
+    expect(GEN_AI_EXPLANATION in (logs[0]?.attributes ?? {})).toBe(false)
   })
 
   it('converts online evaluator failures without calling onError', async () => {
