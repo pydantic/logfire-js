@@ -18,7 +18,7 @@ const FIREFOX_PATTERN = /^(.+?)@(.+?):\d+:\d+/u
  * - V8/Node.js: "    at functionName (file:line:col)" or "    at file:line:col"
  * - Firefox: "functionName@file:line:col"
  */
-function parseStackFrames(stack: string | undefined): StackFrame[] {
+function parseStackFrames(stack: string | undefined, error?: Error): StackFrame[] {
   if (stack === undefined || stack === '') {
     return []
   }
@@ -27,8 +27,11 @@ function parseStackFrames(stack: string | undefined): StackFrame[] {
   const allLines = stack.split('\n')
   // V8 puts `Error: message` on the first line, which is why it gets dropped. Firefox and
   // Safari have no such header and start at the top frame, so dropping it there threw away
-  // the one frame that tells two otherwise identical stacks apart.
-  const lines = looksLikeFrame(allLines[0]) ? allLines : allLines.slice(1)
+  // the one frame that tells two otherwise identical stacks apart. The header is matched
+  // against the error's own name and message first, so a message that happens to contain a
+  // frame-shaped `x@y:1:2` cannot leak into the fingerprint as a fake frame.
+  const first = allLines[0]
+  const lines = first !== undefined && !isV8Header(first, error) && looksLikeFrame(first) ? allLines : allLines.slice(1)
 
   for (const line of lines) {
     const withParensMatch = V8_PATTERN_WITH_PARENS.exec(line)
@@ -73,6 +76,19 @@ function looksLikeFrame(line: string | undefined): boolean {
 }
 
 /**
+ * Whether a line is the exact V8 header, which is `Error.prototype.toString()`: the error's
+ * name, then `: message` when there is one. Only the first line of a multiline message is
+ * compared, because that is all the header contributes before the frames start.
+ */
+function isV8Header(line: string, error: Error | undefined): boolean {
+  if (error === undefined) {
+    return false
+  }
+  const message = error.message.split('\n')[0] ?? ''
+  return line === (message === '' ? error.name : `${error.name}: ${message}`)
+}
+
+/**
  * Extracts a module-like name from a file path for stable fingerprinting.
  * Removes absolute path prefixes and file extensions to make fingerprints
  * portable across different environments.
@@ -111,7 +127,7 @@ export function canonicalizeError(error: Error, seen: WeakSet<Error> = new WeakS
   lines.push(error.constructor.name || 'Error')
   lines.push('----')
 
-  const frames = parseStackFrames(error.stack)
+  const frames = parseStackFrames(error.stack, error)
   const seenFrames = new Set<string>()
 
   for (const frame of frames) {

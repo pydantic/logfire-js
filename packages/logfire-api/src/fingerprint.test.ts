@@ -17,6 +17,22 @@ test:testFunction
 test:main`)
   })
 
+  test('drops a V8 header whose message is shaped like a Firefox frame', () => {
+    // `user@example.com:12:9` matches the Firefox frame pattern, so shape alone
+    // cannot tell this header from a top frame.
+    const error1 = new Error('user alice@example.com:12:9 not found')
+    error1.stack = `Error: user alice@example.com:12:9 not found
+    at lookupUser (src/users.js:10:5)`
+    const error2 = new Error('user bob@example.com:34:7 not found')
+    error2.stack = `Error: user bob@example.com:34:7 not found
+    at lookupUser (src/users.js:10:5)`
+
+    expect(canonicalizeError(error1)).toBe(`Error
+----
+src/users:lookupUser`)
+    expect(computeFingerprint(error1)).toBe(computeFingerprint(error2))
+  })
+
   test('includes function names from stack', () => {
     function innerFunction() {
       throw new Error('test')
