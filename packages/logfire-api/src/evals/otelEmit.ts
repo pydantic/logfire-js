@@ -270,9 +270,11 @@ function applyBaggage(attrs: Record<string, unknown>, baggage: Record<string, un
   if (baggage === undefined) {
     return
   }
-  // Standard semconv keys win over baggage on conflict.
+  // Standard semconv keys win over baggage on conflict. `Object.hasOwn` rather than `in`, so a
+  // baggage key that happens to name an inherited member, `toString` for one, is not mistaken
+  // for a conflict and dropped.
   for (const [k, v] of Object.entries(baggage)) {
-    if (!(k in attrs)) {
+    if (!Object.hasOwn(attrs, k)) {
       attrs[k] = v
     }
   }
