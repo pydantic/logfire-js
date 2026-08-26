@@ -333,7 +333,7 @@ function isHrTime(value: unknown): value is HrTime {
   return Array.isArray(value) && value.length === 2 && typeof value[0] === 'number' && typeof value[1] === 'number'
 }
 
-type ThenMethod = (onFulfilled: (value: never) => unknown) => unknown
+type ThenMethod = (onFulfilled: (value: never) => unknown, onRejected?: (reason: unknown) => unknown) => unknown
 
 /**
  * Returns the value's `then` method, or undefined when it has none.
@@ -626,10 +626,39 @@ function spanWithSettings<R>(
         )
         // we need this clunky detection because of zone.js promises
       } else if (typeof result === 'object' && result !== null && 'finally' in result && typeof result.finally === 'function') {
+        // `finally` is only the gate, so arbitrary lazy thenables are still left alone. The
+        // settlement itself is observed through a single `then` subscription: two subscriptions
+        // would leave the chain returned by `finally` rejected and unhandled even when the caller
+        // handles the original. `result` is returned untouched, so the rejection still reaches
+        // the caller.
         const resultWithFinally = result as { finally: (onFinally: () => void) => unknown }
-        resultWithFinally.finally(() => {
-          span.end()
-        })
+        // Reading `then` runs a getter that belongs to the caller, so it must not turn a callback
+        // that already succeeded into a throw. `finally` gated this branch and was the only
+        // subscription before, so it stays the fallback when `then` is unusable.
+        const thenMethod = getThenMethod(result)
+        if (thenMethod !== undefined) {
+          let ended = false
+          const endSpan = () => {
+            if (!ended) {
+              ended = true
+              span.end()
+            }
+          }
+          try {
+            thenMethod.call(result, endSpan, (reason: unknown) => {
+              recordSpanException(span, reason, serializationAttributes)
+              endSpan()
+            })
+          } catch {
+            // `then` may already have registered the handlers, so end the span here instead of
+            // adding a second subscription, and guard against ending it twice if it did.
+            endSpan()
+          }
+        } else {
+          resultWithFinally.finally(() => {
+            span.end()
+          })
+        }
       } else {
         span.end()
       }
