@@ -278,6 +278,77 @@ describe('TailSamplingProcessor', () => {
     expect(deferred.calls.filter((c) => c.event === 'end').map((c) => c.span)).toEqual([root, child])
   })
 
+  test('a late span can flip a trace the root already lost to sampled', () => {
+    // Keeping the buffer past root end means `checkSpan` still runs for late spans, so a
+    // duration-based tail rate can accept a trace after its root ended below the threshold.
+    // The whole trace replays at that point, root included.
+    const downstream = makeProcessor()
+    const tail = levelOrDuration({ durationThreshold: 2.0 }).tail
+    if (tail === undefined) {
+      throw new Error('expected tail sampler')
+    }
+    const processor = new TailSamplingProcessor(downstream, tail)
+
+    const root = makeSpan({ endTime: [1001, 0], name: 'root', startTime: [1000, 0] })
+    processor.onStart(root, ROOT_CONTEXT)
+    const child = makeSpan({
+      endTime: [1005, 0],
+      name: 'slow child',
+      parentSpanContext: root.spanContext(),
+      spanId: 'child00000000000',
+      startTime: [1001, 0],
+    })
+    processor.onStart(child, ROOT_CONTEXT)
+
+    root.setRecording(false)
+    processor.onEnd(root)
+    // The root closed under the threshold, so nothing has been exported yet.
+    expect(downstream.calls).toHaveLength(0)
+
+    child.setRecording(false)
+    processor.onEnd(child)
+    expect(downstream.calls).toEqual([
+      { event: 'start', span: root },
+      { event: 'start', span: child },
+      { event: 'end', span: root },
+      { event: 'end', span: child },
+    ])
+  })
+
+  test('degrades to unconditional export past the retention cap', () => {
+    // The cap is the one place the guarantee is deliberately broken: a trace whose spans never
+    // end would otherwise be pinned forever. The oldest retained trace is evicted, and its late
+    // span then takes the unbuffered path.
+    const downstream = makeProcessor()
+    const processor = new TailSamplingProcessor(downstream, () => 0.0)
+
+    const traceId = (index: number): string => index.toString(16).padStart(32, '0')
+    const openChildren: TestSpan[] = []
+    // 1001 traces, each with a child still running when its root ends.
+    for (let index = 0; index < 1001; index++) {
+      const root = makeSpan({ spanId: `root${index.toString().padStart(12, '0')}`, traceId: traceId(index) })
+      processor.onStart(root, ROOT_CONTEXT)
+      const child = makeSpan({
+        parentSpanContext: root.spanContext(),
+        spanId: `kid${index.toString().padStart(13, '0')}`,
+        traceId: traceId(index),
+      })
+      processor.onStart(child, ROOT_CONTEXT)
+      processor.onEnd(root as unknown as ReadableSpan)
+      openChildren.push(child)
+    }
+    expect(downstream.calls).toHaveLength(0)
+
+    // The first trace was evicted to make room for the 1001st, so its child is no longer
+    // recognised as belonging to a dropped trace.
+    processor.onEnd(openChildren[0] as unknown as ReadableSpan)
+    expect(downstream.calls).toEqual([{ event: 'end', span: openChildren[0] }])
+
+    // A trace still inside the cap keeps the guarantee.
+    processor.onEnd(openChildren[1000] as unknown as ReadableSpan)
+    expect(downstream.calls).toHaveLength(1)
+  })
+
   test('flushes buffered spans when a later span meets criteria', () => {
     const downstream = makeProcessor()
     const processor = new TailSamplingProcessor(downstream, (info) => {
