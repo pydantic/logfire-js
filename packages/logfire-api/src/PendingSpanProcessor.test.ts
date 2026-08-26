@@ -241,7 +241,7 @@ describe('PendingSpanProcessor', () => {
     processor.onStart(
       makeSpan({
         attributes: { [ATTRIBUTES_SAMPLE_RATE_KEY]: 0.5, [ATTRIBUTES_SPAN_TYPE_KEY]: 'span' },
-        traceId: '7fffffff000000000000000000000000',
+        traceId: '7ffffffe000000000000000000000000',
       }),
       ROOT_CONTEXT
     )
