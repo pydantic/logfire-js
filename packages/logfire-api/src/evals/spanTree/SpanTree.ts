@@ -8,6 +8,8 @@
 
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 
+import { deepEqual } from '../builtins/Equals'
+
 export class SpanTreeRecordingError extends Error {
   constructor(
     message = 'Span-tree recording was not available. Pass `getEvalsSpanProcessor()` to your TracerProvider, or call `logfire.configure()` so the evals processor is installed automatically.'
@@ -121,6 +123,26 @@ function nsFromHrTime(hr: [number, number]): number {
   return hr[0] * 1_000_000_000 + hr[1]
 }
 
+/**
+ * An OTel attribute value is a primitive or a sequence of them, so an object or an array reaches
+ * the span as either a real array or the JSON string that `serializeAttributes` wrote. Comparing
+ * with `===` matched neither, so every query for a structured attribute failed. Python decodes the
+ * stored string before comparing, so do the same here.
+ */
+function attributeMatches(stored: unknown, expected: unknown): boolean {
+  if (deepEqual(stored, expected)) {
+    return true
+  }
+  if (typeof stored !== 'string' || expected === null || typeof expected !== 'object') {
+    return false
+  }
+  try {
+    return deepEqual(JSON.parse(stored), expected)
+  } catch {
+    return false
+  }
+}
+
 function matchesQuery(node: SpanNode, q: SpanQuery): boolean {
   const or = queryValue(q, 'or_', 'or_') as SpanQuery[] | undefined
   if (or !== undefined && or.length > 0) {
@@ -167,7 +189,7 @@ function matchesQuery(node: SpanNode, q: SpanQuery): boolean {
   const hasAttributes = queryValue(q, 'has_attributes', 'hasAttributes') as Record<string, unknown> | undefined
   if (hasAttributes !== undefined) {
     for (const [k, v] of Object.entries(hasAttributes)) {
-      if (node.attributes[k] !== v) {
+      if (!attributeMatches(node.attributes[k], v)) {
         return false
       }
     }
