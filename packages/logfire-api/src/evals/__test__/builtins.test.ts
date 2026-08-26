@@ -54,6 +54,52 @@ describe('built-in evaluator edge cases', () => {
     expect(deepEqual({ a: 1 }, { a: 2 })).toBe(false)
   })
 
+  it('deepEqual compares the contents of Dates, RegExps, Sets and Maps', () => {
+    // A task returns these in process, so they are not constrained by the dataset file format.
+    expect(deepEqual(new Date('2020-01-01'), new Date('1990-01-01'))).toBe(false)
+    expect(deepEqual(new Date('2020-01-01'), new Date('2020-01-01'))).toBe(true)
+    expect(deepEqual(new Date(0), new Map())).toBe(false)
+    expect(deepEqual(new Date(0), { getTime: 0 })).toBe(false)
+    expect(deepEqual(/a/gu, /b/gu)).toBe(false)
+    expect(deepEqual(/a/gu, /a/gu)).toBe(true)
+    expect(deepEqual(/a/gu, /a/u)).toBe(false)
+    expect(deepEqual(new Set([1]), new Set([2]))).toBe(false)
+    expect(deepEqual(new Set([1]), new Set([1, 2]))).toBe(false)
+    expect(deepEqual(new Set([1, 'a']), new Set([1, 'a']))).toBe(true)
+    expect(deepEqual(new Map([['a', 1]]), new Map([['a', 2]]))).toBe(false)
+    expect(deepEqual(new Map([['a', 1]]), new Map([['b', 1]]))).toBe(false)
+    expect(
+      deepEqual(
+        new Map([['a', 1]]),
+        new Map([
+          ['a', 1],
+          ['b', 2],
+        ])
+      )
+    ).toBe(false)
+    expect(deepEqual(new Map([['a', undefined]]), new Map([['b', undefined]]))).toBe(false)
+    expect(deepEqual(new Map([['a', { n: 1 }]]), new Map([['a', { n: 1 }]]))).toBe(true)
+  })
+
+  it('deepEqual rejects an object that only claims a built-in tag', () => {
+    // `Symbol.toStringTag` is writable, so the tag alone cannot be trusted: calling the built-in's
+    // method on such a value would throw out of the evaluator instead of returning a result.
+    for (const tag of ['Date', 'RegExp', 'Set', 'Map']) {
+      const left = { [Symbol.toStringTag]: tag }
+      const right = { [Symbol.toStringTag]: tag }
+      expect(deepEqual(left, right)).toBe(false)
+      expect(deepEqual(left, left)).toBe(true)
+    }
+    expect(deepEqual({ [Symbol.toStringTag]: 'Date' }, new Date(0))).toBe(false)
+    expect(deepEqual(new Set([1]), { [Symbol.toStringTag]: 'Set' })).toBe(false)
+  })
+
+  it('EqualsExpected reports a wrong Date as a failure', () => {
+    const evaluator = new EqualsExpected()
+    expect(evaluator.evaluate(ctx(new Date('2020-01-01'), { expectedOutput: new Date('1990-01-01') }))).toBe(false)
+    expect(evaluator.evaluate(ctx(new Date('2020-01-01'), { expectedOutput: new Date('2020-01-01') }))).toBe(true)
+  })
+
   it('Equals and EqualsExpected preserve custom result names and empty-output behavior', () => {
     const eq = new Equals({ evaluationName: 'exact', value: { nested: ['x'] } })
     expect(eq.getResultName()).toBe('exact')
