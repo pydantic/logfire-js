@@ -62,7 +62,8 @@ interface Placeholder {
   value: string
 }
 
-const CONTEXT_SHIFTING_HELPERS: ReadonlySet<string> = new Set(['each', 'with'])
+/** Block helpers that run their program body against a different context. */
+export const CONTEXT_SHIFTING_HELPERS: ReadonlySet<string> = new Set(['each', 'with'])
 const IGNORED_PATHS: ReadonlySet<string> = new Set(['', '.', 'else', 'this'])
 
 function adaptCompositionTemplate(template: string, additionalCollisionValues: string[]): AdaptedTemplate {

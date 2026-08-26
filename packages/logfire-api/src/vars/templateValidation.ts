@@ -2,6 +2,7 @@ import Handlebars from 'handlebars'
 
 import type { ComposedReference } from './composition'
 import type { JsonSchema } from './index'
+import { CONTEXT_SHIFTING_HELPERS } from './referenceSyntax'
 
 export interface ReferenceValidationIssue {
   label?: string
@@ -112,11 +113,11 @@ export function extractTemplatePaths(template: string): string[] {
   }
   const paths: string[] = []
   const seen = new Set<string>()
-  collectPathsFromAst(ast, paths, seen)
+  collectPathsFromAst(ast, paths, seen, 0)
   return paths
 }
 
-function collectPathsFromAst(node: unknown, paths: string[], seen: Set<string>): void {
+function collectPathsFromAst(node: unknown, paths: string[], seen: Set<string>, shiftedDepth: number): void {
   if (!isRecord(node)) {
     return
   }
@@ -125,48 +126,62 @@ function collectPathsFromAst(node: unknown, paths: string[], seen: Set<string>):
   if (type === 'MustacheStatement' || type === 'SubExpression') {
     const params = Array.isArray(node['params']) ? node['params'] : []
     if (params.length === 0) {
-      addPathNode(node['path'], paths, seen)
+      addPathNode(node['path'], paths, seen, shiftedDepth)
     } else {
       for (const param of params) {
-        addPathNode(param, paths, seen)
+        addPathNode(param, paths, seen, shiftedDepth)
       }
     }
-    collectHashPaths(node['hash'], paths, seen)
+    collectHashPaths(node['hash'], paths, seen, shiftedDepth)
   } else if (type === 'BlockStatement') {
     const params = Array.isArray(node['params']) ? node['params'] : []
     for (const param of params) {
-      addPathNode(param, paths, seen)
+      addPathNode(param, paths, seen, shiftedDepth)
     }
-    collectHashPaths(node['hash'], paths, seen)
+    collectHashPaths(node['hash'], paths, seen, shiftedDepth)
+
+    // `each` and `with` run their program body against a different context, so a bare path in
+    // there is a property of that context and not of the template inputs. The inverse block runs
+    // against the enclosing context, so it keeps the current depth. Same model as
+    // `collectBlockReferences` in referenceSyntax.ts.
+    const helperName = isRecord(node['path']) && typeof node['path']['original'] === 'string' ? node['path']['original'] : undefined
+    const childShiftedDepth = helperName !== undefined && CONTEXT_SHIFTING_HELPERS.has(helperName) ? shiftedDepth + 1 : shiftedDepth
+    collectPathsFromAst(node['program'], paths, seen, childShiftedDepth)
+    collectPathsFromAst(node['inverse'], paths, seen, shiftedDepth)
+    return
   }
 
   for (const value of Object.values(node)) {
     if (Array.isArray(value)) {
       for (const item of value) {
-        collectPathsFromAst(item, paths, seen)
+        collectPathsFromAst(item, paths, seen, shiftedDepth)
       }
     } else if (isRecord(value)) {
-      collectPathsFromAst(value, paths, seen)
+      collectPathsFromAst(value, paths, seen, shiftedDepth)
     }
   }
 }
 
-function collectHashPaths(hash: unknown, paths: string[], seen: Set<string>): void {
+function collectHashPaths(hash: unknown, paths: string[], seen: Set<string>, shiftedDepth: number): void {
   if (!isRecord(hash) || !Array.isArray(hash['pairs'])) {
     return
   }
   for (const pair of hash['pairs']) {
     if (isRecord(pair)) {
-      addPathNode(pair['value'], paths, seen)
+      addPathNode(pair['value'], paths, seen, shiftedDepth)
     }
   }
 }
 
-function addPathNode(node: unknown, paths: string[], seen: Set<string>): void {
+function addPathNode(node: unknown, paths: string[], seen: Set<string>, shiftedDepth: number): void {
   if (!isRecord(node) || node['type'] !== 'PathExpression') {
     if (isRecord(node) && node['type'] === 'SubExpression') {
-      collectPathsFromAst(node, paths, seen)
+      collectPathsFromAst(node, paths, seen, shiftedDepth)
     }
+    return
+  }
+  const depth = typeof node['depth'] === 'number' ? node['depth'] : 0
+  if (depth < shiftedDepth) {
     return
   }
   const original = node['original']
