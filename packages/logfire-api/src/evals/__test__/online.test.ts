@@ -563,6 +563,41 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     expect(logs).toHaveLength(0)
   })
 
+  it('keeps the sinks running when one evaluator cannot be emitted', async () => {
+    // `getSpec()` feeds `JSON.stringify` during emission, so a spec value that JSON cannot
+    // represent throws there. Emission runs before the sinks.
+    class BigIntSpecEvaluator extends Evaluator {
+      static override evaluatorName = 'BigIntSpecEvaluator'
+      evaluate(): boolean {
+        return true
+      }
+      override toJSON(): Record<string, unknown> {
+        return { threshold: 1n }
+      }
+    }
+    const sinkPayloads: SinkPayload[] = []
+    const errors: string[] = []
+    const fn = withOnlineEvaluation(async () => 'x', {
+      evaluators: [new OnlineEvaluator({ evaluator: new BigIntSpecEvaluator() }), new OnlineEvaluator({ evaluator: new AlwaysPass() })],
+      onError: (error, _context, evaluator, location) => {
+        errors.push(`${evaluator.getResultName()}:${location}:${(error as Error).constructor.name}`)
+      },
+      sink: (payload) => {
+        sinkPayloads.push(payload)
+      },
+      target: 'emit-failure-target',
+    })
+
+    await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+
+    expect(errors).toEqual(['BigIntSpecEvaluator:sink:TypeError'])
+    expect(sinkPayloads).toHaveLength(1)
+    expect(sinkPayloads[0]?.results.map((result) => result.name).sort()).toEqual(['AlwaysPass', 'BigIntSpecEvaluator'])
+  })
+
   it('batches OnlineEvaluator sinks by sink identity', async () => {
     const sinkPayloads: SinkPayload[] = []
     const sharedSink = (payload: SinkPayload): void => {
