@@ -1,5 +1,25 @@
 # logfire
 
+## 0.18.18
+
+### Patch Changes
+
+- e71428a: Accept the boolean environment variable spellings the Python SDK accepts. `LOGFIRE_DISTRIBUTED_TRACING=TRUE` previously matched neither branch and disabled distributed tracing, and `LOGFIRE_CONSOLE` only recognised a lowercase, untrimmed `true`.
+- ebf1860: Leave a blank first-class resource option off the resource instead of recording an empty value. `LOGFIRE_ENVIRONMENT=` reached the resource as `deployment.environment.name: ""` on every span, where the Python SDK omits the attribute.
+- Updated dependencies [b334f97]
+- Updated dependencies [4ced7fe]
+- Updated dependencies [df17ff9]
+- Updated dependencies [3d5c543]
+- Updated dependencies [320d760]
+- Updated dependencies [8ee48bd]
+- Updated dependencies [c07dbea]
+- Updated dependencies [ba8fe33]
+- Updated dependencies [9c6538e]
+- Updated dependencies [83cf913]
+- Updated dependencies [eca8805]
+- Updated dependencies [cd89805]
+  - logfire@0.22.2
+
 ## 0.18.17
 
 ### Patch Changes
