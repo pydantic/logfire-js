@@ -835,7 +835,7 @@ describe('span', () => {
     expect(spanMock.end).toHaveBeenCalledOnce()
   })
 
-  test('records the exception when a zone.js style promise rejects', async () => {
+  test('records the exception when a zone.js-style promise rejects', async () => {
     const error = new Error('zone-oops')
     // zone.js patches the global Promise, so an intrinsic promise from a native async function
     // fails `instanceof Promise` while still exposing `then` and `finally`.
