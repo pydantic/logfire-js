@@ -24,7 +24,11 @@ function parseStackFrames(stack: string | undefined): StackFrame[] {
   }
 
   const frames: StackFrame[] = []
-  const lines = stack.split('\n').slice(1)
+  const allLines = stack.split('\n')
+  // V8 puts `Error: message` on the first line, which is why it gets dropped. Firefox and
+  // Safari have no such header and start at the top frame, so dropping it there threw away
+  // the one frame that tells two otherwise identical stacks apart.
+  const lines = looksLikeFrame(allLines[0]) ? allLines : allLines.slice(1)
 
   for (const line of lines) {
     const withParensMatch = V8_PATTERN_WITH_PARENS.exec(line)
@@ -61,6 +65,11 @@ function parseStackFrames(stack: string | undefined): StackFrame[] {
   }
 
   return frames
+}
+
+/** Whether a line parses as a stack frame, so a first line that is a frame is not mistaken for a header. */
+function looksLikeFrame(line: string | undefined): boolean {
+  return line !== undefined && (V8_PATTERN_BARE.test(line) || FIREFOX_PATTERN.test(line))
 }
 
 /**

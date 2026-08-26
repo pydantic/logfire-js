@@ -249,6 +249,32 @@ describe('computeFingerprint', () => {
     expect(fp1).toBe(fp2)
   })
 
+  test('keeps the top frame of a stack that has no header line', () => {
+    // Firefox and Safari start at the top frame. Mocked rather than thrown, so the
+    // assertion does not depend on the engine running the tests.
+    const firefox = new Error('boom')
+    firefox.stack = `handleClick@http://app.example/src/ui.js:12:9
+submit@http://app.example/src/form.js:4:3`
+
+    expect(canonicalizeError(firefox)).toBe(`Error
+----
+src/ui:handleClick
+src/form:submit`)
+
+    // Two errors that differ only in their top frame must not group together.
+    const other = new Error('boom')
+    other.stack = `renderChart@http://app.example/src/chart.js:88:1
+submit@http://app.example/src/form.js:4:3`
+    expect(computeFingerprint(firefox) === computeFingerprint(other)).toBe(false)
+
+    // Safari writes a frame with a space in the function name.
+    const safari = new Error('boom')
+    safari.stack = `global code@http://app.example/src/boot.js:1:1`
+    expect(canonicalizeError(safari)).toBe(`Error
+----
+src/boot:global code`)
+  })
+
   test('parses Firefox stack trace format', () => {
     const error1 = new Error('test')
     const error2 = new Error('test')
