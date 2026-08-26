@@ -917,6 +917,25 @@ describe('span', () => {
     expect(spanMock.end).toHaveBeenCalledOnce()
   })
 
+  test('records the subscription failure when then throws before any handler runs', () => {
+    const error = new Error('then boom before settlement')
+    const value = {
+      finally: () => {
+        throw new Error('finally must not be a second subscription')
+      },
+      then: () => {
+        throw error
+      },
+    }
+
+    const result = span('test', { callback: () => value })
+
+    expect(result).toBe(value)
+    expect(spanMock.recordException).toHaveBeenCalledWith(error)
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: then boom before settlement' })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
   test('thenable callback result is returned untouched', () => {
     const then = vi.fn<() => void>()
     const lazyThenable = { then }

@@ -649,9 +649,15 @@ function spanWithSettings<R>(
               recordSpanException(span, reason, serializationAttributes)
               endSpan()
             })
-          } catch {
+          } catch (thrown) {
             // `then` may already have registered the handlers, so end the span here instead of
-            // adding a second subscription, and guard against ending it twice if it did.
+            // adding a second subscription, and guard against ending it twice if it did. When
+            // the span is still open the failed subscription is the only signal this span will
+            // ever get, so record it rather than closing with an OK status.
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- `then` can run a handler synchronously before throwing.
+            if (!ended) {
+              recordSpanException(span, thrown, serializationAttributes)
+            }
             endSpan()
           }
         } else {
