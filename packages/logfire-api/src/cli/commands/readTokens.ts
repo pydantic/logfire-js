@@ -3,6 +3,7 @@ import type { CliContext, GlobalOptions } from '../context'
 import { defaultDataDir, organizationFromProjectUrl, readProjectCredentials, reserveReadTokenSave } from '../credentials'
 import { LogfireCliError } from '../errors'
 import { sanitizeForTerminal, writeLine } from '../output'
+import { readRequiredValue } from '../args'
 
 // Only tokens this CLI writes to disk get an expiry. It cannot revoke a token, so one
 // sitting in a file needs some end; a token printed for the caller to paste elsewhere
@@ -123,14 +124,6 @@ function parseOrgProject(value: string): [string, string] {
     throw new LogfireCliError(`Invalid format: ${value}. Expected <org>/<project>`)
   }
   return [organization, project]
-}
-
-function readRequiredValue(args: string[], index: number, option: string): string {
-  const value = args[index]
-  if (value === undefined || value.startsWith('-')) {
-    throw new LogfireCliError(`Missing value for ${option}`)
-  }
-  return value
 }
 
 function printReadTokensHelp(context: CliContext): void {

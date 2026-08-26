@@ -311,6 +311,30 @@ describe('CLI entrypoint', () => {
     expect(existsSync(join(victim, 'read_token.json'))).toBe(false)
   })
 
+  it('rejects an option value that is really the next flag', async () => {
+    // `read-tokens` has always refused this; the other commands consumed the flag as the
+    // value, so the flag was silently dropped and the option took the flag's own name.
+    const cases: { args: string[]; option: string }[] = [
+      { args: ['--region', '--base-url', 'https://logfire-us.pydantic.dev', 'whoami'], option: '--region' },
+      { args: ['whoami', '--data-dir', '--data-dir', makeTmpDir()], option: '--data-dir' },
+      { args: ['projects', 'status', '--data-dir', '--json'], option: '--data-dir' },
+      { args: ['clean', '--data-dir', '--logs'], option: '--data-dir' },
+    ]
+
+    for (const { args, option } of cases) {
+      const stderr = new MemoryOutput()
+      const stdout = new MemoryOutput()
+      const fetchImpl = vi.fn<typeof fetch>()
+
+      // eslint-disable-next-line no-await-in-loop -- each case runs the CLI to completion.
+      await expect(runCli(args, { fetch: fetchImpl, homeDir: makeTmpDir(), stderr, stdout })).resolves.toBe(1)
+
+      expect(fetchImpl).not.toHaveBeenCalled()
+      expect(stdout.text()).toBe('')
+      expect(stderr.text()).toBe(`Missing value for ${option}\n`)
+    }
+  })
+
   it('read-tokens create rejects a missing --data-dir value before minting', async () => {
     const fetchImpl = fetchSequence([jsonResponse({ token: 'newly-minted-token' })])
     const stdout = new MemoryOutput()

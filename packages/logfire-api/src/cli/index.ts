@@ -18,6 +18,7 @@ import { createPrompt } from './interactivePrompt'
 import type { Prompt } from './interactivePrompt'
 import { writeLine } from './output'
 import { resolveSelectedBaseUrl } from './regions'
+import { readRequiredValue } from './args'
 
 export interface CliContextOptions {
   cwd?: string
@@ -189,14 +190,6 @@ function assertNoRegionConflict(baseUrl: string | undefined, region: string | un
   if ((option === '--region' && baseUrl !== undefined) || (option !== '--region' && region !== undefined)) {
     throw new LogfireCliError('Only one of --base-url and --region can be used.')
   }
-}
-
-function readRequiredValue(args: string[], index: number, option: string): string {
-  const value = args[index]
-  if (value === undefined) {
-    throw new LogfireCliError(`Missing value for ${option}`)
-  }
-  return value
 }
 
 function printHelp(context: CliContext): void {
