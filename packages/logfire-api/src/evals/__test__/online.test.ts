@@ -586,6 +586,73 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     expect(sinkPayloads[0]?.results.map((result) => result.name).sort()).toEqual(['AlwaysFail', 'AlwaysPass'])
   })
 
+  it('reports a sink failure through the onError configured on each evaluator', async () => {
+    const calls: string[] = []
+    const failingSink = (): void => {
+      throw new Error('sink is down')
+    }
+    const fn = withOnlineEvaluation(async () => 'x', {
+      emitOtelEvents: false,
+      evaluators: [
+        new OnlineEvaluator({
+          evaluator: new AlwaysPass(),
+          onError: (_error, _context, evaluator, location) => {
+            calls.push(`pass-handler:${evaluator.getResultName()}:${location}`)
+          },
+          sink: failingSink,
+        }),
+        new OnlineEvaluator({
+          evaluator: new AlwaysFail(),
+          onError: (_error, _context, evaluator, location) => {
+            calls.push(`fail-handler:${evaluator.getResultName()}:${location}`)
+          },
+          sink: failingSink,
+        }),
+      ],
+      target: 'shared-sink-target',
+    })
+
+    await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+
+    // Both evaluators share one sink, so they are batched into a single submit call. Each still
+    // reports through the handler configured on it.
+    expect(calls).toEqual(['pass-handler:AlwaysPass:sink', 'fail-handler:AlwaysFail:sink'])
+  })
+
+  it('prefers the evaluator onError over the config one for a failing default sink', async () => {
+    const calls: string[] = []
+    const fn = withOnlineEvaluation(async () => 'x', {
+      emitOtelEvents: false,
+      evaluators: [
+        new OnlineEvaluator({
+          evaluator: new AlwaysPass(),
+          onError: (_error, _context, evaluator) => {
+            calls.push(`evaluator-handler:${evaluator.getResultName()}`)
+          },
+        }),
+        new OnlineEvaluator({ evaluator: new AlwaysFail() }),
+      ],
+      onError: (_error, _context, evaluator) => {
+        calls.push(`config-handler:${evaluator.getResultName()}`)
+      },
+      sink: (): void => {
+        throw new Error('sink is down')
+      },
+      target: 'default-sink-target',
+    })
+
+    await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+
+    // The evaluator that configured a handler uses it; the one that did not falls back.
+    expect(calls).toEqual(['evaluator-handler:AlwaysPass', 'config-handler:AlwaysFail'])
+  })
+
   it('runs sampled online evaluators concurrently', async () => {
     let fastStarted = false
     class SlowOnlineEvaluator extends Evaluator {
