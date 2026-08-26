@@ -2008,6 +2008,10 @@ function collectReferenceDiagnosticsFromSource(
   referenceCycles: Set<string>,
   depth: number
 ): void {
+  // `>`, where `expandNamedReference` uses `>=`. The two walks count from different places:
+  // this one enters the root's own source at depth 0, while composition calls
+  // expandNamedReference for reference k at depth k-1. The operators absorb that one-level
+  // offset, so both refuse the same chain. `runtimeComposition.test.ts` pins the boundary.
   if (depth > MAX_COMPOSITION_DEPTH) {
     referenceErrors.add(
       `Variable '${rootVariable}' reference graph exceeded maximum depth of ${String(MAX_COMPOSITION_DEPTH)} via ${referencePath.join(' -> ')}`
@@ -2087,6 +2091,8 @@ function collectTemplateFieldIssuesFromSource(
   issues: TemplateFieldIssue[],
   depth: number
 ): void {
+  // Same off-by-one pairing as `collectReferenceDiagnosticsFromSource` above: `>` here matches
+  // composition's `>=` because this walk starts one level higher.
   if (depth > MAX_COMPOSITION_DEPTH) {
     return
   }

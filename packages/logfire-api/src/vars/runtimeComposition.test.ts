@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { configureVariables, defineVar, getVariableProvider, variablesClear } from './index'
+import { configureVariables, defineVar, getVariableProvider, variablesClear, variablesValidate } from './index'
 import type { VariableCodec, VariablesConfig } from './index'
 
 const config = (variables: VariablesConfig['variables']): VariablesConfig => ({ variables })
@@ -180,5 +180,52 @@ describe('variable runtime composition parity', () => {
     expect(resolved.exception).toBeInstanceOf(Error)
     expect(calls).toBe(1)
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('code default raised'))
+  })
+
+  it('accepts the deepest chain composition can expand and refuses the next one in both walks', async () => {
+    // A chain of n variables is n-1 hops. `expandNamedReference` refuses at
+    // `depth >= MAX_COMPOSITION_DEPTH`, and the validation walks compare with `>` because they
+    // start one level higher, so the two agree on where the limit falls. These are the boundary
+    // cases that keep them agreeing.
+    const chain = (count: number): VariablesConfig['variables'] => {
+      const variables: VariablesConfig['variables'] = {}
+      for (let index = 0; index < count; index++) {
+        const value = index === count - 1 ? 'end' : `@{v${String(index + 1)}}@`
+        variables[`v${String(index)}`] = {
+          labels: { prod: { serialized_value: JSON.stringify(value), version: 1 } },
+          name: `v${String(index)}`,
+          overrides: [],
+          rollout: { labels: { prod: 1 } },
+        }
+      }
+      return variables
+    }
+    const probe = async (count: number) => {
+      variablesClear()
+      configureVariables({ config: config(chain(count)), instrument: false })
+      const root = defineVar('v0', { default: 'code-default' })
+      const report = await variablesValidate([root])
+      return { referenceErrors: report.referenceErrors, resolved: await root.get() }
+    }
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    // 21 variables is 20 hops, the deepest chain composition expands.
+    const deepest = await probe(21)
+    expect(deepest.referenceErrors).toEqual([])
+    expect(deepest.resolved.value).toBe('end')
+    expect(deepest.resolved.reason).toBe('resolved')
+
+    // 22 variables is 21 hops. Validation reports it and composition refuses it, so a config
+    // that passes validation never fails later at resolve time.
+    const tooDeep = await probe(22)
+    expect(tooDeep.referenceErrors).toEqual([
+      `Variable 'v0' reference graph exceeded maximum depth of 20 via ${Array.from({ length: 22 }, (_unused, index) => `v${String(index)}`).join(' -> ')}`,
+    ])
+    expect(tooDeep.resolved.value).toBe('code-default')
+    expect(tooDeep.resolved.reason).toBe('other_error')
+    expect((tooDeep.resolved.exception as Error).message).toBe(
+      'VariableCompositionDepthError: Variable composition exceeded maximum depth of 20'
+    )
+    expect(warn).toHaveBeenCalledTimes(1)
   })
 })
