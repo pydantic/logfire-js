@@ -1,5 +1,22 @@
 # @pydantic/logfire-api
 
+## 0.22.2
+
+### Patch Changes
+
+- b334f97: Stop dropping a baggage entry whose key names an inherited object member. `applyBaggage` tested for a conflict with `in`, so a `baggage` header carrying `toString` or `constructor` had that entry silently left off the emitted `gen_ai.evaluation.result` event.
+- 4ced7fe: Reject an option value that is really the next flag in every CLI command. `read-tokens` already refused it, but the global options, `whoami`, `projects` and `clean` each had their own copy of the check without that guard, so `logfire clean --data-dir --logs` took `--logs` as the directory name and silently dropped the flag. The four copies are gone; there is one shared helper.
+- df17ff9: Keep an own `__proto__` key when normalizing values for `pushEvaluationDataset`. Assigning into a plain object invoked the `__proto__` setter instead of creating a property, so a JSON-parsed case value carrying that key had it silently dropped from the pushed dataset.
+- 3d5c543: Compare the contents of Dates, RegExps, Sets and Maps in the `Equals` and `EqualsExpected` evaluators. `deepEqual` only compared own enumerable keys, and those types keep their contents in internal slots, so any two of them matched each other and a wrong `Date` passed as equal to the expected one.
+- 320d760: Omit `gen_ai.evaluation.explanation` on an evaluator failure that carries no message, instead of emitting an empty string. pydantic-evals leaves the attribute off in that case, so a failure from `throw new Error()` no longer records an explanation that is not one.
+- 8ee48bd: Identify the V8 stack header by matching the error's own name and message, so a message containing a frame-shaped `x@y:1:2` no longer leaks into the exception fingerprint as a fake frame.
+- c07dbea: Keep the top stack frame when fingerprinting an error in Firefox or Safari. Frame parsing dropped the first line of `error.stack` to skip V8's `Error: message` header, but those engines have no header line, so the frame that identifies the error was discarded and two unrelated errors sharing the frame below it received the same `logfire.exception.fingerprint`.
+- ba8fe33: Read `LOGFIRE_SEND_TO_LOGFIRE=0` and `f` as disabled instead of falling through to string truthiness, matching the boolean spellings the Python SDK accepts.
+- 9c6538e: Match structured attributes in span queries. `hasAttributes` compared the span attribute with `===`, so a query for an object or an array never matched: OTel carries an object as the JSON string `serializeAttributes` wrote, and an array as a real array, and neither is `===` a fresh query value. `HasMatchingSpan` and `SpanTree.any`/`find`/`first` now compare structurally and decode a JSON string attribute first, the way pydantic-evals does.
+- 83cf913: Stop reporting item fields inside an `each` or `with` block as missing template inputs. `variablesValidate` collected bare paths from a block body and checked them against the root `templateInputsSchema`, so `{{#each items}}{{name}}{{/each}}` was flagged for `name` even though the template renders correctly.
+- eca8805: Record the exception on the span when a zone.js-style promise returned from a `span()` callback rejects. Native promise rejections already recorded the error and set the span status to `ERROR`, but the zone.js branch only ended the span, so in Angular applications a failing span looked successful and carried no exception.
+- cd89805: Record the failure on the span when a zone.js-style thenable's `then` throws before any settlement handler runs, instead of ending the span with an OK status.
+
 ## 0.22.1
 
 ### Patch Changes
