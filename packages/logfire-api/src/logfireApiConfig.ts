@@ -160,7 +160,16 @@ export function resolveSendToLogfire(env: Env, option: SendToLogfire, token: str
   if (sendToLogfireConfig === 'true' || sendToLogfireConfig === 't' || sendToLogfireConfig === '1') {
     return true
   }
-  return Boolean(sendToLogfireConfig)
+  if (typeof sendToLogfireConfig === 'boolean') {
+    return sendToLogfireConfig
+  }
+  // A blank value keeps its existing meaning: nothing was configured, so nothing is sent.
+  if (sendToLogfireConfig === '') {
+    return false
+  }
+  // Any other unrecognised string is a typo. `Boolean('yes')` is true, so guessing here turns
+  // sending ON for a value the user may have meant as off. Python raises instead.
+  throw new Error(`Expected LOGFIRE_SEND_TO_LOGFIRE to be a boolean or 'if-token-present', got ${JSON.stringify(configured)}`)
 }
 
 export function resolveBaseUrl(env: Env, passedUrl: string | undefined, token: string): string {
