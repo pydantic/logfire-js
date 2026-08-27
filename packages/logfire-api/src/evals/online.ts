@@ -447,11 +447,23 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
   }
 
   if (emitOtel) {
-    for (const r of allResults) {
-      emitEvaluationResult(r, { baggageAttrs: args.baggageAttrs, parentSpanRef: args.callSpanRef, target: args.target })
-    }
-    for (const f of allFailures) {
-      emitEvaluatorFailure(f, { baggageAttrs: args.baggageAttrs, parentSpanRef: args.callSpanRef, target: args.target })
+    // Per evaluator and guarded: emission runs before the sinks, so an evaluator whose spec or
+    // result cannot be serialized would otherwise take the whole dispatch down with it and the
+    // sinks would never see the evaluators that did succeed. A failure is reported under the
+    // `sink` location, which is the one that means "delivering results downstream went wrong".
+    for (const { ev, failures, results } of runs) {
+      const emitOptions = { baggageAttrs: args.baggageAttrs, parentSpanRef: args.callSpanRef, target: args.target }
+      try {
+        for (const r of results) {
+          emitEvaluationResult(r, emitOptions)
+        }
+        for (const f of failures) {
+          emitEvaluatorFailure(f, emitOptions)
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-await-in-loop -- preserve deterministic onError ordering.
+        await reportPipelineError(ev.onError ?? args.userOptions.onError ?? args.cfg.onError, err, ctx, ev.evaluator, 'sink')
+      }
     }
   }
 
