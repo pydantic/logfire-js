@@ -40,6 +40,7 @@ describe('logfire config', () => {
     delete process.env['OTEL_SERVICE_VERSION']
     delete process.env['LOGFIRE_TOKEN']
     delete process.env['LOGFIRE_CREDENTIALS_DIR']
+    delete process.env['LOGFIRE_DISTRIBUTED_TRACING']
     configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     await shutdownVariables()
   })
@@ -298,12 +299,24 @@ describe('logfire config', () => {
     }
   })
 
-  it('does not parse LOGFIRE_CONSOLE as object-style console config', () => {
-    process.env['LOGFIRE_CONSOLE'] = '{"enabled":true}'
+  it('rejects LOGFIRE_CONSOLE values that are not booleans, including object-style config', () => {
+    const value = '{"enabled":true}'
+    process.env['LOGFIRE_CONSOLE'] = value
 
-    configure()
+    // Object-style console config is still not supported through the env var. It now says so
+    // rather than resolving to `false`, which reads as "console deliberately off".
+    expect(() => {
+      configure()
+    }).toThrow(`Expected LOGFIRE_CONSOLE to be a boolean, got ${JSON.stringify(value)}`)
+  })
 
-    expect(logfireConfig.console).toBe(false)
+  it('rejects a LOGFIRE_DISTRIBUTED_TRACING value that is not a boolean', () => {
+    // The default is on, so a typo used to turn distributed tracing off without a word.
+    process.env['LOGFIRE_DISTRIBUTED_TRACING'] = 'yes'
+
+    expect(() => {
+      configure()
+    }).toThrow('Expected LOGFIRE_DISTRIBUTED_TRACING to be a boolean, got "yes"')
   })
 
   it('passes baggage span attributes config to the shared API', () => {
