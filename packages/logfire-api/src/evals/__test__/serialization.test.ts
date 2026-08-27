@@ -222,6 +222,53 @@ describe('EvaluatorSpec encoding', () => {
     })
   })
 
+  it('offers a short branch for a single-parameter evaluator the encoder writes short', () => {
+    const encoded = encodeEvaluatorSpec(new EqualsExpected({ evaluation_name: 'x' }))
+    expect(encoded).toEqual({ EqualsExpected: 'x' })
+
+    const schema = buildDatasetJsonSchema()
+    const shortBranch = evaluatorBranches(schema, 'EqualsExpected').find(
+      (branch) => ((branch['properties'] ?? {}) as Record<string, unknown>)['EqualsExpected'] !== undefined
+    )
+
+    expect(shortBranch).toEqual({
+      additionalProperties: false,
+      properties: { EqualsExpected: { type: 'string' } },
+      required: ['EqualsExpected'],
+      type: 'object',
+    })
+  })
+
+  it('honours primaryArgKeys for a custom evaluator, as decoding already does', () => {
+    class TwoArgEvaluator extends Evaluator {
+      static override evaluatorName = 'TwoArgEvaluator'
+      static jsonSchema(): Record<string, unknown> {
+        return {
+          properties: { other: { type: 'number' }, subject: { type: 'string' } },
+          required: ['subject'],
+          type: 'object',
+        }
+      }
+      evaluate(): boolean {
+        return true
+      }
+    }
+
+    const withoutKey = buildDatasetJsonSchema({ customEvaluators: [TwoArgEvaluator as never] })
+    const withKey = buildDatasetJsonSchema({
+      customEvaluators: [TwoArgEvaluator as never],
+      primaryArgKeys: { TwoArgEvaluator: 'subject' },
+    })
+
+    const shortOf = (schema: Record<string, unknown>): unknown =>
+      evaluatorBranches(schema, 'TwoArgEvaluator')
+        .map((branch) => ((branch['properties'] ?? {}) as Record<string, unknown>)['TwoArgEvaluator'])
+        .find((value) => JSON.stringify(value) === JSON.stringify({ type: 'string' }))
+
+    expect(shortOf(withoutKey)).toBeUndefined()
+    expect(shortOf(withKey)).toEqual({ type: 'string' })
+  })
+
   it('lists an evaluator once when it is both registered and passed as custom', () => {
     class BothWaysEvaluator extends Evaluator {
       static override evaluatorName = 'BothWaysEvaluator'

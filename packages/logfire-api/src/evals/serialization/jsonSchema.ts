@@ -17,6 +17,12 @@ import { BUILTIN_PRIMARY_ARG_KEYS } from './builtinsPrimaryArgs'
 interface JsonSchemaOptions {
   customEvaluators?: readonly EvaluatorClass[]
   customReportEvaluators?: readonly ReportEvaluatorClass[]
+  /**
+   * Primary-argument key per evaluator name, merged over the builtin map. Mirrors the option
+   * `FromOptions` already accepts, so a custom evaluator that decodes from `{Name: value}` can
+   * also validate against a generated schema.
+   */
+  primaryArgKeys?: Readonly<Record<string, string>> | ReadonlyMap<string, string>
 }
 
 export interface JsonSchema {
@@ -33,8 +39,9 @@ export function buildDatasetJsonSchema(opts: JsonSchemaOptions = {}): JsonSchema
   const evaluators = dedupeByRegistryKey([...listRegisteredEvaluators(), ...(opts.customEvaluators ?? [])])
   const reportEvaluators = dedupeByRegistryKey([...listRegisteredReportEvaluators(), ...(opts.customReportEvaluators ?? [])])
 
-  const evaluatorAnyOf = buildEvaluatorAnyOf(evaluators)
-  const reportAnyOf = buildEvaluatorAnyOf(reportEvaluators)
+  const primaryArgKeys = mergePrimaryArgKeys(opts.primaryArgKeys)
+  const evaluatorAnyOf = buildEvaluatorAnyOf(evaluators, primaryArgKeys)
+  const reportAnyOf = buildEvaluatorAnyOf(reportEvaluators, primaryArgKeys)
 
   return {
     $schema: 'https://json-schema.org/draft-07/schema#',
@@ -79,7 +86,21 @@ function dedupeByRegistryKey<T extends { evaluatorName?: string; name: string }>
   return [...byKey.values()]
 }
 
-function buildEvaluatorAnyOf(classes: readonly (EvaluatorClass | ReportEvaluatorClass)[]): JsonSchema {
+function mergePrimaryArgKeys(overrides: JsonSchemaOptions['primaryArgKeys']): ReadonlyMap<string, string> {
+  const merged = new Map(Object.entries(BUILTIN_PRIMARY_ARG_KEYS))
+  if (overrides !== undefined) {
+    const entries: Iterable<readonly [string, string]> = overrides instanceof Map ? overrides.entries() : Object.entries(overrides)
+    for (const [name, key] of entries) {
+      merged.set(name, key)
+    }
+  }
+  return merged
+}
+
+function buildEvaluatorAnyOf(
+  classes: readonly (EvaluatorClass | ReportEvaluatorClass)[],
+  primaryArgKeys: ReadonlyMap<string, string>
+): JsonSchema {
   // `anyOf`, not `oneOf`: an evaluator whose single argument is untyped matches both its short
   // and its long branch, and `oneOf` demands exactly one match. Python's schema is a union,
   // which pydantic also renders as `anyOf`.
@@ -101,10 +122,13 @@ function buildEvaluatorAnyOf(classes: readonly (EvaluatorClass | ReportEvaluator
     if (required.length === 0) {
       anyOf.push({ const: name, type: 'string' })
     }
-    // `{Name: value}` is what `encodeEvaluatorSpec` writes for a lone argument. Only the
-    // evaluators with a primary-argument key can be built back from it, since that key is what
-    // turns the bare value into the constructor's options object.
-    const shortArgKey = BUILTIN_PRIMARY_ARG_KEYS[name]
+    // `{Name: value}` is what `encodeEvaluatorSpec` writes for a lone argument, and it writes it
+    // for ANY evaluator whose `toJSON()` has exactly one key. Keying this off the builtin map
+    // alone left single-parameter evaluators such as `EqualsExpected` without a short branch, so
+    // the library emitted a file its own schema rejected. Fall back to parameter count, which is
+    // what Python keys on (`_spec.py:320-338`).
+    const onlyProperty = Object.keys(properties).length === 1 ? Object.keys(properties)[0] : undefined
+    const shortArgKey = primaryArgKeys.get(name) ?? onlyProperty
     if (shortArgKey !== undefined) {
       const shortSchema = properties[shortArgKey]
       anyOf.push(namedBranch(name, isRecord(shortSchema) ? shortSchema : {}))
