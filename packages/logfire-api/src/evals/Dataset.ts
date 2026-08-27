@@ -293,11 +293,13 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
     opts: {
       customEvaluators?: readonly EvaluatorClass[]
       customReportEvaluators?: readonly ReportEvaluatorClass[]
+      primaryArgKeys?: Readonly<Record<string, string>> | ReadonlyMap<string, string>
     } = {}
   ): JsonSchema {
     return buildDatasetJsonSchema({
       ...(opts.customEvaluators !== undefined ? { customEvaluators: opts.customEvaluators } : {}),
       ...(opts.customReportEvaluators !== undefined ? { customReportEvaluators: opts.customReportEvaluators } : {}),
+      ...(opts.primaryArgKeys !== undefined ? { primaryArgKeys: opts.primaryArgKeys } : {}),
     })
   }
 

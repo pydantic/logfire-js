@@ -239,6 +239,17 @@ describe('EvaluatorSpec encoding', () => {
     })
   })
 
+  it('round-trips the EqualsExpected evaluation name through the short form', () => {
+    const encoded = encodeEvaluatorSpec(new EqualsExpected({ evaluation_name: 'x' }))
+    expect(encoded).toEqual({ EqualsExpected: 'x' })
+
+    const restored = Dataset.fromObject({ cases: [{ inputs: 1 }], evaluators: [encoded], name: 'rt' })
+    const evaluator = restored.evaluators[0] as EqualsExpected
+    expect(evaluator).toBeInstanceOf(EqualsExpected)
+    expect(evaluator.evaluationName).toBe('x')
+    expect(encodeEvaluatorSpec(evaluator)).toEqual({ EqualsExpected: 'x' })
+  })
+
   it('honours primaryArgKeys for a custom evaluator, as decoding already does', () => {
     class TwoArgEvaluator extends Evaluator {
       static override evaluatorName = 'TwoArgEvaluator'
@@ -492,6 +503,33 @@ describe('Dataset YAML round-trip', () => {
     expect(text).toContain('predicted_from')
     expect(text).toContain('score_key')
     expect(schema['title']).toBe('PydanticEvalsDataset')
+  })
+
+  it('Dataset.jsonSchema() forwards primaryArgKeys, so fromObject and the schema agree', () => {
+    class ForwardedKeyEvaluator extends Evaluator {
+      static override evaluatorName = 'ForwardedKeyEvaluator'
+      static jsonSchema(): Record<string, unknown> {
+        return {
+          properties: { other: { type: 'number' }, subject: { type: 'string' } },
+          required: ['subject'],
+          type: 'object',
+        }
+      }
+      evaluate(): boolean {
+        return true
+      }
+    }
+
+    const dataset = new Dataset({ cases: [], name: 'x' })
+    const schema = dataset.jsonSchema({
+      customEvaluators: [ForwardedKeyEvaluator as never],
+      primaryArgKeys: { ForwardedKeyEvaluator: 'subject' },
+    })
+
+    const shortBranch = evaluatorBranches(schema, 'ForwardedKeyEvaluator')
+      .map((branch) => ((branch['properties'] ?? {}) as Record<string, unknown>)['ForwardedKeyEvaluator'])
+      .find((value) => JSON.stringify(value) === JSON.stringify({ type: 'string' }))
+    expect(shortBranch).toEqual({ type: 'string' })
   })
 
   it('reads and writes Python-compatible flat ConfusionMatrixEvaluator options', () => {
