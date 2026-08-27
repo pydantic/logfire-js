@@ -63,7 +63,9 @@ export class TailSamplingProcessor implements SpanProcessor {
   }
 
   async forceFlush(): Promise<void> {
-    return this.wrapped.forceFlush()
+    await this.wrapped.forceFlush()
+    // The deferred processor is owned by this one, so nothing else will flush it.
+    await this.deferredProcessor?.forceFlush()
   }
 
   onEnd(span: ReadableSpan): void {
@@ -140,7 +142,9 @@ export class TailSamplingProcessor implements SpanProcessor {
   async shutdown(): Promise<void> {
     this.buffers.clear()
     this.retainedAfterRoot.clear()
-    return this.wrapped.shutdown()
+    await this.wrapped.shutdown()
+    // Same ownership: without this the deferred processor is never shut down at all.
+    await this.deferredProcessor?.shutdown()
   }
 
   private retainAfterRoot(traceId: string): void {

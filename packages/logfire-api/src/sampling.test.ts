@@ -783,6 +783,22 @@ describe('TailSamplingProcessor', () => {
     expect(downstream.shutdown).toHaveBeenCalled()
   })
 
+  test('forwards forceFlush and shutdown to the deferred processor', async () => {
+    const downstream = makeProcessor()
+    const deferred = makeProcessor()
+    const processor = new TailSamplingProcessor(downstream, () => 1.0, { deferredProcessor: deferred })
+
+    await processor.forceFlush()
+    await processor.shutdown()
+
+    // This processor owns the deferred one, so nothing else can flush or shut it down.
+    expect(deferred.forceFlush).toHaveBeenCalledTimes(1)
+    expect(deferred.shutdown).toHaveBeenCalledTimes(1)
+    // The wrapped processor is still called exactly once for each.
+    expect(downstream.forceFlush).toHaveBeenCalledTimes(1)
+    expect(downstream.shutdown).toHaveBeenCalledTimes(1)
+  })
+
   test('shutdown with deferred pending processor does not double-shutdown the wrapped processor', async () => {
     const downstream = makeProcessor()
     const processor = new TailSamplingProcessor(downstream, () => 0.0, {
