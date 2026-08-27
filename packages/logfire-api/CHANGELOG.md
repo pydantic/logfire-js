@@ -1,5 +1,16 @@
 # @pydantic/logfire-api
 
+## 0.22.3
+
+### Patch Changes
+
+- 8f6c307: Generate a dataset JSON Schema that matches the evaluator forms the loader accepts. The schema only described `{Name: {kwargs}}`, so the short form `{Equals: 1}` that `Dataset.toText`/`toObject` writes failed validation in an editor, while a bare `Equals` validated even though constructing it with no arguments throws.
+- 8e2d6b3: Round-trip the `EqualsExpected` evaluation name and let `Dataset.jsonSchema()` receive `primaryArgKeys`. `{EqualsExpected: 'x'}` decoded through the positional path and silently dropped the name (Python's dataclass accepts it positionally), and the instance schema API could not express the primary-arg option that `fromObject` already honours.
+- 00c584f: Keep online-evaluation sinks running when OTel emission fails for one evaluator. Emission ran unguarded before the sinks, so an evaluator whose spec could not be JSON-serialized threw out of the whole dispatch: the other evaluators' results never reached the sink, and the configured `onError` was never called because the dispatch promise is discarded.
+- 396b738: Report a failing online-evaluation sink through the `onError` configured on each evaluator. Evaluators that share a sink are batched into one submit call, and the batch resolved a single handler from the first evaluator, so a handler set on any other evaluator in the batch never fired. The same resolution applies on the default-sink path, where a per-evaluator handler was skipped in favour of the config-level one.
+- bf2df6d: Keep `TailSamplingProcessor` trace state until the root has ended and every started span has ended, so a span still running when the root closes is no longer exported unconditionally through the unbuffered path. This is a deliberate divergence from the Python SDK, which pops the buffer at root end and passes late spans through, bounding memory by accepting that behaviour; the upstream side is tracked in pydantic/logfire#2273. Two consequences of the longer lifetime: a late span in a sampled trace now reaches the deferred processor rather than only the wrapped one, and a late span can still flip a trace to sampled after its root ended below a duration threshold, replaying the whole trace. Retention past root end is capped at 1000 traces, after which the oldest degrades to the previous passthrough behaviour rather than pinning memory.
+- a8d2736: Match OTel's exclusive TraceIdRatioBasedSampler bound in `checkTraceIdRatio`. An accumulation equal to `floor(rate * 0xffffffff)` was sampled; the OTel JS sampler's comparison is `<`, so the 0.5 threshold ID `7fffffff` followed by 24 zeros is now dropped.
+
 ## 0.22.2
 
 ### Patch Changes
