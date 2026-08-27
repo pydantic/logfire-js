@@ -432,25 +432,14 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
   const allFailures: EvaluatorFailureRecord[] = []
   const perEvaluatorSinks = new Map<
     EvaluationSink,
-    { evaluators: Evaluator[]; failures: EvaluatorFailureRecord[]; onError?: OnErrorCallback; results: EvaluationResultJson[] }
+    { failures: EvaluatorFailureRecord[]; results: EvaluationResultJson[]; targets: SinkTarget[] }
   >()
   for (const { ev, failures, results } of runs) {
     allResults.push(...results)
     allFailures.push(...failures)
     if (ev.sink !== undefined) {
-      let group = perEvaluatorSinks.get(ev.sink)
-      if (group === undefined) {
-        group = {
-          evaluators: [],
-          failures: [],
-          results: [],
-        }
-        const onError = ev.onError ?? args.userOptions.onError ?? args.cfg.onError
-        if (onError !== undefined) {
-          group.onError = onError
-        }
-      }
-      group.evaluators.push(ev.evaluator)
+      const group = perEvaluatorSinks.get(ev.sink) ?? { failures: [], results: [], targets: [] }
+      group.targets.push(sinkTarget(ev, args.userOptions, args.cfg))
       group.failures.push(...failures)
       group.results.push(...results)
       perEvaluatorSinks.set(ev.sink, group)
@@ -478,8 +467,7 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
           spanReference: args.callSpanRef,
           target: args.target,
         },
-        group.evaluators,
-        group.onError
+        group.targets
       )
     )
   }
@@ -494,8 +482,7 @@ async function dispatchEvaluators(args: DispatchArgs): Promise<void> {
           spanReference: args.callSpanRef,
           target: args.target,
         },
-        args.sampledEvaluators.map((ev) => ev.evaluator),
-        args.userOptions.onError ?? args.cfg.onError
+        args.sampledEvaluators.map((ev) => sinkTarget(ev, args.userOptions, args.cfg))
       )
     )
   }
@@ -516,18 +503,26 @@ function processOutput(
   }
 }
 
-async function submitSink(
-  sink: EvaluationSink,
-  payload: SinkPayload,
-  evaluators: readonly Evaluator[],
+/** One evaluator in a sink's batch, with the error handler that evaluator resolves to. */
+interface SinkTarget {
+  evaluator: Evaluator
   onError: OnErrorCallback | undefined
-): Promise<void> {
+}
+
+function sinkTarget(ev: OnlineEvaluator, userOptions: WithOnlineOptions, cfg: OnlineEvalConfig): SinkTarget {
+  return { evaluator: ev.evaluator, onError: ev.onError ?? userOptions.onError ?? cfg.onError }
+}
+
+async function submitSink(sink: EvaluationSink, payload: SinkPayload, targets: readonly SinkTarget[]): Promise<void> {
   try {
     await sink(payload)
   } catch (err) {
-    for (const evaluator of evaluators) {
+    for (const target of targets) {
+      // Each evaluator reports through its own handler: evaluators sharing a sink are batched
+      // into one submit call, so resolving a single handler for the batch would drop the
+      // handlers configured on every evaluator but the first.
       // eslint-disable-next-line no-await-in-loop -- preserve deterministic onError ordering for sink failures.
-      await reportPipelineError(onError, err, payload.context, evaluator, 'sink')
+      await reportPipelineError(target.onError, err, payload.context, target.evaluator, 'sink')
     }
   }
 }
