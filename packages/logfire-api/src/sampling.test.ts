@@ -66,6 +66,13 @@ describe('checkTraceIdRatio', () => {
   test('all-zeros trace ID is always sampled at any positive rate', () => {
     expect(checkTraceIdRatio('00000000000000000000000000000000', 0.001)).toBe(true)
   })
+
+  test('matches OTel exclusive bound at the 0.5 threshold accumulation', () => {
+    // 7fffffff XOR remaining zeros = 2147483647 = floor(0.5 * 0xffffffff).
+    // OTel TraceIdRatioBasedSampler uses accumulation < upperBound, not <=.
+    expect(checkTraceIdRatio('7fffffff000000000000000000000000', 0.5)).toBe(false)
+    expect(checkTraceIdRatio('7ffffffe000000000000000000000000', 0.5)).toBe(true)
+  })
 })
 
 describe('levelOrDuration', () => {

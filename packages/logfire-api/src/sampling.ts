@@ -77,7 +77,7 @@ export function checkTraceIdRatio(traceId: string, rate: number): boolean {
   }
 
   const threshold = Math.floor(rate * 0xffffffff)
-  return accumulation <= threshold
+  return accumulation < threshold
 }
 
 /**
