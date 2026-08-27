@@ -94,14 +94,28 @@ export function computeAssertionPassRate(cases: readonly ReportCase[]): null | n
   return passed / total
 }
 
+/** `Map` counterpart of `record[key] ??= make()`, so a `__proto__` key is stored like any other. */
+function getOrCreate<K, V>(map: Map<K, V>, key: K, make: () => V): V {
+  let value = map.get(key)
+  if (value === undefined) {
+    value = make()
+    map.set(key, value)
+  }
+  return value
+}
+
 /**
  * Compute the `averages` block stored under `logfire.experiment.metadata.averages`.
  * Required by the platform's sort-by-pass-rate UI.
  */
 export function computeAverages(name: string, cases: readonly ReportCase[]): ReportCaseAggregate {
-  const scoresAcc: Record<string, { count: number; sum: number }> = {}
-  const metricsAcc: Record<string, { count: number; sum: number }> = {}
-  const labelsAcc: Record<string, Record<string, number>> = {}
+  // Maps, not plain objects: score, metric and label names come from evaluator output, and a
+  // name or label value of `__proto__` assigned into an object literal invokes the inherited
+  // setter instead of creating an own key. `vars/template.ts` and `datasets/json.ts` avoid the
+  // same trap with `Object.fromEntries`, which is how these are turned back into records below.
+  const scoresAcc = new Map<string, { count: number; sum: number }>()
+  const metricsAcc = new Map<string, { count: number; sum: number }>()
+  const labelsAcc = new Map<string, Map<string, number>>()
   let assertionsTotal = 0
   let assertionsPassed = 0
   let taskDurationSum = 0
@@ -109,21 +123,21 @@ export function computeAverages(name: string, cases: readonly ReportCase[]): Rep
 
   for (const c of cases) {
     for (const [k, r] of Object.entries(c.scores)) {
-      const acc = (scoresAcc[k] ??= { count: 0, sum: 0 })
+      const acc = getOrCreate(scoresAcc, k, () => ({ count: 0, sum: 0 }))
       if (typeof r.value === 'number') {
         acc.count += 1
         acc.sum += r.value
       }
     }
     for (const [k, v] of Object.entries(c.metrics)) {
-      const acc = (metricsAcc[k] ??= { count: 0, sum: 0 })
+      const acc = getOrCreate(metricsAcc, k, () => ({ count: 0, sum: 0 }))
       acc.count += 1
       acc.sum += v
     }
     for (const [k, r] of Object.entries(c.labels)) {
-      const dist = (labelsAcc[k] ??= {})
+      const dist = getOrCreate(labelsAcc, k, () => new Map<string, number>())
       const lv = String(r.value)
-      dist[lv] = (dist[lv] ?? 0) + 1
+      dist.set(lv, (dist.get(lv) ?? 0) + 1)
     }
     for (const a of Object.values(c.assertions)) {
       assertionsTotal += 1
@@ -135,22 +149,18 @@ export function computeAverages(name: string, cases: readonly ReportCase[]): Rep
     totalDurationSum += c.total_duration
   }
 
-  const scores: ReportCaseAggregate['scores'] = {}
-  for (const [k, { count, sum }] of Object.entries(scoresAcc)) {
-    scores[k] = { count, mean: count === 0 ? 0 : sum / count }
-  }
-  const metrics: ReportCaseAggregate['metrics'] = {}
-  for (const [k, { count, sum }] of Object.entries(metricsAcc)) {
-    metrics[k] = { count, mean: count === 0 ? 0 : sum / count }
-  }
-  const labels: ReportCaseAggregate['labels'] = {}
-  for (const [k, counts] of Object.entries(labelsAcc)) {
-    const total = Object.values(counts).reduce((sum, count) => sum + count, 0)
-    labels[k] = {}
-    for (const [label, count] of Object.entries(counts)) {
-      labels[k][label] = total === 0 ? 0 : count / total
-    }
-  }
+  const scores: ReportCaseAggregate['scores'] = Object.fromEntries(
+    [...scoresAcc].map(([k, { count, sum }]) => [k, { count, mean: count === 0 ? 0 : sum / count }])
+  )
+  const metrics: ReportCaseAggregate['metrics'] = Object.fromEntries(
+    [...metricsAcc].map(([k, { count, sum }]) => [k, { count, mean: count === 0 ? 0 : sum / count }])
+  )
+  const labels: ReportCaseAggregate['labels'] = Object.fromEntries(
+    [...labelsAcc].map(([k, counts]) => {
+      const total = [...counts.values()].reduce((sum, count) => sum + count, 0)
+      return [k, Object.fromEntries([...counts].map(([label, count]) => [label, total === 0 ? 0 : count / total]))]
+    })
+  )
 
   const n = cases.length === 0 ? 1 : cases.length
   return {
@@ -236,48 +246,41 @@ export function averageFromAggregates(name: string, aggregates: readonly ReportC
   }
 
   const avgCountMean = (key: 'metrics' | 'scores'): Record<string, { count: number; mean: number }> => {
-    const out: Record<string, { count: number; mean: number; n: number; sum: number }> = {}
+    const out = new Map<string, { count: number; n: number; sum: number }>()
     for (const agg of aggregates) {
       for (const [k, { count, mean }] of Object.entries(agg[key])) {
-        const acc = (out[k] ??= { count: 0, mean: 0, n: 0, sum: 0 })
+        const acc = getOrCreate(out, k, () => ({ count: 0, n: 0, sum: 0 }))
         acc.sum += mean
         acc.n += 1
         acc.count += count
       }
     }
-    const result: Record<string, { count: number; mean: number }> = {}
-    for (const [k, { count, n, sum }] of Object.entries(out)) {
-      result[k] = { count, mean: sum / n }
-    }
-    return result
+    return Object.fromEntries([...out].map(([k, { count, n, sum }]) => [k, { count, mean: sum / n }]))
   }
 
-  const avgLabels: Record<string, Record<string, number>> = {}
   const labelKeys = new Set<string>()
   for (const a of aggregates) {
     for (const k of Object.keys(a.labels)) {
       labelKeys.add(k)
     }
   }
-  for (const key of labelKeys) {
-    const combined: Record<string, number> = {}
-    let n = 0
-    for (const a of aggregates) {
-      const dist = a.labels[key]
-      if (dist === undefined) {
-        continue
+  const avgLabels: Record<string, Record<string, number>> = Object.fromEntries(
+    [...labelKeys].map((key) => {
+      const combined = new Map<string, number>()
+      let n = 0
+      for (const a of aggregates) {
+        const dist = a.labels[key]
+        if (dist === undefined) {
+          continue
+        }
+        n += 1
+        for (const [labelVal, freq] of Object.entries(dist)) {
+          combined.set(labelVal, (combined.get(labelVal) ?? 0) + freq)
+        }
       }
-      n += 1
-      for (const [labelVal, freq] of Object.entries(dist)) {
-        combined[labelVal] = (combined[labelVal] ?? 0) + freq
-      }
-    }
-    const out: Record<string, number> = {}
-    for (const [k, v] of Object.entries(combined)) {
-      out[k] = v / n
-    }
-    avgLabels[key] = out
-  }
+      return [key, Object.fromEntries([...combined].map(([k, v]) => [k, v / n]))]
+    })
+  )
 
   const assertionVals = aggregates.map((a) => a.assertions).filter((v): v is number => v !== null)
   const avgAssertions = assertionVals.length === 0 ? null : assertionVals.reduce((s, v) => s + v, 0) / assertionVals.length
