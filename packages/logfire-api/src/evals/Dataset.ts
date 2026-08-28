@@ -669,12 +669,13 @@ function resolveSiblingPath(filePath: string, siblingPath: string): string {
 }
 
 /**
- * The `$schema` value to record inside the dataset. An absolute path under the dataset's own
- * directory becomes relative to it, so a committed dataset does not carry the writer's machine
- * layout; anything else is kept as given. Mirrors `Dataset.to_file` in pydantic-evals.
+ * The `$schema` value to record inside the dataset. A path under the dataset's own directory
+ * becomes relative to it, so a committed dataset does not carry the writer's machine layout.
+ * Anything else, including a URL and a path on another drive, is kept as given. Mirrors
+ * `Dataset.to_file` in pydantic-evals.
  */
 function schemaReference(filePath: string, schemaPath: string): string {
-  if (!isRooted(schemaPath) || /^[a-zA-Z][a-zA-Z\d+.-]*:/u.test(schemaPath)) {
+  if (!isRooted(schemaPath)) {
     return schemaPath
   }
   const { dir, sep } = directoryOf(filePath)

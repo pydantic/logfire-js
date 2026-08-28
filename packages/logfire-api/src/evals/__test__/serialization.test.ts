@@ -640,6 +640,39 @@ describe('Dataset YAML round-trip', () => {
     }
   })
 
+  it('records a Windows drive-letter schema path relative to the dataset file', async () => {
+    // Driven through the Deno stub so the paths stay strings and the test runs anywhere. A drive
+    // letter looks like a URI scheme, which is what kept it out of the relative-reference path.
+    const originalDeno = (globalThis as { Deno?: unknown }).Deno
+    const files = new Map<string, string>()
+    ;(globalThis as { Deno?: unknown }).Deno = {
+      readTextFile: async (path: string) => {
+        const text = files.get(path)
+        return text === undefined ? Promise.reject(new Error(`missing ${path}`)) : Promise.resolve(text)
+      },
+      writeTextFile: async (path: string, text: string) => {
+        files.set(path, text)
+        return Promise.resolve()
+      },
+    }
+
+    try {
+      const ds = new Dataset({ cases: [new Case({ inputs: { v: 1 }, name: 'tmp' })], name: 'win-file-test' })
+      await ds.toFile('C:\\data\\dataset.yaml', { schemaPath: 'C:\\data\\dataset.schema.json' })
+
+      expect(files.get('C:\\data\\dataset.yaml')?.split('\n')[0]).toBe('# yaml-language-server: $schema=dataset.schema.json')
+      expect(files.has('C:\\data\\dataset.schema.json')).toBe(true)
+
+      // A real URI is still recorded as given.
+      await ds.toFile('C:\\data\\dataset.yaml', { schemaPath: 'https://example.com/dataset.schema.json' })
+      expect(files.get('C:\\data\\dataset.yaml')?.split('\n')[0]).toBe(
+        '# yaml-language-server: $schema=https://example.com/dataset.schema.json'
+      )
+    } finally {
+      ;(globalThis as { Deno?: unknown }).Deno = originalDeno
+    }
+  })
+
   it('prefers Deno readTextFile/writeTextFile helpers when present', async () => {
     const originalDeno = (globalThis as { Deno?: unknown }).Deno
     const files = new Map<string, string>()
