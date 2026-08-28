@@ -606,6 +606,40 @@ describe('Dataset YAML round-trip', () => {
     }
   })
 
+  it('records an absolute schemaPath relative to the dataset file', async () => {
+    const ds = new Dataset({ cases: [new Case({ inputs: { v: 1 }, name: 'tmp' })], name: 'file-test' })
+    const fs = await import('node:fs/promises')
+    const os = await import('node:os')
+    const path = await import('node:path')
+    const tmpdir = await fs.mkdtemp(path.join(os.tmpdir(), 'logfire-evals-abs-schema-'))
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'logfire-evals-elsewhere-'))
+    try {
+      // Absolute and next to the dataset: the file records the bare name, so the dataset is
+      // still readable after it is committed and opened somewhere else.
+      const insidePath = path.join(tmpdir, 'dataset.schema.json')
+      const yamlPath = path.join(tmpdir, 'dataset.yaml')
+      await ds.toFile(yamlPath, { schemaPath: insidePath })
+      expect((await fs.readFile(yamlPath, 'utf8')).split('\n')[0]).toBe('# yaml-language-server: $schema=dataset.schema.json')
+      const insideSchema = JSON.parse(await fs.readFile(insidePath, 'utf8')) as { title: string }
+      expect(insideSchema.title).toBe('PydanticEvalsDataset')
+
+      const jsonPath = path.join(tmpdir, 'dataset.json')
+      await ds.toFile(jsonPath, { schemaPath: insidePath })
+      const written = JSON.parse(await fs.readFile(jsonPath, 'utf8')) as { $schema: string }
+      expect(written.$schema).toBe('dataset.schema.json')
+
+      // Absolute and somewhere else: there is no relative form to prefer, so it is kept.
+      const outsidePath = path.join(outsideDir, 'shared.schema.json')
+      await ds.toFile(yamlPath, { schemaPath: outsidePath })
+      expect((await fs.readFile(yamlPath, 'utf8')).split('\n')[0]).toBe(`# yaml-language-server: $schema=${outsidePath}`)
+      const outsideSchema = JSON.parse(await fs.readFile(outsidePath, 'utf8')) as { title: string }
+      expect(outsideSchema.title).toBe('PydanticEvalsDataset')
+    } finally {
+      await fs.rm(tmpdir, { force: true, recursive: true })
+      await fs.rm(outsideDir, { force: true, recursive: true })
+    }
+  })
+
   it('prefers Deno readTextFile/writeTextFile helpers when present', async () => {
     const originalDeno = (globalThis as { Deno?: unknown }).Deno
     const files = new Map<string, string>()
