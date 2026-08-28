@@ -119,6 +119,11 @@ export class OnlineEvaluator {
   private readonly onMaxConcurrency?: OnMaxConcurrencyCallback
 
   constructor(opts: OnlineEvaluatorOptions) {
+    if (opts.maxConcurrency !== undefined && (!Number.isInteger(opts.maxConcurrency) || opts.maxConcurrency < 1)) {
+      // A semaphore with no permits never lets the evaluator run, and `tryAcquire` reports that
+      // as "at capacity" on every call, so the misconfiguration reads as a busy pipeline.
+      throw new Error(`OnlineEvaluator: maxConcurrency must be a positive integer (got ${String(opts.maxConcurrency)})`)
+    }
     this.inner = opts.evaluator
     this.maxConcurrencySem = new Semaphore(opts.maxConcurrency ?? 10)
     if (opts.onError !== undefined) {

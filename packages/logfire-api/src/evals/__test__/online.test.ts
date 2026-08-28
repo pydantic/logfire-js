@@ -621,6 +621,17 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     expect(sinkPayloads[0]?.results.map((result) => result.name).sort()).toEqual(['AlwaysFail', 'AlwaysPass'])
   })
 
+  it('rejects a non-positive or fractional maxConcurrency', () => {
+    // A zero or negative limit builds a semaphore that never admits the evaluator, so the
+    // evaluator silently never runs and the sink still receives an empty payload.
+    for (const maxConcurrency of [0, -3, 1.5]) {
+      expect(() => new OnlineEvaluator({ evaluator: new AlwaysPass(), maxConcurrency })).toThrow(
+        `OnlineEvaluator: maxConcurrency must be a positive integer (got ${String(maxConcurrency)})`
+      )
+    }
+    expect(new OnlineEvaluator({ evaluator: new AlwaysPass(), maxConcurrency: 1 }).name).toBe('AlwaysPass')
+  })
+
   it('reports a sink failure through the onError configured on each evaluator', async () => {
     const calls: string[] = []
     const failingSink = (): void => {
