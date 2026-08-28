@@ -191,6 +191,39 @@ describe('offline evals — span attribute parity', () => {
     expect(result.cases[0]?.assertions['duplicate_2']?.value).toBe(false)
   })
 
+  it('keeps a result name that collides with Object.prototype', async () => {
+    class PrototypeNamedEvaluator extends Evaluator {
+      static override evaluatorName = 'PrototypeNamedEvaluator'
+      evaluate(): Record<string, number> {
+        // `fromEntries` is how a real result map ends up with an own `__proto__` key, the same
+        // way `JSON.parse` does; an object literal would set the prototype instead.
+        return Object.fromEntries([
+          ['__proto__', 0.9],
+          ['toString', 0.5],
+        ]) as Record<string, number>
+      }
+    }
+
+    const dataset = new Dataset<string, string>({
+      cases: [new Case<string, string>({ inputs: 'x', name: 'case' })],
+      evaluators: [new PrototypeNamedEvaluator()],
+      name: 'prototype-names',
+    })
+
+    const { result } = await withMemoryExporter(async () => dataset.evaluate((input) => input))
+
+    const scores = result.cases[0]?.scores ?? {}
+    // Reading these names off a plain object finds `Object.prototype`, so the collision check saw
+    // them as taken and renamed them, and the write ran the inherited `__proto__` setter.
+    // Read through a variable: a literal `scores.toString` would resolve to the inherited method
+    // rather than the recorded score.
+    const scoreValue = (name: string): unknown => scores[name]?.value
+    expect(Object.keys(scores).sort()).toEqual(['__proto__', 'toString'])
+    expect(scoreValue('__proto__')).toBe(0.9)
+    expect(scoreValue('toString')).toBe(0.5)
+    expect(Object.getPrototypeOf(scores)).toBe(Object.prototype)
+  })
+
   it('treats a result map containing a value key as a map, not as a single reason', async () => {
     class MapWithValueKey extends Evaluator {
       static override evaluatorName = 'MapWithValueKey'

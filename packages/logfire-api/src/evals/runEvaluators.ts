@@ -65,25 +65,27 @@ export async function runEvaluators(
 }
 
 function place(out: RunEvaluatorsResult, result: EvaluationResultJson): void {
-  if (typeof result.value === 'boolean') {
-    const name = nextResultName(out.assertions, result.name)
-    out.assertions[name] = { ...result, name }
-  } else if (typeof result.value === 'number') {
-    const name = nextResultName(out.scores, result.name)
-    out.scores[name] = { ...result, name }
-  } else {
-    const name = nextResultName(out.labels, result.name)
-    out.labels[name] = { ...result, name }
-  }
+  const bucket = typeof result.value === 'boolean' ? out.assertions : typeof result.value === 'number' ? out.scores : out.labels
+  const name = nextResultName(bucket, result.name)
+  setResult(bucket, name, { ...result, name })
 }
 
+/**
+ * Result names come from evaluators, so they can collide with `Object.prototype`. `hasOwn` keeps
+ * a name like `toString` or `__proto__` from looking like an existing result, and `defineProperty`
+ * stores it as an own property instead of running the inherited `__proto__` setter.
+ */
 function nextResultName(existing: Record<string, EvaluationResultJson>, baseName: string): string {
-  if (existing[baseName] === undefined) {
+  if (!Object.hasOwn(existing, baseName)) {
     return baseName
   }
   let i = 2
-  while (existing[`${baseName}_${i.toString()}`] !== undefined) {
+  while (Object.hasOwn(existing, `${baseName}_${i.toString()}`)) {
     i++
   }
   return `${baseName}_${i.toString()}`
+}
+
+function setResult(bucket: Record<string, EvaluationResultJson>, name: string, result: EvaluationResultJson): void {
+  Object.defineProperty(bucket, name, { configurable: true, enumerable: true, value: result, writable: true })
 }
