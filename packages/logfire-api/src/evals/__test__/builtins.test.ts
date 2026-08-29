@@ -120,6 +120,43 @@ describe('built-in evaluator edge cases', () => {
     })
   })
 
+  it('Contains pairs a record against Map entries the way Python pairs it against a dict', () => {
+    expect(new Contains({ value: { k: 1 } }).evaluate(ctx(new Map<unknown, unknown>([['k', 1]])))).toEqual({ value: true })
+    expect(new Contains({ value: {} }).evaluate(ctx(new Map<unknown, unknown>([['k', 1]])))).toEqual({ value: true })
+    expect(
+      new Contains({ value: { a: 1 } }).evaluate(
+        ctx(
+          new Map<unknown, unknown>([
+            ['a', 1],
+            ['b', 2],
+          ])
+        )
+      )
+    ).toEqual({ value: true })
+    expect(new Contains({ value: { k: 2 } }).evaluate(ctx(new Map<unknown, unknown>([['k', 1]])))).toEqual({
+      reason: 'Output has different value for key "k": 1 != 2',
+      value: false,
+    })
+    expect(new Contains({ value: { z: 1 } }).evaluate(ctx(new Map<unknown, unknown>([['k', 1]])))).toEqual({
+      reason: 'Output does not contain expected key "z"',
+      value: false,
+    })
+
+    // A Map can hold the record itself as a key, which a dict cannot, so the key check still
+    // runs when the pairing fails. This is the only case that reaches the structural key loop:
+    // the NaN cases above are answered by `has`.
+    expect(new Contains({ value: { id: 1 } }).evaluate(ctx(new Map<unknown, unknown>([[{ id: 1 }, 'v']])))).toEqual({
+      value: true,
+    })
+
+    // Only a real record pairs. A Date has no own enumerable keys, so pairing it would be
+    // vacuously true; it stays a key query.
+    expect(new Contains({ value: new Date(0) }).evaluate(ctx(new Map<unknown, unknown>([['k', 1]])))).toEqual({
+      reason: 'Output ["k"] does not contain provided value as a key',
+      value: false,
+    })
+  })
+
   it('Equals and EqualsExpected preserve custom result names and empty-output behavior', () => {
     const eq = new Equals({ evaluationName: 'exact', value: { nested: ['x'] } })
     expect(eq.getResultName()).toBe('exact')

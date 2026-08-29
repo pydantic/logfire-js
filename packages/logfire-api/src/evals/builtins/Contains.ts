@@ -106,15 +106,19 @@ export class Contains extends Evaluator {
       return { reason: `Output ${truncatedRepr([...output], 200)} does not contain provided value`, value: false }
     }
     if (output instanceof Map) {
-      if (output.has(this.value)) {
-        return { value: true }
-      }
-      for (const key of output.keys()) {
-        if (deepEqual(key, this.value)) {
+      if (isPlainObject(this.value)) {
+        // Python compares key/value pairs when both sides are dicts (`common.py:113-130`), and a
+        // Map is the closest analogue of a dict, so a record asks about pairs, not about a key.
+        const pairingFailure = missingEntry(output, this.value)
+        if (pairingFailure === undefined) {
           return { value: true }
         }
+        // A Map, unlike a dict, can also hold the record itself as a key.
+        return this.hasKey(output) ? { value: true } : pairingFailure
       }
-      return { reason: `Output ${truncatedRepr([...output.keys()], 200)} does not contain provided value as a key`, value: false }
+      return this.hasKey(output)
+        ? { value: true }
+        : { reason: `Output ${truncatedRepr([...output.keys()], 200)} does not contain provided value as a key`, value: false }
     }
     if (output !== null && typeof output === 'object') {
       const obj = output as Record<string, unknown>
@@ -139,8 +143,47 @@ export class Contains extends Evaluator {
     }
     return { reason: 'Containment check failed: output is not iterable', value: false }
   }
+
+  private hasKey(output: Map<unknown, unknown>): boolean {
+    // `has` is SameValueZero, so it matches NaN, which `deepEqual`'s `===` cannot.
+    if (output.has(this.value)) {
+      return true
+    }
+    for (const key of output.keys()) {
+      if (deepEqual(key, this.value)) {
+        return true
+      }
+    }
+    return false
+  }
 }
 registerEvaluator(Contains)
+
+// Python takes the pairing path only for a real dict. A Date or a Set has no own enumerable
+// keys, so accepting one here would make every pairing vacuously true.
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object') {
+    return false
+  }
+  const prototype: unknown = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function missingEntry(output: Map<unknown, unknown>, value: Record<string, unknown>): EvaluationReason | undefined {
+  for (const [key, expected] of Object.entries(value)) {
+    if (!output.has(key)) {
+      return { reason: `Output does not contain expected key ${truncatedRepr(key, 30)}`, value: false }
+    }
+    const actual = output.get(key)
+    if (!deepEqual(actual, expected)) {
+      return {
+        reason: `Output has different value for key ${truncatedRepr(key, 30)}: ${truncatedRepr(actual, 100)} != ${truncatedRepr(expected, 100)}`,
+        value: false,
+      }
+    }
+  }
+  return undefined
+}
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
