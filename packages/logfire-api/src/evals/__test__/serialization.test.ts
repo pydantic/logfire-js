@@ -129,6 +129,15 @@ describe('EvaluatorSpec encoding', () => {
     expect(() => decodeEvaluator('Missing', new Map([['ValueEvaluator', ValueEvaluator as never]]), new Map())).toThrow(
       'Unknown evaluator name: "Missing" (registered: ValueEvaluator)'
     )
+
+    // An evaluator name is read from a dataset file, so a plain-object registry must answer for
+    // its own entries only. `constructor` otherwise resolves to `Object` and is constructed.
+    const objectRegistry = { ValueEvaluator: ValueEvaluator as never }
+    for (const inherited of ['constructor', 'toString', 'valueOf', '__proto__']) {
+      expect(() => decodeEvaluator(inherited, objectRegistry, new Map())).toThrow(
+        `Unknown evaluator name: ${JSON.stringify(inherited)} (registered: ValueEvaluator)`
+      )
+    }
   })
 
   it('decodeReportEvaluator constructs report evaluators and reports unknown names', () => {
