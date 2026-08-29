@@ -31,6 +31,9 @@ export const PROJECT_CREDENTIALS_FILENAME = 'logfire_credentials.json'
 // the other.
 export const READ_TOKEN_FILENAME = 'read_token.json'
 const READ_TOKEN_IGNORE_PATTERN = `${READ_TOKEN_FILENAME}*`
+const TEMPORARY_SAVE_SUFFIX = '.tmp'
+/** `randomUUID()`, the middle segment of the temporary file `reserveReadTokenSave` renames from. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
 
 export interface UserTokenData {
   token: string
@@ -600,8 +603,24 @@ function seedGitignore(dataDir: string): void {
   }
 }
 
+/**
+ * The exact names Logfire writes into a data directory: the ignore rule, the two credential
+ * files, and the lock and temporary files a read-token save holds while it runs. Matching a
+ * prefix instead would accept a user's own `read_token.jsonl` and hide it behind the `*` rule.
+ */
 function isDataDirFile(name: string): boolean {
-  return name === '.gitignore' || name === PROJECT_CREDENTIALS_FILENAME || name.startsWith(READ_TOKEN_FILENAME)
+  if (
+    name === '.gitignore' ||
+    name === PROJECT_CREDENTIALS_FILENAME ||
+    name === READ_TOKEN_FILENAME ||
+    name === `${READ_TOKEN_FILENAME}.lock`
+  ) {
+    return true
+  }
+  if (!name.startsWith(`${READ_TOKEN_FILENAME}.`) || !name.endsWith(TEMPORARY_SAVE_SUFFIX)) {
+    return false
+  }
+  return UUID_PATTERN.test(name.slice(READ_TOKEN_FILENAME.length + 1, -TEMPORARY_SAVE_SUFFIX.length))
 }
 
 function ensureReadTokenIgnored(dataDir: string): void {
