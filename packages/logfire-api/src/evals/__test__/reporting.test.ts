@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vite-plus/test'
 
 import {
+  averageFromAggregates,
   Case,
   CaseLifecycle,
   computeAssertionPassRate,
@@ -595,6 +596,41 @@ describe('report-level evaluators land on the experiment span', () => {
       },
       { title: 'KS Statistic', type: 'scalar', value: 1 },
     ])
+  })
+
+  it('counts a label value of __proto__ like any other', () => {
+    const makeCase = (label: string): ReportCase => makeReportCase({ labels: { grade: resultJson('grade', label) }, name: label })
+
+    // Assigning into a plain object would run the inherited setter, dropping this bucket and
+    // leaving the surviving one at 100%. The expected distribution is built with `fromEntries`
+    // for the same reason: a `__proto__` key in an object literal sets the prototype instead
+    // of becoming a key.
+    const averages = computeAverages('labels', [makeCase('__proto__'), makeCase('good')])
+    expect(averages.labels).toEqual({
+      grade: Object.fromEntries([
+        ['__proto__', 0.5],
+        ['good', 0.5],
+      ]),
+    })
+    expect(Object.keys(averages.labels['grade'] ?? {}).sort()).toEqual(['__proto__', 'good'])
+
+    // The multi-run roll-up reads those same distributions back.
+    const rolled = averageFromAggregates('all', [averages, averages])
+    expect(Object.keys(rolled.labels['grade'] ?? {}).sort()).toEqual(['__proto__', 'good'])
+  })
+
+  it('keeps a score, metric or label named __proto__', () => {
+    // A report parsed from JSON can carry an own `__proto__` key, which an object literal cannot.
+    const labels = JSON.parse(`{"__proto__":${JSON.stringify(resultJson('grade', 'good'))}}`) as ReportCase['labels']
+    const scores = JSON.parse(`{"__proto__":${JSON.stringify(resultJson('score', 1))}}`) as ReportCase['scores']
+    const metrics = JSON.parse('{"__proto__":2}') as ReportCase['metrics']
+
+    const averages = computeAverages('proto', [makeReportCase({ labels, metrics, name: 'case', scores })])
+
+    expect(Object.keys(averages.labels)).toEqual(['__proto__'])
+    expect(Object.keys(averages.scores)).toEqual(['__proto__'])
+    expect(Object.keys(averages.metrics)).toEqual(['__proto__'])
+    expect(averages.metrics['__proto__']).toEqual({ count: 1, mean: 2 })
   })
 
   it('computes label averages as normalized frequencies', () => {

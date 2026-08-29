@@ -95,13 +95,51 @@ export function computeAssertionPassRate(cases: readonly ReportCase[]): null | n
 }
 
 /**
+ * Tally values into per-key accumulators, then finalize each into a record entry.
+ * Backed by a `Map` because score, metric and label names come from evaluator
+ * output: assigning a `__proto__` key into a plain object invokes the inherited
+ * setter instead of creating an own key, silently dropping the entry.
+ * `toRecord` goes through `Object.fromEntries`, which defines own keys.
+ */
+class KeyedAccumulator<A> {
+  private readonly init: () => A
+  private readonly map = new Map<string, A>()
+
+  constructor(init: () => A) {
+    this.init = init
+  }
+
+  entries(): IterableIterator<[string, A]> {
+    return this.map.entries()
+  }
+
+  toRecord<R>(finalize: (acc: A) => R): Record<string, R> {
+    return Object.fromEntries([...this.map].map(([k, acc]) => [k, finalize(acc)]))
+  }
+
+  update(key: string, fn: (acc: A) => void): void {
+    let acc = this.map.get(key)
+    if (acc === undefined) {
+      acc = this.init()
+      this.map.set(key, acc)
+    }
+    fn(acc)
+  }
+}
+
+const toCountMean = ({ count, sum }: { count: number; sum: number }): { count: number; mean: number } => ({
+  count,
+  mean: count === 0 ? 0 : sum / count,
+})
+
+/**
  * Compute the `averages` block stored under `logfire.experiment.metadata.averages`.
  * Required by the platform's sort-by-pass-rate UI.
  */
 export function computeAverages(name: string, cases: readonly ReportCase[]): ReportCaseAggregate {
-  const scoresAcc: Record<string, { count: number; sum: number }> = {}
-  const metricsAcc: Record<string, { count: number; sum: number }> = {}
-  const labelsAcc: Record<string, Record<string, number>> = {}
+  const scoresAcc = new KeyedAccumulator(() => ({ count: 0, sum: 0 }))
+  const metricsAcc = new KeyedAccumulator(() => ({ count: 0, sum: 0 }))
+  const labelsAcc = new KeyedAccumulator(() => new Map<string, number>())
   let assertionsTotal = 0
   let assertionsPassed = 0
   let taskDurationSum = 0
@@ -109,21 +147,24 @@ export function computeAverages(name: string, cases: readonly ReportCase[]): Rep
 
   for (const c of cases) {
     for (const [k, r] of Object.entries(c.scores)) {
-      const acc = (scoresAcc[k] ??= { count: 0, sum: 0 })
-      if (typeof r.value === 'number') {
-        acc.count += 1
-        acc.sum += r.value
-      }
+      scoresAcc.update(k, (acc) => {
+        if (typeof r.value === 'number') {
+          acc.count += 1
+          acc.sum += r.value
+        }
+      })
     }
     for (const [k, v] of Object.entries(c.metrics)) {
-      const acc = (metricsAcc[k] ??= { count: 0, sum: 0 })
-      acc.count += 1
-      acc.sum += v
+      metricsAcc.update(k, (acc) => {
+        acc.count += 1
+        acc.sum += v
+      })
     }
     for (const [k, r] of Object.entries(c.labels)) {
-      const dist = (labelsAcc[k] ??= {})
       const lv = String(r.value)
-      dist[lv] = (dist[lv] ?? 0) + 1
+      labelsAcc.update(k, (dist) => {
+        dist.set(lv, (dist.get(lv) ?? 0) + 1)
+      })
     }
     for (const a of Object.values(c.assertions)) {
       assertionsTotal += 1
@@ -135,22 +176,12 @@ export function computeAverages(name: string, cases: readonly ReportCase[]): Rep
     totalDurationSum += c.total_duration
   }
 
-  const scores: ReportCaseAggregate['scores'] = {}
-  for (const [k, { count, sum }] of Object.entries(scoresAcc)) {
-    scores[k] = { count, mean: count === 0 ? 0 : sum / count }
-  }
-  const metrics: ReportCaseAggregate['metrics'] = {}
-  for (const [k, { count, sum }] of Object.entries(metricsAcc)) {
-    metrics[k] = { count, mean: count === 0 ? 0 : sum / count }
-  }
-  const labels: ReportCaseAggregate['labels'] = {}
-  for (const [k, counts] of Object.entries(labelsAcc)) {
-    const total = Object.values(counts).reduce((sum, count) => sum + count, 0)
-    labels[k] = {}
-    for (const [label, count] of Object.entries(counts)) {
-      labels[k][label] = total === 0 ? 0 : count / total
-    }
-  }
+  const scores = scoresAcc.toRecord(toCountMean)
+  const metrics = metricsAcc.toRecord(toCountMean)
+  const labels = labelsAcc.toRecord((counts) => {
+    const total = [...counts.values()].reduce((sum, count) => sum + count, 0)
+    return Object.fromEntries([...counts].map(([label, count]) => [label, total === 0 ? 0 : count / total]))
+  })
 
   const n = cases.length === 0 ? 1 : cases.length
   return {
@@ -178,28 +209,24 @@ export function caseGroups<Inputs = unknown, Output = unknown, Metadata = unknow
     return undefined
   }
 
-  const groups = new Map<
-    string,
-    { failures: ReportCaseFailure<Inputs, Output, Metadata>[]; runs: ReportCase<Inputs, Output, Metadata>[] }
-  >()
-  const ensure = (key: string) => {
-    let g = groups.get(key)
-    if (g === undefined) {
-      g = { failures: [], runs: [] }
-      groups.set(key, g)
-    }
-    return g
-  }
+  const groups = new KeyedAccumulator<{
+    failures: ReportCaseFailure<Inputs, Output, Metadata>[]
+    runs: ReportCase<Inputs, Output, Metadata>[]
+  }>(() => ({ failures: [], runs: [] }))
   for (const c of report.cases) {
-    ensure(c.source_case_name ?? c.name).runs.push(c)
+    groups.update(c.source_case_name ?? c.name, (g) => {
+      g.runs.push(c)
+    })
   }
   for (const f of report.failures) {
-    ensure(f.source_case_name ?? f.name).failures.push(f)
+    groups.update(f.source_case_name ?? f.name, (g) => {
+      g.failures.push(f)
+    })
   }
 
   const result: ReportCaseGroup<Inputs, Output, Metadata>[] = []
-  for (const [name, { failures, runs }] of groups) {
-    // ensure() only inserts a group when a case or failure is added, so at least one of the two arrays is non-empty.
+  for (const [name, { failures, runs }] of groups.entries()) {
+    // update() only inserts a group when a case or failure is added, so at least one of the two arrays is non-empty.
     const first = runs[0] ?? failures[0]
     if (first === undefined) {
       continue
@@ -236,48 +263,33 @@ export function averageFromAggregates(name: string, aggregates: readonly ReportC
   }
 
   const avgCountMean = (key: 'metrics' | 'scores'): Record<string, { count: number; mean: number }> => {
-    const out: Record<string, { count: number; mean: number; n: number; sum: number }> = {}
+    const out = new KeyedAccumulator(() => ({ count: 0, n: 0, sum: 0 }))
     for (const agg of aggregates) {
       for (const [k, { count, mean }] of Object.entries(agg[key])) {
-        const acc = (out[k] ??= { count: 0, mean: 0, n: 0, sum: 0 })
-        acc.sum += mean
-        acc.n += 1
-        acc.count += count
+        out.update(k, (acc) => {
+          acc.sum += mean
+          acc.n += 1
+          acc.count += count
+        })
       }
     }
-    const result: Record<string, { count: number; mean: number }> = {}
-    for (const [k, { count, n, sum }] of Object.entries(out)) {
-      result[k] = { count, mean: sum / n }
-    }
-    return result
+    return out.toRecord(({ count, n, sum }) => ({ count, mean: sum / n }))
   }
 
-  const avgLabels: Record<string, Record<string, number>> = {}
-  const labelKeys = new Set<string>()
+  // Only aggregates that contain a label key contribute to its average, so the
+  // divisor is tracked per key rather than being `aggregates.length`.
+  const labelsAcc = new KeyedAccumulator(() => ({ combined: new Map<string, number>(), n: 0 }))
   for (const a of aggregates) {
-    for (const k of Object.keys(a.labels)) {
-      labelKeys.add(k)
+    for (const [key, dist] of Object.entries(a.labels)) {
+      labelsAcc.update(key, (acc) => {
+        acc.n += 1
+        for (const [labelVal, freq] of Object.entries(dist)) {
+          acc.combined.set(labelVal, (acc.combined.get(labelVal) ?? 0) + freq)
+        }
+      })
     }
   }
-  for (const key of labelKeys) {
-    const combined: Record<string, number> = {}
-    let n = 0
-    for (const a of aggregates) {
-      const dist = a.labels[key]
-      if (dist === undefined) {
-        continue
-      }
-      n += 1
-      for (const [labelVal, freq] of Object.entries(dist)) {
-        combined[labelVal] = (combined[labelVal] ?? 0) + freq
-      }
-    }
-    const out: Record<string, number> = {}
-    for (const [k, v] of Object.entries(combined)) {
-      out[k] = v / n
-    }
-    avgLabels[key] = out
-  }
+  const avgLabels = labelsAcc.toRecord(({ combined, n }) => Object.fromEntries([...combined].map(([k, v]) => [k, v / n])))
 
   const assertionVals = aggregates.map((a) => a.assertions).filter((v): v is number => v !== null)
   const avgAssertions = assertionVals.length === 0 ? null : assertionVals.reduce((s, v) => s + v, 0) / assertionVals.length
