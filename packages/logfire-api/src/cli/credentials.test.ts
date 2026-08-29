@@ -106,6 +106,39 @@ token = "ignored"
     expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toBe('node_modules\n')
   })
 
+  it('restores .gitignore when credentials are written after logfire clean', () => {
+    const dir = join(makeTmpDir(), '.logfire')
+    const credentials = {
+      logfire_api_url: 'https://logfire-us.pydantic.dev',
+      project_name: 'myproject',
+      project_url: 'https://logfire.pydantic.dev/org/myproject',
+      token: 'write-token',
+    }
+    writeProjectCredentials(dir, credentials)
+    // `logfire clean` removes the ignore rule along with the credentials, and leaves the
+    // directory in place, so re-authenticating has to write the rule again.
+    removeProjectCredentials(dir)
+    expect(readdirSync(dir)).toEqual([])
+
+    writeProjectCredentials(dir, credentials)
+
+    expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toBe('*')
+  })
+
+  it("leaves a data directory holding the user's own files unignored", () => {
+    const dir = makeTmpDir()
+    writeFileSync(join(dir, 'notes.txt'), 'mine\n')
+
+    writeProjectCredentials(dir, {
+      logfire_api_url: 'https://logfire-us.pydantic.dev',
+      project_name: 'myproject',
+      project_url: 'https://logfire.pydantic.dev/org/myproject',
+      token: 'write-token',
+    })
+
+    expect(existsSync(join(dir, '.gitignore'))).toBe(false)
+  })
+
   it("adds the saved token to an existing data directory's ignore rules", () => {
     const dir = makeTmpDir()
     writeFileSync(join(dir, '.gitignore'), 'logfire_credentials.json\n')

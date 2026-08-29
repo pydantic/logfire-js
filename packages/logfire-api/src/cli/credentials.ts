@@ -8,6 +8,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -557,8 +558,6 @@ function writeUserTokensFile(path: string, tokens: ReadonlyMap<string, UserToken
 }
 
 export function ensureDataDir(dataDir: string): void {
-  // Match Python's `ensure_data_dir_exists`: only seed `.gitignore` when creating the
-  // directory, so an existing dir's ignore rules are never clobbered.
   if (existsSync(dataDir)) {
     // `lstatSync`, not `statSync`: the data directory lives inside the user's repository,
     // so a symlink can arrive by being committed to it, the same way a symlinked
@@ -574,10 +573,35 @@ export function ensureDataDir(dataDir: string): void {
     if (!stat.isDirectory()) {
       throw new LogfireCliError(`Data directory ${dataDir} exists but is not a directory`)
     }
+  } else {
+    mkdirSync(dataDir, { recursive: true })
+  }
+  seedGitignore(dataDir)
+}
+
+/**
+ * Write the `*` ignore rule for a directory that holds nothing but the files Logfire writes
+ * itself. That covers a newly created directory and one `logfire clean` has emptied, which
+ * removes the `.gitignore` along with the credentials. A directory with any other contents is
+ * left alone: `--data-dir` can point at a directory of the user's own, and `*` would ignore it.
+ */
+function seedGitignore(dataDir: string): void {
+  if (!readdirSync(dataDir).every(isDataDirFile)) {
     return
   }
-  mkdirSync(dataDir, { recursive: true })
-  writeFileSync(join(dataDir, '.gitignore'), '*')
+  try {
+    // Exclusive creation, so an existing `.gitignore` keeps its rules and a symlink planted in a
+    // data directory that arrived from elsewhere is refused rather than written through.
+    writeFileSync(join(dataDir, '.gitignore'), '*', { flag: 'wx' })
+  } catch (error) {
+    if (!hasErrorCode(error, 'EEXIST')) {
+      throw error
+    }
+  }
+}
+
+function isDataDirFile(name: string): boolean {
+  return name === '.gitignore' || name === PROJECT_CREDENTIALS_FILENAME || name.startsWith(READ_TOKEN_FILENAME)
 }
 
 function ensureReadTokenIgnored(dataDir: string): void {
