@@ -34,6 +34,7 @@ import {
   SPAN_NAME_EXPERIMENT,
 } from '../../evals'
 import type { ReportEvaluatorContext } from '../../evals'
+import { computeAverages } from '../reporting'
 import { withMemoryExporter } from './withMemoryExporter'
 
 const sleep = async (ms: number): Promise<void> =>
@@ -718,5 +719,42 @@ describe('offline evals — span attribute parity', () => {
     expect(result.cases[0]?.evaluator_failures.map((f) => [f.name, f.error_message])).toEqual([
       ['NanScore', 'Evaluator returned a non-finite value for NanScore: NaN'],
     ])
+  })
+
+  it('keeps a task-run attribute or metric named like an Object.prototype member', async () => {
+    const dataset = new Dataset<{ x: number }, number>({
+      cases: [new Case<{ x: number }, number>({ expectedOutput: 1, inputs: { x: 1 }, name: 'a' })],
+      evaluators: [new EqualsExpected()],
+      name: 'proto-names',
+    })
+
+    // Metric names are sliced off span attribute keys in `extractMetrics`, so they arrive from
+    // the provider's usage payload rather than being chosen by the SDK.
+    const { result } = await withMemoryExporter(async () =>
+      dataset.evaluate(({ x }) => {
+        setEvalAttribute('__proto__', { polluted: true })
+        setEvalAttribute('toString', 'attr')
+        incrementEvalMetric('__proto__', 5)
+        incrementEvalMetric('toString', 5)
+        incrementEvalMetric('toString', 3)
+        return x
+      })
+    )
+
+    // Held in variables: written as a literal, `dot-notation` rewrites the lookup to
+    // `metrics.toString`, which typechecks as the inherited method and stops asserting anything.
+    const inherited = 'toString'
+    const protoName = '__proto__'
+    const only = [...result.cases][0]
+    expect(only).toBeDefined()
+    expect(Object.keys(only?.attributes ?? {}).sort()).toEqual([protoName, inherited])
+    expect(Object.keys(only?.metrics ?? {}).sort()).toEqual([protoName, inherited])
+    expect(only?.metrics[inherited]).toBe(8)
+    expect(only?.metrics[protoName]).toBe(5)
+    // Assigning `{ polluted: true }` under `__proto__` would have replaced the prototype instead.
+    expect(Object.getPrototypeOf(only?.attributes)).toBe(Object.prototype)
+
+    // A corrupted metric propagates: `sum += value` on a string yields a non-numeric mean.
+    expect(computeAverages('proto-names', result.cases).metrics[inherited]).toEqual({ count: 1, mean: 8 })
   })
 })
