@@ -31,6 +31,36 @@ describe('CLI entrypoint', () => {
     expect(stdout.text()).not.toMatch(/^  gateway\s/mu)
   })
 
+  it('reads the base URL from LOGFIRE_BASE_URL, with both flags winning over it', async () => {
+    const request = async (argv: string[], env: Record<string, string | undefined>): Promise<string> => {
+      const urls: string[] = []
+      const fetchImpl = (async (input: RequestInfo | URL) => {
+        urls.push(input instanceof Request ? input.url : input.toString())
+        return new Response('{}', { headers: { 'content-type': 'application/json' }, status: 200 })
+      }) as typeof fetch
+      await runCli(argv, {
+        env: { LOGFIRE_TOKEN: 'pylf_v1_us_1234567890', ...env },
+        fetch: fetchImpl,
+        homeDir: makeTmpDir(),
+        stderr: new MemoryOutput(),
+        stdout: new MemoryOutput(),
+      })
+      return urls[0] ?? ''
+    }
+    const selfHosted = { LOGFIRE_BASE_URL: 'https://selfhosted.example.com' }
+
+    expect(await request(['whoami'], selfHosted)).toBe('https://selfhosted.example.com/v1/info')
+    expect(await request(['whoami'], {})).toBe('https://logfire-us.pydantic.dev/v1/info')
+    expect(await request(['--base-url=https://flag.example.com', 'whoami'], selfHosted)).toBe('https://flag.example.com/v1/info')
+    expect(await request(['--region=eu', 'whoami'], selfHosted)).toBe('https://logfire-eu.pydantic.dev/v1/info')
+    // A trailing slash is normalized the same way `--base-url` is.
+    expect(await request(['whoami'], { LOGFIRE_BASE_URL: 'https://selfhosted.example.com/' })).toBe(
+      'https://selfhosted.example.com/v1/info'
+    )
+    // Blank is not a request for anything, unlike `--base-url=`, which stays an error.
+    expect(await request(['whoami'], { LOGFIRE_BASE_URL: '   ' })).toBe('https://logfire-us.pydantic.dev/v1/info')
+  })
+
   it('rejects a blank --base-url value', async () => {
     const stderr = new MemoryOutput()
     const fetchImpl = vi.fn<typeof fetch>()

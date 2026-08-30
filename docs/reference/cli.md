@@ -32,6 +32,7 @@ The JavaScript CLI does not implement Python SDK commands such as `run`, `inspec
 - `--version`: print the CLI, Node.js, and platform versions, then exit.
 - `--region <region>`: select a Logfire data region (`us` or `eu`).
 - `--base-url <url>`: target a self-hosted or custom Logfire API. Mutually exclusive with `--region`.
+- `LOGFIRE_BASE_URL`: the same target as `--base-url`, read from the environment. Either flag takes precedence over it.
 
 ## Auth
 
