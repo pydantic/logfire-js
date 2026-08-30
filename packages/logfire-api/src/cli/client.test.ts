@@ -36,6 +36,42 @@ describe('CLI client', () => {
     ])
   })
 
+  it('reports a non-JSON device-auth response instead of a parse error', async () => {
+    const proxyPage = (): Response =>
+      new Response('<html><body>Sign in to continue</body></html>', {
+        headers: { 'content-type': 'text/html' },
+        status: 200,
+      })
+
+    await expect(
+      requestDeviceCode({ baseUrl: 'https://logfire-us.pydantic.dev', fetch: fetchSequence([], [proxyPage()]) })
+    ).rejects.toThrow('Failed to request a device code: the response was not JSON.')
+
+    // The poll retries an unparseable body the same way it retries a rejected request, and
+    // gives up on the fourth, so a captive portal ends the login with the CLI's own message.
+    const calls: CapturedRequest[] = []
+    const fetchImpl = fetchSequence(calls, [proxyPage(), proxyPage(), proxyPage(), proxyPage()])
+    await expect(pollForToken({ baseUrl: 'https://logfire-us.pydantic.dev', deviceCode: 'DC', fetch: fetchImpl })).rejects.toThrow(
+      'Failed to poll for token.'
+    )
+    expect(calls.length).toBe(4)
+  })
+
+  it('keeps polling while the device-auth response body is null', async () => {
+    const calls: CapturedRequest[] = []
+    const fetchImpl = fetchSequence(calls, [
+      jsonResponse(null),
+      jsonResponse(null),
+      jsonResponse({ expiration: '2099-12-31T23:59:59Z', token: 'user-token' }),
+    ])
+
+    await expect(pollForToken({ baseUrl: 'https://logfire-us.pydantic.dev', deviceCode: 'DC', fetch: fetchImpl })).resolves.toEqual({
+      expiration: '2099-12-31T23:59:59Z',
+      token: 'user-token',
+    })
+    expect(calls.length).toBe(3)
+  })
+
   it('uses project endpoints and auth headers', async () => {
     const calls: CapturedRequest[] = []
     const client = new LogfireApiClient({
