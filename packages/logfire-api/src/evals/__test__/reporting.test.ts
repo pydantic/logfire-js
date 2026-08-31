@@ -113,6 +113,32 @@ describe('lifecycle hooks', () => {
     expect(events).toEqual(['teardown'])
   })
 
+  it('records a lifecycle constructor error as a case failure without rejecting the experiment', async () => {
+    class ThrowingConstructor extends CaseLifecycle<string, string> {
+      constructor(c: Case<string, string>) {
+        super(c)
+        if (c.name === 'b') {
+          throw new Error('ctor boom')
+        }
+      }
+    }
+    const ds = new Dataset<string, string>({
+      cases: [
+        new Case<string, string>({ inputs: 'a', name: 'a' }),
+        new Case<string, string>({ inputs: 'b', name: 'b' }),
+        new Case<string, string>({ inputs: 'c', name: 'c' }),
+      ],
+      name: 'lifecycle-ctor-test',
+    })
+
+    const { result } = await withMemoryExporter(async () => ds.evaluate((input) => input.toUpperCase(), { lifecycle: ThrowingConstructor }))
+
+    // Sorted: cases land in completion order, which concurrency makes non-deterministic.
+    expect(result.cases.map((c) => c.name).sort()).toEqual(['a', 'c'])
+    expect(result.failures.map((f) => f.name)).toEqual(['b'])
+    expect(result.failures[0]?.error_message).toBe('ctor boom')
+  })
+
   it('records teardown errors on failed cases without rejecting the experiment', async () => {
     class TeardownThrows extends CaseLifecycle<string, string> {
       override async teardown(): Promise<void> {
