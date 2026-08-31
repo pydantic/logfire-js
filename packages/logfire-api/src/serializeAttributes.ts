@@ -53,7 +53,12 @@ export function serializeAttributes(attributes: RawAttributes): SerializedAttrib
 
     if (value === null || value === undefined) {
       nullArgs.push(key)
-    } else if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    } else if (typeof value === 'number') {
+      // OTLP carries a double, and JSON has no NaN or Infinity, so these serialize to `null` and
+      // the value is lost. Python's `prepare_otlp_attribute` sends the string instead. `String`
+      // spells them the way the message template already does, so the two agree.
+      result[key] = Number.isFinite(value) ? value : String(value)
+    } else if (typeof value === 'string' || typeof value === 'boolean') {
       result[key] = value
     } else if (value instanceof Date) {
       try {

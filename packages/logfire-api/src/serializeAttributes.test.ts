@@ -28,6 +28,26 @@ describe('serializeAttributes', () => {
     })
   })
 
+  test('sends a non-finite number as a string rather than losing it to JSON null', () => {
+    const result = serializeAttributes({
+      inf: Number.POSITIVE_INFINITY,
+      nan: Number.NaN,
+      neginf: Number.NEGATIVE_INFINITY,
+      ok: 1.5,
+      zero: -0,
+    })
+
+    expect(result).toEqual({
+      inf: 'Infinity',
+      nan: 'NaN',
+      neginf: '-Infinity',
+      ok: 1.5,
+      zero: -0,
+    })
+    // The point of the change: these used to reach the wire as null.
+    expect(JSON.stringify(result)).toBe('{"inf":"Infinity","nan":"NaN","neginf":"-Infinity","ok":1.5,"zero":0}')
+  })
+
   test('emits deterministic nested object schema for ordinary JSON-like values', () => {
     const result = serializeAttributes({
       payload: {
