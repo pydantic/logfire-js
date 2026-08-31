@@ -260,21 +260,32 @@ async function shutdownRuntime(runtime: ActiveRuntime, options: ShutdownRuntimeO
       if (options.shutdownVariables !== false) {
         shutdownOperations.push(shutdownVariables())
       }
-      // `allSettled`, not `all`: `all` rejects on the first failure, so the other shutdown was
-      // left running past this call and its error was dropped, in a function whose whole shape
-      // exists to collect failures. Both are already in flight, so this only waits for what was
-      // started, and the deadline below still bounds it.
-      const shutdownPromise = Promise.allSettled(shutdownOperations)
-      let settled: PromiseSettledResult<void>[] = []
+      // Each failure is recorded as its own operation settles, rather than read off a combined
+      // result. `Promise.all` rejected on the first failure, leaving the other shutdown running
+      // past this call with its error dropped; waiting for a combined result instead would lose
+      // an early failure whenever the other operation outlives the deadline. Both are already in
+      // flight, so this only waits for what was started, and the deadline still bounds it.
+      const operationErrors: unknown[] = []
+      const allSettled = Promise.all(
+        shutdownOperations.map(async (operation) => {
+          try {
+            await operation
+          } catch (e: unknown) {
+            operationErrors.push(e)
+          }
+        })
+      )
+      let deadlineError: unknown
+      let deadlineExceeded = false
       try {
-        settled = await withDeadline('shutdown', deadline, shutdownPromise)
+        await withDeadline('shutdown', deadline, allSettled)
       } catch (e: unknown) {
-        errors.push(e)
+        deadlineError = e
+        deadlineExceeded = true
       }
-      for (const outcome of settled) {
-        if (outcome.status === 'rejected') {
-          errors.push(outcome.reason)
-        }
+      errors.push(...operationErrors)
+      if (deadlineExceeded) {
+        errors.push(deadlineError)
       }
 
       if (errors.length === 1) {

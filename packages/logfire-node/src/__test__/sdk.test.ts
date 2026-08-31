@@ -702,14 +702,42 @@ describe('sdk lifecycle helpers', () => {
     start()
 
     const shutdownCall = shutdown()
-    // `Promise.all` rejected on the SDK error alone, so the call finished while this was pending.
+    // The flush runs first, so the queued promise is not consumed yet. Rejecting before the
+    // teardown has started would make the pending-ness below prove nothing.
+    await vi.waitFor(() => {
+      expect(mocks.shutdownVariablesCalls).toBe(1)
+    })
+    expect(variablesSettled).toBe(false)
     rejectVariables(variablesError)
 
     const error: unknown = await shutdownCall.catch((caught: unknown) => caught)
     expect(variablesSettled).toBe(true)
     expect(error).toBeInstanceOf(AggregateError)
     expect((error as AggregateError).message).toBe('logfire SDK: shutdown failed')
-    expect((error as AggregateError).errors).toEqual([sdkError, variablesError])
+    // Sorted: errors are recorded in settle order, which is not something to pin.
+    expect(((error as AggregateError).errors as Error[]).map((e) => e.message).sort()).toEqual([
+      'sdk shutdown failed',
+      'variables shutdown failed',
+    ])
+  })
+
+  it('keeps an early shutdown failure when the other teardown outlives the deadline', async () => {
+    const sdkError = new Error('sdk shutdown failed')
+    mocks.queueShutdownPromise(Promise.reject(sdkError))
+    mocks.queueShutdownVariablesPromise(
+      new Promise<void>(() => {
+        // Never settles: the point is that the SDK error must survive the deadline firing.
+      })
+    )
+    start()
+
+    const error: unknown = await shutdown({ flush: false, timeoutMillis: 20 }).catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(AggregateError)
+    expect(((error as AggregateError).errors as Error[]).map((e) => e.message)).toEqual([
+      'sdk shutdown failed',
+      'logfire SDK: shutdown timed out',
+    ])
   })
 
   it('concurrent shutdown calls share one shutdown', async () => {
