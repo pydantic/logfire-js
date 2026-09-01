@@ -302,7 +302,8 @@ preserves the batch and is remembered for the active replay controller, but it
 may briefly use the main thread.
 
 A backend proxy can add application-specific authentication, origin checks, or
-rate limits:
+rate limits. Keep its replay headers synchronous so lifecycle uploads do not
+wait on asynchronous work:
 
 ```ts
 logfire.configure({
@@ -311,8 +312,8 @@ logfire.configure({
   sessionReplay: {
     load: () => import('@pydantic/logfire-session-replay'),
     replayUrl: '/logfire-proxy/v1/replay',
-    headers: async () => ({
-      'X-CSRF': await getCsrfToken(),
+    headers: () => ({
+      'X-CSRF': getCsrfToken(),
     }),
   },
 })
