@@ -303,24 +303,30 @@ subsequent replay events only peek at the session id and do not refresh the
 timeout. Span starts are the ongoing automatic activity;
 `getBrowserSessionId()` also explicitly touches the session.
 
-Unlike browser traces, replay uploads still require a browser-safe proxy
-endpoint. The replay ingest endpoint does not currently accept arbitrary-origin
-browser requests. The proxy should authenticate the browser request with your
-application session or CSRF mechanism and add the Logfire write token
-server-side. Direct token configuration remains an advanced escape hatch for
-trusted or same-origin runtimes:
+Session replay uses the same restricted frontend application token as traces
+and metrics. Derive the regional replay endpoint from the generated trace URL:
 
 ```js
+const frontendApplicationConfig = {
+  // Copy these values from Project settings > Frontend applications.
+  traceUrl: 'https://logfire-us.pydantic.dev/v1/traces',
+  traceExporterHeaders: () => ({
+    Authorization: 'Bearer <frontend-application-token>',
+  }),
+}
+
 logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'browser-app',
+  ...frontendApplicationConfig,
   sessionReplay: {
     load: () => import('@pydantic/logfire-session-replay'),
-    replayUrl: 'https://logfire-api.pydantic.dev/v1/replay',
-    token: '<write-token>',
+    replayUrl: new URL('/v1/replay', frontendApplicationConfig.traceUrl).toString(),
+    headers: frontendApplicationConfig.traceExporterHeaders,
   },
 })
 ```
+
+Use a backend proxy only when your application needs additional server-side
+authentication, origin checks, or rate limits.
 
 After a replay reaches the minimum duration, hiding the document or receiving
 `pagehide` makes a bounded best-effort start of the earliest compressed chunks.
@@ -330,7 +336,7 @@ browser's keepalive quota is also shared with unrelated page traffic. Delivery
 after page freeze or termination is therefore not guaranteed. Functional
 `headers` and `token` values are resolved for every upload; an asynchronous
 resolver can finish too late for a lifecycle request, so prefer credentials that
-are synchronously available from your same-origin proxy flow.
+are synchronously available, such as the generated frontend application headers.
 
 Replays shorter than `minSessionDurationMs` are not uploaded (5 seconds by
 default). An earlier flush remains buffered until the minimum is reached, and

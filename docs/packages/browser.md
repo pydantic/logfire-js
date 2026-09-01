@@ -243,18 +243,15 @@ Install the optional replay package when you want rrweb session recording:
 npm install @pydantic/logfire-session-replay
 ```
 
-Unlike browser traces, replay uploads still require a browser-safe proxy endpoint. The replay ingest endpoint does not currently accept arbitrary-origin browser requests:
+Session replay uses the same restricted frontend application token as traces and metrics:
 
 ```ts
 const cleanup = logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
+  ...frontendApplicationConfig,
   sessionReplay: {
     load: () => import('@pydantic/logfire-session-replay'),
-    replayUrl: '/logfire-proxy/v1/replay',
-    headers: async () => ({
-      'X-CSRF': await getCsrfToken(),
-    }),
+    replayUrl: new URL('/v1/replay', frontendApplicationConfig.traceUrl).toString(),
+    headers: frontendApplicationConfig.traceExporterHeaders,
     maskAllText: true,
     maskAllInputs: true,
   },
@@ -298,16 +295,15 @@ browser's keepalive quota is also shared with unrelated page traffic. Delivery
 after page freeze or termination is therefore not guaranteed. Functional
 `headers` and `token` values are resolved for every upload; an asynchronous
 resolver can finish too late for a lifecycle request, so prefer credentials that
-are synchronously available from your same-origin proxy flow.
+are synchronously available, such as the generated frontend application headers.
 
 Ordinary replay uploads automatically fall back to synchronous gzip if a
 restrictive Content Security Policy blocks the compressor worker. The fallback
 preserves the batch and is remembered for the active replay controller, but it
 may briefly use the main thread.
 
-Direct token usage is available as an advanced escape hatch for trusted or
-same-origin runtimes, but it exposes a normal write token and is not the default
-browser deployment model:
+A backend proxy remains available when your application needs additional
+server-side authentication, origin checks, or rate limits:
 
 ```ts
 logfire.configure({
@@ -315,8 +311,10 @@ logfire.configure({
   serviceName: 'web-app',
   sessionReplay: {
     load: () => import('@pydantic/logfire-session-replay'),
-    replayUrl: 'https://logfire-api.pydantic.dev/v1/replay',
-    token: '<write-token>',
+    replayUrl: '/logfire-proxy/v1/replay',
+    headers: async () => ({
+      'X-CSRF': await getCsrfToken(),
+    }),
   },
 })
 ```
