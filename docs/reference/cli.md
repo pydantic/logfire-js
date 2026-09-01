@@ -142,4 +142,4 @@ Both commands accept `--data-dir <dir>` to read or remove credentials from a dir
 
 ## Browser Safety
 
-Local credential files are Node-only. Browser code must not receive a Logfire write token; configure `@pydantic/logfire-browser` with a backend `traceUrl` proxy instead.
+Local credential files are Node-only. Browser applications use the restricted token and ingest URL generated under **Project settings > Frontend applications**. Do not publish a normal Logfire write token. See the [Browser package](../packages/browser.md) for setup.

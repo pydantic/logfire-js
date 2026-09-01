@@ -63,7 +63,7 @@ Store production values as Worker secrets.
 
 ## Browser
 
-`@pydantic/logfire-browser` does not read Logfire credentials from environment variables. Configure a `traceUrl` that points at your backend proxy.
+`@pydantic/logfire-browser` does not read Logfire credentials from environment variables. Use the restricted token, `traceUrl`, and `traceExporterHeaders` generated for a frontend application. A backend proxy remains optional for applications that need additional server-side controls.
 
 ## Generic OpenTelemetry
 

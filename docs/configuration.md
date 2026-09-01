@@ -46,7 +46,7 @@ then `OTEL_*` environment variables.
 
 ## Tokens
 
-Node.js and Cloudflare read `LOGFIRE_TOKEN` by default. Browser code must not receive the token; use a backend proxy and configure `traceUrl` instead.
+Node.js and Cloudflare read `LOGFIRE_TOKEN` by default. Browser applications use a restricted frontend application token and the generated `traceUrl` and `traceExporterHeaders` settings. Do not publish a normal Logfire write token. See the [Browser package](packages/browser.md) for setup.
 
 For local Node.js development, you can also let the CLI write project credentials:
 

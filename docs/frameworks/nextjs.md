@@ -5,7 +5,7 @@ description: Use Logfire with Next.js server-side OpenTelemetry and optional cli
 
 # Next.js
 
-Next.js can emit server-side OpenTelemetry through `@vercel/otel`. Client-side browser traces use `@pydantic/logfire-browser` and a proxy endpoint so the write token stays server-side.
+Next.js can emit server-side OpenTelemetry through `@vercel/otel`. Client-side browser traces use `@pydantic/logfire-browser` with a restricted frontend application token. A proxy remains available when you need additional server-side controls.
 
 ## Server-Side Tracing
 
@@ -59,7 +59,40 @@ Install the browser package:
 npm install @pydantic/logfire-browser @opentelemetry/auto-instrumentations-web
 ```
 
-Create a proxy route or middleware that forwards browser OTLP requests to Logfire with the `Authorization` header. Browser requests should go to this same-origin proxy, not directly to the Logfire API.
+Create a frontend application under **Project settings > Frontend applications**, then copy its generated browser setup. The restricted token can only write data for that application and is safe to include in the browser bundle. See the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for the complete flow.
+
+Configure the browser package in a client-only component using the generated `traceUrl` and `traceExporterHeaders` values:
+
+```tsx
+'use client'
+
+import * as logfire from '@pydantic/logfire-browser'
+import { useEffect } from 'react'
+
+export function ClientInstrumentation() {
+  useEffect(() => {
+    const shutdown = logfire.configure({
+      traceUrl: 'https://logfire-us.pydantic.dev/v1/traces',
+      traceExporterHeaders: () => ({
+        Authorization: 'Bearer <frontend-application-token>',
+      }),
+      autoInstrumentations: true,
+    })
+
+    return () => {
+      void shutdown()
+    }
+  }, [])
+
+  return null
+}
+```
+
+If you import the component from a server-rendered page, load it with `next/dynamic` and `ssr: false` so browser instrumentation only runs in the browser.
+
+### Optional Proxy
+
+Use a proxy route or middleware if you need application-specific authentication, origin checks, or rate limits in front of browser ingest.
 
 For Next.js 16 and later, place this code in `proxy.ts` in the project root, or in `src/proxy.ts` if your app uses `src`.
 
@@ -88,7 +121,7 @@ export const config = {
 }
 ```
 
-Then configure the browser package in a client-only component:
+Then point the browser package at the proxy:
 
 ```tsx
 'use client'
@@ -113,7 +146,5 @@ export function ClientInstrumentation() {
   return null
 }
 ```
-
-If you import the component from a server-rendered page, load it with `next/dynamic` and `ssr: false` so browser instrumentation only runs in the browser.
 
 See `examples/nextjs` and `examples/nextjs-client-side-instrumentation` for working projects.
