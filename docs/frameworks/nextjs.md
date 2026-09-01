@@ -61,34 +61,22 @@ npm install @pydantic/logfire-browser @opentelemetry/auto-instrumentations-web
 
 Create a frontend application under **Project settings > Frontend applications**, then copy its generated browser setup. The token can only write telemetry for that frontend application and cannot read project data. Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification.
 
-Configure the browser package in a client-only component using the generated `traceUrl` and `traceExporterHeaders` values:
+For Next.js 15.3 and later, configure the browser package in
+`instrumentation-client.ts` using the generated `traceUrl` and
+`traceExporterHeaders` values. Next.js loads this file once in the browser
+before the application becomes interactive.
 
-```tsx
-'use client'
-
+```ts title="instrumentation-client.ts"
 import * as logfire from '@pydantic/logfire-browser'
-import { useEffect } from 'react'
 
-export function ClientInstrumentation() {
-  useEffect(() => {
-    const shutdown = logfire.configure({
-      traceUrl: 'https://logfire-us.pydantic.dev/v1/traces',
-      traceExporterHeaders: () => ({
-        Authorization: 'Bearer <frontend-application-token>',
-      }),
-      autoInstrumentations: true,
-    })
-
-    return () => {
-      void shutdown()
-    }
-  }, [])
-
-  return null
-}
+logfire.configure({
+  traceUrl: 'https://logfire-us.pydantic.dev/v1/traces',
+  traceExporterHeaders: () => ({
+    Authorization: 'Bearer <frontend-application-token>',
+  }),
+  autoInstrumentations: true,
+})
 ```
-
-If you import the component from a server-rendered page, load it with `next/dynamic` and `ssr: false` so browser instrumentation only runs in the browser.
 
 ### Optional Proxy
 
@@ -121,30 +109,16 @@ export const config = {
 }
 ```
 
-Then point the browser package at the proxy:
+Then point `instrumentation-client.ts` at the proxy:
 
-```tsx
-'use client'
-
-import { getWebAutoInstrumentations } from '@opentelemetry/auto-instrumentations-web'
+```ts title="instrumentation-client.ts"
 import * as logfire from '@pydantic/logfire-browser'
-import { useEffect } from 'react'
 
-export function ClientInstrumentation() {
-  useEffect(() => {
-    const shutdown = logfire.configure({
-      traceUrl: '/logfire-proxy/v1/traces',
-      serviceName: 'nextjs-browser',
-      instrumentations: [getWebAutoInstrumentations()],
-    })
-
-    return () => {
-      void shutdown()
-    }
-  }, [])
-
-  return null
-}
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'nextjs-browser',
+  autoInstrumentations: true,
+})
 ```
 
 See `examples/nextjs` and `examples/nextjs-client-side-instrumentation` for working projects.
