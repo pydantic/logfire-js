@@ -5,7 +5,7 @@ description: Use Logfire with Next.js server-side OpenTelemetry and optional cli
 
 # Next.js
 
-Next.js can emit server-side OpenTelemetry through `@vercel/otel`. Client-side browser traces use `@pydantic/logfire-browser` with a restricted frontend application token. A proxy remains available when you need additional server-side controls.
+Next.js can emit server-side OpenTelemetry through `@vercel/otel`. Use `@pydantic/logfire-browser` with a restricted frontend application token for client-side browser traces.
 
 ## Server-Side Tracing
 
@@ -59,7 +59,7 @@ Install the browser package:
 npm install @pydantic/logfire-browser @opentelemetry/auto-instrumentations-web
 ```
 
-Create a frontend application under **Project settings > Frontend applications**, then copy its generated browser setup. The restricted token can only write data for that application and is safe to include in the browser bundle. See the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for the complete flow.
+Create a frontend application under **Project settings > Frontend applications**, then copy its generated browser setup. The token can only write telemetry for that frontend application and cannot read project data. Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification.
 
 Configure the browser package in a client-only component using the generated `traceUrl` and `traceExporterHeaders` values:
 
@@ -92,7 +92,7 @@ If you import the component from a server-rendered page, load it with `next/dyna
 
 ### Optional Proxy
 
-Use a proxy route or middleware if you need application-specific authentication, origin checks, or rate limits in front of browser ingest.
+Use a proxy route or middleware if you need to authenticate browser requests, restrict origins, or apply application-specific rate limits.
 
 For Next.js 16 and later, place this code in `proxy.ts` in the project root, or in `src/proxy.ts` if your app uses `src`.
 

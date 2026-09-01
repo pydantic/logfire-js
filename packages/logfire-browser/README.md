@@ -19,17 +19,16 @@ If you're instrumenting Cloudflare, see the [Logfire CF workers package](https:/
 
 ## Basic usage
 
-Create a frontend application under **Project settings > Frontend applications** and paste its generated setup into your browser code. Its restricted token is safe to publish: it can only write data for that application and cannot read project data. A backend proxy is not required. See the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for the complete setup and the [Browser package docs](https://pydantic.dev/docs/logfire/instrument/typescript/packages/browser/) for SDK options.
+Create a frontend application under **Project settings > Frontend applications** and paste its generated setup into your browser code. Its token can only write telemetry for that frontend application and cannot read project data. Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification, then use the [Browser package docs](https://pydantic.dev/docs/logfire/instrument/typescript/packages/browser/) for SDK options.
 
 Ready to run examples are available in the repository [in vanilla browser](https://github.com/pydantic/logfire-js/tree/main/examples/browser), [with RUM and replay](https://github.com/pydantic/logfire-js/tree/main/examples/browser-rum-replay), and [in Next.js variants](https://github.com/pydantic/logfire-js/tree/main/examples/nextjs-client-side-instrumentation).
 
 Build the workspace packages before running the Vite examples. The standalone
 examples use same-origin browser URLs and development-only Express helpers that
 bind to `127.0.0.1`, accept exact configured origins, and inject the Logfire
-write token server-side. They demonstrate an optional proxy setup for local
-development, not a production proxy design. Never put a normal Logfire write
-token in a browser bundle; use a restricted frontend application token for
-direct ingest.
+write token server-side. They demonstrate a local proxy, not a production proxy
+design. For direct ingest, use a restricted frontend application token. Never
+put a normal Logfire write token in browser code.
 
 ## Managed Variables
 
@@ -303,8 +302,9 @@ subsequent replay events only peek at the session id and do not refresh the
 timeout. Span starts are the ongoing automatic activity;
 `getBrowserSessionId()` also explicitly touches the session.
 
-Session replay uses the same restricted frontend application token as traces
-and metrics. Derive the regional replay endpoint from the generated trace URL:
+Use the same restricted frontend application token for traces, metrics, and
+session replay. Derive the regional replay endpoint from the generated trace
+URL:
 
 ```js
 const frontendApplicationConfig = {
@@ -325,8 +325,8 @@ logfire.configure({
 })
 ```
 
-Use a backend proxy only when your application needs additional server-side
-authentication, origin checks, or rate limits.
+Use a backend proxy only when you need to authenticate browser requests,
+restrict origins, or apply application-specific rate limits.
 
 After a replay reaches the minimum duration, hiding the document or receiving
 `pagehide` makes a bounded best-effort start of the earliest compressed chunks.
@@ -335,8 +335,8 @@ budget is shared across its own unfinished keepalive requests, while the
 browser's keepalive quota is also shared with unrelated page traffic. Delivery
 after page freeze or termination is therefore not guaranteed. Functional
 `headers` and `token` values are resolved for every upload; an asynchronous
-resolver can finish too late for a lifecycle request, so prefer credentials that
-are synchronously available, such as the generated frontend application headers.
+resolver can finish too late for a lifecycle request. The generated frontend
+application headers are synchronous and work for these uploads.
 
 Replays shorter than `minSessionDurationMs` are not uploaded (5 seconds by
 default). An earlier flush remains buffered until the minimum is reached, and

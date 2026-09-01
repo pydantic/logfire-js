@@ -11,8 +11,9 @@ export interface BrowserMetricsOptions {
    */
   metricUrl: string
   /**
-   * Dynamic headers for the metric exporter. Direct ingest should use a
-   * restricted frontend application token, never a normal Logfire write token.
+   * Dynamic headers for the metric exporter. Direct Logfire ingest requires a
+   * restricted frontend application token. Never use a normal write token in
+   * browser code.
    */
   metricExporterHeaders?: () => Record<string, string> | Promise<Record<string, string>>
   /**

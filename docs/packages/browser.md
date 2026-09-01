@@ -1,15 +1,15 @@
 ---
 title: Browser Package
-description: Configure @pydantic/logfire-browser with a restricted frontend application token or an optional backend proxy.
+description: Configure @pydantic/logfire-browser for browser tracing, RUM, metrics, and session replay.
 ---
 
 # `@pydantic/logfire-browser`
 
 `@pydantic/logfire-browser` configures OpenTelemetry browser tracing and re-exports the manual `logfire` API for client-side spans and logs.
 
-Create a frontend application under **Project settings > Frontend applications**, then paste its generated setup into your browser code. The generated token is deliberately safe to publish: it can only write data for that frontend application and cannot read project data. A backend proxy is not required.
+Create a frontend application under **Project settings > Frontend applications**, then paste its generated setup into your browser code. Its token can only write telemetry for that frontend application and cannot read project data.
 
-See the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for the complete setup and verification flow. Do not publish a normal Logfire write token. Only frontend application tokens have the restricted permissions intended for browser bundles.
+Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification. Never put a normal Logfire write token in browser code.
 
 ## Install
 
@@ -36,7 +36,7 @@ logfire.configure({
 })
 ```
 
-The frontend application supplies the service name, so the browser cannot use its public token to report as another service. Keep the generated `traceUrl` and `traceExporterHeaders` when adding the options shown in the rest of this page.
+Logfire associates the token with the frontend application's service name, so it cannot report data for another application. Keep the generated `traceUrl` and `traceExporterHeaders` when adding the options shown in the rest of this page.
 
 `autoInstrumentations` is opt-in and lazily loads OpenTelemetry browser auto-instrumentations after the Logfire browser provider is ready. For advanced integrations, `instrumentations` also accepts factories, so custom instrumentation construction can be deferred until `configure()` has registered the provider.
 
@@ -182,9 +182,8 @@ and metric destination but ignore changed observer options with a diagnostic
 warning. If the initial lazy load or observer startup fails, a later
 `configure()` call retries it.
 
-To emit native OpenTelemetry histogram metrics in parallel with those spans,
-use the frontend application token for the regional metrics endpoint and opt
-Web Vitals into metrics:
+To also export Web Vitals as OpenTelemetry histogram metrics, configure the
+regional metrics endpoint with the same headers:
 
 ```ts
 logfire.configure({
@@ -243,7 +242,7 @@ Install the optional replay package when you want rrweb session recording:
 npm install @pydantic/logfire-session-replay
 ```
 
-Session replay uses the same restricted frontend application token as traces and metrics:
+Use the same endpoint host and headers for session replay:
 
 ```ts
 const cleanup = logfire.configure({
@@ -294,16 +293,16 @@ budget is shared across its own unfinished keepalive requests, while the
 browser's keepalive quota is also shared with unrelated page traffic. Delivery
 after page freeze or termination is therefore not guaranteed. Functional
 `headers` and `token` values are resolved for every upload; an asynchronous
-resolver can finish too late for a lifecycle request, so prefer credentials that
-are synchronously available, such as the generated frontend application headers.
+resolver can finish too late for a lifecycle request. The generated frontend
+application headers are synchronous and work for these uploads.
 
 Ordinary replay uploads automatically fall back to synchronous gzip if a
 restrictive Content Security Policy blocks the compressor worker. The fallback
 preserves the batch and is remembered for the active replay controller, but it
 may briefly use the main thread.
 
-A backend proxy remains available when your application needs additional
-server-side authentication, origin checks, or rate limits:
+A backend proxy can add application-specific authentication, origin checks, or
+rate limits:
 
 ```ts
 logfire.configure({
@@ -417,15 +416,14 @@ baggage.
 
 ## Optional Backend Proxy
 
-Direct ingest with a frontend application token is the standard setup. Use a
-backend proxy only when your application needs additional server-side access
-control, origin checks, or rate limits. A browser proxy should:
+Use a backend proxy when you need to authenticate browser requests, restrict
+origins, or apply application-specific rate limits. A browser proxy should:
 
-- accept requests from your frontend only
+- authenticate browser requests and restrict their origins
 - add `Authorization: <write-token>` server-side
-- forward traces to the Logfire OTLP trace endpoint and metrics to the OTLP
-  metrics endpoint
-- apply authentication, rate limiting, or origin checks for production apps
+- forward traces, metrics, and session replays to the corresponding Logfire
+  ingest endpoints
+- apply application-specific rate limits
 
 For Next.js, see [Next.js](../frameworks/nextjs.md). For a standalone browser example, see the `examples/browser` project in this repository.
 
