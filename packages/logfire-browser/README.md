@@ -19,13 +19,16 @@ If you're instrumenting Cloudflare, see the [Logfire CF workers package](https:/
 
 ## Basic usage
 
-See the [Logfire Browser docs for a primer](https://logfire.pydantic.dev/docs/integrations/javascript/browser/). Ready to run examples are available in the repository [in vanilla browser](https://github.com/pydantic/logfire-js/tree/main/examples/browser), [with RUM and replay](https://github.com/pydantic/logfire-js/tree/main/examples/browser-rum-replay), and [in Next.js variants](https://github.com/pydantic/logfire-js/tree/main/examples/nextjs-client-side-instrumentation).
+Create a frontend application under **Project settings > Frontend applications** and paste its generated setup into your browser code. Its token can only write telemetry for that frontend application and cannot read project data. Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification, then use the [Browser package docs](https://pydantic.dev/docs/logfire/instrument/typescript/packages/browser/) for SDK options.
+
+Ready to run examples are available in the repository [in vanilla browser](https://github.com/pydantic/logfire-js/tree/main/examples/browser), [with RUM and replay](https://github.com/pydantic/logfire-js/tree/main/examples/browser-rum-replay), and [in Next.js variants](https://github.com/pydantic/logfire-js/tree/main/examples/nextjs-client-side-instrumentation).
 
 Build the workspace packages before running the Vite examples. The standalone
 examples use same-origin browser URLs and development-only Express helpers that
 bind to `127.0.0.1`, accept exact configured origins, and inject the Logfire
-write token server-side. Do not put a write token in a browser bundle or treat
-those loopback helpers as a production proxy design.
+write token server-side. They demonstrate a local proxy, not a production proxy
+design. For direct ingest, use a restricted frontend application token. Never
+put a normal Logfire write token in browser code.
 
 ## Managed Variables
 
@@ -299,22 +302,31 @@ subsequent replay events only peek at the session id and do not refresh the
 timeout. Span starts are the ongoing automatic activity;
 `getBrowserSessionId()` also explicitly touches the session.
 
-Use a backend proxy for browser replay uploads. The proxy should authenticate
-the browser request with your application session or CSRF mechanism and add the
-Logfire write token server-side. Direct token configuration is available as an
-advanced escape hatch:
+Use the same restricted frontend application token for traces, metrics, and
+session replay. Derive the regional replay endpoint from the generated trace
+URL:
 
 ```js
+const frontendApplicationConfig = {
+  // Copy these values from Project settings > Frontend applications.
+  traceUrl: 'https://logfire-us.pydantic.dev/v1/traces',
+  traceExporterHeaders: () => ({
+    Authorization: 'Bearer <frontend-application-token>',
+  }),
+}
+
 logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'browser-app',
+  ...frontendApplicationConfig,
   sessionReplay: {
     load: () => import('@pydantic/logfire-session-replay'),
-    replayUrl: 'https://logfire-api.pydantic.dev/v1/replay',
-    token: '<write-token>',
+    replayUrl: new URL('/v1/replay', frontendApplicationConfig.traceUrl).toString(),
+    headers: frontendApplicationConfig.traceExporterHeaders,
   },
 })
 ```
+
+Use a backend proxy only when you need to authenticate browser requests,
+restrict origins, or apply application-specific rate limits.
 
 After a replay reaches the minimum duration, hiding the document or receiving
 `pagehide` makes a bounded best-effort start of the earliest compressed chunks.
@@ -323,8 +335,8 @@ budget is shared across its own unfinished keepalive requests, while the
 browser's keepalive quota is also shared with unrelated page traffic. Delivery
 after page freeze or termination is therefore not guaranteed. Functional
 `headers` and `token` values are resolved for every upload; an asynchronous
-resolver can finish too late for a lifecycle request, so prefer credentials that
-are synchronously available from your same-origin proxy flow.
+resolver can finish too late for a lifecycle request. The generated frontend
+application headers are synchronous and work for these uploads.
 
 Replays shorter than `minSessionDurationMs` are not uploaded (5 seconds by
 default). An earlier flush remains buffered until the minimum is reached, and
@@ -336,11 +348,11 @@ restrictive Content Security Policy blocks the compressor worker. The fallback
 preserves the batch and is remembered for the active replay controller, but it
 may briefly use the main thread.
 
-Do not use direct tokens in normal browser applications. Replay masks all
-rendered text and input values by default, leaves console capture off, and
-removes query strings and fragments from captured page, fetch/XHR, and
-navigation URLs. Network and navigation capture remain enabled. These defaults
-are inherited when the corresponding browser options are omitted.
+Replay masks all rendered text and input values by default, leaves console
+capture off, and removes query strings and fragments from captured page,
+fetch/XHR, and navigation URLs. Network and navigation capture remain enabled.
+These defaults are inherited when the corresponding browser options are
+omitted.
 
 Use `blockSelector` to omit a subtree. Set `maskAllText: false` only when
 visible text recording is acceptable; `maskTextSelector` can then selectively

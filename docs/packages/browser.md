@@ -1,13 +1,15 @@
 ---
 title: Browser Package
-description: Configure @pydantic/logfire-browser for browser tracing with an authenticated backend proxy.
+description: Configure @pydantic/logfire-browser for browser tracing, RUM, metrics, and session replay.
 ---
 
 # `@pydantic/logfire-browser`
 
 `@pydantic/logfire-browser` configures OpenTelemetry browser tracing and re-exports the manual `logfire` API for client-side spans and logs.
 
-Browser telemetry must be sent through your own backend proxy. Do not put a Logfire write token in browser code, and do not configure browser code to send directly to `https://logfire-api.pydantic.dev/v1/traces`. Requests from arbitrary browser origins are blocked by CORS, and adding an `Authorization` header in client code would expose the write token.
+Create a frontend application under **Project settings > Frontend applications**, then paste its generated setup into your browser code. Its token can only write telemetry for that frontend application and cannot read project data.
+
+Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification. Never put a normal Logfire write token in browser code.
 
 ## Install
 
@@ -20,17 +22,21 @@ npm install @pydantic/logfire-browser
 ```ts
 import * as logfire from '@pydantic/logfire-browser'
 
-const url = new URL('/logfire-proxy/v1/traces', window.location.origin)
+const frontendApplicationConfig = {
+  // Copy these region-specific values from the frontend application page.
+  traceUrl: 'https://logfire-us.pydantic.dev/v1/traces',
+  traceExporterHeaders: () => ({
+    Authorization: 'Bearer <frontend-application-token>',
+  }),
+}
 
 logfire.configure({
-  traceUrl: url.toString(),
-  serviceName: 'web-app',
-  serviceVersion: '1.0.0',
+  ...frontendApplicationConfig,
   autoInstrumentations: true,
 })
 ```
 
-`traceUrl` should point to a server-side endpoint that accepts OTLP trace requests from your browser instrumentation, forwards them to Logfire, and adds the `Authorization` header on the server.
+Logfire associates the token with the frontend application's service name, so it cannot report data for another application. Keep the generated `traceUrl` and `traceExporterHeaders` when adding the options shown in the rest of this page.
 
 `autoInstrumentations` is opt-in and lazily loads OpenTelemetry browser auto-instrumentations after the Logfire browser provider is ready. For advanced integrations, `instrumentations` also accepts factories, so custom instrumentation construction can be deferred until `configure()` has registered the provider.
 
@@ -38,8 +44,7 @@ Use `diagLogLevel` while troubleshooting local browser instrumentation:
 
 ```ts
 logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
+  ...frontendApplicationConfig,
   autoInstrumentations: true,
   diagLogLevel: logfire.DiagLogLevel.ALL,
 })
@@ -56,8 +61,7 @@ created by the configured browser provider:
 
 ```ts
 logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
+  ...frontendApplicationConfig,
   rum: { session: true },
 })
 ```
@@ -73,8 +77,7 @@ for a browser session:
 
 ```ts
 logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
+  ...frontendApplicationConfig,
   rum: {
     session: {
       getRouteName: () => router.currentRoute.value.matched.at(-1)?.path,
@@ -107,8 +110,7 @@ raw page URL, or suppress them:
 
 ```ts
 logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
+  ...frontendApplicationConfig,
   rum: {
     session: {
       urlAttributes: (url) => ({ full: url.href, path: url.pathname }),
@@ -117,8 +119,7 @@ logfire.configure({
 })
 
 logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
+  ...frontendApplicationConfig,
   rum: {
     session: {
       urlAttributes: false,
@@ -136,8 +137,7 @@ Enable `rum.webVitals` to record Core Web Vitals from real browser sessions:
 
 ```ts
 logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
+  ...frontendApplicationConfig,
   rum: { webVitals: true },
 })
 ```
@@ -160,8 +160,7 @@ session options alongside Web Vitals:
 
 ```ts
 logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
+  ...frontendApplicationConfig,
   rum: {
     session: {
       urlAttributes: (url) => ({
@@ -183,16 +182,16 @@ and metric destination but ignore changed observer options with a diagnostic
 warning. If the initial lazy load or observer startup fails, a later
 `configure()` call retries it.
 
-To emit native OpenTelemetry histogram metrics in parallel with those spans,
-configure a browser-safe metrics proxy and opt Web Vitals into metrics:
+To also export Web Vitals as OpenTelemetry histogram metrics, configure the
+regional metrics endpoint with the same headers:
 
 ```ts
 logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
+  ...frontendApplicationConfig,
   metrics: {
-    metricUrl: '/logfire-proxy/v1/metrics',
+    metricUrl: new URL('/v1/metrics', frontendApplicationConfig.traceUrl).toString(),
+    metricExporterHeaders: frontendApplicationConfig.traceExporterHeaders,
   },
-  serviceName: 'web-app',
   rum: {
     webVitals: {
       metrics: true,
@@ -243,18 +242,15 @@ Install the optional replay package when you want rrweb session recording:
 npm install @pydantic/logfire-session-replay
 ```
 
-Configure replay with a browser-safe proxy endpoint:
+Use the same endpoint host and headers for session replay:
 
 ```ts
 const cleanup = logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
+  ...frontendApplicationConfig,
   sessionReplay: {
     load: () => import('@pydantic/logfire-session-replay'),
-    replayUrl: '/logfire-proxy/v1/replay',
-    headers: async () => ({
-      'X-CSRF': await getCsrfToken(),
-    }),
+    replayUrl: new URL('/v1/replay', frontendApplicationConfig.traceUrl).toString(),
+    headers: frontendApplicationConfig.traceExporterHeaders,
     maskAllText: true,
     maskAllInputs: true,
   },
@@ -297,17 +293,17 @@ budget is shared across its own unfinished keepalive requests, while the
 browser's keepalive quota is also shared with unrelated page traffic. Delivery
 after page freeze or termination is therefore not guaranteed. Functional
 `headers` and `token` values are resolved for every upload; an asynchronous
-resolver can finish too late for a lifecycle request, so prefer credentials that
-are synchronously available from your same-origin proxy flow.
+resolver can finish too late for a lifecycle request. The generated frontend
+application headers are synchronous and work for these uploads.
 
 Ordinary replay uploads automatically fall back to synchronous gzip if a
 restrictive Content Security Policy blocks the compressor worker. The fallback
 preserves the batch and is remembered for the active replay controller, but it
 may briefly use the main thread.
 
-Direct token usage is available as an advanced escape hatch, but it exposes the
-write token to browser code and should not be the default browser deployment
-model:
+A backend proxy can add application-specific authentication, origin checks, or
+rate limits. Keep its replay headers synchronous so lifecycle uploads do not
+wait on asynchronous work:
 
 ```ts
 logfire.configure({
@@ -315,8 +311,10 @@ logfire.configure({
   serviceName: 'web-app',
   sessionReplay: {
     load: () => import('@pydantic/logfire-session-replay'),
-    replayUrl: 'https://logfire-api.pydantic.dev/v1/replay',
-    token: '<write-token>',
+    replayUrl: '/logfire-proxy/v1/replay',
+    headers: () => ({
+      'X-CSRF': getCsrfToken(),
+    }),
   },
 })
 ```
@@ -348,8 +346,7 @@ the browser tracer provider:
 
 ```ts
 logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
+  ...frontendApplicationConfig,
   spanProcessors: [customProcessor],
 })
 ```
@@ -382,8 +379,7 @@ are created:
 
 ```ts
 logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
+  ...frontendApplicationConfig,
   minLevel: 'warning',
 })
 ```
@@ -402,8 +398,7 @@ values onto Logfire manual spans and logs:
 
 ```ts
 logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
+  ...frontendApplicationConfig,
   baggage: {
     spanAttributes: ['tenant', 'region'],
   },
@@ -420,15 +415,16 @@ Baggage propagates across service boundaries. Do not store secrets,
 credentials, session cookies, raw emails, or other sensitive user data in
 baggage.
 
-## Proxy Requirement
+## Optional Backend Proxy
 
-A browser proxy should:
+Use a backend proxy when you need to authenticate browser requests, restrict
+origins, or apply application-specific rate limits. A browser proxy should:
 
-- accept requests from your frontend only
+- authenticate browser requests and restrict their origins
 - add `Authorization: <write-token>` server-side
-- forward traces to the Logfire OTLP trace endpoint and metrics to the OTLP
-  metrics endpoint
-- apply authentication, rate limiting, or origin checks for production apps
+- forward traces, metrics, and session replays to the corresponding Logfire
+  ingest endpoints
+- apply application-specific rate limits
 
 For Next.js, see [Next.js](../frameworks/nextjs.md). For a standalone browser example, see the `examples/browser` project in this repository.
 

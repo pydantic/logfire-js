@@ -7,13 +7,13 @@ import type { MetricWithAttribution } from 'web-vitals/attribution'
 
 export interface BrowserMetricsOptions {
   /**
-   * Browser-safe OTLP metrics proxy URL, e.g. `/logfire-proxy/v1/metrics`.
+   * Browser-safe OTLP metrics URL, either direct Logfire ingest or a proxy.
    */
   metricUrl: string
   /**
-   * Dynamic headers for the metric exporter. Browser apps should normally
-   * authenticate through their backend proxy, not with a Logfire write token in
-   * client code.
+   * Dynamic headers for the metric exporter. Direct Logfire ingest requires a
+   * restricted frontend application token. Never use a normal write token in
+   * browser code.
    */
   metricExporterHeaders?: () => Record<string, string> | Promise<Record<string, string>>
   /**

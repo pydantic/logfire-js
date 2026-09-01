@@ -5,7 +5,7 @@ description: Use Logfire with Next.js server-side OpenTelemetry and optional cli
 
 # Next.js
 
-Next.js can emit server-side OpenTelemetry through `@vercel/otel`. Client-side browser traces use `@pydantic/logfire-browser` and a proxy endpoint so the write token stays server-side.
+Next.js can emit server-side OpenTelemetry through `@vercel/otel`. Use `@pydantic/logfire-browser` with a restricted frontend application token for client-side browser traces.
 
 ## Server-Side Tracing
 
@@ -59,7 +59,28 @@ Install the browser package:
 npm install @pydantic/logfire-browser @opentelemetry/auto-instrumentations-web
 ```
 
-Create a proxy route or middleware that forwards browser OTLP requests to Logfire with the `Authorization` header. Browser requests should go to this same-origin proxy, not directly to the Logfire API.
+Create a frontend application under **Project settings > Frontend applications**, then copy its generated browser setup. The token can only write telemetry for that frontend application and cannot read project data. Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification.
+
+For Next.js 15.3 and later, configure the browser package in
+`instrumentation-client.ts` using the generated `traceUrl` and
+`traceExporterHeaders` values. Next.js loads this file once in the browser
+before the application becomes interactive.
+
+```ts title="instrumentation-client.ts"
+import * as logfire from '@pydantic/logfire-browser'
+
+logfire.configure({
+  traceUrl: 'https://logfire-us.pydantic.dev/v1/traces',
+  traceExporterHeaders: () => ({
+    Authorization: 'Bearer <frontend-application-token>',
+  }),
+  autoInstrumentations: true,
+})
+```
+
+### Optional Proxy
+
+Use a proxy route or middleware if you need to authenticate browser requests, restrict origins, or apply application-specific rate limits.
 
 For Next.js 16 and later, place this code in `proxy.ts` in the project root, or in `src/proxy.ts` if your app uses `src`.
 
@@ -88,32 +109,16 @@ export const config = {
 }
 ```
 
-Then configure the browser package in a client-only component:
+Then point `instrumentation-client.ts` at the proxy:
 
-```tsx
-'use client'
-
-import { getWebAutoInstrumentations } from '@opentelemetry/auto-instrumentations-web'
+```ts title="instrumentation-client.ts"
 import * as logfire from '@pydantic/logfire-browser'
-import { useEffect } from 'react'
 
-export function ClientInstrumentation() {
-  useEffect(() => {
-    const shutdown = logfire.configure({
-      traceUrl: '/logfire-proxy/v1/traces',
-      serviceName: 'nextjs-browser',
-      instrumentations: [getWebAutoInstrumentations()],
-    })
-
-    return () => {
-      void shutdown()
-    }
-  }, [])
-
-  return null
-}
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  serviceName: 'nextjs-browser',
+  autoInstrumentations: true,
+})
 ```
-
-If you import the component from a server-rendered page, load it with `next/dynamic` and `ssr: false` so browser instrumentation only runs in the browser.
 
 See `examples/nextjs` and `examples/nextjs-client-side-instrumentation` for working projects.

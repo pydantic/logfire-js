@@ -19,6 +19,6 @@ The TypeScript SDK provides Logfire support for JavaScript and TypeScript applic
 Use [Getting Started](get-started.md) for a minimal script, then move to the package page for your runtime:
 
 - Server-side Node.js applications should start with [Node.js](packages/node.md).
-- Browser applications should start with [Browser](packages/browser.md), especially the proxy requirement.
+- Browser applications should start with [Browser](packages/browser.md) and use a restricted frontend application token for direct trace, metric, and session replay ingest.
 - Cloudflare Workers should start with [Cloudflare Workers](packages/cloudflare.md).
 - Framework users can use the [Express](frameworks/express.md), [Next.js](frameworks/nextjs.md), [Deno](frameworks/deno.md), or [Vercel AI SDK](frameworks/vercel-ai.md) guides.
