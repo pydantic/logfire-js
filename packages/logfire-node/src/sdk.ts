@@ -260,12 +260,32 @@ async function shutdownRuntime(runtime: ActiveRuntime, options: ShutdownRuntimeO
       if (options.shutdownVariables !== false) {
         shutdownOperations.push(shutdownVariables())
       }
-      const shutdownPromise = Promise.all(shutdownOperations).then(() => undefined)
-      shutdownPromise.catch(() => undefined)
+      // Each failure is recorded as its own operation settles, rather than read off a combined
+      // result. `Promise.all` rejected on the first failure, leaving the other shutdown running
+      // past this call with its error dropped; waiting for a combined result instead would lose
+      // an early failure whenever the other operation outlives the deadline. Both are already in
+      // flight, so this only waits for what was started, and the deadline still bounds it.
+      const operationErrors: unknown[] = []
+      const allSettled = Promise.all(
+        shutdownOperations.map(async (operation) => {
+          try {
+            await operation
+          } catch (e: unknown) {
+            operationErrors.push(e)
+          }
+        })
+      )
+      let deadlineError: unknown
+      let deadlineExceeded = false
       try {
-        await withDeadline('shutdown', deadline, shutdownPromise)
+        await withDeadline('shutdown', deadline, allSettled)
       } catch (e: unknown) {
-        errors.push(e)
+        deadlineError = e
+        deadlineExceeded = true
+      }
+      errors.push(...operationErrors)
+      if (deadlineExceeded) {
+        errors.push(deadlineError)
       }
 
       if (errors.length === 1) {

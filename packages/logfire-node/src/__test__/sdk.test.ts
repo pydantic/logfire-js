@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => {
   const createdMetricReaders: MockMetricReader[] = []
   const metricReaderCallCounts = new Map<number, { forceFlush: number; shutdown: number }>()
   const shutdownPromises: Promise<void>[] = []
+  const shutdownVariablesPromises: Promise<void>[] = []
   let evalForceFlushCalls = 0
   let evalShutdownCalls = 0
   let logForceFlushCalls = 0
@@ -210,6 +211,7 @@ const mocks = vi.hoisted(() => {
       reportErrorCalls.length = 0
       shutdownVariablesCalls = 0
       shutdownPromises.length = 0
+      shutdownVariablesPromises.length = 0
       traceForceFlushCalls = 0
       traceOnEndSpans.length = 0
       traceOnStartSpans.length = 0
@@ -224,10 +226,13 @@ const mocks = vi.hoisted(() => {
     get shutdownVariablesCalls() {
       return shutdownVariablesCalls
     },
+    queueShutdownVariablesPromise(promise: Promise<void>) {
+      shutdownVariablesPromises.push(promise)
+    },
     shutdownVariables: async () => {
       shutdownVariablesCalls++
       variableState = makeEmptyVariableState()
-      return Promise.resolve()
+      return shutdownVariablesPromises.shift() ?? Promise.resolve()
     },
     get traceForceFlushCalls() {
       return traceForceFlushCalls
@@ -678,6 +683,61 @@ describe('sdk lifecycle helpers', () => {
     expect(mocks.shutdownVariablesCalls).toBe(1)
     await forceFlush()
     expect(mocks.traceForceFlushCalls).toBe(1)
+  })
+
+  it('reports both shutdown failures and waits for the slower one', async () => {
+    const sdkError = new Error('sdk shutdown failed')
+    const variablesError = new Error('variables shutdown failed')
+    let rejectVariables!: (reason: Error) => void
+    let variablesSettled = false
+    mocks.queueShutdownPromise(Promise.reject(sdkError))
+    mocks.queueShutdownVariablesPromise(
+      new Promise<void>((_resolve, reject) => {
+        rejectVariables = reject
+      }).catch((error: unknown) => {
+        variablesSettled = true
+        throw error
+      })
+    )
+    start()
+
+    const shutdownCall = shutdown()
+    // The flush runs first, so the queued promise is not consumed yet. Rejecting before the
+    // teardown has started would make the pending-ness below prove nothing.
+    await vi.waitFor(() => {
+      expect(mocks.shutdownVariablesCalls).toBe(1)
+    })
+    expect(variablesSettled).toBe(false)
+    rejectVariables(variablesError)
+
+    const error: unknown = await shutdownCall.catch((caught: unknown) => caught)
+    expect(variablesSettled).toBe(true)
+    expect(error).toBeInstanceOf(AggregateError)
+    expect((error as AggregateError).message).toBe('logfire SDK: shutdown failed')
+    // Sorted: errors are recorded in settle order, which is not something to pin.
+    expect(((error as AggregateError).errors as Error[]).map((e) => e.message).sort()).toEqual([
+      'sdk shutdown failed',
+      'variables shutdown failed',
+    ])
+  })
+
+  it('keeps an early shutdown failure when the other teardown outlives the deadline', async () => {
+    const sdkError = new Error('sdk shutdown failed')
+    mocks.queueShutdownPromise(Promise.reject(sdkError))
+    mocks.queueShutdownVariablesPromise(
+      new Promise<void>(() => {
+        // Never settles: the point is that the SDK error must survive the deadline firing.
+      })
+    )
+    start()
+
+    const error: unknown = await shutdown({ flush: false, timeoutMillis: 20 }).catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(AggregateError)
+    expect(((error as AggregateError).errors as Error[]).map((e) => e.message)).toEqual([
+      'sdk shutdown failed',
+      'logfire SDK: shutdown timed out',
+    ])
   })
 
   it('concurrent shutdown calls share one shutdown', async () => {
