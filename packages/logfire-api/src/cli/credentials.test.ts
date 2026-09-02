@@ -106,6 +106,72 @@ token = "ignored"
     expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toBe('node_modules\n')
   })
 
+  it('restores .gitignore when credentials are written after logfire clean', () => {
+    const dir = join(makeTmpDir(), '.logfire')
+    const credentials = {
+      logfire_api_url: 'https://logfire-us.pydantic.dev',
+      project_name: 'myproject',
+      project_url: 'https://logfire.pydantic.dev/org/myproject',
+      token: 'write-token',
+    }
+    writeProjectCredentials(dir, credentials)
+    // `logfire clean` removes the ignore rule along with the credentials, and leaves the
+    // directory in place, so re-authenticating has to write the rule again.
+    removeProjectCredentials(dir)
+    expect(readdirSync(dir)).toEqual([])
+
+    writeProjectCredentials(dir, credentials)
+
+    expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toBe('*')
+  })
+
+  it("leaves a data directory holding the user's own files unignored", () => {
+    const dir = makeTmpDir()
+    writeFileSync(join(dir, 'notes.txt'), 'mine\n')
+
+    writeProjectCredentials(dir, {
+      logfire_api_url: 'https://logfire-us.pydantic.dev',
+      project_name: 'myproject',
+      project_url: 'https://logfire.pydantic.dev/org/myproject',
+      token: 'write-token',
+    })
+
+    expect(existsSync(join(dir, '.gitignore'))).toBe(false)
+  })
+
+  it('leaves a file that only looks like a Logfire token file unignored', () => {
+    // Logfire writes `read_token.json`, `read_token.json.lock` and
+    // `read_token.json.<uuid>.tmp`, and nothing else that starts with that name.
+    for (const userFile of ['read_token.jsonl', 'read_token.json.bak', 'read_token.json..tmp']) {
+      const dir = makeTmpDir()
+      writeFileSync(join(dir, userFile), 'mine\n')
+
+      writeProjectCredentials(dir, {
+        logfire_api_url: 'https://logfire-us.pydantic.dev',
+        project_name: 'myproject',
+        project_url: 'https://logfire.pydantic.dev/org/myproject',
+        token: 'write-token',
+      })
+
+      expect(existsSync(join(dir, '.gitignore'))).toBe(false)
+    }
+  })
+
+  it('seeds the ignore rule alongside an in-flight read-token save', () => {
+    const dir = makeTmpDir()
+    writeFileSync(join(dir, 'read_token.json.lock'), '')
+    writeFileSync(join(dir, 'read_token.json.123e4567-e89b-12d3-a456-426614174000.tmp'), '')
+
+    writeProjectCredentials(dir, {
+      logfire_api_url: 'https://logfire-us.pydantic.dev',
+      project_name: 'myproject',
+      project_url: 'https://logfire.pydantic.dev/org/myproject',
+      token: 'write-token',
+    })
+
+    expect(readFileSync(join(dir, '.gitignore'), 'utf8')).toBe('*')
+  })
+
   it("adds the saved token to an existing data directory's ignore rules", () => {
     const dir = makeTmpDir()
     writeFileSync(join(dir, '.gitignore'), 'logfire_credentials.json\n')

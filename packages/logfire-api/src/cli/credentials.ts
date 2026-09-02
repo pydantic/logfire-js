@@ -8,6 +8,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -30,6 +31,9 @@ export const PROJECT_CREDENTIALS_FILENAME = 'logfire_credentials.json'
 // the other.
 export const READ_TOKEN_FILENAME = 'read_token.json'
 const READ_TOKEN_IGNORE_PATTERN = `${READ_TOKEN_FILENAME}*`
+const TEMPORARY_SAVE_SUFFIX = '.tmp'
+/** `randomUUID()`, the middle segment of the temporary file `reserveReadTokenSave` renames from. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u
 
 export interface UserTokenData {
   token: string
@@ -557,8 +561,6 @@ function writeUserTokensFile(path: string, tokens: ReadonlyMap<string, UserToken
 }
 
 export function ensureDataDir(dataDir: string): void {
-  // Match Python's `ensure_data_dir_exists`: only seed `.gitignore` when creating the
-  // directory, so an existing dir's ignore rules are never clobbered.
   if (existsSync(dataDir)) {
     // `lstatSync`, not `statSync`: the data directory lives inside the user's repository,
     // so a symlink can arrive by being committed to it, the same way a symlinked
@@ -574,10 +576,51 @@ export function ensureDataDir(dataDir: string): void {
     if (!stat.isDirectory()) {
       throw new LogfireCliError(`Data directory ${dataDir} exists but is not a directory`)
     }
+  } else {
+    mkdirSync(dataDir, { recursive: true })
+  }
+  seedGitignore(dataDir)
+}
+
+/**
+ * Write the `*` ignore rule for a directory that holds nothing but the files Logfire writes
+ * itself. That covers a newly created directory and one `logfire clean` has emptied, which
+ * removes the `.gitignore` along with the credentials. A directory with any other contents is
+ * left alone: `--data-dir` can point at a directory of the user's own, and `*` would ignore it.
+ */
+function seedGitignore(dataDir: string): void {
+  if (!readdirSync(dataDir).every(isDataDirFile)) {
     return
   }
-  mkdirSync(dataDir, { recursive: true })
-  writeFileSync(join(dataDir, '.gitignore'), '*')
+  try {
+    // Exclusive creation, so an existing `.gitignore` keeps its rules and a symlink planted in a
+    // data directory that arrived from elsewhere is refused rather than written through.
+    writeFileSync(join(dataDir, '.gitignore'), '*', { flag: 'wx' })
+  } catch (error) {
+    if (!hasErrorCode(error, 'EEXIST')) {
+      throw error
+    }
+  }
+}
+
+/**
+ * The exact names Logfire writes into a data directory: the ignore rule, the two credential
+ * files, and the lock and temporary files a read-token save holds while it runs. Matching a
+ * prefix instead would accept a user's own `read_token.jsonl` and hide it behind the `*` rule.
+ */
+function isDataDirFile(name: string): boolean {
+  if (
+    name === '.gitignore' ||
+    name === PROJECT_CREDENTIALS_FILENAME ||
+    name === READ_TOKEN_FILENAME ||
+    name === `${READ_TOKEN_FILENAME}.lock`
+  ) {
+    return true
+  }
+  if (!name.startsWith(`${READ_TOKEN_FILENAME}.`) || !name.endsWith(TEMPORARY_SAVE_SUFFIX)) {
+    return false
+  }
+  return UUID_PATTERN.test(name.slice(READ_TOKEN_FILENAME.length + 1, -TEMPORARY_SAVE_SUFFIX.length))
 }
 
 function ensureReadTokenIgnored(dataDir: string): void {
