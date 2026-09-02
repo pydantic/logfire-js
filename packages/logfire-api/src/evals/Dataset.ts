@@ -308,9 +308,11 @@ export class Dataset<Inputs = unknown, Output = unknown, Metadata = unknown> {
       throw new Error('Dataset.toFile is only supported on Node, Bun, and Deno (no filesystem in browser/CF Workers)')
     }
     const format: 'json' | 'yaml' = filePath.endsWith('.json') ? 'json' : 'yaml'
-    const text = this.toText(format, opts)
-    const finalText =
-      format === 'yaml' && opts.schemaPath !== undefined ? `# yaml-language-server: $schema=${opts.schemaPath}\n${text}` : text
+    // The schema is written where the caller asked, but the reference recorded inside the
+    // dataset is relative whenever it can be, so the file stays readable on another machine.
+    const reference = opts.schemaPath === undefined ? undefined : schemaReference(filePath, opts.schemaPath)
+    const text = this.toText(format, reference === undefined ? opts : { ...opts, schemaPath: reference })
+    const finalText = format === 'yaml' && reference !== undefined ? `# yaml-language-server: $schema=${reference}\n${text}` : text
     await writeTextFile(filePath, finalText)
     if (opts.schemaPath !== undefined) {
       const schemaText = `${JSON.stringify(this.jsonSchema(), null, 2)}\n`
@@ -659,14 +661,37 @@ function fileStem(filePath: string): string {
 }
 
 function resolveSiblingPath(filePath: string, siblingPath: string): string {
-  if (/^(?:[a-zA-Z]:[\\/]|[\\/]|[a-zA-Z][a-zA-Z\d+.-]*:)/u.test(siblingPath)) {
+  if (isRooted(siblingPath)) {
     return siblingPath
   }
+  const { dir, sep } = directoryOf(filePath)
+  return dir === '.' ? siblingPath : `${dir}${sep}${siblingPath}`
+}
+
+/**
+ * The `$schema` value to record inside the dataset. A path under the dataset's own directory
+ * becomes relative to it, so a committed dataset does not carry the writer's machine layout.
+ * Anything else, including a URL and a path on another drive, is kept as given. Mirrors
+ * `Dataset.to_file` in pydantic-evals.
+ */
+function schemaReference(filePath: string, schemaPath: string): string {
+  if (!isRooted(schemaPath)) {
+    return schemaPath
+  }
+  const { dir, sep } = directoryOf(filePath)
+  const prefix = dir === '.' ? '' : `${dir}${sep}`
+  return prefix !== '' && schemaPath.startsWith(prefix) ? schemaPath.slice(prefix.length) : schemaPath
+}
+
+function isRooted(path: string): boolean {
+  return /^(?:[a-zA-Z]:[\\/]|[\\/]|[a-zA-Z][a-zA-Z\d+.-]*:)/u.test(path)
+}
+
+function directoryOf(filePath: string): { dir: string; sep: string } {
   const trimmed = filePath.replace(/[\\/]+$/u, '')
   const sep = trimmed.includes('\\') ? '\\' : '/'
   const lastSep = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-  const dir = lastSep === -1 ? '.' : trimmed.slice(0, lastSep)
-  return dir === '.' ? siblingPath : `${dir}${sep}${siblingPath}`
+  return { dir: lastSep === -1 ? '.' : trimmed.slice(0, lastSep), sep }
 }
 
 async function runLifecycleTeardown<Inputs, Output, Metadata>(
