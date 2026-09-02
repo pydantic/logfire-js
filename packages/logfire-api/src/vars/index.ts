@@ -1,6 +1,7 @@
 import { context as ContextAPI, createContextKey, propagation, trace as TraceAPI } from '@opentelemetry/api'
 
 import { murmurhash3x64128 } from '../murmurhash'
+import { getOwn } from '../ownRecord'
 import { startSpan } from '../index'
 import { PlatformAPIClient, encodePathSegment } from '../platform/http'
 import { PlatformHTTPError } from '../platform/errors'
@@ -2626,7 +2627,9 @@ function followRef(
 }
 
 function getVariableConfig(config: VariablesConfig, name: string): VariableConfig | undefined {
-  const direct = config.variables[name]
+  // Own properties only. The name comes from `defineVar`, so `constructor` or `valueOf` would
+  // otherwise resolve to the inherited member and be handed back as if it were a variable config.
+  const direct = getOwn(config.variables, name)
   if (direct !== undefined) {
     return direct
   }
