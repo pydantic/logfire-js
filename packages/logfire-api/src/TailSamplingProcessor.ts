@@ -48,6 +48,30 @@ function hrTimeToSeconds(hrTime: HrTime): number {
  */
 const MAX_TRACES_RETAINED_AFTER_ROOT = 1000
 
+/**
+ * Run both lifecycle calls in order and report the first failure. Awaiting them in sequence would
+ * skip the second one whenever the first rejects, which is exactly when the deferred processor
+ * still needs the call.
+ */
+async function runBoth(first: () => Promise<void>, second: () => Promise<void>): Promise<void> {
+  let failure: unknown
+  try {
+    await first()
+  } catch (error) {
+    failure = error
+  }
+  try {
+    await second()
+  } catch (error) {
+    failure ??= error
+  }
+  if (failure !== undefined) {
+    // Rethrown as an error object, which is what a caller awaiting these methods expects. An
+    // error rejection is passed through untouched; anything else keeps its JSON form.
+    throw failure instanceof Error ? failure : new Error(JSON.stringify(failure))
+  }
+}
+
 export class TailSamplingProcessor implements SpanProcessor {
   private readonly buffers = new Map<string, TraceBuffer>()
   /** Traces still held after their root ended, in insertion order for eviction. */
@@ -63,7 +87,13 @@ export class TailSamplingProcessor implements SpanProcessor {
   }
 
   async forceFlush(): Promise<void> {
-    return this.wrapped.forceFlush()
+    // The deferred processor is owned by this one, so nothing else will flush it. Both run even
+    // if the first rejects, since a wrapped processor that fails to flush is exactly when the
+    // deferred one still needs to.
+    await runBoth(
+      async () => this.wrapped.forceFlush(),
+      async () => this.deferredProcessor?.forceFlush()
+    )
   }
 
   onEnd(span: ReadableSpan): void {
@@ -140,7 +170,12 @@ export class TailSamplingProcessor implements SpanProcessor {
   async shutdown(): Promise<void> {
     this.buffers.clear()
     this.retainedAfterRoot.clear()
-    return this.wrapped.shutdown()
+    // Same ownership, and the same reason to run both: without this the deferred processor is
+    // never shut down at all.
+    await runBoth(
+      async () => this.wrapped.shutdown(),
+      async () => this.deferredProcessor?.shutdown()
+    )
   }
 
   private retainAfterRoot(traceId: string): void {
