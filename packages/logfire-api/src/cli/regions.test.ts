@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await -- test stubs satisfy async signatures without awaiting. */
-import { describe, expect, it } from 'vite-plus/test'
+import { describe, expect, it, vi } from 'vite-plus/test'
 
 import { getBaseUrlFromToken } from '../tokenBaseUrl'
 import { NoAnswerAvailableError } from './interactivePrompt'
@@ -29,6 +29,27 @@ describe('CLI regions', () => {
     expect(getBaseUrlFromToken('pylf_v1_constructor_abc123')).toBe('https://logfire-us.pydantic.dev')
     expect(getBaseUrlFromToken('pylf_v1_eu_abc123')).toBe('https://logfire-eu.pydantic.dev')
     expect(getBaseUrlFromToken(undefined)).toBe('https://logfire-us.pydantic.dev')
+  })
+
+  it('warns when a token names a region this version does not know', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      expect(getBaseUrlFromToken('pylf_v1_apac_abc123')).toBe('https://logfire-us.pydantic.dev')
+      expect(warn.mock.calls).toEqual([
+        ['Unknown region "apac" in Logfire token, falling back to the US region. Known regions: eu, stagingeu, stagingus, us.'],
+      ])
+
+      // A token with a known region, one minted before regions existed, and one that is not a
+      // Logfire token all carry no disagreement to report.
+      warn.mockClear()
+      expect(getBaseUrlFromToken('pylf_v1_eu_abc123')).toBe('https://logfire-eu.pydantic.dev')
+      expect(getBaseUrlFromToken('pylf_v1_stagingus_abc123')).toBe('https://logfire-us.pydantic.info')
+      expect(getBaseUrlFromToken('not-a-logfire-token')).toBe('https://logfire-us.pydantic.dev')
+      expect(getBaseUrlFromToken(undefined)).toBe('https://logfire-us.pydantic.dev')
+      expect(warn.mock.calls).toEqual([])
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   describe('promptForRegion', () => {

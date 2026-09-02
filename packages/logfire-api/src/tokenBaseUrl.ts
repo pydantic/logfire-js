@@ -39,13 +39,23 @@ export function removeTrailingSlash(url: string): string {
 }
 
 export function getBaseUrlFromToken(token: string | undefined): string {
+  // Default to US for tokens minted before regions existed, and for anything that is not a
+  // Logfire token at all: neither carries a region to disagree with.
   let regionKey = 'us'
   if (token !== undefined && token !== '') {
     const match = PYDANTIC_LOGFIRE_TOKEN_PATTERN.exec(token)
     if (match) {
       const region = match.groups?.['region']
-      if (region !== undefined && Object.hasOwn(LOGFIRE_REGIONS, region)) {
-        regionKey = region
+      if (region !== undefined) {
+        if (Object.hasOwn(LOGFIRE_REGIONS, region)) {
+          regionKey = region
+        } else {
+          // The token names a region this version does not know, so the US fallback sends its
+          // data somewhere the token was not minted for. Silence there looks like success.
+          console.warn(
+            `Unknown region "${region}" in Logfire token, falling back to the US region. Known regions: ${Object.keys(LOGFIRE_REGIONS).sort().join(', ')}.`
+          )
+        }
       }
     }
   }
