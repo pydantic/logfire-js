@@ -36,6 +36,18 @@ test('resolves staging base urls from the token', () => {
   expect(resolveBaseUrl({}, undefined, 'pylf_v1_stagingeu_1234567890')).toBe('https://logfire-eu.pydantic.info')
 })
 
+test('rejects a LOGFIRE_SEND_TO_LOGFIRE value that is neither a boolean nor the sentinel', () => {
+  const token = 'pylf_v1_us_token'
+
+  // `Boolean('yes')` is true, so a typo used to turn sending on rather than being reported.
+  expect(() => resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: 'yes' }, undefined, token)).toThrow(
+    `Expected LOGFIRE_SEND_TO_LOGFIRE to be a boolean or 'if-token-present', got "yes"`
+  )
+  // A boolean passed in code still resolves without touching the env var.
+  expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: 'yes' }, false, token)).toBe(false)
+  expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: 'yes' }, true, undefined)).toBe(true)
+})
+
 test('reads LOGFIRE_SEND_TO_LOGFIRE=false as disabled', () => {
   const token = 'pylf_v1_us_1234567890'
 
