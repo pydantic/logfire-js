@@ -649,6 +649,57 @@ describe('Dataset YAML round-trip', () => {
     }
   })
 
+  it('records an absolute schemaPath relative to a dataset given by a relative path', async () => {
+    const ds = new Dataset({ cases: [new Case({ inputs: { v: 1 }, name: 'tmp' })], name: 'rel-file-test' })
+    const fs = await import('node:fs/promises')
+    const os = await import('node:os')
+    const path = await import('node:path')
+    // realpath, because `process.cwd()` reports the resolved path after chdir and the tmpdir on
+    // macOS is reached through a symlink.
+    const tmpdir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'logfire-evals-rel-dataset-')))
+    const previousCwd = process.cwd()
+    process.chdir(tmpdir)
+    try {
+      await fs.mkdir('data')
+      // A relative dataset path with an absolute schema path is what a `path.join(cwd, ...)`
+      // helper produces; containment has to be judged with both sides anchored the same way.
+      await ds.toFile(path.join('data', 'dataset.yaml'), { schemaPath: path.join(tmpdir, 'data', 'dataset.schema.json') })
+      expect((await fs.readFile(path.join('data', 'dataset.yaml'), 'utf8')).split('\n')[0]).toBe(
+        '# yaml-language-server: $schema=dataset.schema.json'
+      )
+    } finally {
+      process.chdir(previousCwd)
+      await fs.rm(tmpdir, { force: true, recursive: true })
+    }
+  })
+
+  it('records a mixed-separator schema path relative to the dataset file', async () => {
+    // Deno stub, like the drive-letter test below: the paths stay strings so this runs anywhere.
+    const originalDeno = (globalThis as { Deno?: unknown }).Deno
+    const files = new Map<string, string>()
+    ;(globalThis as { Deno?: unknown }).Deno = {
+      readTextFile: async (path: string) => {
+        const text = files.get(path)
+        return text === undefined ? Promise.reject(new Error(`missing ${path}`)) : Promise.resolve(text)
+      },
+      writeTextFile: async (path: string, text: string) => {
+        files.set(path, text)
+        return Promise.resolve()
+      },
+    }
+
+    try {
+      const ds = new Dataset({ cases: [new Case({ inputs: { v: 1 }, name: 'tmp' })], name: 'mixed-sep-test' })
+      // Forward slashes in the dataset path, backslashes in the schema path: the same directory
+      // spelled two ways, which a string-prefix comparison would miss.
+      await ds.toFile('C:/data/dataset.yaml', { schemaPath: 'C:\\data\\dataset.schema.json' })
+
+      expect(files.get('C:/data/dataset.yaml')?.split('\n')[0]).toBe('# yaml-language-server: $schema=dataset.schema.json')
+    } finally {
+      ;(globalThis as { Deno?: unknown }).Deno = originalDeno
+    }
+  })
+
   it('records a Windows drive-letter schema path relative to the dataset file', async () => {
     // Driven through the Deno stub so the paths stay strings and the test runs anywhere. A drive
     // letter looks like a URI scheme, which is what kept it out of the relative-reference path.

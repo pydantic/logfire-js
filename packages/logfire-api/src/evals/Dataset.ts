@@ -684,9 +684,39 @@ function schemaReference(filePath: string, schemaPath: string): string {
   if (!isRooted(schemaPath)) {
     return schemaPath
   }
-  const { dir, sep } = directoryOf(filePath)
-  const prefix = dir === '.' ? '' : `${dir}${sep}`
-  return prefix !== '' && schemaPath.startsWith(prefix) ? schemaPath.slice(prefix.length) : schemaPath
+  const { dir } = directoryOf(filePath)
+  // The dataset path is commonly relative while the schema path was built absolute (a
+  // `path.join(cwd, ...)`, a tmpdir), so containment can only be judged with the dataset
+  // directory anchored at the working directory. Separators are normalized for the comparison
+  // only; the recorded remainder keeps the schema path's own spelling.
+  const anchoredDir = isRooted(filePath) ? dir : anchorAtCwd(dir)
+  if (anchoredDir === undefined) {
+    return schemaPath
+  }
+  const prefix = `${normalizeSeparators(anchoredDir)}/`
+  return normalizeSeparators(schemaPath).startsWith(prefix) ? schemaPath.slice(prefix.length) : schemaPath
+}
+
+function normalizeSeparators(path: string): string {
+  return path.replaceAll('\\', '/')
+}
+
+/** The dataset directory made absolute against the working directory, when one is reachable. */
+function anchorAtCwd(dir: string): string | undefined {
+  const cwd = workingDirectory()?.replace(/[\\/]+$/u, '')
+  if (cwd === undefined) {
+    return undefined
+  }
+  return dir === '.' ? (cwd === '' ? '/' : cwd) : `${cwd}/${dir}`
+}
+
+function workingDirectory(): string | undefined {
+  const deno = (globalThis as { Deno?: { cwd?: () => string } }).Deno
+  if (typeof deno?.cwd === 'function') {
+    return deno.cwd()
+  }
+  const proc = (globalThis as { process?: { cwd?: () => string } }).process
+  return typeof proc?.cwd === 'function' ? proc.cwd() : undefined
 }
 
 function isRooted(path: string): boolean {
