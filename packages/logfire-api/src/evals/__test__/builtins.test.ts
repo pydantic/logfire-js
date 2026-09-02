@@ -100,6 +100,63 @@ describe('built-in evaluator edge cases', () => {
     expect(evaluator.evaluate(ctx(new Date('2020-01-01'), { expectedOutput: new Date('2020-01-01') }))).toBe(true)
   })
 
+  it('Contains checks Set members and Map keys', () => {
+    // A task returns these in process, so they are not constrained by the dataset file format.
+    expect(new Contains({ value: 'a' }).evaluate(ctx(new Set(['a', 'b'])))).toEqual({ value: true })
+    expect(new Contains({ value: { id: 1 } }).evaluate(ctx(new Set([{ id: 1 }])))).toEqual({ value: true })
+    expect(new Contains({ value: 'k' }).evaluate(ctx(new Map([['k', 1]])))).toEqual({ value: true })
+    // Native membership is SameValueZero, so NaN matches; `deepEqual` compares with `===`.
+    expect(new Contains({ value: Number.NaN }).evaluate(ctx(new Set([Number.NaN])))).toEqual({ value: true })
+    expect(new Contains({ value: Number.NaN }).evaluate(ctx(new Map([[Number.NaN, 1]])))).toEqual({ value: true })
+
+    // The reason has to name the contents; `JSON.stringify` renders a Set or Map as `{}`.
+    expect(new Contains({ value: 'missing' }).evaluate(ctx(new Set(['a'])))).toEqual({
+      reason: 'Output ["a"] does not contain provided value',
+      value: false,
+    })
+    expect(new Contains({ value: 'missing' }).evaluate(ctx(new Map([['k', 1]])))).toEqual({
+      reason: 'Output ["k"] does not contain provided value as a key',
+      value: false,
+    })
+  })
+
+  it('Contains pairs a record against Map entries the way Python pairs it against a dict', () => {
+    expect(new Contains({ value: { k: 1 } }).evaluate(ctx(new Map<unknown, unknown>([['k', 1]])))).toEqual({ value: true })
+    expect(new Contains({ value: {} }).evaluate(ctx(new Map<unknown, unknown>([['k', 1]])))).toEqual({ value: true })
+    expect(
+      new Contains({ value: { a: 1 } }).evaluate(
+        ctx(
+          new Map<unknown, unknown>([
+            ['a', 1],
+            ['b', 2],
+          ])
+        )
+      )
+    ).toEqual({ value: true })
+    expect(new Contains({ value: { k: 2 } }).evaluate(ctx(new Map<unknown, unknown>([['k', 1]])))).toEqual({
+      reason: 'Output has different value for key "k": 1 != 2',
+      value: false,
+    })
+    expect(new Contains({ value: { z: 1 } }).evaluate(ctx(new Map<unknown, unknown>([['k', 1]])))).toEqual({
+      reason: 'Output does not contain expected key "z"',
+      value: false,
+    })
+
+    // A Map can hold the record itself as a key, which a dict cannot, so the key check still
+    // runs when the pairing fails. This is the only case that reaches the structural key loop:
+    // the NaN cases above are answered by `has`.
+    expect(new Contains({ value: { id: 1 } }).evaluate(ctx(new Map<unknown, unknown>([[{ id: 1 }, 'v']])))).toEqual({
+      value: true,
+    })
+
+    // Only a real record pairs. A Date has no own enumerable keys, so pairing it would be
+    // vacuously true; it stays a key query.
+    expect(new Contains({ value: new Date(0) }).evaluate(ctx(new Map<unknown, unknown>([['k', 1]])))).toEqual({
+      reason: 'Output ["k"] does not contain provided value as a key',
+      value: false,
+    })
+  })
+
   it('Equals and EqualsExpected preserve custom result names and empty-output behavior', () => {
     const eq = new Equals({ evaluationName: 'exact', value: { nested: ['x'] } })
     expect(eq.getResultName()).toBe('exact')
