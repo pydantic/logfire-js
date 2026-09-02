@@ -1,5 +1,27 @@
 # logfire
 
+## 0.18.21
+
+### Patch Changes
+
+- f25ccd9: Reject an environment value that is neither a recognised boolean nor, for `LOGFIRE_SEND_TO_LOGFIRE`, the `if-token-present` sentinel, instead of guessing. `LOGFIRE_DISTRIBUTED_TRACING=yes` silently turned distributed tracing off and `LOGFIRE_CONSOLE=on` silently turned the console off, because anything unrecognised fell through to false; `LOGFIRE_SEND_TO_LOGFIRE=yes` fell through to `Boolean()` and turned sending on. All three now fail with the variable name and the value, matching `_check_bool` in the Python SDK. Unset and blank values keep their current meaning.
+- 18ab1ca: Report both shutdown failures instead of the first. `shutdown()` awaited the SDK and the variables teardown with `Promise.all`, which rejects on the first failure, so the second error was dropped and the operation it belonged to was left running past the call. Each failure is now recorded as its own operation settles, so an early one survives even when the other teardown outlives the deadline.
+- Updated dependencies [b6345f6]
+- Updated dependencies [12a9f8c]
+- Updated dependencies [e2a2692]
+- Updated dependencies [b6ac808]
+- Updated dependencies [f25ccd9]
+- Updated dependencies [69dea10]
+- Updated dependencies [62e470f]
+- Updated dependencies [bdbaf82]
+- Updated dependencies [e4a42d5]
+- Updated dependencies [0458fd2]
+- Updated dependencies [248aeb5]
+- Updated dependencies [f7da71a]
+- Updated dependencies [4fc005e]
+- Updated dependencies [5c5d15d]
+  - logfire@0.22.5
+
 ## 0.18.20
 
 ### Patch Changes
