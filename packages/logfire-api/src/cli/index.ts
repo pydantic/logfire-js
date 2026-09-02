@@ -44,7 +44,7 @@ interface ParsedArgs {
 export async function runCli(argv: string[] = process.argv.slice(2), options: CliContextOptions = {}): Promise<number> {
   const context = createCliContext(options)
   try {
-    const parsed = parseArgs(argv)
+    const parsed = parseArgs(argv, context.env)
     if (parsed.version) {
       printVersion(context)
       return 0
@@ -123,7 +123,7 @@ async function dispatch(command: string, args: string[], globalOptions: GlobalOp
   throw new LogfireCliError(`Unknown command "${command}".`)
 }
 
-function parseArgs(argv: string[]): ParsedArgs {
+function parseArgs(argv: string[], env: Record<string, string | undefined>): ParsedArgs {
   let command: string | undefined
   let baseUrl: string | undefined
   let region: string | undefined
@@ -158,7 +158,7 @@ function parseArgs(argv: string[]): ParsedArgs {
       return {
         command,
         commandArgs: argv.slice(index + 1),
-        globalOptions: buildGlobalOptions(baseUrl, region),
+        globalOptions: buildGlobalOptions(baseUrl, region, env),
         help,
         version,
       }
@@ -168,14 +168,23 @@ function parseArgs(argv: string[]): ParsedArgs {
   return {
     command,
     commandArgs: [],
-    globalOptions: buildGlobalOptions(baseUrl, region),
+    globalOptions: buildGlobalOptions(baseUrl, region, env),
     help,
     version,
   }
 }
 
-function buildGlobalOptions(baseUrl: string | undefined, region: string | undefined): GlobalOptions {
-  const resolvedBaseUrl = resolveSelectedBaseUrl(baseUrl, region)
+function buildGlobalOptions(
+  baseUrl: string | undefined,
+  region: string | undefined,
+  env: Record<string, string | undefined>
+): GlobalOptions {
+  // `LOGFIRE_BASE_URL` is the documented way to point at a self-hosted endpoint, and the SDK
+  // already reads it. Both flags are explicit, so either one wins over it. A blank value is
+  // ignored rather than rejected: an unset-looking variable is not the user asking for anything,
+  // whereas `--base-url=` is, and stays an error.
+  const selected = baseUrl ?? (region === undefined ? nonEmpty(env['LOGFIRE_BASE_URL']) : undefined)
+  const resolvedBaseUrl = resolveSelectedBaseUrl(selected, region)
   const options: GlobalOptions = {}
   if (resolvedBaseUrl !== undefined) {
     options.baseUrl = resolvedBaseUrl
@@ -184,6 +193,10 @@ function buildGlobalOptions(baseUrl: string | undefined, region: string | undefi
     options.region = region
   }
   return options
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+  return value === undefined || value.trim() === '' ? undefined : value
 }
 
 function assertNoRegionConflict(baseUrl: string | undefined, region: string | undefined, option: string): void {
