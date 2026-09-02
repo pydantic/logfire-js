@@ -8,7 +8,12 @@ import { PassThrough, Writable } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
 
 import type { Prompt } from './interactivePrompt'
-import { runCli } from './index'
+import { runCli as runCliImpl } from './index'
+
+// The CLI context defaults its `env` to `process.env`, so a bare call would inherit whatever
+// LOGFIRE_* variables the developer's shell exports and the suite would pass or fail depending
+// on the machine. Every test runs against an empty environment unless it passes its own.
+const runCli: typeof runCliImpl = async (argv, options) => runCliImpl(argv, { env: {}, ...options })
 
 describe('CLI entrypoint', () => {
   const tmpDirs: string[] = []
