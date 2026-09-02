@@ -817,6 +817,24 @@ describe('TailSamplingProcessor', () => {
     expect(deferred.shutdown).toHaveBeenCalledTimes(1)
   })
 
+  test('reports a rejection whose value is undefined, and keeps a first rejection of null', async () => {
+    const downstream = makeProcessor()
+    vi.mocked(downstream.forceFlush).mockRejectedValueOnce(undefined)
+    vi.mocked(downstream.shutdown).mockRejectedValueOnce(null)
+    const deferred = makeProcessor()
+    vi.mocked(deferred.shutdown).mockRejectedValueOnce(new Error('deferred shutdown failed'))
+    const processor = new TailSamplingProcessor(downstream, () => 1.0, { deferredProcessor: deferred })
+
+    // `undefined` is a legal rejection value; reading the value as the failure sentinel would
+    // report this flush as having succeeded.
+    await expect(processor.forceFlush()).rejects.toEqual(new Error('undefined'))
+    expect(deferred.forceFlush).toHaveBeenCalledTimes(1)
+
+    // A first rejection of `null` wins over the second failure like any other first failure.
+    await expect(processor.shutdown()).rejects.toEqual(new Error('null'))
+    expect(deferred.shutdown).toHaveBeenCalledTimes(1)
+  })
+
   test('shutdown with deferred pending processor does not double-shutdown the wrapped processor', async () => {
     const downstream = makeProcessor()
     const processor = new TailSamplingProcessor(downstream, () => 0.0, {

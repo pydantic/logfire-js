@@ -54,21 +54,30 @@ const MAX_TRACES_RETAINED_AFTER_ROOT = 1000
  * still needs the call.
  */
 async function runBoth(first: () => Promise<void>, second: () => Promise<void>): Promise<void> {
+  // A separate flag, not the rejection value, decides whether to rethrow: a promise can reject
+  // with `undefined` or `null`, which a value-as-sentinel check would misread as success or let
+  // the second failure overwrite.
+  let failed = false
   let failure: unknown
   try {
     await first()
   } catch (error) {
+    failed = true
     failure = error
   }
   try {
     await second()
   } catch (error) {
-    failure ??= error
+    if (!failed) {
+      failed = true
+      failure = error
+    }
   }
-  if (failure !== undefined) {
+  if (failed) {
     // Rethrown as an error object, which is what a caller awaiting these methods expects. An
-    // error rejection is passed through untouched; anything else keeps its JSON form.
-    throw failure instanceof Error ? failure : new Error(JSON.stringify(failure))
+    // error rejection is passed through untouched; anything else keeps its JSON form, with
+    // undefined spelled out by hand because `JSON.stringify` has no representation for it.
+    throw failure instanceof Error ? failure : new Error(failure === undefined ? 'undefined' : JSON.stringify(failure))
   }
 }
 
