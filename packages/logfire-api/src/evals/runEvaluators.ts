@@ -25,7 +25,15 @@ export async function runEvaluators(
   ctx: EvaluatorContext,
   retryEvaluators?: RetryConfig
 ): Promise<RunEvaluatorsResult> {
-  const result: RunEvaluatorsResult = { assertions: {}, failures: [], labels: {}, scores: {} }
+  // Result names come from evaluators, so they can collide with `Object.prototype` members like
+  // `toString` or `__proto__`. Accumulate into Maps, where any key is just a key, and convert at
+  // the end with `Object.fromEntries`, which defines own properties.
+  const buckets = {
+    assertions: new Map<string, EvaluationResultJson>(),
+    labels: new Map<string, EvaluationResultJson>(),
+    scores: new Map<string, EvaluationResultJson>(),
+  }
+  const failures: EvaluatorFailureRecord[] = []
 
   const runs = await Promise.all(
     evaluators.map(async (evaluator) => {
@@ -56,36 +64,34 @@ export async function runEvaluators(
   )
 
   for (const run of runs) {
-    result.failures.push(...run.failures)
+    failures.push(...run.failures)
     for (const item of run.results) {
-      place(result, item)
+      place(buckets, item)
     }
   }
-  return result
+  return {
+    assertions: Object.fromEntries(buckets.assertions),
+    failures,
+    labels: Object.fromEntries(buckets.labels),
+    scores: Object.fromEntries(buckets.scores),
+  }
 }
 
-function place(out: RunEvaluatorsResult, result: EvaluationResultJson): void {
+type Buckets = Record<'assertions' | 'labels' | 'scores', Map<string, EvaluationResultJson>>
+
+function place(out: Buckets, result: EvaluationResultJson): void {
   const bucket = typeof result.value === 'boolean' ? out.assertions : typeof result.value === 'number' ? out.scores : out.labels
   const name = nextResultName(bucket, result.name)
-  setResult(bucket, name, { ...result, name })
+  bucket.set(name, { ...result, name })
 }
 
-/**
- * Result names come from evaluators, so they can collide with `Object.prototype`. `hasOwn` keeps
- * a name like `toString` or `__proto__` from looking like an existing result, and `defineProperty`
- * stores it as an own property instead of running the inherited `__proto__` setter.
- */
-function nextResultName(existing: Record<string, EvaluationResultJson>, baseName: string): string {
-  if (!Object.hasOwn(existing, baseName)) {
+function nextResultName(existing: ReadonlyMap<string, EvaluationResultJson>, baseName: string): string {
+  if (!existing.has(baseName)) {
     return baseName
   }
   let i = 2
-  while (Object.hasOwn(existing, `${baseName}_${i.toString()}`)) {
+  while (existing.has(`${baseName}_${i.toString()}`)) {
     i++
   }
   return `${baseName}_${i.toString()}`
-}
-
-function setResult(bucket: Record<string, EvaluationResultJson>, name: string, result: EvaluationResultJson): void {
-  Object.defineProperty(bucket, name, { configurable: true, enumerable: true, value: result, writable: true })
 }

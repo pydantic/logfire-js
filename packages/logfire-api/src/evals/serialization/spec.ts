@@ -64,9 +64,10 @@ export function decodeEvaluator<I = unknown, O = unknown, M = unknown>(
   primaryArgKeys: Map<string, string>
 ): Evaluator<I, O, M> {
   const spec = decodeSpec(encoded)
-  const Cls = lookup(registry, spec.name)
+  const mapping = asMapping(registry)
+  const Cls = mapping.get(spec.name)
   if (Cls === undefined) {
-    throw new Error(`Unknown evaluator name: ${JSON.stringify(spec.name)} (registered: ${[...keys(registry)].join(', ')})`)
+    throw new Error(`Unknown evaluator name: ${JSON.stringify(spec.name)} (registered: ${[...mapping.keys()].join(', ')})`)
   }
   return constructEvaluator(Cls, spec, primaryArgKeys.get(spec.name))
 }
@@ -77,7 +78,7 @@ export function decodeReportEvaluator<I = unknown, O = unknown, M = unknown>(
   primaryArgKeys: Map<string, string>
 ): ReportEvaluator<I, O, M> {
   const spec = decodeSpec(encoded)
-  const Cls = lookup(registry, spec.name)
+  const Cls = asMapping(registry).get(spec.name)
   if (Cls === undefined) {
     throw new Error(`Unknown report evaluator name: ${JSON.stringify(spec.name)}`)
   }
@@ -136,23 +137,15 @@ function isStringKeyedDict(v: unknown): boolean {
   return v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)
 }
 
-function lookup<T>(registry: RegistryInput<T>, name: string): T | undefined {
-  if (isLookupRegistry(registry)) {
-    return registry.get(name)
+/**
+ * The registry as a Mapping, the way Python's `load_from_registry` consumes one. A plain-object
+ * registry is copied through `Object.entries`, so only its own keys are consultable: the name
+ * being looked up comes from a dataset file, and reading the object directly would resolve
+ * `constructor` to `Object` and hand back something that is not an evaluator.
+ */
+function asMapping<T>(registry: RegistryInput<T>): EvaluatorRegistry<T> {
+  if (typeof (registry as EvaluatorRegistry<T>).get === 'function' && typeof (registry as EvaluatorRegistry<T>).keys === 'function') {
+    return registry as EvaluatorRegistry<T>
   }
-  // Own properties only. The name comes from a dataset file, so a plain-object registry would
-  // otherwise resolve `constructor` to `Object` and hand back something that is not an evaluator.
-  // `keys()` below already lists own properties, so the two agree on what the registry holds.
-  return Object.hasOwn(registry, name) ? registry[name] : undefined
-}
-
-function keys<T>(registry: RegistryInput<T>): Iterable<string> {
-  if (isLookupRegistry(registry)) {
-    return registry.keys()
-  }
-  return Object.keys(registry)
-}
-
-function isLookupRegistry<T>(registry: RegistryInput<T>): registry is EvaluatorRegistry<T> | Map<string, T> {
-  return typeof (registry as EvaluatorRegistry<T>).get === 'function' && typeof (registry as EvaluatorRegistry<T>).keys === 'function'
+  return new Map(Object.entries(registry))
 }

@@ -11,6 +11,7 @@ import type { AsyncLocalStorage } from 'node:async_hooks'
 
 import type { TaskRunState } from './types'
 
+import { getOwn, setOwn } from '../ownRecord'
 import { hasAsyncLocalStorage } from './runtime'
 
 interface ALSLike<T> {
@@ -92,23 +93,12 @@ export function setEvalAttribute(name: string, value: unknown): void {
  * usage attribute does not invent a metric key that Python omits.
  */
 export function incrementMetric(metrics: Record<string, number>, name: string, amount: number): void {
-  const current = Object.hasOwn(metrics, name) ? (metrics[name] ?? 0) : 0
+  const current = getOwn(metrics, name) ?? 0
   const next = current + amount
   if (current === 0 && next === 0) {
     return
   }
   setOwn(metrics, name, next)
-}
-
-/**
- * Write an own property, for records whose keys are not the SDK's to choose. Metric names are
- * sliced off span attribute keys in `extractMetrics`, so they arrive from the provider's usage
- * payload, and attribute names come from task code. Plain assignment reaches the prototype: a
- * `__proto__` name invokes the inherited setter and the entry is dropped, and a name like
- * `toString` reads back the inherited function.
- */
-function setOwn<T>(record: Record<string, T>, name: string, value: T): void {
-  Object.defineProperty(record, name, { configurable: true, enumerable: true, value, writable: true })
 }
 
 /**
