@@ -140,7 +140,10 @@ function lookup<T>(registry: RegistryInput<T>, name: string): T | undefined {
   if (isLookupRegistry(registry)) {
     return registry.get(name)
   }
-  return registry[name]
+  // Own properties only. The name comes from a dataset file, so a plain-object registry would
+  // otherwise resolve `constructor` to `Object` and hand back something that is not an evaluator.
+  // `keys()` below already lists own properties, so the two agree on what the registry holds.
+  return Object.hasOwn(registry, name) ? registry[name] : undefined
 }
 
 function keys<T>(registry: RegistryInput<T>): Iterable<string> {
