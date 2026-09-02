@@ -173,7 +173,20 @@ export async function requestDeviceCode(options: DeviceAuthOptions): Promise<Dev
   if (!response.ok) {
     throw new LogfireCliError('Failed to request a device code.')
   }
-  return (await response.json()) as DeviceCodeResponse
+  const payload = await readJsonBody(response)
+  if (payload === undefined) {
+    throw new LogfireCliError('Failed to request a device code: the response was not JSON.')
+  }
+  return payload as DeviceCodeResponse
+}
+
+/** The parsed body, or `undefined` when it is not JSON at all. */
+async function readJsonBody(response: Response): Promise<unknown> {
+  try {
+    return (await response.json()) as unknown
+  } catch {
+    return undefined
+  }
 }
 
 export interface PollForTokenOptions {
@@ -198,18 +211,20 @@ export async function pollForToken(options: PollForTokenOptions): Promise<UserTo
       method: 'GET',
     }).catch(() => undefined)
 
-    if (response === undefined || !response.ok) {
+    // A proxy or captive portal can answer 200 with HTML, which is the same kind of failure as
+    // a rejected request: it retries rather than ending the login with a raw parse error.
+    // eslint-disable-next-line no-await-in-loop -- the response body must be read before deciding to poll again.
+    const token = response?.ok === true ? await readJsonBody(response) : undefined
+    if (token === undefined) {
       errors += 1
       if (errors >= 4) {
         throw new LogfireCliError('Failed to poll for token.')
       }
       continue
     }
-
-    // eslint-disable-next-line no-await-in-loop -- the response body must be read before deciding to poll again.
-    const token = (await response.json()) as UserTokenData | null
+    // A JSON `null` is the server saying the user has not finished yet, so keep polling.
     if (token !== null) {
-      return token
+      return token as UserTokenData
     }
   }
 
