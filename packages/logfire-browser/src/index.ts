@@ -406,15 +406,23 @@ function startBrowserInstrumentations(options: {
         ...unregisterConfigured,
         ...(unregisterAutoInstrumentations === undefined ? [] : [unregisterAutoInstrumentations]),
       ]
+      // A separate flag, not the thrown value, records that something failed. An unregister
+      // callback is user supplied, so `undefined` is a legal thing for it to throw, and the raw
+      // value read as no failure at all; a first `null` was overwritten by a later error through
+      // `??=`, despite the name. Same shape as `runBoth` in TailSamplingProcessor.
+      let failed = false
       let firstError: unknown
       for (let index = unregisters.length - 1; index >= 0; index -= 1) {
         try {
           unregisters[index]?.()
         } catch (error) {
-          firstError ??= error
+          if (!failed) {
+            failed = true
+            firstError = error
+          }
         }
       }
-      if (firstError !== undefined) {
+      if (failed) {
         throw firstError instanceof Error
           ? firstError
           : new Error('logfire-browser: instrumentation unregister failed', { cause: firstError })
