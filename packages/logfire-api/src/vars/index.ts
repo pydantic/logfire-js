@@ -2677,15 +2677,18 @@ function normalizeVariablesConfig(data: unknown): VariablesConfig {
   if (!isRecord(rawVariables)) {
     throw new Error('Variables config requires a variables object')
   }
-  const variables: Record<string, VariableConfig> = {}
+  // Accumulate in a Map and materialize with `Object.fromEntries`, which defines own keys. A
+  // variable name is a valid identifier (`__proto__` included), so plain assignment would run
+  // the inherited setter and drop the variable from every config read back out of the store.
+  const variables = new Map<string, VariableConfig>()
   for (const [key, value] of Object.entries(rawVariables)) {
     const variableConfig = normalizeVariableConfig(value)
     if (variableConfig.name !== key) {
       throw new Error(`variables has invalid lookup key '${key}' for variable '${variableConfig.name}'`)
     }
-    variables[key] = variableConfig
+    variables.set(key, variableConfig)
   }
-  return { variables }
+  return { variables: Object.fromEntries(variables) }
 }
 
 function cloneVariablesConfig(config: VariablesConfig): VariablesConfig {
@@ -2733,22 +2736,24 @@ function normalizeLabels(data: unknown): Record<string, LabelRef | LabeledValue>
   if (!isRecord(data)) {
     throw new Error('Variable labels must be an object')
   }
-  const labels: Record<string, LabelRef | LabeledValue> = {}
+  // Same reason as the variables record: a dropped `__proto__` label is not merely missing, it
+  // makes the rollout validator below report it as "not present in labels" when it is.
+  const labels = new Map<string, LabelRef | LabeledValue>()
   for (const [label, raw] of Object.entries(data)) {
     if (!isRecord(raw)) {
       throw new Error(`Label '${label}' must be an object`)
     }
     if (typeof raw['serialized_value'] === 'string' && typeof raw['version'] === 'number') {
-      labels[label] = { serialized_value: raw['serialized_value'], version: raw['version'] }
+      labels.set(label, { serialized_value: raw['serialized_value'], version: raw['version'] })
     } else if (typeof raw['ref'] === 'string') {
-      labels[label] = { ref: raw['ref'], version: typeof raw['version'] === 'number' ? raw['version'] : null }
+      labels.set(label, { ref: raw['ref'], version: typeof raw['version'] === 'number' ? raw['version'] : null })
     } else if (typeof raw['target_type'] === 'string') {
-      labels[label] = normalizeApiLabel(raw)
+      labels.set(label, normalizeApiLabel(raw))
     } else {
       throw new Error(`Label '${label}' must contain serialized_value/version, ref, or target_type`)
     }
   }
-  return labels
+  return Object.fromEntries(labels)
 }
 
 function validateLabelRefs(labels: Record<string, LabelRef | LabeledValue>): void {

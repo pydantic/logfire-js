@@ -685,6 +685,47 @@ describe('managed variables', () => {
     expect(calls[0]?.headers.get('Content-Type')).toBeNull()
   })
 
+  it('keeps a variable whose name is an Object.prototype member in the config read back out', () => {
+    const variableConfig = (name: string) => ({
+      labels: { prod: { serialized_value: JSON.stringify('v'), version: 1 } },
+      name,
+      overrides: [],
+      rollout: { labels: { prod: 1 } },
+    })
+    // `__proto__` satisfies the SDK's own name rule, `/^[A-Za-z_][A-Za-z0-9_]*$/`, the same
+    // pattern Python uses, so the store has to be able to hold one.
+    const provider = new LocalVariableProvider({ variables: {} })
+    provider.createVariable(variableConfig('__proto__'))
+    provider.createVariable(variableConfig('normal'))
+
+    const all = provider.getAllVariablesConfig()
+
+    expect(Object.keys(all.variables).sort()).toEqual(['__proto__', 'normal'])
+    expect(Object.hasOwn(all.variables, '__proto__')).toBe(true)
+    expect(Object.getPrototypeOf(all.variables)).toBe(Object.prototype)
+    // The store already considered it created, so the read-back must agree.
+    expect(() => provider.createVariable(variableConfig('__proto__'))).toThrow("Variable '__proto__' already exists")
+  })
+
+  it('keeps a label named like an Object.prototype member', () => {
+    // Built by entries: a `__proto__` key in an object literal sets the prototype instead.
+    const labels = Object.fromEntries([
+      ['__proto__', { serialized_value: JSON.stringify('proto'), version: 1 }],
+      ['prod', { serialized_value: JSON.stringify('ok'), version: 1 }],
+    ])
+    const rollout = { labels: Object.fromEntries([['__proto__', 1]]) }
+
+    // Dropping the label used to make this throw "is not present in labels" for a label the
+    // payload does contain.
+    const provider = new LocalVariableProvider({
+      variables: { main: { labels, name: 'main', overrides: [], rollout } },
+    })
+
+    const main = provider.getAllVariablesConfig().variables['main']
+    expect(Object.keys(main?.labels ?? {}).sort()).toEqual(['__proto__', 'prod'])
+    expect(Object.getPrototypeOf(main?.labels)).toBe(Object.prototype)
+  })
+
   it('can disable variables explicitly', () => {
     configureVariables(false)
 
