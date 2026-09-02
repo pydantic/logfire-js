@@ -395,8 +395,10 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
   taskName: string
 }): Promise<ReportCase<Inputs, Output, Metadata> | ReportCaseFailure<Inputs, Output, Metadata>> {
   const { caseName, datasetEvaluators, lifecycleClass, originalCase, retryEvaluators, retryTask, sourceCaseName, task, taskName } = args
-  // eslint-disable-next-line new-cap
-  const lifecycle: CaseLifecycle<Inputs, Output, Metadata> | null = lifecycleClass ? new lifecycleClass(originalCase) : null
+  // Constructed inside the case span's try below, not here, so a constructor that throws fails
+  // that one case instead of rejecting the whole run. Python instantiates it in the same place
+  // (`dataset.py:1135-1137`).
+  let lifecycle: CaseLifecycle<Inputs, Output, Metadata> | null = null
 
   const exporterContextId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 
@@ -434,6 +436,10 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
     let output: Output
     let taskDuration = 0
     try {
+      if (lifecycleClass !== undefined) {
+        // eslint-disable-next-line new-cap
+        lifecycle = new lifecycleClass(originalCase)
+      }
       if (lifecycle?.setup !== undefined) {
         await lifecycle.setup()
       }
