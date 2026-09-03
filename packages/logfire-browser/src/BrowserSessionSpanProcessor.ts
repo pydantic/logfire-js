@@ -10,6 +10,8 @@ const ATTR_SESSION_REPLAY_MODE = 'logfire.session_replay.mode'
 const ATTR_LOGFIRE_PAGE_ROUTE = 'logfire.page.route'
 const ATTR_LOGFIRE_PAGE_URL_FULL = 'logfire.page.url.full'
 const ATTR_LOGFIRE_PAGE_URL_PATH = 'logfire.page.url.path'
+const LONG_ANIMATION_FRAME_TRACER_NAME = 'logfire-long-animation-frames'
+const MAIN_THREAD_WINDOW_SPAN_NAME = 'browser.main_thread_window'
 
 function getCurrentUrl(): URL | undefined {
   const maybeGlobal = globalThis as {
@@ -47,7 +49,9 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
   }
 
   onStart(span: Span, _parentContext: Context): void {
-    const session = this.sessionManager.touch()
+    const isPeriodicMainThreadWindow =
+      span.instrumentationScope.name === LONG_ANIMATION_FRAME_TRACER_NAME && span.name === MAIN_THREAD_WINDOW_SPAN_NAME
+    const session = isPeriodicMainThreadWindow ? this.sessionManager.getSession() : this.sessionManager.touch()
     span.setAttribute(ATTR_SESSION_ID, session.id)
     for (const [key, value] of Object.entries(session.sessionAttributes ?? {})) {
       span.setAttribute(`logfire.session.${key}`, value)

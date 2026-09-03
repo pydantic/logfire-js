@@ -9,6 +9,13 @@ import type { BrowserSessionReplayRuntime } from './sessionReplay'
 
 class TestSpan {
   readonly attributes: Record<string, unknown> = {}
+  readonly instrumentationScope: { name: string }
+  readonly name: string
+
+  constructor(name = 'test span', instrumentationScopeName = 'test-tracer') {
+    this.name = name
+    this.instrumentationScope = { name: instrumentationScopeName }
+  }
 
   setAttribute(key: string, value: unknown): this {
     this.attributes[key] = value
@@ -108,6 +115,58 @@ describe('BrowserSessionSpanProcessor', () => {
       'session.id': 'session-1',
     })
     expect(span.attributes).not.toHaveProperty('browser.session.id')
+  })
+
+  it('does not treat periodic main-thread summaries as session activity', () => {
+    let now = 0
+    let sessionNumber = 0
+    const sessionManager = new BrowserSessionManager({
+      generateId: () => `session-${(++sessionNumber).toString()}`,
+      idleTimeoutMs: 30_000,
+      now: () => now,
+      storage: new MemoryStorage(),
+      storageKey: 'test-session',
+      urlAttributes: false,
+    })
+    const processor = new BrowserSessionSpanProcessor(sessionManager)
+    const firstSpan = new TestSpan()
+    startSpan(processor, firstSpan)
+
+    now = 20_000
+    const firstSummary = new TestSpan('browser.main_thread_window', 'logfire-long-animation-frames')
+    startSpan(processor, firstSummary)
+    now = 31_000
+    const secondSummary = new TestSpan('browser.main_thread_window', 'logfire-long-animation-frames')
+    startSpan(processor, secondSummary)
+
+    expect(firstSpan.attributes['session.id']).toBe('session-1')
+    expect(firstSummary.attributes['session.id']).toBe('session-1')
+    expect(secondSummary.attributes['session.id']).toBe('session-2')
+  })
+
+  it('continues to treat long-animation-frame diagnostics as session activity', () => {
+    let now = 0
+    let sessionNumber = 0
+    const sessionManager = new BrowserSessionManager({
+      generateId: () => `session-${(++sessionNumber).toString()}`,
+      idleTimeoutMs: 30_000,
+      now: () => now,
+      storage: new MemoryStorage(),
+      storageKey: 'test-session',
+      urlAttributes: false,
+    })
+    const processor = new BrowserSessionSpanProcessor(sessionManager)
+    startSpan(processor, new TestSpan())
+
+    now = 20_000
+    const diagnostic = new TestSpan('browser.long_animation_frame', 'logfire-long-animation-frames')
+    startSpan(processor, diagnostic)
+    now = 31_000
+    const summary = new TestSpan('browser.main_thread_window', 'logfire-long-animation-frames')
+    startSpan(processor, summary)
+
+    expect(diagnostic.attributes['session.id']).toBe('session-1')
+    expect(summary.attributes['session.id']).toBe('session-1')
   })
 
   it('stamps session dimensions and evaluates the route for each span', () => {

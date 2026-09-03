@@ -153,6 +153,10 @@ Every Web Vital span includes `web_vital.name`, `web_vital.value`,
 `web_vital.navigation_type`. Attribution fields include values such as
 `web_vital.lcp.target`, `web_vital.inp.target`, and
 `web_vital.cls.largest_shift_target`.
+When INP attribution identifies a culprit Long Animation Frame script, the INP
+span also includes its normalized source URL, bounded function name, invoker,
+and duration as `web_vital.inp.script.*` attributes. These diagnostic fields
+remain span-only and are not added to Web Vitals metrics.
 
 `rum.webVitals` implies default `rum.session` behavior so Web Vital spans get
 session and URL attributes. To sanitize URLs while reporting Web Vitals, pass
@@ -228,6 +232,69 @@ browser URL when the callback fires; route-specific Core Web Vitals need
 separate route or soft-navigation instrumentation. To add a route dimension to metrics, pass a
 low-cardinality template such as `/products/:id` through
 `rum.webVitals.metrics.attributes`.
+
+## RUM Long Animation Frames
+
+Enable `rum.longAnimationFrames` to detect and diagnose severe main-thread
+congestion in supported Chromium browsers:
+
+```ts
+logfire.configure({
+  ...frontendApplicationConfig,
+  rum: {
+    longAnimationFrames: true,
+  },
+})
+```
+
+The Long Animation Frames API observes frames over 50 ms. It is available in
+Chromium-based browsers, but not in Firefox or Safari at the time of writing.
+It does not cover all main-thread work and cannot attribute cross-origin
+frames, workers, or extension isolated worlds. Treat it as a high-coverage
+sentinel for severe congestion, complementary to INP, request volume, journey
+timing, and synthetic monitoring.
+
+The feature is off by default. When enabled, the SDK feature-detects
+`long-animation-frame`, samples 10% of browser sessions, and observes with
+`buffered: true`. Sampled-out and unsupported sessions do not install an
+observer, timer, or lifecycle listeners.
+
+For sampled sessions, the SDK emits two log-type span shapes:
+
+- `browser.long_animation_frame` diagnoses frames whose `blockingDuration` is
+  at least 100 ms. Frames are ranked within each foreground window, and the
+  worst frames are emitted up to a fixed cap of 20 per browser session.
+- `browser.main_thread_window` summarizes each foreground window with its real
+  foreground duration, total blocking duration, LoAF count, dropped diagnostic
+  count, and the top three scripts by summed duration. Hidden time is excluded,
+  and a partial window is emitted on document hide or `pagehide`.
+
+The default ranking and summary window is 60 seconds. You can tune collection
+without changing the SDK-owned event and script caps:
+
+```ts
+logfire.configure({
+  ...frontendApplicationConfig,
+  rum: {
+    longAnimationFrames: {
+      blockingDurationThresholdMs: 150,
+      sessionSampleRate: 0.25,
+      windowDurationMs: 30_000,
+    },
+  },
+})
+```
+
+`sessionSampleRate` is clamped to `0..1`. The window has a 10-second minimum to
+prevent accidental span floods. HTTP(S) script source URLs have credentials,
+query strings, and fragments removed and are capped at 2,048 Unicode code
+points. Payload-bearing and per-load URL schemes use stable scheme or origin
+placeholders. Function names are capped at 200 Unicode code points. Periodic
+window summaries do not extend the browser session idle timeout, but diagnostic
+frame spans count as session activity. LoAF data is emitted only as spans, never
+as OpenTelemetry metrics. The existing browser session processor adds session
+id, route, sanitized page URL, replay state, and service-version context to both
+span shapes.
 
 ## Session Replay
 
@@ -517,12 +584,13 @@ idempotent: repeated or concurrent calls share one promise and run the lifecycle
 once in this order:
 
 1. await session replay startup and stop replay when enabled
-2. unregister configured instrumentations
-3. await Web Vitals startup and shutdown when enabled
-4. force-flush and shut down metrics when configured
-5. force-flush spans
-6. shut down the tracer provider
-7. clear SDK-owned browser session state
+2. close and shut down Long Animation Frame reporting when enabled
+3. unregister configured instrumentations
+4. await Web Vitals startup and shutdown when enabled
+5. force-flush and shut down metrics when configured
+6. force-flush spans
+7. shut down the tracer provider
+8. clear SDK-owned browser session state
 
 If any cleanup step fails, Logfire still attempts the later steps before
 returning the first failure. Later calls return the same settled cleanup promise

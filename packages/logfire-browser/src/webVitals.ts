@@ -12,6 +12,7 @@ import type {
 } from 'web-vitals/attribution'
 
 import type { BrowserWebVitalsMetricOptions, BrowserWebVitalsMetricRecorder } from './browserMetrics'
+import { normalizeScriptEntry } from './scriptAttributes'
 
 const LOGFIRE_SPAN_TYPE_KEY = 'logfire.span_type'
 
@@ -169,6 +170,13 @@ function createMetricAttributes(metric: MetricWithAttribution): Attributes {
       setPrimitiveAttribute(attributes, 'web_vital.inp.processing_duration', attribution.processingDuration)
       setPrimitiveAttribute(attributes, 'web_vital.inp.presentation_delay', attribution.presentationDelay)
       setPrimitiveAttribute(attributes, 'web_vital.inp.load_state', attribution.loadState)
+      const script = normalizeScriptEntry(attribution.longestScript?.entry)
+      if (script !== undefined) {
+        setPrimitiveAttribute(attributes, 'web_vital.inp.script.source_url', script.sourceUrl)
+        setPrimitiveAttribute(attributes, 'web_vital.inp.script.function_name', script.functionName)
+        setPrimitiveAttribute(attributes, 'web_vital.inp.script.invoker', script.invoker)
+        setPrimitiveAttribute(attributes, 'web_vital.inp.script.duration', script.duration)
+      }
       break
     }
     case 'CLS': {

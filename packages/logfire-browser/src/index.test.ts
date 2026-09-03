@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
   const lifecycleEvents: string[] = []
   const autoInstrumentationConfigs: unknown[] = []
   const autoInstrumentations: unknown[] = []
+  const longAnimationFramesStartCalls: unknown[] = []
   const registerInstrumentationCalls: { instrumentations: unknown; tracerProvider: unknown }[] = []
   const registrationFailures: unknown[] = []
   const webVitalsStartCalls: unknown[] = []
@@ -28,6 +29,7 @@ const mocks = vi.hoisted(() => {
       }>
     | undefined
   let unregisterCalls = 0
+  let longAnimationFramesShutdownCalls = 0
   let webVitalsShutdownCalls = 0
   let webVitalsStartupPromise:
     | Promise<{
@@ -50,10 +52,12 @@ const mocks = vi.hoisted(() => {
       return {
         name,
         provider: this,
-        startSpan: () => {
+        startSpan: (spanName: string) => {
           const attributes: Record<string, unknown> = {}
           const span = {
             attributes,
+            instrumentationScope: { name },
+            name: spanName,
             end() {
               return undefined
             },
@@ -107,6 +111,16 @@ const mocks = vi.hoisted(() => {
     }
   }
 
+  function createLongAnimationFramesHandle(): { shutdown: () => Promise<void> } {
+    return {
+      async shutdown() {
+        cleanupStepCalls.push('longAnimationFramesShutdown')
+        longAnimationFramesShutdownCalls++
+        return Promise.resolve()
+      },
+    }
+  }
+
   function createBrowserMetricsRuntime(): {
     createWebVitalsMetricRecorder: (options: unknown) => unknown
     forceFlush: () => Promise<void>
@@ -155,7 +169,10 @@ const mocks = vi.hoisted(() => {
     cleanupStepCalls,
     createBrowserMetricsRuntime,
     createWebVitalsHandle,
-    failStep(step: 'metricForceFlush' | 'metricShutdown' | 'unregister' | 'forceFlush' | 'shutdown', error: unknown) {
+    failStep(
+      step: 'longAnimationFramesStart' | 'metricForceFlush' | 'metricShutdown' | 'unregister' | 'forceFlush' | 'shutdown',
+      error: unknown
+    ) {
       failures.set(step, error)
     },
     failNextRegistration(error: unknown) {
@@ -169,6 +186,12 @@ const mocks = vi.hoisted(() => {
     },
     get lifecycleEvents() {
       return lifecycleEvents
+    },
+    get longAnimationFramesShutdownCalls() {
+      return longAnimationFramesShutdownCalls
+    },
+    get longAnimationFramesStartCalls() {
+      return longAnimationFramesStartCalls
     },
     get unregisterCalls() {
       return unregisterCalls
@@ -204,6 +227,8 @@ const mocks = vi.hoisted(() => {
       cleanupStepCalls.length = 0
       failures.clear()
       lifecycleEvents.length = 0
+      longAnimationFramesShutdownCalls = 0
+      longAnimationFramesStartCalls.length = 0
       unregisterCalls = 0
       webVitalsShutdownCalls = 0
       webVitalsStartCalls.length = 0
@@ -237,6 +262,14 @@ const mocks = vi.hoisted(() => {
       lifecycleEvents.push('browserMetricsStart')
       browserMetricsStartCalls.push({ options, resource })
       return browserMetricsStartupPromise ?? Promise.resolve(createBrowserMetricsRuntime())
+    },
+    startBrowserLongAnimationFrames(options: unknown) {
+      lifecycleEvents.push('longAnimationFramesStart')
+      longAnimationFramesStartCalls.push(options)
+      if (failures.has('longAnimationFramesStart')) {
+        throw failures.get('longAnimationFramesStart')
+      }
+      return createLongAnimationFramesHandle()
     },
     async startBrowserWebVitals(options: unknown) {
       lifecycleEvents.push('webVitalsStart')
@@ -342,6 +375,10 @@ vi.mock('@opentelemetry/sdk-trace-web', () => ({
 
 vi.mock('./webVitals', () => ({
   startBrowserWebVitals: async (options: unknown) => mocks.startBrowserWebVitals(options),
+}))
+
+vi.mock('./longAnimationFrames', () => ({
+  startBrowserLongAnimationFrames: (options: unknown) => mocks.startBrowserLongAnimationFrames(options),
 }))
 
 vi.mock('./browserMetrics', () => ({
@@ -1303,6 +1340,143 @@ describe('browser Web Vitals config', () => {
     expect(mocks.webVitalsShutdownCalls).toBe(1)
     expect(mocks.cleanupStepCalls).toEqual(['unregister', 'webVitalsShutdown', 'forceFlush', 'shutdown'])
     expect(cleanup()).toBe(cleanupPromise)
+  })
+})
+
+describe('browser Long Animation Frames config', () => {
+  beforeEach(() => {
+    mocks.reset()
+    cleanup = undefined
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        language: 'en-US',
+        userAgent: 'test-browser',
+        userAgentData: undefined,
+      },
+    })
+  })
+
+  afterEach(async () => {
+    await cleanup?.()
+    clearConfiguredBrowserSessionForTests()
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    })
+    vi.restoreAllMocks()
+  })
+
+  it('does not start Long Animation Frames by default or when disabled', async () => {
+    cleanup = configure({
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    expect(mocks.longAnimationFramesStartCalls).toEqual([])
+    await cleanup()
+    cleanup = undefined
+
+    cleanup = configure({
+      rum: { longAnimationFrames: false },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    expect(mocks.longAnimationFramesStartCalls).toEqual([])
+  })
+
+  it('starts Long Animation Frames with session context and public options', () => {
+    cleanup = configure({
+      rum: {
+        longAnimationFrames: {
+          blockingDurationThresholdMs: 150,
+          sessionSampleRate: 0.5,
+          windowDurationMs: 30_000,
+        },
+      },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(mocks.longAnimationFramesStartCalls).toHaveLength(1)
+    const call = mocks.longAnimationFramesStartCalls[0] as {
+      autoFlushOnDocumentHide: boolean
+      blockingDurationThresholdMs: number
+      forceFlush: () => Promise<void>
+      sessionManager: unknown
+      sessionSampleRate: number
+      tracer: { name: string }
+      windowDurationMs: number
+    }
+    expect({
+      autoFlushOnDocumentHide: call.autoFlushOnDocumentHide,
+      blockingDurationThresholdMs: call.blockingDurationThresholdMs,
+      hasForceFlush: typeof call.forceFlush === 'function',
+      hasSessionManager: call.sessionManager !== undefined,
+      sessionSampleRate: call.sessionSampleRate,
+      tracerName: call.tracer.name,
+      windowDurationMs: call.windowDurationMs,
+    }).toEqual({
+      autoFlushOnDocumentHide: true,
+      blockingDurationThresholdMs: 150,
+      hasForceFlush: true,
+      hasSessionManager: true,
+      sessionSampleRate: 0.5,
+      tracerName: 'logfire-long-animation-frames',
+      windowDurationMs: 30_000,
+    })
+    expect(getLatestSpanProcessors()[0]).toBeInstanceOf(BrowserSessionSpanProcessor)
+    expect(mocks.lifecycleEvents).toEqual(['providerCreate', 'longAnimationFramesStart'])
+  })
+
+  it('keeps tracing configured when Long Animation Frame startup fails', async () => {
+    const startupError = new Error('Long Animation Frame observer unavailable')
+    const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
+    mocks.failStep('longAnimationFramesStart', startupError)
+
+    cleanup = configure({
+      rum: { longAnimationFrames: true },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(mocks.longAnimationFramesStartCalls).toHaveLength(1)
+    expect(diagError).toHaveBeenCalledWith('logfire-browser: failed to start Long Animation Frame reporting', startupError)
+    expect(() => {
+      startSpan('after Long Animation Frame startup failure').end()
+    }).not.toThrow()
+    await cleanup()
+    cleanup = undefined
+  })
+
+  it('preserves disabled document-hide auto-flush', () => {
+    cleanup = configure({
+      batchSpanProcessorConfig: { disableAutoFlushOnDocumentHide: true },
+      rum: { longAnimationFrames: true },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    expect(mocks.longAnimationFramesStartCalls[0]).toMatchObject({
+      autoFlushOnDocumentHide: false,
+    })
+  })
+
+  it('rejects Long Animation Frames when session attributes are explicitly disabled', () => {
+    expect(() => {
+      configure({
+        rum: { longAnimationFrames: true, session: false },
+        traceUrl: 'http://localhost:8989/client-traces',
+      })
+    }).toThrow('rum.longAnimationFrames requires browser session attributes')
+    expect(mocks.longAnimationFramesStartCalls).toEqual([])
+  })
+
+  it('shuts down Long Animation Frames before provider flush', async () => {
+    cleanup = configure({
+      rum: { longAnimationFrames: true },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    await cleanup()
+
+    expect(mocks.longAnimationFramesShutdownCalls).toBe(1)
+    expect(mocks.cleanupStepCalls).toEqual(['longAnimationFramesShutdown', 'unregister', 'forceFlush', 'shutdown'])
   })
 })
 

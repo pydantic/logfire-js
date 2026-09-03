@@ -1,4 +1,5 @@
 import type { BrowserWebVitalsOptions } from './webVitals'
+import type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
 
 export const BROWSER_SESSION_ACTIVITY_WRITE_DELAY_MS = 1_000
 const MAX_SESSION_ATTRIBUTES = 20
@@ -66,6 +67,10 @@ export interface RUMOptions {
    * Enable browser Web Vitals reporting.
    */
   webVitals?: boolean | BrowserWebVitalsOptions
+  /**
+   * Enable sampled Long Animation Frame diagnostics and foreground summaries.
+   */
+  longAnimationFrames?: boolean | BrowserLongAnimationFramesOptions
 }
 
 export interface BrowserSessionManagerOptions extends BrowserSessionOptions {
