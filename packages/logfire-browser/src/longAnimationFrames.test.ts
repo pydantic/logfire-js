@@ -9,7 +9,9 @@ import { startBrowserLongAnimationFrames } from './longAnimationFrames'
 
 interface TestSpan {
   attributes: Record<string, unknown>
+  endTime?: unknown
   name: string
+  startTime?: unknown
 }
 
 class MemoryStorage implements Storage {
@@ -57,6 +59,12 @@ class MockPerformanceObserver {
   readonly disconnect = vi.fn<() => void>()
   readonly observe = vi.fn<(options: PerformanceObserverInit) => void>()
   private readonly callback: PerformanceObserverCallback
+  private queuedEntries: PerformanceEntry[] = []
+  readonly takeRecords = vi.fn<() => PerformanceEntry[]>(() => {
+    const entries = this.queuedEntries
+    this.queuedEntries = []
+    return entries
+  })
 
   constructor(callback: PerformanceObserverCallback) {
     this.callback = callback
@@ -71,6 +79,10 @@ class MockPerformanceObserver {
       this as unknown as PerformanceObserver
     )
   }
+
+  queue(entries: PerformanceEntry[]): void {
+    this.queuedEntries.push(...entries)
+  }
 }
 
 const originalPerformanceObserver = globalThis.PerformanceObserver
@@ -81,11 +93,12 @@ function setVisibilityState(state: DocumentVisibilityState): void {
 
 function createTracer(spans: TestSpan[]) {
   return {
-    startSpan(name: string) {
-      const span: TestSpan = { attributes: {}, name }
+    startSpan(name: string, options?: { startTime?: unknown }) {
+      const span: TestSpan = { attributes: {}, name, startTime: options?.startTime }
       spans.push(span)
       return {
-        end() {
+        end(endTime?: unknown) {
+          span.endTime = endTime
           return undefined
         },
         setAttributes(attributes: Record<string, unknown>) {
@@ -97,12 +110,17 @@ function createTracer(spans: TestSpan[]) {
   }
 }
 
-function createSessionManager(storage: Storage, now: () => number, generateId: () => string = () => 'session-1') {
+function createSessionManager(
+  storage: Storage,
+  now: () => number,
+  generateId: () => string = () => 'session-1',
+  storageKey = 'test-browser-session'
+) {
   return new BrowserSessionManager({
     generateId,
     now,
     storage,
-    storageKey: 'test-browser-session',
+    storageKey,
   })
 }
 
@@ -223,6 +241,7 @@ describe('browser long animation frame reporting', () => {
       sessionManager: createSessionManager(storage, () => now),
       sessionSampleRate: 1,
       storage,
+      timeOrigin: 1_000_000,
       tracer: createTracer(spans) as never,
     })
     const observer = MockPerformanceObserver.instances[0]
@@ -250,6 +269,7 @@ describe('browser long animation frame reporting', () => {
       'browser.long_animation_frame.style_and_layout_duration': 50,
       'logfire.span_type': 'log',
     })
+    expect(spans[0]).toMatchObject({ endTime: 1_000_010, startTime: 1_000_010 })
     expect(spans[1]?.attributes).toMatchObject({
       'browser.main_thread_window.blocking_duration': 150,
       'browser.main_thread_window.dropped_long_animation_frame_count': 0,
@@ -324,7 +344,7 @@ describe('browser long animation frame reporting', () => {
 
     sessionNumber = 2
     reloadedSessionManager.reset()
-    reloadedObserver?.deliver([createFrame(600, { startTime: 120_001 })])
+    MockPerformanceObserver.instances[2]?.deliver([createFrame(600, { startTime: 120_001 })])
     now = 180_000
     await vi.advanceTimersByTimeAsync(60_000)
     expect(spans.filter((span) => span.name === 'browser.long_animation_frame')).toHaveLength(21)
@@ -376,6 +396,63 @@ describe('browser long animation frame reporting', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it('drains queued observer records before closing a foreground window', async () => {
+    let now = 0
+    const spans: TestSpan[] = []
+    const storage = new MemoryStorage()
+    const handle = startBrowserLongAnimationFrames({
+      autoFlushOnDocumentHide: false,
+      forceFlush: async () => Promise.resolve(),
+      now: () => now,
+      sessionManager: createSessionManager(storage, () => now),
+      sessionSampleRate: 1,
+      storage,
+      tracer: createTracer(spans) as never,
+    })
+    const observer = MockPerformanceObserver.instances[0]
+    observer?.queue([createFrame(150, { startTime: 1 })])
+
+    now = 10_000
+    setVisibilityState('hidden')
+    document.dispatchEvent(new Event('visibilitychange'))
+
+    expect(observer?.takeRecords).toHaveBeenCalledTimes(1)
+    expect(spans.map((span) => span.name)).toEqual(['browser.long_animation_frame', 'browser.main_thread_window'])
+    expect(spans[1]?.attributes['browser.main_thread_window.long_animation_frame_count']).toBe(1)
+    await handle?.shutdown()
+  })
+
+  it('opens a fresh foreground window after a back-forward cache restore', async () => {
+    let now = 0
+    const spans: TestSpan[] = []
+    const storage = new MemoryStorage()
+    const handle = startBrowserLongAnimationFrames({
+      autoFlushOnDocumentHide: false,
+      forceFlush: async () => Promise.resolve(),
+      now: () => now,
+      sessionManager: createSessionManager(storage, () => now),
+      sessionSampleRate: 1,
+      storage,
+      tracer: createTracer(spans) as never,
+    })
+
+    now = 10_000
+    window.dispatchEvent(new Event('pagehide'))
+    now = 20_000
+    window.dispatchEvent(new Event('pageshow'))
+    MockPerformanceObserver.instances[0]?.deliver([createFrame(150, { startTime: 20_001 })])
+    now = 30_000
+    window.dispatchEvent(new Event('pagehide'))
+
+    expect(
+      spans
+        .filter((span) => span.name === 'browser.main_thread_window')
+        .map((span) => span.attributes['browser.main_thread_window.foreground_duration'])
+    ).toEqual([10_000, 10_000])
+    expect(spans.filter((span) => span.name === 'browser.long_animation_frame')).toHaveLength(1)
+    await handle?.shutdown()
+  })
+
   it('ranks buffered entries separately from the foreground denominator', async () => {
     let now = 1_000
     const spans: TestSpan[] = []
@@ -408,9 +485,9 @@ describe('browser long animation frame reporting', () => {
     await handle?.shutdown()
   })
 
-  it('uses deterministic fractional sampling and stops after rotation to a sampled-out session', async () => {
+  it('re-evaluates deterministic fractional sampling after each session rotation', async () => {
     const storage = new MemoryStorage()
-    const sessionIds = ['sampled', 'unsampled']
+    const sessionIds = ['sampled', 'unsampled', 'sampled']
     const sessionManager = createSessionManager(
       storage,
       () => 0,
@@ -432,22 +509,31 @@ describe('browser long animation frame reporting', () => {
 
     expect(observer?.disconnect).toHaveBeenCalledTimes(1)
     expect(vi.getTimerCount()).toBe(0)
+    sessionManager.reset()
+    expect(MockPerformanceObserver.instances).toHaveLength(2)
+    MockPerformanceObserver.instances[1]?.deliver([createFrame(150)])
+    await vi.advanceTimersByTimeAsync(60_000)
     await handle?.shutdown()
 
+    const sampledOutIds = ['unsampled', 'sampled']
     const sampledOutManager = createSessionManager(
       new MemoryStorage(),
       () => 0,
-      () => 'unsampled'
+      () => sampledOutIds.shift() ?? 'sampled'
     )
-    expect(
-      startBrowserLongAnimationFrames({
-        autoFlushOnDocumentHide: false,
-        forceFlush: async () => Promise.resolve(),
-        sessionManager: sampledOutManager,
-        sessionSampleRate: 0.5,
-        tracer: createTracer([]) as never,
-      })
-    ).toBeUndefined()
+    const sampledOutHandle = startBrowserLongAnimationFrames({
+      autoFlushOnDocumentHide: false,
+      forceFlush: async () => Promise.resolve(),
+      sessionManager: sampledOutManager,
+      sessionSampleRate: 0.5,
+      tracer: createTracer([]) as never,
+    })
+    expect(sampledOutHandle).toBeDefined()
+    expect(MockPerformanceObserver.instances).toHaveLength(2)
+    expect(vi.getTimerCount()).toBe(0)
+    sampledOutManager.reset()
+    expect(MockPerformanceObserver.instances).toHaveLength(3)
+    await sampledOutHandle?.shutdown()
   })
 
   it('discards a partial window when the browser session rotates', async () => {
@@ -475,15 +561,64 @@ describe('browser long animation frame reporting', () => {
     sessionManager.reset()
     now = 60_000
     await vi.advanceTimersByTimeAsync(60_000)
-    expect(spans).toEqual([])
+    expect(spans.filter((span) => span.name === 'browser.long_animation_frame')).toEqual([])
 
-    observer?.deliver([createFrame(200, { startTime: 60_001 })])
+    MockPerformanceObserver.instances[1]?.deliver([createFrame(200, { startTime: 60_001 })])
     now = 120_000
     await vi.advanceTimersByTimeAsync(60_000)
-    expect(spans.map((span) => span.name)).toEqual(['browser.long_animation_frame', 'browser.main_thread_window'])
-    expect(spans[0]?.attributes['browser.long_animation_frame.blocking_duration']).toBe(200)
+    expect(spans.filter((span) => span.name === 'browser.long_animation_frame')).toHaveLength(1)
+    expect(spans.find((span) => span.name === 'browser.long_animation_frame')?.attributes).toMatchObject({
+      'browser.long_animation_frame.blocking_duration': 200,
+    })
 
     await handle?.shutdown()
+  })
+
+  it('isolates persisted diagnostic caps by browser-session storage key', async () => {
+    let now = 0
+    const spans: TestSpan[] = []
+    const storage = new MemoryStorage()
+    const firstHandle = startBrowserLongAnimationFrames({
+      autoFlushOnDocumentHide: false,
+      forceFlush: async () => Promise.resolve(),
+      now: () => now,
+      sessionManager: createSessionManager(
+        storage,
+        () => now,
+        () => 'shared-session',
+        'session-a'
+      ),
+      sessionSampleRate: 1,
+      storage,
+      tracer: createTracer(spans) as never,
+    })
+    MockPerformanceObserver.instances[0]?.deliver(Array.from({ length: 20 }, (_, index) => createFrame(101 + index)))
+    now = 60_000
+    await vi.advanceTimersByTimeAsync(60_000)
+    await firstHandle?.shutdown()
+
+    const secondHandle = startBrowserLongAnimationFrames({
+      autoFlushOnDocumentHide: false,
+      forceFlush: async () => Promise.resolve(),
+      now: () => now,
+      sessionManager: createSessionManager(
+        storage,
+        () => now,
+        () => 'shared-session',
+        'session-b'
+      ),
+      sessionSampleRate: 1,
+      storage,
+      tracer: createTracer(spans) as never,
+    })
+    MockPerformanceObserver.instances[1]?.deliver([createFrame(500, { startTime: 60_001 })])
+    now = 120_000
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(spans.filter((span) => span.name === 'browser.long_animation_frame')).toHaveLength(21)
+    expect(storage.getItem('lf_browser_loaf:session-a')).not.toBeNull()
+    expect(storage.getItem('lf_browser_loaf:session-b')).not.toBeNull()
+    await secondHandle?.shutdown()
   })
 
   it('aggregates matching scripts and exports only the top three', async () => {

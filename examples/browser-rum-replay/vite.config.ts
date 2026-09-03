@@ -13,7 +13,7 @@ const recorderModuleId = 'lf-browser-recorder'
 const resolvedRecorderModuleId = `\0${recorderModuleId}`
 const packageEntrypoint = resolve(__dirname, '../../packages/logfire-session-replay/dist/index.js')
 const require = createRequire(packageEntrypoint)
-const recorderEntrypoint = require.resolve('@rrweb/record').replace(/dist\/record\.cjs$/u, 'dist/record.js')
+const recorderEntrypoint = resolve(dirname(require.resolve('@rrweb/record')), 'record.js')
 const fflateEntrypoint = resolve(dirname(require.resolve('fflate/package.json')), 'esm/browser.js')
 
 function loadRecorderModule(): string {

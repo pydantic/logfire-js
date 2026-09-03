@@ -33,6 +33,7 @@ interface BrowserLongAnimationFramesStartOptions extends BrowserLongAnimationFra
   now?: () => number
   sessionManager: BrowserSessionManager
   storage?: Storage | null
+  timeOrigin?: number
   tracer: Tracer
 }
 
@@ -50,10 +51,15 @@ interface ScriptAggregate extends NormalizedScriptAttributes {
 
 interface WindowState {
   blockingDuration: number
-  candidates: { frame: NormalizedFrame; observed: number }[]
+  candidates: FrameCandidate[]
   frameCount: number
   scripts: Map<string, ScriptAggregate>
   startedAt: number
+}
+
+interface FrameCandidate {
+  frame: NormalizedFrame
+  observed: number
 }
 
 interface PersistedCapState {
@@ -75,11 +81,10 @@ export function startBrowserLongAnimationFrames(
   }
 
   const resolved = resolveOptions(options)
-  const sessionId = options.sessionManager.getSession().id
-  if (!isSessionSampled(sessionId, resolved.sessionSampleRate)) {
+  if (resolved.sessionSampleRate <= 0) {
     return undefined
   }
-
+  const sessionId = options.sessionManager.getSession().id
   const collector = new LongAnimationFrameCollector(options, resolved, sessionId)
   collector.start()
   return collector.handle()
@@ -87,8 +92,10 @@ export function startBrowserLongAnimationFrames(
 
 class LongAnimationFrameCollector {
   private active = true
+  private readonly capStorageKey: string
   private capState: PersistedCapState
-  private readonly collectorStartedAt: number
+  private collecting = false
+  private collectorStartedAt = 0
   private currentSessionId: string
   private firstDelivery = true
   private nextObserved = 0
@@ -96,32 +103,52 @@ class LongAnimationFrameCollector {
   private readonly options: ResolvedOptions
   private readonly startOptions: BrowserLongAnimationFramesStartOptions
   private timer: ReturnType<typeof setTimeout> | undefined
+  private unsubscribeSessionChange: (() => void) | undefined
   private window: WindowState | undefined
 
   constructor(startOptions: BrowserLongAnimationFramesStartOptions, options: ResolvedOptions, sessionId: string) {
     this.startOptions = startOptions
     this.options = options
-    this.collectorStartedAt = this.now()
+    this.capStorageKey = `${STORAGE_KEY}:${startOptions.sessionManager.getStorageKey()}`
     this.currentSessionId = sessionId
-    this.capState = loadCapState(this.storage(), sessionId)
+    this.capState = loadCapState(this.storage(), this.capStorageKey, sessionId)
   }
 
   start(): void {
-    this.observer = new PerformanceObserver((list) => {
-      this.onEntries(list.getEntries())
-    })
+    const unsubscribeSessionChange = this.startOptions.sessionManager.onSessionChange(this.onSessionChange)
+    this.unsubscribeSessionChange = unsubscribeSessionChange
     try {
-      this.observer.observe({ type: 'long-animation-frame', buffered: true })
+      if (isSessionSampled(this.currentSessionId, this.options.sessionSampleRate)) {
+        this.startCollection()
+      }
+    } catch (error) {
+      unsubscribeSessionChange()
+      this.unsubscribeSessionChange = undefined
+      throw error
+    }
+  }
+
+  private startCollection(): void {
+    if (!this.active || this.collecting) {
+      return
+    }
+    this.collectorStartedAt = this.now()
+    this.firstDelivery = true
+    const observer = new PerformanceObserver((list) => {
+      this.onEntries(list.getEntries(), observer)
+    })
+    this.observer = observer
+    try {
+      observer.observe({ type: 'long-animation-frame', buffered: true })
       document.addEventListener('visibilitychange', this.onVisibilityChange, true)
       window.addEventListener('pagehide', this.onPageHide, true)
+      window.addEventListener('pageshow', this.onPageShow, true)
+      this.collecting = true
       if (isDocumentVisible()) {
         this.openWindow()
       }
     } catch (error) {
-      this.observer.disconnect()
-      this.observer = undefined
-      document.removeEventListener('visibilitychange', this.onVisibilityChange, true)
-      window.removeEventListener('pagehide', this.onPageHide, true)
+      this.stopCollection()
       throw error
     }
   }
@@ -137,17 +164,11 @@ class LongAnimationFrameCollector {
   }
 
   private readonly onVisibilityChange = () => {
-    if (!this.active) {
+    if (!this.active || !this.collecting) {
       return
     }
+    this.startOptions.sessionManager.getSession()
     if (isDocumentVisible()) {
-      const sessionState = this.refreshSession()
-      if (sessionState === undefined) {
-        return
-      }
-      if (sessionState === 'rotated') {
-        this.discardWindow()
-      }
       this.openWindow()
       return
     }
@@ -158,7 +179,7 @@ class LongAnimationFrameCollector {
   }
 
   private readonly onPageHide = () => {
-    if (!this.active) {
+    if (!this.active || !this.collecting) {
       return
     }
     const emitted = this.closeWindow()
@@ -167,22 +188,42 @@ class LongAnimationFrameCollector {
     }
   }
 
-  private onEntries(entries: PerformanceEntry[]): void {
-    if (!this.active) {
+  private readonly onPageShow = () => {
+    if (!this.active || !this.collecting) {
       return
     }
-    const sessionState = this.refreshSession()
-    if (sessionState === undefined) {
+    this.startOptions.sessionManager.getSession()
+    if (isDocumentVisible()) {
+      this.openWindow()
+    }
+  }
+
+  private readonly onSessionChange = (session: { id: string }) => {
+    if (!this.active || session.id === this.currentSessionId) {
       return
     }
-    if (sessionState === 'rotated') {
-      this.discardWindow()
-      if (isDocumentVisible()) {
-        this.openWindow()
+    this.stopCollection()
+    this.currentSessionId = session.id
+    this.capState = loadCapState(this.storage(), this.capStorageKey, session.id)
+    if (isSessionSampled(session.id, this.options.sessionSampleRate)) {
+      try {
+        this.startCollection()
+      } catch (error) {
+        diag.error('logfire-browser: failed to restart Long Animation Frame reporting after browser session rotation', error)
       }
     }
+  }
 
-    const startupCandidates: { frame: NormalizedFrame; observed: number }[] = []
+  private onEntries(entries: PerformanceEntry[], sourceObserver: PerformanceObserver): void {
+    if (!this.active || !this.collecting || sourceObserver !== this.observer) {
+      return
+    }
+    this.startOptions.sessionManager.getSession()
+    if (sourceObserver !== this.observer) {
+      return
+    }
+
+    const startupCandidates: FrameCandidate[] = []
     const currentWindow = this.window
     for (const entry of entries) {
       const frame = normalizeFrame(entry)
@@ -213,7 +254,7 @@ class LongAnimationFrameCollector {
   }
 
   private openWindow(): void {
-    if (this.window !== undefined || !this.active) {
+    if (this.window !== undefined || !this.active || !this.collecting) {
       return
     }
     this.window = {
@@ -235,7 +276,17 @@ class LongAnimationFrameCollector {
 
   private closeWindow(): boolean {
     const currentWindow = this.window
-    if (currentWindow === undefined) {
+    const observer = this.observer
+    const pendingEntries = typeof observer?.takeRecords === 'function' ? observer.takeRecords() : []
+    if (observer !== undefined && pendingEntries.length > 0) {
+      this.onEntries(pendingEntries, observer)
+    }
+    if (currentWindow === undefined || !this.collecting || observer !== this.observer || currentWindow !== this.window) {
+      return false
+    }
+    const foregroundDuration = Math.max(0, this.now() - currentWindow.startedAt)
+    this.startOptions.sessionManager.getSession()
+    if (currentWindow !== this.window) {
       return false
     }
     this.window = undefined
@@ -243,14 +294,7 @@ class LongAnimationFrameCollector {
       clearTimeout(this.timer)
       this.timer = undefined
     }
-
-    const foregroundDuration = Math.max(0, this.now() - currentWindow.startedAt)
-    const sessionState = this.refreshSession()
-    if (foregroundDuration === 0 || sessionState === undefined) {
-      return false
-    }
-    if (sessionState === 'rotated') {
-      diag.debug('logfire-browser: discarded a long animation frame window after browser session rotation')
+    if (foregroundDuration === 0) {
       return false
     }
     const dropped = this.emitRankedFrames(currentWindow.candidates)
@@ -258,55 +302,37 @@ class LongAnimationFrameCollector {
     return true
   }
 
-  private emitRankedFrames(candidates: { frame: NormalizedFrame; observed: number }[]): number {
+  private emitRankedFrames(candidates: FrameCandidate[]): number {
     const ranked = [...candidates].sort(
       (left, right) => right.frame.blockingDuration - left.frame.blockingDuration || left.observed - right.observed
     )
     const remaining = Math.max(0, MAX_FRAME_SPANS_PER_SESSION - this.capState.emitted)
     const emitted = ranked.slice(0, remaining)
     for (const candidate of emitted) {
-      this.reportSpan('browser.long_animation_frame', createFrameAttributes(candidate.frame))
+      this.reportSpan('browser.long_animation_frame', createFrameAttributes(candidate.frame), this.frameTime(candidate.frame))
     }
     if (emitted.length > 0) {
       this.capState.emitted += emitted.length
-      saveCapState(this.storage(), this.capState)
+      saveCapState(this.storage(), this.capStorageKey, this.capState)
     }
     return ranked.length - emitted.length
   }
 
-  private reportSpan(name: string, attributes: Attributes): void {
+  private reportSpan(name: string, attributes: Attributes, timestamp?: number): void {
     try {
-      const span = this.startOptions.tracer.startSpan(name)
+      const span = this.startOptions.tracer.startSpan(name, timestamp === undefined ? undefined : { startTime: timestamp })
       try {
         span.setAttributes(attributes)
       } finally {
-        span.end()
+        span.end(timestamp)
       }
     } catch (error) {
       diag.error(`logfire-browser: failed to report ${name}`, error)
     }
   }
 
-  private refreshSession(): 'same' | 'rotated' | undefined {
-    const sessionId = this.startOptions.sessionManager.getSession().id
-    if (sessionId === this.currentSessionId) {
-      return 'same'
-    }
-    this.currentSessionId = sessionId
-    this.capState = loadCapState(this.storage(), sessionId)
-    if (isSessionSampled(sessionId, this.options.sessionSampleRate)) {
-      return 'rotated'
-    }
-    this.stop()
-    return undefined
-  }
-
-  private discardWindow(): void {
-    this.window = undefined
-    if (this.timer !== undefined) {
-      clearTimeout(this.timer)
-      this.timer = undefined
-    }
+  private frameTime(frame: NormalizedFrame): number {
+    return (this.startOptions.timeOrigin ?? performance.timeOrigin) + frame.startTime
   }
 
   private flushAfterDocumentHide(): void {
@@ -322,7 +348,9 @@ class LongAnimationFrameCollector {
     if (!this.active) {
       return Promise.resolve()
     }
-    this.closeWindow()
+    if (this.collecting) {
+      this.closeWindow()
+    }
     this.stop()
     return Promise.resolve()
   }
@@ -332,6 +360,12 @@ class LongAnimationFrameCollector {
       return
     }
     this.active = false
+    this.stopCollection()
+    this.unsubscribeSessionChange?.()
+    this.unsubscribeSessionChange = undefined
+  }
+
+  private stopCollection(): void {
     if (this.timer !== undefined) {
       clearTimeout(this.timer)
       this.timer = undefined
@@ -341,8 +375,11 @@ class LongAnimationFrameCollector {
       observer.disconnect()
     }
     this.observer = undefined
+    this.window = undefined
+    this.collecting = false
     document.removeEventListener('visibilitychange', this.onVisibilityChange, true)
     window.removeEventListener('pagehide', this.onPageHide, true)
+    window.removeEventListener('pageshow', this.onPageShow, true)
   }
 
   private now(): number {
@@ -481,10 +518,10 @@ function isSessionSampled(sessionId: string, rate: number): boolean {
   return (hash >>> 0) / 4_294_967_296 < rate
 }
 
-function loadCapState(storage: Storage | null, sessionId: string): PersistedCapState {
+function loadCapState(storage: Storage | null, storageKey: string, sessionId: string): PersistedCapState {
   if (storage !== null) {
     try {
-      const raw = storage.getItem(STORAGE_KEY)
+      const raw = storage.getItem(storageKey)
       if (raw !== null) {
         const parsed: unknown = JSON.parse(raw)
         if (isPersistedCapState(parsed) && parsed.sessionId === sessionId) {
@@ -498,12 +535,12 @@ function loadCapState(storage: Storage | null, sessionId: string): PersistedCapS
   return { emitted: 0, sessionId }
 }
 
-function saveCapState(storage: Storage | null, state: PersistedCapState): void {
+function saveCapState(storage: Storage | null, storageKey: string, state: PersistedCapState): void {
   if (storage === null) {
     return
   }
   try {
-    storage.setItem(STORAGE_KEY, JSON.stringify(state))
+    storage.setItem(storageKey, JSON.stringify(state))
   } catch {
     // Session-level collection bounds are best-effort when storage is unavailable.
   }

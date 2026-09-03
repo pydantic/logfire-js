@@ -83,7 +83,7 @@ logfire.configure({
       getRouteName: () => router.currentRoute.value.matched.at(-1)?.path,
       getSessionAttributes: () => ({
         account_tier: currentAccount.tier,
-        beta_user: currentUser.isBeta,
+        beta_user: currentUser?.isBeta,
       }),
       getUser: () =>
         currentUser === undefined

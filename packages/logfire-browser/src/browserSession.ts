@@ -253,6 +253,7 @@ export class BrowserSessionManager {
   private readonly storage: Storage | null
   private readonly storageKey: string
   private readonly urlAttributes: BrowserSessionOptions['urlAttributes'] | undefined
+  private readonly sessionChangeListeners = new Set<(session: BrowserSessionState) => void>()
   private memorySession: BrowserSessionState | undefined
   private pendingSession: BrowserSessionState | undefined
   private persistenceTimer: ReturnType<typeof setTimeout> | undefined
@@ -283,11 +284,22 @@ export class BrowserSessionManager {
     return attributes === undefined ? undefined : Object.freeze({ ...attributes })
   }
 
+  getStorageKey(): string {
+    return this.storageKey
+  }
+
+  onSessionChange(listener: (session: BrowserSessionState) => void): () => void {
+    this.sessionChangeListeners.add(listener)
+    return () => {
+      this.sessionChangeListeners.delete(listener)
+    }
+  }
+
   touch(): BrowserSessionState {
     const now = this.now()
     const session = this.getSessionAt(now)
     const touchedSession = { ...session, lastActivityAt: now }
-    this.memorySession = touchedSession
+    this.setMemorySession(touchedSession)
     this.scheduleWrite(touchedSession)
     return touchedSession
   }
@@ -376,7 +388,7 @@ export class BrowserSessionManager {
           const parsedValue: unknown = JSON.parse(value)
           if (isBrowserSessionState(parsedValue)) {
             const session = this.prepareStoredSession(parsedValue)
-            this.memorySession = session
+            this.setMemorySession(session)
             if (hasOwn(parsedValue, 'sessionAttributes') || this.sessionAttributesCallback !== undefined) {
               const persisted = this.writeSession(session)
               if (!persisted && !hasOwn(parsedValue, 'sessionAttributes') && this.sessionAttributesCallback !== undefined) {
@@ -426,7 +438,7 @@ export class BrowserSessionManager {
   }
 
   private writeSession(session: BrowserSessionState): boolean {
-    this.memorySession = session
+    this.setMemorySession(session)
     if (this.storage === null) {
       return false
     }
@@ -453,6 +465,21 @@ export class BrowserSessionManager {
         this.writeSession(pendingSession)
       }
     }, BROWSER_SESSION_ACTIVITY_WRITE_DELAY_MS)
+  }
+
+  private setMemorySession(session: BrowserSessionState): void {
+    const changed = this.memorySession?.id !== session.id
+    this.memorySession = session
+    if (!changed) {
+      return
+    }
+    for (const listener of this.sessionChangeListeners) {
+      try {
+        listener(session)
+      } catch {
+        // Internal observers must not interfere with browser session state.
+      }
+    }
   }
 }
 

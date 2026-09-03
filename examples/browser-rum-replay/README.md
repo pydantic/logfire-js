@@ -142,6 +142,7 @@ the extension for this local app.
 
 This example imports `lf-browser-recorder`, a neutral Vite virtual module,
 instead of importing `@pydantic/logfire-session-replay` directly. The virtual
-module avoids blocker-sensitive dev URLs and aliases rrweb to its browser ESM
-build. If a local Vite integration fails with an error that `rrweb.cjs` does
-not provide `record`, make sure rrweb resolves to `rrweb/dist/rrweb.js`.
+module avoids blocker-sensitive dev URLs and aliases `@rrweb/record` to its
+browser ESM build. If a local Vite integration fails with an error that
+`record.cjs` does not provide `record`, make sure `@rrweb/record` resolves to
+the adjacent `record.js` entrypoint.
