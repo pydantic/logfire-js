@@ -122,7 +122,12 @@ function serializeJsonAttribute(
 
 function stringifyJsonAttribute(value: unknown): string | undefined {
   try {
-    const serialized = JSON.stringify(value)
+    // JSON has no spelling for NaN or Infinity, so `JSON.stringify` writes them as `null` and the
+    // value is lost at any depth. Python's encoder returns `str(o)` for a non-finite float
+    // wherever it appears, and the top-level branch above already sends the string.
+    const serialized = JSON.stringify(value, (_key, item: unknown) =>
+      typeof item === 'number' && !Number.isFinite(item) ? String(item) : item
+    )
     return typeof serialized === 'string' ? serialized : undefined
   } catch {
     return undefined
@@ -151,7 +156,8 @@ function inferJsonSchema(
     case 'boolean':
       return { type: 'boolean' }
     case 'number':
-      return Number.isFinite(value) ? { type: 'number' } : { type: 'null' }
+      // Sent as a string by `stringifyJsonAttribute`, so the schema has to say so.
+      return Number.isFinite(value) ? { type: 'number' } : { type: 'string' }
     case 'string':
       return { type: 'string' }
     case 'bigint':

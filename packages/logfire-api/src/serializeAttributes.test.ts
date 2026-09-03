@@ -48,6 +48,19 @@ describe('serializeAttributes', () => {
     expect(JSON.stringify(result)).toBe('{"inf":"Infinity","nan":"NaN","neginf":"-Infinity","ok":1.5,"zero":0}')
   })
 
+  test('sends a nested non-finite number as a string, like the top-level one', () => {
+    const result = serializeAttributes({
+      nested: { inf: Number.POSITIVE_INFINITY, list: [Number.NaN, 2], nan: Number.NaN, ok: 1.5 },
+    })
+
+    // These used to reach the wire as `null`, indistinguishable from an actual null. The array
+    // schema drops `items` because the array is now heterogeneous, a string beside a number.
+    expect(result['nested']).toBe('{"inf":"Infinity","list":["NaN",2],"nan":"NaN","ok":1.5}')
+    expect(result[JSON_SCHEMA_KEY]).toBe(
+      '{"properties":{"nested":{"properties":{"inf":{"type":"string"},"list":{"type":"array"},"nan":{"type":"string"},"ok":{"type":"number"}},"type":"object"}},"type":"object"}'
+    )
+  })
+
   test('emits deterministic nested object schema for ordinary JSON-like values', () => {
     const result = serializeAttributes({
       payload: {
