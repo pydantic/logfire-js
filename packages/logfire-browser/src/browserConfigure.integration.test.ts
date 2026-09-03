@@ -250,6 +250,52 @@ describe('public browser configure startup ordering', () => {
     }
   })
 
+  it('attaches the current public user to each span without rotating the session', async () => {
+    let user: { id: string; name?: string; email?: string } | undefined
+    const exporter = new InMemorySpanExporter()
+    const cleanup = configure({
+      rum: {
+        session: {
+          getRouteName: () => '/account',
+          getSessionAttributes: () => ({ account_tier: 'pro' }),
+          getUser: () => user,
+        },
+      },
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      startSpan('anonymous').end()
+      user = { email: 'alice@example.com', id: 'user-a', name: 'Alice' }
+      startSpan('identified').end()
+      user = { id: 'user-b' }
+      startSpan('switched').end()
+      user = undefined
+      startSpan('logged-out').end()
+
+      const spans = Object.fromEntries(exporter.getFinishedSpans().map((span) => [span.name, span]))
+      const sessionId = spans['anonymous']?.attributes['session.id']
+      expect(sessionId).toBeTypeOf('string')
+      expect(spans['anonymous']?.attributes).not.toHaveProperty('user.id')
+      expect(spans['identified']?.attributes).toMatchObject({
+        'logfire.page.route': '/account',
+        'logfire.session.account_tier': 'pro',
+        'session.id': sessionId,
+        'user.email': 'alice@example.com',
+        'user.id': 'user-a',
+        'user.name': 'Alice',
+      })
+      expect(spans['switched']?.attributes).toMatchObject({ 'session.id': sessionId, 'user.id': 'user-b' })
+      expect(spans['switched']?.attributes).not.toHaveProperty('user.name')
+      expect(spans['logged-out']?.attributes['session.id']).toBe(sessionId)
+      expect(spans['logged-out']?.attributes).not.toHaveProperty('user.id')
+      expect(sessionStorage.getItem('lf_browser_session')).not.toContain('user-')
+    } finally {
+      await cleanup()
+    }
+  })
+
   it('exports Web Vitals spans when browser metrics startup fails', async () => {
     const exporter = new InMemorySpanExporter()
     const diagWarn = vi.spyOn(diag, 'warn').mockImplementation(() => undefined)
@@ -260,6 +306,7 @@ describe('public browser configure startup ordering', () => {
         session: {
           getRouteName: () => '/integration',
           getSessionAttributes: () => ({ account_tier: 'pro' }),
+          getUser: () => ({ id: 'user-1' }),
         },
         webVitals: { metrics: true },
       },
@@ -275,6 +322,7 @@ describe('public browser configure startup ordering', () => {
       expect(span?.attributes['logfire.span_type']).toBe('log')
       expect(span?.attributes['logfire.page.route']).toBe('/integration')
       expect(span?.attributes['logfire.session.account_tier']).toBe('pro')
+      expect(span?.attributes['user.id']).toBe('user-1')
       expect(diagWarn).toHaveBeenCalledWith(
         'logfire-browser: browser metrics did not start; continuing Web Vitals with span reporting only'
       )

@@ -82,6 +82,7 @@ export type {
   BrowserSessionAttributeValue,
   BrowserSessionOptions,
   BrowserSessionUrlAttributes,
+  BrowserUser,
   RUMOptions,
 } from './browserSession'
 export type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'

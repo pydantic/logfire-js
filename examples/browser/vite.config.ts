@@ -8,17 +8,17 @@ import { defineConfig, loadEnv } from 'vite-plus'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 // Keep the dev import URL neutral because browser privacy extensions can block
 // module URLs containing "session-replay". Loading workspace dist output also
-// needs rrweb's browser ESM build, not the CommonJS package entrypoint.
+// needs the recorder's browser ESM build, not the CommonJS package entrypoint.
 const recorderModuleId = 'lf-browser-recorder'
 const resolvedRecorderModuleId = `\0${recorderModuleId}`
 const packageEntrypoint = resolve(__dirname, '../../packages/logfire-session-replay/dist/index.js')
 const require = createRequire(packageEntrypoint)
-const rrwebEntrypoint = require.resolve('rrweb').replace(/dist\/rrweb\.cjs$/u, 'dist/rrweb.js')
+const recorderEntrypoint = require.resolve('@rrweb/record').replace(/dist\/record\.cjs$/u, 'dist/record.js')
 const fflateEntrypoint = resolve(dirname(require.resolve('fflate/package.json')), 'esm/browser.js')
 
 function loadRecorderModule(): string {
   return readFileSync(packageEntrypoint, 'utf8')
-    .replaceAll('from"rrweb"', `from${JSON.stringify(rrwebEntrypoint)}`)
+    .replaceAll('from"@rrweb/record"', `from${JSON.stringify(recorderEntrypoint)}`)
     .replaceAll('from"fflate"', `from${JSON.stringify(fflateEntrypoint)}`)
 }
 

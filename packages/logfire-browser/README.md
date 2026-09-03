@@ -80,7 +80,7 @@ or 4 hours of total duration by default. Spans get the OpenTelemetry
 
 Use `getRouteName` for the application's normalized route template and
 `getSessionAttributes` for low-cardinality dimensions that should remain stable
-for a browser session:
+for a browser session. Use `getUser` for the application's current user:
 
 ```js
 logfire.configure({
@@ -93,12 +93,29 @@ logfire.configure({
         account_tier: currentAccount.tier,
         beta_user: currentUser.isBeta,
       }),
+      getUser: () =>
+        currentUser === undefined
+          ? undefined
+          : {
+              id: currentUser.id,
+              name: currentUser.name,
+              email: currentUser.email,
+            },
     },
   },
 })
 ```
 
 `getRouteName` is evaluated for each span and becomes `logfire.page.route`.
+`getUser` is also evaluated for each span. A non-empty `id` becomes `user.id`;
+non-empty `name` and `email` values become `user.name` and `user.email`.
+Use an opaque application id. Name and email are opt-in PII. The SDK emits
+accepted strings unchanged, does not persist them, does not add them to Web
+Vitals metric labels, and does not rotate the browser session when the current
+user changes or logs out. Returning `undefined` represents an anonymous user or
+logout. These client-asserted values are observational context, not
+authentication, authorization, billing, or audit evidence.
+
 `getSessionAttributes` is evaluated once for each browser session, persisted
 across same-tab reloads, and refreshed when the session rotates. Accepted
 values become span attributes prefixed with `logfire.session.` and are also
@@ -372,6 +389,11 @@ initializes and touches the session once before loading the optional peer, but
 subsequent replay events only peek at the session id and do not refresh the
 timeout. Span starts are the ongoing automatic activity;
 `getBrowserSessionId()` also explicitly touches the session.
+
+When `sessionReplay.getDistinctId` is not configured, replay uses the current
+`rum.session.getUser()?.id` so replay rows and span `user.id` agree. An explicit
+`getDistinctId` remains authoritative. A static `sessionReplay.distinctId`
+remains the fallback while the selected live getter returns `undefined`.
 
 Use the same restricted frontend application token for traces, metrics, and
 session replay. Derive the regional replay endpoint from the generated trace

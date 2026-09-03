@@ -201,6 +201,71 @@ describe('BrowserSessionSpanProcessor', () => {
     expect(secondSpan.attributes['logfire.page.route']).toBe('')
   })
 
+  it('follows the current user without rotating the browser session', () => {
+    let user: { id: string; name?: string; email?: string } | undefined
+    const processor = createProcessor({
+      getRouteName: () => '/account',
+      getUser: () => user,
+      urlAttributes: false,
+    })
+    const anonymous = createSpan()
+    startSpan(processor, anonymous)
+    user = { email: 'alice@example.com', id: 'user-a', name: 'Alice' }
+    const identified = createSpan()
+    startSpan(processor, identified)
+    user = { id: 'user-b' }
+    const switched = createSpan()
+    startSpan(processor, switched)
+    user = undefined
+    const loggedOut = createSpan()
+    startSpan(processor, loggedOut)
+
+    expect(anonymous.attributes).toEqual({ 'logfire.page.route': '/account', 'session.id': 'session-1' })
+    expect(identified.attributes).toEqual({
+      'logfire.page.route': '/account',
+      'session.id': 'session-1',
+      'user.email': 'alice@example.com',
+      'user.id': 'user-a',
+      'user.name': 'Alice',
+    })
+    expect(switched.attributes).toEqual({
+      'logfire.page.route': '/account',
+      'session.id': 'session-1',
+      'user.id': 'user-b',
+    })
+    expect(loggedOut.attributes).toEqual({ 'logfire.page.route': '/account', 'session.id': 'session-1' })
+  })
+
+  it('contains hostile user callbacks without suppressing other context', () => {
+    const replayState = new BrowserSessionReplayState()
+    replayState.setReplay(createReplayRuntime('full'))
+    const span = createSpan()
+
+    expect(() => {
+      startSpan(
+        createProcessor(
+          {
+            getRouteName: () => '/account',
+            getSessionAttributes: () => ({ tier: 'pro' }),
+            getUser: () => {
+              throw new Error('identity unavailable')
+            },
+            urlAttributes: false,
+          },
+          replayState
+        ),
+        span
+      )
+    }).not.toThrow()
+    expect(span.attributes).toEqual({
+      'logfire.page.route': '/account',
+      'logfire.session.tier': 'pro',
+      'logfire.session_replay.active': true,
+      'logfire.session_replay.mode': 'full',
+      'session.id': 'session-1',
+    })
+  })
+
   it('keeps route evaluation independent from URL sanitization failures', () => {
     setLocation({ href: 'https://example.com/dashboard' })
     const span = createSpan()

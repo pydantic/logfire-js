@@ -39,7 +39,9 @@ export interface BrowserSessionReplayPackageConfig {
   maxBufferBytes?: number
   /** Minimum recording duration before a replay is uploaded. Defaults to 5 seconds. */
   minSessionDurationMs?: number
+  /** Static replay identity and anonymous fallback for a live identity getter. */
   distinctId?: string
+  /** Explicit live replay identity. This takes precedence over rum.session.getUser. */
   getDistinctId?: () => string | undefined
   captureConsole?: boolean
   captureNetwork?: boolean
@@ -95,7 +97,9 @@ export interface BrowserSessionReplayOptions {
   /** Minimum recording duration before a replay is uploaded. Defaults to 5 seconds. */
   minSessionDurationMs?: number
 
+  /** Static replay identity and anonymous fallback for a live identity getter. */
   distinctId?: string
+  /** Explicit live replay identity. This takes precedence over rum.session.getUser. */
   getDistinctId?: () => string | undefined
 
   captureConsole?: boolean
@@ -236,6 +240,8 @@ function createReplayConfig(
   }
   if (options.getDistinctId !== undefined) {
     config.getDistinctId = options.getDistinctId
+  } else {
+    config.getDistinctId = () => browserSessionManager.getUser()?.id
   }
   if (options.captureConsole !== undefined) {
     config.captureConsole = options.captureConsole

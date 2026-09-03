@@ -225,6 +225,65 @@ describe('startBrowserSessionReplay', () => {
     expect(touchSpy).toHaveBeenCalledTimes(touchCallsAfterStartup)
   })
 
+  it('derives live replay identity from the current span user', async () => {
+    let user: { id: string } | undefined
+    const manager = new BrowserSessionManager({
+      generateId: () => 'browser-session-1',
+      getUser: () => user,
+      now: () => 1_000,
+      storage: new MemoryStorage(),
+      storageKey: 'test-session',
+    })
+    let replayConfig: BrowserSessionReplayPackageConfig | undefined
+    const replayModule: BrowserSessionReplayModule = {
+      startSessionReplay: (config) => {
+        replayConfig = config
+        return createReplayRuntime()
+      },
+    }
+
+    await startBrowserSessionReplay(
+      { distinctId: 'anonymous', load: () => replayModule, replayUrl: '/logfire/replay' },
+      manager,
+      new BrowserSessionReplayState(),
+      { traceUrl: '/logfire/traces' }
+    )
+
+    expect(replayConfig?.getDistinctId?.()).toBeUndefined()
+    user = { id: 'user-a' }
+    expect(replayConfig?.getDistinctId?.()).toBe('user-a')
+    user = { id: 'user-b' }
+    expect(replayConfig?.getDistinctId?.()).toBe('user-b')
+    user = undefined
+    expect(replayConfig?.getDistinctId?.()).toBeUndefined()
+    expect(replayConfig?.distinctId).toBe('anonymous')
+  })
+
+  it('preserves an explicit replay identity getter over the span user', async () => {
+    const explicitGetDistinctId = () => 'replay-user'
+    const manager = new BrowserSessionManager({
+      getUser: () => ({ id: 'span-user' }),
+      storage: null,
+    })
+    let replayConfig: BrowserSessionReplayPackageConfig | undefined
+    const replayModule: BrowserSessionReplayModule = {
+      startSessionReplay: (config) => {
+        replayConfig = config
+        return createReplayRuntime()
+      },
+    }
+
+    await startBrowserSessionReplay(
+      { getDistinctId: explicitGetDistinctId, load: () => replayModule, replayUrl: '/logfire/replay' },
+      manager,
+      new BrowserSessionReplayState(),
+      { traceUrl: '/logfire/traces' }
+    )
+
+    expect(replayConfig?.getDistinctId).toBe(explicitGetDistinctId)
+    expect(replayConfig?.getDistinctId?.()).toBe('replay-user')
+  })
+
   it('leaves privacy options absent so the replay package owns safe defaults', async () => {
     let replayConfig: BrowserSessionReplayPackageConfig | undefined
     const replayModule: BrowserSessionReplayModule = {

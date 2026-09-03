@@ -15,12 +15,26 @@ export interface BrowserSessionUrlAttributes {
   path?: string
 }
 
+export interface BrowserUser {
+  /** Opaque application user id. */
+  id: string
+  /** Optional display name. This is PII when provided. */
+  name?: string
+  /** Optional email address. This is PII when provided. */
+  email?: string
+}
+
 export interface BrowserSessionOptions {
   /**
    * Returns the application's current normalized, low-cardinality route name.
    * The callback is evaluated independently for every new browser span.
    */
   getRouteName?: () => string | undefined
+  /**
+   * Returns the application's current user for each new browser span. The
+   * value is client-asserted context, not authentication or authorization.
+   */
+  getUser?: () => BrowserUser | undefined
   /**
    * Returns low-cardinality, non-PII dimensions to snapshot once per browser
    * session. Invalid or oversized entries are omitted.
@@ -205,10 +219,34 @@ function normalizeBrowserSessionAttributes(value: unknown): BrowserSessionAttrib
   return Object.freeze(attributes)
 }
 
+function normalizeBrowserUser(value: unknown): BrowserUser | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined
+  }
+
+  try {
+    const id: unknown = Reflect.get(value, 'id')
+    if (typeof id !== 'string' || id.length === 0) {
+      return undefined
+    }
+
+    const name: unknown = Reflect.get(value, 'name')
+    const email: unknown = Reflect.get(value, 'email')
+    return Object.freeze({
+      id,
+      ...(typeof name === 'string' && name.length > 0 ? { name } : {}),
+      ...(typeof email === 'string' && email.length > 0 ? { email } : {}),
+    })
+  } catch {
+    return undefined
+  }
+}
+
 export class BrowserSessionManager {
   private readonly generateId: () => string
   private readonly routeNameCallback: BrowserSessionOptions['getRouteName'] | undefined
   private readonly sessionAttributesCallback: BrowserSessionOptions['getSessionAttributes'] | undefined
+  private readonly userCallback: BrowserSessionOptions['getUser'] | undefined
   private readonly idleTimeoutMs: number
   private readonly maxDurationMs: number
   private readonly now: () => number
@@ -223,6 +261,7 @@ export class BrowserSessionManager {
     this.generateId = options.generateId ?? generateBrowserSessionId
     this.routeNameCallback = options.getRouteName
     this.sessionAttributesCallback = options.getSessionAttributes
+    this.userCallback = options.getUser
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_BROWSER_SESSION_OPTIONS.idleTimeoutMs
     this.maxDurationMs = options.maxDurationMs ?? DEFAULT_BROWSER_SESSION_OPTIONS.maxDurationMs
     this.now = options.now ?? Date.now
@@ -288,6 +327,14 @@ export class BrowserSessionManager {
     try {
       const routeName = this.routeNameCallback?.()
       return typeof routeName === 'string' ? routeName : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  getUser(): BrowserUser | undefined {
+    try {
+      return normalizeBrowserUser(this.userCallback?.())
     } catch {
       return undefined
     }

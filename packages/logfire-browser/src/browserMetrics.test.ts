@@ -257,6 +257,7 @@ describe('browser metrics runtime', () => {
       attributes: () =>
         ({
           'app.route': '/products/:id',
+          'user.plan': 'enterprise',
           'web_vital.id': 'custom-id',
           'web_vital.lcp.target': '#hero img',
           'web_vital.value': 999,
@@ -272,6 +273,9 @@ describe('browser metrics runtime', () => {
           'session.id': 'session-1',
           'url.full': 'https://example.com/products/123?token=secret',
           'url.path': '/products/:id',
+          'user.email': 'alice@example.com',
+          'user.id': 'user-1',
+          'user.name': 'Alice',
           'web_vital.delta': 12,
           ignored: { nested: true },
         }) as never,

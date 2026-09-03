@@ -54,7 +54,6 @@ logfire.configure({
     captureNetwork: true,
     captureNavigation: true,
     distinctId: 'anonymous',
-    getDistinctId: () => getUserId(),
     flushIntervalMs: 2_000,
   },
   rum: {
@@ -65,6 +64,10 @@ logfire.configure({
         app_region: 'eu',
         experiment_variant: 'catalog_b',
       }),
+      getUser: () => {
+        const id = getUserId()
+        return id === undefined ? undefined : { id }
+      },
     },
     webVitals: {
       reportAllChanges: true,
@@ -215,7 +218,6 @@ async function runCheckout(): Promise<void> {
       attributes: {
         'app.route': routeTemplate(window.location.pathname),
         'example.action': 'checkout',
-        'enduser.id': getUserId(),
       },
       callback: async () => {
         await logfire.span('browser replay validate cart', {
@@ -237,7 +239,7 @@ async function runCheckout(): Promise<void> {
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
-                userId: getUserId(),
+                userId: getUserId() ?? 'anonymous',
                 region: regionSelect.value,
                 privateNote: getInput('private-note').value,
               }),
@@ -345,8 +347,8 @@ function logEvent(message: string): void {
   logElement.textContent = `[${timestamp}] ${message}\n${logElement.textContent ?? ''}`.slice(0, 3_000)
 }
 
-function getUserId(): string {
-  return userIdInput.value.trim() || 'anonymous'
+function getUserId(): string | undefined {
+  return userIdInput.value.trim() || undefined
 }
 
 function currentView(): string {
