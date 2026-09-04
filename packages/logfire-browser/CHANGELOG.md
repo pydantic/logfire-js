@@ -1,5 +1,12 @@
 # @pydantic/logfire-browser
 
+## 0.19.0
+
+### Minor Changes
+
+- 2940d7d: Report severe browser main-thread congestion with opt-in, sampled Long Animation Frame spans. The browser SDK now emits bounded per-frame diagnostics and foreground window summaries with normalized script attribution, and existing INP spans include the culprit script already identified by `web-vitals`. The new data remains span-only and is not added to metrics.
+- 2940d7d: Attach the application's current user to browser spans through `rum.session.getUser`, and use the same live id for session replay when no explicit replay identity getter is configured. User context remains client asserted, span-only, and outside persisted browser-session state and Web Vitals metric labels.
+
 ## 0.18.14
 
 ### Patch Changes
