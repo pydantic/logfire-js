@@ -81,11 +81,13 @@ jobs:
       - name: Install pnpm for publishing
         uses: pnpm/action-setup@v4
 
+      # Publishing authenticates through npm trusted publishing (OIDC via the id-token
+      # permission and the npm environment); no registry token is involved. A brand-new
+      # package cannot use OIDC for its first publish (npm/cli#8544): publish it once
+      # locally, configure its trusted publisher on npmjs.com, and CI takes over.
       - name: Release
         id: changesets
         uses: changesets/action@v2
         with:
           publish-script: pnpm run release
           github-token: ${{ secrets.GITHUB_TOKEN }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -3,6 +3,14 @@ set -euo pipefail
 
 # Creates a granular npm token for CI publishing and updates the
 # NPM_TOKEN secret in the GitHub repo.
+#
+# NOTE: the release workflow publishes through npm trusted publishing (OIDC) and does
+# not read NPM_TOKEN; nothing wires the secret into an .npmrc. Keep this script only
+# as a fallback for bootstrapping a brand-new package through CI, which would also
+# require adding NODE_AUTH_TOKEN wiring back to the workflow. The simpler bootstrap
+# is a one-time local `pnpm publish`, then configuring the package's trusted
+# publisher on npmjs.com (see npm/cli#8544 for why OIDC cannot first-publish).
+#
 # Covers both @pydantic scoped packages and the unscoped "logfire" package.
 # 90-day expiry, bypasses 2FA for CI. Requires gh CLI.
 # Assumes you are already logged in to npm (run `npm login` first if needed).
