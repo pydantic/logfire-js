@@ -332,11 +332,29 @@ describe('serializeAttributes', () => {
       symbol: Symbol('top-level'),
     })
 
-    expect(result['bigintPayload']).toBe('[unserializable]')
+    // A BigInt is representable now, so it no longer stands in for a serialization failure here;
+    // `handler` and `symbol` below still cover the graceful-degradation guarantee this test exists for.
+    expect(result['bigintPayload']).toBe('{"value":"1"}')
     expect(result['circular']).toBe('{"password":"[Scrubbed due to \'password\']","self":"[Scrubbed due to cycle]"}')
     expect(result['circularArray']).toBe('["[Scrubbed due to cycle]"]')
     expect(result['handler']).toBe('[unserializable]')
     expect(result['symbol']).toBe('[unserializable]')
+  })
+
+  test('sends a BigInt attribute as its exact decimal string at any depth', () => {
+    const result = serializeAttributes({
+      big: 12345678901234567890n,
+      nested: { id: 99n, name: 'row' },
+      small: 7n,
+    })
+
+    // These used to be `[unserializable]`, and the nested one took the whole attribute with it.
+    expect(result['big']).toBe('12345678901234567890')
+    expect(result['small']).toBe('7')
+    expect(result['nested']).toBe('{"id":"99","name":"row"}')
+    expect(result[JSON_SCHEMA_KEY]).toBe(
+      '{"properties":{"nested":{"properties":{"id":{"type":"string"},"name":{"type":"string"}},"type":"object"}},"type":"object"}'
+    )
   })
 
   test('does not throw for deeply nested attributes before JSON serialization', () => {

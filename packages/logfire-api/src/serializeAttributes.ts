@@ -63,6 +63,11 @@ export function serializeAttributes(attributes: RawAttributes): SerializedAttrib
       nullArgs.push(key)
     } else if (typeof value === 'number') {
       result.set(key, serializeNumberAttribute(value))
+    } else if (typeof value === 'bigint') {
+      // OTLP has no arbitrary-precision integer, and a BigInt exists precisely because the value
+      // may not survive as a double, so it is sent as its exact decimal string rather than
+      // narrowed. `JSON.stringify` throws on one, which used to lose the whole attribute.
+      result.set(key, value.toString())
     } else if (typeof value === 'string' || typeof value === 'boolean') {
       result.set(key, value)
     } else if (value instanceof Date) {
@@ -164,9 +169,13 @@ function stringifyJsonAttribute(value: unknown): string | undefined {
     // JSON writes NaN and Infinity as `null`, so a nested one is lost at any depth. Python's
     // encoder returns `str(o)` for a non-finite float wherever it appears, and
     // `serializeNumberAttribute` already sends the string for a top-level one.
-    const serialized = JSON.stringify(value, (_key, item: unknown) =>
-      typeof item === 'number' && !Number.isFinite(item) ? String(item) : item
-    )
+    const serialized = JSON.stringify(value, (_key, item: unknown) => {
+      // A nested BigInt makes `JSON.stringify` throw, which discarded the entire attribute.
+      if (typeof item === 'bigint') {
+        return item.toString()
+      }
+      return typeof item === 'number' && !Number.isFinite(item) ? String(item) : item
+    })
     return typeof serialized === 'string' ? serialized : undefined
   } catch {
     return undefined
@@ -200,7 +209,7 @@ function inferJsonSchema(
     case 'string':
       return { type: 'string' }
     case 'bigint':
-      return undefined
+      return { type: 'string' }
     case 'function':
     case 'symbol':
       return state.container === 'array' ? { type: 'null' } : undefined
