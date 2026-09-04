@@ -1,5 +1,12 @@
 # @pydantic/logfire-api
 
+## 0.22.6
+
+### Patch Changes
+
+- 2b0d673: Send a number OTLP cannot represent as a string: a non-finite number nested inside an attribute (it previously reached the wire as `null`, indistinguishable from an actual null; a top-level one was already sent as a string), and a top-level integer outside signed 64-bit range (it previously claimed an OTLP `intValue` width the field does not have). Both match Python's `prepare_otlp_attribute`; an oversized integer is printed in its exact decimal form and warns once per process.
+- 92f0868: Handle names that collide with `Object.prototype` members everywhere user-controlled keys meet plain records. A variable, label, rollout weight, or attribute named `__proto__` was silently dropped by the store, the config normalizer, the push API, and the attribute scrubber; a lookup of an unconfigured name such as `constructor` or `valueOf` found the inherited member and misreported the resolution. Records are now built through Maps or `Object.fromEntries` and read with own-property lookups throughout the variables runtime and attribute serialization.
+
 ## 0.22.5
 
 ### Patch Changes

@@ -1,5 +1,16 @@
 # @pydantic/logfire-cf-workers
 
+## 2.0.18
+
+### Patch Changes
+
+- a68833f: Keep a span attribute named like an `Object.prototype` member. The Workers span stored attributes by plain assignment, so `setAttribute('__proto__', …)` silently dropped a primitive value and replaced the attribute record's prototype for an array value; the Logfire post-processor then lost the same key again through `Object.assign`. Both now write own properties.
+- Updated dependencies [a68833f]
+- Updated dependencies [2b0d673]
+- Updated dependencies [92f0868]
+  - @pydantic/otel-cf-workers@2.1.3
+  - logfire@0.22.6
+
 ## 2.0.17
 
 ### Patch Changes
