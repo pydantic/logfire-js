@@ -123,7 +123,9 @@ export class SpanImpl implements Span, ReadableSpan {
 
   setAttribute(key: string, value?: AttributeValue): this {
     if (isAttributeKey(key) && isAttributeValue(value)) {
-      this.attributes[key] = value
+      // Defined as an own property: a plain write to a `__proto__` key runs the inherited setter,
+      // which drops a primitive value and replaces the record's prototype for an array value.
+      Object.defineProperty(this.attributes, key, { configurable: true, enumerable: true, value, writable: true })
     }
     return this
   }

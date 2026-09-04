@@ -145,7 +145,12 @@ function postProcessAttributes(spans: ReadableSpan[]) {
         delete span.attributes[attrKey]
       }
     }
-    Object.assign(span.attributes, serializeAttributes(span.attributes))
+    // Applied key by key with own-property writes: `Object.assign` runs the inherited `__proto__`
+    // setter, which would discard that attribute right after the serializer preserved it.
+    const serialized = serializeAttributes(span.attributes)
+    for (const [key, value] of Object.entries(serialized)) {
+      Object.defineProperty(span.attributes, key, { configurable: true, enumerable: true, value, writable: true })
+    }
   }
   return spans
 }

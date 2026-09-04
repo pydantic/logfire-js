@@ -13,6 +13,7 @@ import {
   variablesBuildConfig,
   variablesClear,
   variablesPullConfig,
+  variablesPush,
   variablesPushConfig,
   variablesPushTypes,
   variablesValidate,
@@ -370,6 +371,34 @@ describe('managed variables', () => {
     expect(pushed.changes).toEqual([{ action: 'create', name: '__proto__' }])
     const pulled = await variablesPullConfig()
     expect(Object.hasOwn(pulled.variables, '__proto__')).toBe(true)
+  })
+
+  it('builds and pushes a registered variable named like an Object.prototype member', async () => {
+    configureVariables({ config: config({}), instrument: false })
+    defineVar('__proto__', { default: 'fallback' })
+
+    const built = variablesBuildConfig()
+    expect(Object.hasOwn(built.variables, '__proto__')).toBe(true)
+
+    // The update record used to lose the entry to the inherited setter while `changes` still
+    // reported the create, so the push claimed success and sent nothing.
+    const pushed = await variablesPush()
+    expect(pushed.changes).toEqual([{ action: 'create', name: '__proto__' }])
+    const pulled = await variablesPullConfig()
+    expect(Object.hasOwn(pulled.variables, '__proto__')).toBe(true)
+  })
+
+  it('targets variables named like Object.prototype members', async () => {
+    configureVariables({ config: config({}), instrument: false })
+    const proto = defineVar('__proto__', { codec: { parse: String }, default: (targetingKey) => targetingKey ?? 'none' })
+    const ctor = defineVar('constructor', { codec: { parse: String }, default: (targetingKey) => targetingKey ?? 'none' })
+
+    await targetingContext('user-1', { variables: [proto] }, async () => {
+      // The per-variable write for `__proto__` used to run the inherited setter and be ignored.
+      await expect(proto.get()).resolves.toMatchObject({ value: 'user-1' })
+      // The lookup for `constructor` used to return the inherited member as the targeting key.
+      await expect(ctor.get()).resolves.toMatchObject({ value: 'none' })
+    })
   })
 
   it('treats an explicit label named like an Object.prototype member as missing', async () => {

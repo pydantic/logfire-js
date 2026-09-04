@@ -1544,11 +1544,12 @@ export function variablesGet(): VariableDefinition[] {
 }
 
 export function variablesBuildConfig(variables: VariableDefinition[] = variablesGet()): VariablesConfig {
-  const configs: Record<string, VariableConfig> = {}
+  // Map + fromEntries: a registered variable may legally be named `__proto__`.
+  const configs = new Map<string, VariableConfig>()
   for (const variable of variables) {
-    configs[variable.name] = variable.toConfig()
+    configs.set(variable.name, variable.toConfig())
   }
-  return { variables: configs }
+  return { variables: Object.fromEntries(configs) }
 }
 
 export async function variablesValidate(variables: VariableDefinition[] = variablesGet()): Promise<ValidationReport> {
@@ -1565,13 +1566,16 @@ export async function variablesPush(
   const provider = getWritableProvider()
   await provider.refresh?.(true)
   const serverConfig = (await provider.getAllVariablesConfig?.()) ?? { variables: {} }
-  const updates: Record<string, VariableConfig> = {}
+  // A Map, for the same reason as in variablesPushConfig: a plain record write would drop a
+  // `__proto__` variable while `changes` still reported it, so the push would claim success and
+  // send nothing.
+  const updates = new Map<string, VariableConfig>()
   const changes: VariablePushChange[] = []
   for (const variable of variables) {
     const local = variable.toConfig()
     const existing = getVariableConfig(serverConfig, variable.name)
     if (existing === undefined) {
-      updates[local.name] = local
+      updates.set(local.name, local)
       changes.push({ action: 'create', name: local.name })
       continue
     }
@@ -1584,7 +1588,7 @@ export async function variablesPush(
       type_name: local.type_name ?? null,
     }
     if (JSON.stringify(merged) !== JSON.stringify(existing)) {
-      updates[existing.name] = merged
+      updates.set(existing.name, merged)
       changes.push({ action: 'update', name: existing.name })
     }
   }
@@ -1596,8 +1600,8 @@ export async function variablesPush(
   }
   warnForNonStrictVariablePush(report)
 
-  if (options.dryRun !== true && Object.keys(updates).length > 0) {
-    await provider.batchUpdate(updates)
+  if (options.dryRun !== true && updates.size > 0) {
+    await provider.batchUpdate(Object.fromEntries(updates))
   }
   return { blocked: false, blockedBy: [], changes, dryRun: options.dryRun === true }
 }
@@ -1794,7 +1798,9 @@ export async function targetingContext<R>(
     next.defaultKey = targetingKey
   } else {
     for (const variable of variables) {
-      next.byVariable[variable.name] = targetingKey
+      // Own-property write: a targeting key for a variable named `__proto__` would otherwise be
+      // swallowed by the inherited setter.
+      setOwn(next.byVariable, variable.name, targetingKey)
     }
   }
   return withTargetingContext(next, callback)
@@ -2974,7 +2980,9 @@ async function withTargetingContext<R>(data: TargetingContextData, callback: () 
 
 function getContextTargetingKey(variableName: string): string | undefined {
   const ctx = getTargetingContext()
-  return ctx.byVariable[variableName] ?? ctx.defaultKey
+  // Own properties only: `constructor` or `valueOf` would otherwise return the inherited member
+  // as the targeting key and seed the rollout with garbage.
+  return getOwn(ctx.byVariable, variableName) ?? ctx.defaultKey
 }
 
 function getOverrideContext(): Record<string, unknown> {
