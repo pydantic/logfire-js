@@ -1,5 +1,14 @@
 # @pydantic/logfire-browser
 
+## 0.19.1
+
+### Patch Changes
+
+- 05ac16b: Report an instrumentation `unregister` that throws `undefined` instead of resolving cleanup as if it had succeeded. The accumulator held the raw thrown value as the failure sentinel, so `undefined` read as no failure at all, and a first `null` was overwritten by a later error through `??=`. Failures are now normalized to an `Error` when captured, the way the other error accumulators in the cleanup path already do.
+- Updated dependencies [2b0d673]
+- Updated dependencies [92f0868]
+  - logfire@0.22.6
+
 ## 0.19.0
 
 ### Minor Changes
