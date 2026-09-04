@@ -22,6 +22,10 @@ interface AttributesJSONSchema {
 type SerializedAttributes = Record<string, AttributeValue>
 type ContainerKind = 'array' | 'object' | 'top-level'
 
+/** OTLP encodes every integral number attribute as a signed 64-bit `intValue`. */
+const OTLP_MAX_INT = 9223372036854775807n
+const OTLP_MIN_INT = -9223372036854775808n
+
 const MAX_SCHEMA_DEPTH = 4
 const MAX_OBJECT_PROPERTIES = 20
 const MAX_ARRAY_ITEMS = 20
@@ -54,10 +58,7 @@ export function serializeAttributes(attributes: RawAttributes): SerializedAttrib
     if (value === null || value === undefined) {
       nullArgs.push(key)
     } else if (typeof value === 'number') {
-      // OTLP carries a double, and JSON has no NaN or Infinity, so these serialize to `null` and
-      // the value is lost. Python's `prepare_otlp_attribute` sends the string instead. `String`
-      // spells them the way the message template already does, so the two agree.
-      result[key] = Number.isFinite(value) ? value : String(value)
+      result[key] = serializeNumberAttribute(value)
     } else if (typeof value === 'string' || typeof value === 'boolean') {
       result[key] = value
     } else if (value instanceof Date) {
@@ -82,6 +83,39 @@ export function serializeAttributes(attributes: RawAttributes): SerializedAttrib
     result[JSON_SCHEMA_KEY] = JSON.stringify(schema)
   }
   return result
+}
+
+let warnedOversizedInteger = false
+
+/**
+ * A top-level number as OTLP can carry it. Two cases have no representation and are sent as
+ * strings, which is what Python's `prepare_otlp_attribute` does:
+ *
+ * - `NaN` and `Infinity`: OTLP carries a double but JSON has no spelling for them, so they
+ *   serialize to `null` and the value is lost. `String` spells them the way the message template
+ *   already does, so the two agree.
+ * - An integer outside signed 64-bit range: `otlp-transformer` encodes every integral number as an
+ *   `intValue`, which a larger value overflows. `BigInt` prints the double's exact value, where
+ *   `String` would give a rounded form such as `1e+21`.
+ */
+function serializeNumberAttribute(value: number): number | string {
+  if (!Number.isFinite(value)) {
+    return String(value)
+  }
+  if (!Number.isInteger(value)) {
+    return value
+  }
+  const exact = BigInt(value)
+  if (exact >= OTLP_MIN_INT && exact <= OTLP_MAX_INT) {
+    return value
+  }
+  if (!warnedOversizedInteger) {
+    warnedOversizedInteger = true
+    console.warn(
+      `Integer attribute ${exact.toString()} is outside the signed 64-bit range OTLP supports; sending it and any later oversized integer as a decimal string.`
+    )
+  }
+  return exact.toString()
 }
 
 function serializeJsonAttribute(
@@ -122,7 +156,12 @@ function serializeJsonAttribute(
 
 function stringifyJsonAttribute(value: unknown): string | undefined {
   try {
-    const serialized = JSON.stringify(value)
+    // JSON writes NaN and Infinity as `null`, so a nested one is lost at any depth. Python's
+    // encoder returns `str(o)` for a non-finite float wherever it appears, and
+    // `serializeNumberAttribute` already sends the string for a top-level one.
+    const serialized = JSON.stringify(value, (_key, item: unknown) =>
+      typeof item === 'number' && !Number.isFinite(item) ? String(item) : item
+    )
     return typeof serialized === 'string' ? serialized : undefined
   } catch {
     return undefined
@@ -151,7 +190,8 @@ function inferJsonSchema(
     case 'boolean':
       return { type: 'boolean' }
     case 'number':
-      return Number.isFinite(value) ? { type: 'number' } : { type: 'null' }
+      // A nested non-finite number is sent as a string by `stringifyJsonAttribute`.
+      return Number.isFinite(value) ? { type: 'number' } : { type: 'string' }
     case 'string':
       return { type: 'string' }
     case 'bigint':

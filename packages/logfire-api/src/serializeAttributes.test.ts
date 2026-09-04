@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'vite-plus/test'
+import { beforeEach, describe, expect, test, vi } from 'vite-plus/test'
 
 import { JSON_NULL_FIELDS_KEY, JSON_SCHEMA_KEY } from './constants'
 import { configureLogfireApi } from './logfireApiConfig'
@@ -46,6 +46,46 @@ describe('serializeAttributes', () => {
     })
     // The point of the change: these used to reach the wire as null.
     expect(JSON.stringify(result)).toBe('{"inf":"Infinity","nan":"NaN","neginf":"-Infinity","ok":1.5,"zero":0}')
+  })
+
+  test('sends a nested non-finite number as a string, like the top-level one', () => {
+    const result = serializeAttributes({
+      nested: { inf: Number.POSITIVE_INFINITY, list: [Number.NaN, 2], nan: Number.NaN, ok: 1.5 },
+    })
+
+    // These used to reach the wire as `null`, indistinguishable from an actual null. The list
+    // schema drops `items` because the array became heterogeneous, a string beside a number.
+    expect(result['nested']).toBe('{"inf":"Infinity","list":["NaN",2],"nan":"NaN","ok":1.5}')
+    expect(result[JSON_SCHEMA_KEY]).toBe(
+      '{"properties":{"nested":{"properties":{"inf":{"type":"string"},"list":{"type":"array"},"nan":{"type":"string"},"ok":{"type":"number"}},"type":"object"}},"type":"object"}'
+    )
+  })
+
+  test('sends an integer outside signed 64-bit range as its exact decimal string', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const result = serializeAttributes({
+        // One past the int64 maximum, the first double the range check must reject.
+        atBoundary: 2 ** 63,
+        big: 2 ** 64,
+        float: 1.5,
+        negative: -(2 ** 64),
+        safe: 9007199254740991,
+      })
+
+      expect(result).toEqual({
+        atBoundary: '9223372036854775808',
+        big: '18446744073709551616',
+        float: 1.5,
+        negative: '-18446744073709551616',
+        safe: 9007199254740991,
+      })
+      // Warned once per process, not per attribute, unlike Python's per-call-site warning.
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('signed 64-bit'))
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   test('emits deterministic nested object schema for ordinary JSON-like values', () => {
