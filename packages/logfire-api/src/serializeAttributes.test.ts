@@ -48,6 +48,25 @@ describe('serializeAttributes', () => {
     expect(JSON.stringify(result)).toBe('{"inf":"Infinity","nan":"NaN","neginf":"-Infinity","ok":1.5,"zero":0}')
   })
 
+  test('sends an integer outside signed 64-bit range as its exact decimal string', () => {
+    const result = serializeAttributes({
+      big: 2 ** 64,
+      float: 1.5,
+      negative: -(2 ** 64),
+      safe: 9007199254740991,
+      // One past the int64 maximum, which is the first double the range check must reject.
+      atBoundary: 2 ** 63,
+    })
+
+    expect(result).toEqual({
+      atBoundary: '9223372036854775808',
+      big: '18446744073709551616',
+      float: 1.5,
+      negative: '-18446744073709551616',
+      safe: 9007199254740991,
+    })
+  })
+
   test('emits deterministic nested object schema for ordinary JSON-like values', () => {
     const result = serializeAttributes({
       payload: {

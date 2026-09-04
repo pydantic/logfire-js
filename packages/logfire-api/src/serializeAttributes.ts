@@ -22,6 +22,10 @@ interface AttributesJSONSchema {
 type SerializedAttributes = Record<string, AttributeValue>
 type ContainerKind = 'array' | 'object' | 'top-level'
 
+/** OTLP carries an integer attribute as a signed 64-bit value. */
+const OTLP_MAX_INT = 9223372036854775807n
+const OTLP_MIN_INT = -9223372036854775808n
+
 const MAX_SCHEMA_DEPTH = 4
 const MAX_OBJECT_PROPERTIES = 20
 const MAX_ARRAY_ITEMS = 20
@@ -54,10 +58,7 @@ export function serializeAttributes(attributes: RawAttributes): SerializedAttrib
     if (value === null || value === undefined) {
       nullArgs.push(key)
     } else if (typeof value === 'number') {
-      // OTLP carries a double, and JSON has no NaN or Infinity, so these serialize to `null` and
-      // the value is lost. Python's `prepare_otlp_attribute` sends the string instead. `String`
-      // spells them the way the message template already does, so the two agree.
-      result[key] = Number.isFinite(value) ? value : String(value)
+      result[key] = serializeNumberAttribute(value)
     } else if (typeof value === 'string' || typeof value === 'boolean') {
       result[key] = value
     } else if (value instanceof Date) {
@@ -82,6 +83,27 @@ export function serializeAttributes(attributes: RawAttributes): SerializedAttrib
     result[JSON_SCHEMA_KEY] = JSON.stringify(schema)
   }
   return result
+}
+
+/**
+ * A number as OTLP can carry it. Two cases cannot be represented and are sent as strings, which is
+ * what Python's `prepare_otlp_attribute` does with both:
+ *
+ * - `NaN` and `Infinity`, because JSON has no spelling for them and they serialize to `null`.
+ * - An integer outside signed 64-bit range. Every integral number is encoded as an OTLP `intValue`
+ *   (`otlp-transformer`'s `toAnyValue`), so a larger one claims a width the field does not have.
+ *   `BigInt` gives the double's exact value, where `String` would give its rounded decimal form.
+ */
+function serializeNumberAttribute(value: number): number | string {
+  if (!Number.isFinite(value)) {
+    // Spelled the way the message template already renders them, so the two agree.
+    return String(value)
+  }
+  if (!Number.isInteger(value)) {
+    return value
+  }
+  const exact = BigInt(value)
+  return exact > OTLP_MAX_INT || exact < OTLP_MIN_INT ? exact.toString() : value
 }
 
 function serializeJsonAttribute(
