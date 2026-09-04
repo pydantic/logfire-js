@@ -312,6 +312,86 @@ describe('managed variables', () => {
     })
   })
 
+  it('keeps a variable, label, and rollout weight named like an Object.prototype member', async () => {
+    // `__proto__` satisfies the SDK's own name rule, `/^[A-Za-z_][A-Za-z0-9_]*$/`, the same
+    // pattern Python uses, so every layer has to be able to hold one. An object literal cannot
+    // make such an own key; a config parsed from JSON can, which `Object.fromEntries` mimics.
+    const labels = Object.fromEntries([
+      ['__proto__', { serialized_value: JSON.stringify('proto'), version: 1 }],
+      ['prod', { serialized_value: JSON.stringify('ok'), version: 2 }],
+    ])
+    const rollout = { labels: Object.fromEntries([['__proto__', 1]]) }
+    configureVariables({
+      config: config({ main: { labels, name: 'main', overrides: [], rollout } }),
+      instrument: false,
+    })
+
+    // The rollout puts the whole weight on the label. Its weight used to run the inherited setter
+    // and vanish while normalizing, after the label itself vanished the same way and made the
+    // rollout validator reject a label the payload does contain.
+    const main = defineVar('main', { default: 'fallback' })
+    await expect(main.get()).resolves.toMatchObject({ label: '__proto__', reason: 'resolved', value: 'proto' })
+  })
+
+  it('stores and updates a variable whose name is an Object.prototype member', () => {
+    const variableConfig = (value: string) => ({
+      labels: { on: { serialized_value: JSON.stringify(value), version: 1 } },
+      name: '__proto__',
+      overrides: [],
+      rollout: { labels: { on: 1 } },
+    })
+    const provider = new LocalVariableProvider({ variables: {} })
+    provider.createVariable(variableConfig('first'))
+    expect(() => provider.createVariable(variableConfig('again'))).toThrow("Variable '__proto__' already exists")
+    provider.updateVariable('__proto__', variableConfig('second'))
+
+    const all = provider.getAllVariablesConfig()
+    expect(Object.hasOwn(all.variables, '__proto__')).toBe(true)
+    expect(Object.getPrototypeOf(all.variables)).toBe(Object.prototype)
+    expect(all.variables['__proto__']?.labels['on']).toEqual({ serialized_value: JSON.stringify('second'), version: 1 })
+  })
+
+  it('pushes a variable whose name is an Object.prototype member', async () => {
+    configureVariables({ config: config({}), instrument: false })
+    const variables = Object.fromEntries([
+      [
+        '__proto__',
+        {
+          labels: { on: { serialized_value: 'true', version: 1 } },
+          name: '__proto__',
+          overrides: [],
+          rollout: { labels: { on: 1 } },
+        },
+      ],
+    ]) as VariablesConfig['variables']
+
+    const pushed = await variablesPushConfig({ variables })
+
+    expect(pushed.changes).toEqual([{ action: 'create', name: '__proto__' }])
+    const pulled = await variablesPullConfig()
+    expect(Object.hasOwn(pulled.variables, '__proto__')).toBe(true)
+  })
+
+  it('treats an explicit label named like an Object.prototype member as missing', async () => {
+    configureVariables({
+      config: config({
+        color: {
+          labels: { blue: { serialized_value: JSON.stringify('blue'), version: 1 } },
+          name: 'color',
+          overrides: [],
+          rollout: { labels: { blue: 1 } },
+        },
+      }),
+      instrument: false,
+    })
+
+    const color = defineVar('color', { default: 'red' })
+
+    // The same fallback as any other missing label: the contextual rollout. The lookup used to
+    // find the inherited member and treat it as label data.
+    await expect(color.get({ label: 'constructor' })).resolves.toMatchObject({ label: 'blue', value: 'blue' })
+  })
+
   it('uses remote fetch with API key auth', async () => {
     const calls: { headers: HeadersInit | undefined; url: string }[] = []
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {

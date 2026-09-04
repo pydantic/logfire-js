@@ -88,6 +88,39 @@ describe('serializeAttributes', () => {
     }
   })
 
+  test('keeps an attribute whose key is an Object.prototype member', () => {
+    // An object literal cannot make an own `__proto__` key; user data built by `Object.fromEntries`
+    // or `JSON.parse` can. The scrubber used to assign it into its rebuilt record, which replaced
+    // that record's prototype and lost the attribute.
+    const result = serializeAttributes(
+      Object.fromEntries<unknown>([
+        ['__proto__', { a: 1 }],
+        ['ok', 2],
+      ])
+    )
+
+    expect(Object.hasOwn(result, '__proto__')).toBe(true)
+    expect(result['__proto__']).toBe('{"a":1}')
+    expect(result['ok']).toBe(2)
+    expect(result[JSON_SCHEMA_KEY]).toBe(
+      '{"properties":{"__proto__":{"properties":{"a":{"type":"number"}},"type":"object"}},"type":"object"}'
+    )
+  })
+
+  test('keeps a __proto__ property nested inside an attribute value, and its schema', () => {
+    const result = serializeAttributes({
+      payload: Object.fromEntries([
+        ['__proto__', 1],
+        ['b', 'x'],
+      ]),
+    })
+
+    expect(result['payload']).toBe('{"__proto__":1,"b":"x"}')
+    expect(result[JSON_SCHEMA_KEY]).toBe(
+      '{"properties":{"payload":{"properties":{"__proto__":{"type":"number"},"b":{"type":"string"}},"type":"object"}},"type":"object"}'
+    )
+  })
+
   test('emits deterministic nested object schema for ordinary JSON-like values', () => {
     const result = serializeAttributes({
       payload: {

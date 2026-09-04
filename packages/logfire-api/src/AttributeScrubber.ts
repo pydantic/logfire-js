@@ -193,14 +193,15 @@ export class LogfireAttributeScrubber implements BaseScrubber {
         return CYCLE_REPLACEMENT
       }
       seen.add(value)
-      // Object
+      // Object. Rebuilt through a Map: keys are user data, and assigning to a `__proto__` key
+      // would replace the rebuilt record's prototype instead of keeping the entry.
       try {
-        const result: Record<string, unknown> = {}
+        const result = new Map<string, unknown>()
         for (const [k, v] of Object.entries(value)) {
           if (SAFE_KEYS.has(k) || ['boolean', 'number', 'undefined'].includes(typeof v) || v === null) {
             // Safe key or a primitive value, no scrubbing of the key itself.
             // (In the Python SDK we still scrub primitive values to be extra careful)
-            result[k] = v
+            result.set(k, v)
           } else {
             // Check key against the pattern
             const keyMatch = k.match(this.pattern)
@@ -209,14 +210,14 @@ export class LogfireAttributeScrubber implements BaseScrubber {
               const redacted = this.redact([...path, k], v, keyMatch, notes)
               // If v is an object/array and got redacted to a string, we may want to consider if that's correct.
               // For simplicity, we just store the redacted string.
-              result[k] = redacted
+              result.set(k, redacted)
             } else {
               // Scrub the value recursively
-              result[k] = this.scrub([...path, k], v, notes, seen, depth + 1)
+              result.set(k, this.scrub([...path, k], v, notes, seen, depth + 1))
             }
           }
         }
-        return result
+        return Object.fromEntries(result)
       } finally {
         seen.delete(value)
       }

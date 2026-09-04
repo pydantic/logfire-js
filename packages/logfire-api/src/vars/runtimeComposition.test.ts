@@ -27,6 +27,34 @@ describe('variable runtime composition parity', () => {
     configureVariables(false)
   })
 
+  it('treats a variable named like an Object.prototype member as unconfigured', async () => {
+    configureVariables({
+      config: config({
+        main: {
+          labels: { prod: { serialized_value: JSON.stringify('Hello'), version: 1 } },
+          name: 'main',
+          overrides: [],
+          rollout: { labels: { prod: 1 } },
+        },
+      }),
+      instrument: false,
+    })
+
+    // An ordinary absent name is the reference point: it reports `code_default`.
+    await expect(defineVar('absentname', { default: 'fallback' }).get()).resolves.toMatchObject({
+      reason: 'code_default',
+      value: 'fallback',
+    })
+
+    // These used to find the inherited member, hand it back as a variable config, and fail
+    // downstream, reporting `other_error` for a name nobody configured.
+    const inherited = await Promise.all(
+      ['constructor', 'valueOf', 'hasOwnProperty'].map(async (name) => defineVar(name, { default: 'fallback' }).get())
+    )
+    expect(inherited.map((resolved) => resolved.reason)).toEqual(['code_default', 'code_default', 'code_default'])
+    expect(inherited.map((resolved) => resolved.value)).toEqual(['fallback', 'fallback', 'fallback'])
+  })
+
   it('falls back to the variable code default when a provider value has a missing reference', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     configureVariables({

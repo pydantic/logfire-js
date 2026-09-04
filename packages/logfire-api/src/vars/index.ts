@@ -1,6 +1,7 @@
 import { context as ContextAPI, createContextKey, propagation, trace as TraceAPI } from '@opentelemetry/api'
 
 import { murmurhash3x64128 } from '../murmurhash'
+import { getOwn, setOwn } from '../ownRecord'
 import { startSpan } from '../index'
 import { PlatformAPIClient, encodePathSegment } from '../platform/http'
 import { PlatformHTTPError } from '../platform/errors'
@@ -392,7 +393,7 @@ export class LocalVariableProvider implements VariableProvider {
     }
     const normalized = normalizeVariableConfig(config)
     const variables = withoutKey(this.config.variables, name)
-    variables[normalized.name] = normalized
+    setOwn(variables, normalized.name, normalized)
     this.config = { variables }
     return normalized
   }
@@ -413,7 +414,7 @@ export class LocalVariableProvider implements VariableProvider {
       } else {
         const normalized = normalizeVariableConfig(config)
         variables = withoutKey(variables, name)
-        variables[normalized.name] = normalized
+        setOwn(variables, normalized.name, normalized)
       }
     }
     this.config = { variables }
@@ -1609,26 +1610,28 @@ export async function variablesPushConfig(
   const provider = getWritableProvider()
   await provider.refresh?.(true)
   const serverConfig = (await provider.getAllVariablesConfig?.()) ?? { variables: {} }
-  const updates: Record<string, VariableConfig | undefined> = {}
+  // Accumulated in a Map: a variable name can be any identifier, `__proto__` included, and a
+  // plain record write would run the inherited setter and silently drop that update or delete.
+  const updates = new Map<string, VariableConfig | undefined>()
   const changes: VariablePushChange[] = []
 
   for (const [name, variableConfig] of Object.entries(normalized.variables)) {
     const existing = getVariableConfig(serverConfig, name)
-    updates[name] = variableConfig
+    updates.set(name, variableConfig)
     changes.push({ action: existing === undefined ? 'create' : 'update', name })
   }
 
   if (options.mode === 'replace') {
     for (const name of Object.keys(serverConfig.variables)) {
       if (!Object.hasOwn(normalized.variables, name)) {
-        updates[name] = undefined
+        updates.set(name, undefined)
         changes.push({ action: 'delete', name })
       }
     }
   }
 
-  if (options.dryRun !== true && Object.keys(updates).length > 0) {
-    await provider.batchUpdate(updates)
+  if (options.dryRun !== true && updates.size > 0) {
+    await provider.batchUpdate(Object.fromEntries(updates))
   }
   return { blocked: false, blockedBy: [], changes, dryRun: options.dryRun === true }
 }
@@ -1947,7 +1950,7 @@ function resolveLabelSourceForValidation(
     return undefined
   }
   visited.add(labeled.ref)
-  const next = config.labels[labeled.ref]
+  const next = getOwn(config.labels, labeled.ref)
   return next === undefined ? undefined : resolveLabelSourceForValidation(config, next, localDefault, visited)
 }
 
@@ -2519,7 +2522,7 @@ function resolveSerializedValueForLabel(config: VariablesConfig, name: string, l
 }
 
 function resolveVariableConfigForLabel(config: VariableConfig, label: string): SerializedResolvedVariable {
-  const labeled = config.labels[label]
+  const labeled = getOwn(config.labels, label)
   if (labeled === undefined) {
     return new SerializedResolvedVariable({ name: config.name, reason: 'resolved', value: undefined })
   }
@@ -2556,7 +2559,7 @@ function resolveValue(
 ): { label: string | undefined; serializedValue: string | undefined; version: number | undefined } {
   const selectedLabel = resolveLabel(config, targetingKey, attributes)
   if (selectedLabel !== undefined) {
-    const labeled = config.labels[selectedLabel]
+    const labeled = getOwn(config.labels, selectedLabel)
     if (labeled !== undefined) {
       const followed = followRef(config, labeled)
       return { label: selectedLabel, serializedValue: followed.serializedValue, version: followed.version }
@@ -2618,7 +2621,7 @@ function followRef(
     return { serializedValue: undefined, version: labeled.version ?? undefined }
   }
   visited.add(labeled.ref)
-  const next = config.labels[labeled.ref]
+  const next = getOwn(config.labels, labeled.ref)
   if (next === undefined) {
     return { serializedValue: undefined, version: labeled.version ?? undefined }
   }
@@ -2626,7 +2629,9 @@ function followRef(
 }
 
 function getVariableConfig(config: VariablesConfig, name: string): VariableConfig | undefined {
-  const direct = config.variables[name]
+  // Own properties only: a variable named `constructor` or `valueOf` must not resolve to the
+  // inherited member and be handed back as if it were a variable config.
+  const direct = getOwn(config.variables, name)
   if (direct !== undefined) {
     return direct
   }
@@ -2677,15 +2682,18 @@ function normalizeVariablesConfig(data: unknown): VariablesConfig {
   if (!isRecord(rawVariables)) {
     throw new Error('Variables config requires a variables object')
   }
-  const variables: Record<string, VariableConfig> = {}
+  // Accumulate in a Map and materialize with `Object.fromEntries`, which defines own keys. A
+  // variable name is a valid identifier (`__proto__` included), so plain assignment would run
+  // the inherited setter and drop the variable from every config read back out of the store.
+  const variables = new Map<string, VariableConfig>()
   for (const [key, value] of Object.entries(rawVariables)) {
     const variableConfig = normalizeVariableConfig(value)
     if (variableConfig.name !== key) {
       throw new Error(`variables has invalid lookup key '${key}' for variable '${variableConfig.name}'`)
     }
-    variables[key] = variableConfig
+    variables.set(key, variableConfig)
   }
-  return { variables }
+  return { variables: Object.fromEntries(variables) }
 }
 
 function cloneVariablesConfig(config: VariablesConfig): VariablesConfig {
@@ -2733,22 +2741,24 @@ function normalizeLabels(data: unknown): Record<string, LabelRef | LabeledValue>
   if (!isRecord(data)) {
     throw new Error('Variable labels must be an object')
   }
-  const labels: Record<string, LabelRef | LabeledValue> = {}
+  // Same reason as the variables record: a dropped `__proto__` label is not merely missing, it
+  // makes the rollout validator report it as "not present in labels" when it is.
+  const labels = new Map<string, LabelRef | LabeledValue>()
   for (const [label, raw] of Object.entries(data)) {
     if (!isRecord(raw)) {
       throw new Error(`Label '${label}' must be an object`)
     }
     if (typeof raw['serialized_value'] === 'string' && typeof raw['version'] === 'number') {
-      labels[label] = { serialized_value: raw['serialized_value'], version: raw['version'] }
+      labels.set(label, { serialized_value: raw['serialized_value'], version: raw['version'] })
     } else if (typeof raw['ref'] === 'string') {
-      labels[label] = { ref: raw['ref'], version: typeof raw['version'] === 'number' ? raw['version'] : null }
+      labels.set(label, { ref: raw['ref'], version: typeof raw['version'] === 'number' ? raw['version'] : null })
     } else if (typeof raw['target_type'] === 'string') {
-      labels[label] = normalizeApiLabel(raw)
+      labels.set(label, normalizeApiLabel(raw))
     } else {
       throw new Error(`Label '${label}' must contain serialized_value/version, ref, or target_type`)
     }
   }
-  return labels
+  return Object.fromEntries(labels)
 }
 
 function validateLabelRefs(labels: Record<string, LabelRef | LabeledValue>): void {
@@ -2796,7 +2806,7 @@ function normalizeRollout(data: unknown, labels: Record<string, LabelRef | Label
   if (!isRecord(data) || !isRecord(data['labels'])) {
     throw new Error('Rollout requires a labels object')
   }
-  const rolloutLabels: Record<string, number> = {}
+  const rolloutLabels = new Map<string, number>()
   let total = 0
   for (const [label, weight] of Object.entries(data['labels'])) {
     if (!Object.hasOwn(labels, label)) {
@@ -2807,12 +2817,12 @@ function normalizeRollout(data: unknown, labels: Record<string, LabelRef | Label
       throw new Error('Label proportions must not be negative')
     }
     total += normalizedWeight
-    rolloutLabels[label] = normalizedWeight
+    rolloutLabels.set(label, normalizedWeight)
   }
   if (total > 1.0 + 1e-9) {
     throw new Error('Label proportions must not sum to more than 1')
   }
-  return { labels: rolloutLabels }
+  return { labels: Object.fromEntries(rolloutLabels) }
 }
 
 function normalizeOverrides(data: unknown, labels: Record<string, LabelRef | LabeledValue>): RolloutOverride[] {
@@ -2904,22 +2914,29 @@ function labelToApiData(label: LabelRef | LabeledValue): Record<string, unknown>
 }
 
 function getMergedAttributes(attributes: Record<string, unknown> | undefined): Record<string, unknown> {
-  const result: Record<string, unknown> = {}
+  // Merged in a Map: baggage and user attribute keys are arbitrary strings, and both plain
+  // assignment and `Object.assign` run an inherited `__proto__` setter instead of keeping the
+  // entry.
+  const merged = new Map<string, unknown>()
   if (runtimeState.includeResourceAttributesInContext) {
-    Object.assign(result, runtimeState.resourceAttributes)
+    for (const [key, value] of Object.entries(runtimeState.resourceAttributes)) {
+      merged.set(key, value)
+    }
   }
   if (runtimeState.includeBaggageInContext) {
     const baggage = propagation.getActiveBaggage()
     if (baggage !== undefined) {
       for (const [key, entry] of baggage.getAllEntries()) {
-        result[key] = entry.value
+        merged.set(key, entry.value)
       }
     }
   }
   if (attributes !== undefined) {
-    Object.assign(result, attributes)
+    for (const [key, value] of Object.entries(attributes)) {
+      merged.set(key, value)
+    }
   }
-  return result
+  return Object.fromEntries(merged)
 }
 
 function shouldInstrumentVariables(): boolean {

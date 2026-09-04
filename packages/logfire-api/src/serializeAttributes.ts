@@ -1,5 +1,6 @@
 import type { ScrubbedNote } from '.'
 import { logfireApiConfig } from '.'
+import { getOwn } from './ownRecord'
 import { ATTRIBUTES_SCRUBBED_KEY, ATTRIBUTES_SPAN_TYPE_KEY, ATTRIBUTES_TAGS_KEY, JSON_NULL_FIELDS_KEY, JSON_SCHEMA_KEY } from './constants'
 
 export type AttributeValue = boolean | number | string | string[]
@@ -36,9 +37,12 @@ export function serializeAttributes(attributes: RawAttributes): SerializedAttrib
   const alreadyScubbed = ATTRIBUTES_SPAN_TYPE_KEY in attributes
   const [scrubbedAttributes, scrubNotes] = alreadyScubbed ? [attributes, []] : scrubber.scrubValue([], attributes)
 
-  const result: SerializedAttributes = {}
+  // Built in Maps and materialized with `Object.fromEntries`, which defines own keys: attribute
+  // keys are user data, and assigning a `__proto__` key to a plain record would run the inherited
+  // setter and lose the attribute.
+  const result = new Map<string, AttributeValue>()
   const nullArgs: string[] = []
-  const schema: AttributesJSONSchema = { properties: {}, type: 'object' }
+  const schemaProperties = new Map<string, JSONSchema>()
 
   if (scrubNotes.length > 0) {
     if (ATTRIBUTES_SCRUBBED_KEY in scrubbedAttributes) {
@@ -51,38 +55,39 @@ export function serializeAttributes(attributes: RawAttributes): SerializedAttrib
     const rawValue = Object.hasOwn(attributes, key) ? attributes[key] : value
     // we don't want to serialize the tags
     if (key === ATTRIBUTES_TAGS_KEY) {
-      result[key] = value as string[]
+      result.set(key, value as string[])
       continue
     }
 
     if (value === null || value === undefined) {
       nullArgs.push(key)
     } else if (typeof value === 'number') {
-      result[key] = serializeNumberAttribute(value)
+      result.set(key, serializeNumberAttribute(value))
     } else if (typeof value === 'string' || typeof value === 'boolean') {
-      result[key] = value
+      result.set(key, value)
     } else if (value instanceof Date) {
       try {
-        result[key] = value.toISOString()
+        result.set(key, value.toISOString())
         if (logfireApiConfig.jsonSchema === 'rich') {
-          schema.properties[key] = { format: 'date-time', type: 'string' }
+          schemaProperties.set(key, { format: 'date-time', type: 'string' })
         }
       } catch {
-        result[key] = UNSERIALIZABLE_VALUE
+        result.set(key, UNSERIALIZABLE_VALUE)
       }
     } else if (Array.isArray(value)) {
-      serializeJsonAttribute(key, value, rawValue, 'array', result, schema)
+      serializeJsonAttribute(key, value, rawValue, 'array', result, schemaProperties)
     } else {
-      serializeJsonAttribute(key, value, rawValue, 'object', result, schema)
+      serializeJsonAttribute(key, value, rawValue, 'object', result, schemaProperties)
     }
   }
   if (nullArgs.length > 0) {
-    result[JSON_NULL_FIELDS_KEY] = nullArgs
+    result.set(JSON_NULL_FIELDS_KEY, nullArgs)
   }
-  if (Object.keys(schema.properties).length > 0) {
-    result[JSON_SCHEMA_KEY] = JSON.stringify(schema)
+  if (schemaProperties.size > 0) {
+    const schema: AttributesJSONSchema = { properties: Object.fromEntries(schemaProperties), type: 'object' }
+    result.set(JSON_SCHEMA_KEY, JSON.stringify(schema))
   }
-  return result
+  return Object.fromEntries(result)
 }
 
 let warnedOversizedInteger = false
@@ -123,23 +128,23 @@ function serializeJsonAttribute(
   value: unknown,
   rawValue: unknown,
   basicType: 'array' | 'object',
-  result: SerializedAttributes,
-  schema: AttributesJSONSchema
+  result: Map<string, AttributeValue>,
+  schemaProperties: Map<string, JSONSchema>
 ): void {
   const serializedValue = stringifyJsonAttribute(value)
   if (serializedValue === undefined) {
-    result[key] = UNSERIALIZABLE_VALUE
+    result.set(key, UNSERIALIZABLE_VALUE)
     return
   }
 
-  result[key] = serializedValue
+  result.set(key, serializedValue)
 
   if (logfireApiConfig.jsonSchema === false) {
     return
   }
 
   if (logfireApiConfig.jsonSchema === 'basic') {
-    schema.properties[key] = { type: basicType }
+    schemaProperties.set(key, { type: basicType })
     return
   }
 
@@ -150,7 +155,7 @@ function serializeJsonAttribute(
     seen: new WeakSet(),
   })
   if (inferredSchema !== undefined) {
-    schema.properties[key] = inferredSchema
+    schemaProperties.set(key, inferredSchema)
   }
 }
 
@@ -293,22 +298,24 @@ function inferObjectSchema(
 
   state.seen.add(value)
   try {
-    const properties: Record<string, JSONSchema> = {}
+    const properties = new Map<string, JSONSchema>()
     const keys = Object.keys(value).sort().slice(0, MAX_OBJECT_PROPERTIES)
 
     for (const key of keys) {
+      // `key` is own on `value` but not necessarily on `rawValue`, so an unguarded read there
+      // could pick up an inherited member such as `constructor`.
       const propertySchema = inferJsonSchema(value[key], {
         container: 'object',
         depth: state.depth + 1,
-        rawValue: rawValue[key],
+        rawValue: getOwn(rawValue, key),
         seen: state.seen,
       })
       if (propertySchema !== undefined) {
-        properties[key] = propertySchema
+        properties.set(key, propertySchema)
       }
     }
 
-    return Object.keys(properties).length > 0 ? { properties, type: 'object' } : { type: 'object' }
+    return properties.size > 0 ? { properties: Object.fromEntries(properties), type: 'object' } : { type: 'object' }
   } finally {
     state.seen.delete(value)
   }
