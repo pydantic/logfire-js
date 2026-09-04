@@ -123,6 +123,7 @@ function isDisallowedWebVitalMetricAttribute(key: string): boolean {
   return (
     DISALLOWED_WEB_VITAL_METRIC_ATTRIBUTES.has(key) ||
     key.startsWith('logfire.session.') ||
+    key.startsWith('user.') ||
     key.startsWith('web_vital.cls.') ||
     key.startsWith('web_vital.fcp.') ||
     key.startsWith('web_vital.inp.') ||

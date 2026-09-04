@@ -5,6 +5,7 @@ This example is an end-to-end browser telemetry workbench. It sends:
 - browser traces and manual Logfire spans
 - automatic document-load, fetch, XHR, and click/change spans
 - normalized route names and bounded RUM session dimensions on browser spans
+- live `user.id` context from the editable application user id
 - Core Web Vitals spans and native histogram metrics
 - rrweb session replay chunks through a local backend proxy
 - replay custom events for console, fetch/XHR, navigation, and errors
@@ -91,6 +92,7 @@ In traces/logs:
   `logfire.session.experiment_variant`
 - `logfire.session_replay.active` and `logfire.session_replay.mode` on spans
   while replay is active
+- `user.id` matching the current application user without changing `session.id`
 - normalized route attributes such as `logfire.page.route=/orders/:id`
 - privacy-safe default URL attributes that retain the actual path, such as
   `logfire.page.url.path=/orders/1234`
@@ -108,6 +110,7 @@ In replay:
 
 - replay chunks uploaded to `/client-replay/:sessionId?seq=...`
 - the replay session id matching `session.id` / `browser.session.id`
+- replay `distinctId` matching span `user.id`, with `anonymous` as the fallback
 - matching unprefixed dimensions in `meta.sessionAttributes`
 - masked input values from the form
 - blocked content under `[data-logfire-block]`
@@ -139,6 +142,7 @@ the extension for this local app.
 
 This example imports `lf-browser-recorder`, a neutral Vite virtual module,
 instead of importing `@pydantic/logfire-session-replay` directly. The virtual
-module avoids blocker-sensitive dev URLs and aliases rrweb to its browser ESM
-build. If a local Vite integration fails with an error that `rrweb.cjs` does
-not provide `record`, make sure rrweb resolves to `rrweb/dist/rrweb.js`.
+module avoids blocker-sensitive dev URLs and aliases `@rrweb/record` to its
+browser ESM build. If a local Vite integration fails with an error that
+`record.cjs` does not provide `record`, make sure `@rrweb/record` resolves to
+the adjacent `record.js` entrypoint.

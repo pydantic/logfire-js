@@ -495,6 +495,55 @@ describe('browser Web Vitals reporting', () => {
     }
   })
 
+  it('maps the normalized INP culprit script only when attribution provides one', async () => {
+    const metricRecorder = createMetricRecorder()
+    await startWebVitals({ metricRecorder })
+    const functionName = 'f'.repeat(201)
+
+    const attributedMetric = createMetric('INP', {
+      inputDelay: 3,
+      interactionTarget: 'button.submit',
+      interactionTime: 100,
+      interactionType: 'pointer',
+      loadState: 'complete',
+      longestScript: {
+        entry: {
+          duration: 87,
+          invoker: 'HTMLButtonElement.onclick',
+          invokerType: 'event-listener',
+          sourceFunctionName: functionName,
+          sourceURL: 'https://cdn.example.com/app.js?user=secret#handler',
+        },
+        intersectingDuration: 45,
+        subpart: 'processing-duration',
+      },
+      presentationDelay: 5,
+      processingDuration: 4,
+    })
+    const unattributedMetric = createMetric('INP', {
+      inputDelay: 1,
+      interactionTarget: 'input',
+      interactionTime: 200,
+      interactionType: 'keyboard',
+      loadState: 'complete',
+      presentationDelay: 2,
+      processingDuration: 3,
+    })
+
+    report('INP', attributedMetric)
+    report('INP', unattributedMetric)
+
+    expect(mocks.spans[0]?.attributes).toMatchObject({
+      'web_vital.inp.script.duration': 87,
+      'web_vital.inp.script.function_name': 'f'.repeat(200),
+      'web_vital.inp.script.invoker': 'HTMLButtonElement.onclick',
+      'web_vital.inp.script.source_url': 'https://cdn.example.com/app.js',
+    })
+    expect(Object.keys(mocks.spans[1]?.attributes ?? {}).some((key) => key.startsWith('web_vital.inp.script.'))).toBe(false)
+    expect(metricRecorder.record).toHaveBeenNthCalledWith(1, attributedMetric)
+    expect(metricRecorder.record).toHaveBeenNthCalledWith(2, unattributedMetric)
+  })
+
   it('skips undefined attribution values', async () => {
     await startWebVitals()
 

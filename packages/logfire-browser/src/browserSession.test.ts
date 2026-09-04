@@ -293,6 +293,70 @@ describe('BrowserSessionManager', () => {
     expect(routeCallback).toHaveBeenCalledTimes(1)
   })
 
+  it('returns a normalized live user without persisting identity', () => {
+    const storage = new MemoryStorage()
+    let user: unknown = undefined
+    const getUser = vi.fn<() => { id: string; name?: string; email?: string } | undefined>(() => user as never)
+    const manager = new BrowserSessionManager({
+      generateId: createIdGenerator(),
+      getUser,
+      now: () => 1_000,
+      storage,
+      storageKey: 'test-session',
+    })
+
+    expect(manager.getUser()).toBeUndefined()
+    user = { email: 'alice@example.com', id: 'user-1', name: 'Alice' }
+    expect(manager.getUser()).toEqual({ email: 'alice@example.com', id: 'user-1', name: 'Alice' })
+    user = { email: 'bob@example.com', id: 'user-2', name: 42 }
+    expect(manager.getUser()).toEqual({ email: 'bob@example.com', id: 'user-2' })
+    expect(manager.touch().id).toBe('session-1')
+    manager.flushPendingStorage()
+    expect(storage.getItem('test-session')).toBe('{"id":"session-1","lastActivityAt":1000,"startedAt":1000}')
+    expect(getUser).toHaveBeenCalledTimes(3)
+  })
+
+  it.each([
+    ['null', null],
+    ['array', []],
+    ['primitive', 'user-1'],
+    ['empty id', { id: '' }],
+    ['non-string id', { id: 123 }],
+    [
+      'throwing id getter',
+      Object.defineProperty({}, 'id', {
+        get: () => {
+          throw new Error('id unavailable')
+        },
+      }),
+    ],
+    [
+      'throwing optional getter',
+      Object.defineProperty({ id: 'user-1' }, 'name', {
+        get: () => {
+          throw new Error('name unavailable')
+        },
+      }),
+    ],
+  ])('omits a hostile %s user value', (_name, value) => {
+    const manager = new BrowserSessionManager({
+      getUser: () => value as never,
+      storage: null,
+    })
+
+    expect(manager.getUser()).toBeUndefined()
+  })
+
+  it('preserves accepted user strings without an identity-specific length cap', () => {
+    const id = 'user-'.padEnd(10_000, 'x')
+    const manager = new BrowserSessionManager({
+      getUser: () => ({ email: '', id, name: '' }),
+      storage: null,
+    })
+
+    expect(manager.getUser()).toEqual({ id })
+  })
+
   it('enforces the complete session attribute boundary without mutating input', () => {
     const source: Record<string, unknown> = {
       Invalid: 'uppercase',

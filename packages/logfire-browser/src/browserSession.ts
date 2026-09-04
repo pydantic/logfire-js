@@ -1,4 +1,5 @@
 import type { BrowserWebVitalsOptions } from './webVitals'
+import type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
 
 export const BROWSER_SESSION_ACTIVITY_WRITE_DELAY_MS = 1_000
 const MAX_SESSION_ATTRIBUTES = 20
@@ -14,12 +15,26 @@ export interface BrowserSessionUrlAttributes {
   path?: string
 }
 
+export interface BrowserUser {
+  /** Opaque application user id. */
+  id: string
+  /** Optional display name. This is PII when provided. */
+  name?: string
+  /** Optional email address. This is PII when provided. */
+  email?: string
+}
+
 export interface BrowserSessionOptions {
   /**
    * Returns the application's current normalized, low-cardinality route name.
    * The callback is evaluated independently for every new browser span.
    */
   getRouteName?: () => string | undefined
+  /**
+   * Returns the application's current user for each new browser span. The
+   * value is client-asserted context, not authentication or authorization.
+   */
+  getUser?: () => BrowserUser | undefined
   /**
    * Returns low-cardinality, non-PII dimensions to snapshot once per browser
    * session. Invalid or oversized entries are omitted.
@@ -66,6 +81,10 @@ export interface RUMOptions {
    * Enable browser Web Vitals reporting.
    */
   webVitals?: boolean | BrowserWebVitalsOptions
+  /**
+   * Enable sampled Long Animation Frame diagnostics and foreground summaries.
+   */
+  longAnimationFrames?: boolean | BrowserLongAnimationFramesOptions
 }
 
 export interface BrowserSessionManagerOptions extends BrowserSessionOptions {
@@ -200,16 +219,41 @@ function normalizeBrowserSessionAttributes(value: unknown): BrowserSessionAttrib
   return Object.freeze(attributes)
 }
 
+function normalizeBrowserUser(value: unknown): BrowserUser | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined
+  }
+
+  try {
+    const id: unknown = Reflect.get(value, 'id')
+    if (typeof id !== 'string' || id.length === 0) {
+      return undefined
+    }
+
+    const name: unknown = Reflect.get(value, 'name')
+    const email: unknown = Reflect.get(value, 'email')
+    return Object.freeze({
+      id,
+      ...(typeof name === 'string' && name.length > 0 ? { name } : {}),
+      ...(typeof email === 'string' && email.length > 0 ? { email } : {}),
+    })
+  } catch {
+    return undefined
+  }
+}
+
 export class BrowserSessionManager {
   private readonly generateId: () => string
   private readonly routeNameCallback: BrowserSessionOptions['getRouteName'] | undefined
   private readonly sessionAttributesCallback: BrowserSessionOptions['getSessionAttributes'] | undefined
+  private readonly userCallback: BrowserSessionOptions['getUser'] | undefined
   private readonly idleTimeoutMs: number
   private readonly maxDurationMs: number
   private readonly now: () => number
   private readonly storage: Storage | null
   private readonly storageKey: string
   private readonly urlAttributes: BrowserSessionOptions['urlAttributes'] | undefined
+  private readonly sessionChangeListeners = new Set<(session: BrowserSessionState) => void>()
   private memorySession: BrowserSessionState | undefined
   private pendingSession: BrowserSessionState | undefined
   private persistenceTimer: ReturnType<typeof setTimeout> | undefined
@@ -218,6 +262,7 @@ export class BrowserSessionManager {
     this.generateId = options.generateId ?? generateBrowserSessionId
     this.routeNameCallback = options.getRouteName
     this.sessionAttributesCallback = options.getSessionAttributes
+    this.userCallback = options.getUser
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_BROWSER_SESSION_OPTIONS.idleTimeoutMs
     this.maxDurationMs = options.maxDurationMs ?? DEFAULT_BROWSER_SESSION_OPTIONS.maxDurationMs
     this.now = options.now ?? Date.now
@@ -239,11 +284,22 @@ export class BrowserSessionManager {
     return attributes === undefined ? undefined : Object.freeze({ ...attributes })
   }
 
+  getStorageKey(): string {
+    return this.storageKey
+  }
+
+  onSessionChange(listener: (session: BrowserSessionState) => void): () => void {
+    this.sessionChangeListeners.add(listener)
+    return () => {
+      this.sessionChangeListeners.delete(listener)
+    }
+  }
+
   touch(): BrowserSessionState {
     const now = this.now()
     const session = this.getSessionAt(now)
     const touchedSession = { ...session, lastActivityAt: now }
-    this.memorySession = touchedSession
+    this.setMemorySession(touchedSession)
     this.scheduleWrite(touchedSession)
     return touchedSession
   }
@@ -288,6 +344,14 @@ export class BrowserSessionManager {
     }
   }
 
+  getUser(): BrowserUser | undefined {
+    try {
+      return normalizeBrowserUser(this.userCallback?.())
+    } catch {
+      return undefined
+    }
+  }
+
   private createSession(now: number): BrowserSessionState {
     const session: BrowserSessionState = {
       id: this.generateId(),
@@ -324,7 +388,7 @@ export class BrowserSessionManager {
           const parsedValue: unknown = JSON.parse(value)
           if (isBrowserSessionState(parsedValue)) {
             const session = this.prepareStoredSession(parsedValue)
-            this.memorySession = session
+            this.setMemorySession(session)
             if (hasOwn(parsedValue, 'sessionAttributes') || this.sessionAttributesCallback !== undefined) {
               const persisted = this.writeSession(session)
               if (!persisted && !hasOwn(parsedValue, 'sessionAttributes') && this.sessionAttributesCallback !== undefined) {
@@ -374,7 +438,7 @@ export class BrowserSessionManager {
   }
 
   private writeSession(session: BrowserSessionState): boolean {
-    this.memorySession = session
+    this.setMemorySession(session)
     if (this.storage === null) {
       return false
     }
@@ -401,6 +465,21 @@ export class BrowserSessionManager {
         this.writeSession(pendingSession)
       }
     }, BROWSER_SESSION_ACTIVITY_WRITE_DELAY_MS)
+  }
+
+  private setMemorySession(session: BrowserSessionState): void {
+    const changed = this.memorySession?.id !== session.id
+    this.memorySession = session
+    if (!changed) {
+      return
+    }
+    for (const listener of this.sessionChangeListeners) {
+      try {
+        listener(session)
+      } catch {
+        // Internal observers must not interfere with browser session state.
+      }
+    }
   }
 }
 

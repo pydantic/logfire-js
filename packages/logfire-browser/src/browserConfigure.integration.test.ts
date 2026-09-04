@@ -10,6 +10,31 @@ import { clearConfiguredBrowserSessionForTests } from './browserSession'
 import { configure, startSpan } from './index'
 
 const originalFetch = globalThis.fetch
+const originalPerformanceObserver = globalThis.PerformanceObserver
+
+class MockPerformanceObserver {
+  static instances: MockPerformanceObserver[] = []
+  static supportedEntryTypes = ['long-animation-frame']
+
+  private readonly callback: PerformanceObserverCallback
+
+  constructor(callback: PerformanceObserverCallback) {
+    this.callback = callback
+    MockPerformanceObserver.instances.push(this)
+  }
+
+  disconnect(): void {
+    return undefined
+  }
+
+  observe(_options: PerformanceObserverInit): void {
+    return undefined
+  }
+
+  deliver(entries: PerformanceEntry[]): void {
+    this.callback({ getEntries: () => entries } as PerformanceObserverEntryList, this as unknown as PerformanceObserver)
+  }
+}
 
 const optionalFeatureMocks = vi.hoisted(() => {
   let metricsStartupError: Error | undefined
@@ -90,6 +115,11 @@ vi.mock('@opentelemetry/exporter-trace-otlp-http', () => ({
 
 afterEach(() => {
   Object.defineProperty(globalThis, 'fetch', { configurable: true, value: originalFetch, writable: true })
+  Object.defineProperty(globalThis, 'PerformanceObserver', {
+    configurable: true,
+    value: originalPerformanceObserver,
+  })
+  MockPerformanceObserver.instances.length = 0
   clearConfiguredBrowserSessionForTests()
   sessionStorage.clear()
   optionalFeatureMocks.reset()
@@ -220,6 +250,52 @@ describe('public browser configure startup ordering', () => {
     }
   })
 
+  it('attaches the current public user to each span without rotating the session', async () => {
+    let user: { id: string; name?: string; email?: string } | undefined
+    const exporter = new InMemorySpanExporter()
+    const cleanup = configure({
+      rum: {
+        session: {
+          getRouteName: () => '/account',
+          getSessionAttributes: () => ({ account_tier: 'pro' }),
+          getUser: () => user,
+        },
+      },
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      startSpan('anonymous').end()
+      user = { email: 'alice@example.com', id: 'user-a', name: 'Alice' }
+      startSpan('identified').end()
+      user = { id: 'user-b' }
+      startSpan('switched').end()
+      user = undefined
+      startSpan('logged-out').end()
+
+      const spans = Object.fromEntries(exporter.getFinishedSpans().map((span) => [span.name, span]))
+      const sessionId = spans['anonymous']?.attributes['session.id']
+      expect(sessionId).toBeTypeOf('string')
+      expect(spans['anonymous']?.attributes).not.toHaveProperty('user.id')
+      expect(spans['identified']?.attributes).toMatchObject({
+        'logfire.page.route': '/account',
+        'logfire.session.account_tier': 'pro',
+        'session.id': sessionId,
+        'user.email': 'alice@example.com',
+        'user.id': 'user-a',
+        'user.name': 'Alice',
+      })
+      expect(spans['switched']?.attributes).toMatchObject({ 'session.id': sessionId, 'user.id': 'user-b' })
+      expect(spans['switched']?.attributes).not.toHaveProperty('user.name')
+      expect(spans['logged-out']?.attributes['session.id']).toBe(sessionId)
+      expect(spans['logged-out']?.attributes).not.toHaveProperty('user.id')
+      expect(sessionStorage.getItem('lf_browser_session')).not.toContain('user-')
+    } finally {
+      await cleanup()
+    }
+  })
+
   it('exports Web Vitals spans when browser metrics startup fails', async () => {
     const exporter = new InMemorySpanExporter()
     const diagWarn = vi.spyOn(diag, 'warn').mockImplementation(() => undefined)
@@ -230,6 +306,7 @@ describe('public browser configure startup ordering', () => {
         session: {
           getRouteName: () => '/integration',
           getSessionAttributes: () => ({ account_tier: 'pro' }),
+          getUser: () => ({ id: 'user-1' }),
         },
         webVitals: { metrics: true },
       },
@@ -245,9 +322,79 @@ describe('public browser configure startup ordering', () => {
       expect(span?.attributes['logfire.span_type']).toBe('log')
       expect(span?.attributes['logfire.page.route']).toBe('/integration')
       expect(span?.attributes['logfire.session.account_tier']).toBe('pro')
+      expect(span?.attributes['user.id']).toBe('user-1')
       expect(diagWarn).toHaveBeenCalledWith(
         'logfire-browser: browser metrics did not start; continuing Web Vitals with span reporting only'
       )
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('exports ranked Long Animation Frame spans through browser session context', async () => {
+    let now = 0
+    vi.spyOn(performance, 'now').mockImplementation(() => now)
+    Object.defineProperty(globalThis, 'PerformanceObserver', {
+      configurable: true,
+      value: MockPerformanceObserver,
+    })
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    const exporter = new InMemorySpanExporter()
+    const cleanup = configure({
+      rum: {
+        longAnimationFrames: { sessionSampleRate: 1 },
+        session: {
+          getRouteName: () => '/integration',
+          getSessionAttributes: () => ({ account_tier: 'pro' }),
+        },
+      },
+      serviceVersion: '2026.09.03',
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      MockPerformanceObserver.instances[0]?.deliver([
+        {
+          blockingDuration: 150,
+          duration: 210,
+          entryType: 'long-animation-frame',
+          name: 'long-animation-frame',
+          scripts: [
+            {
+              duration: 80,
+              invokerType: 'event-listener',
+              sourceFunctionName: 'renderChart',
+              sourceURL: 'https://cdn.example.com/chart.js?user=secret#render',
+            },
+          ],
+          startTime: 10,
+          styleAndLayoutStart: 170,
+          toJSON: () => ({}),
+        } as unknown as PerformanceEntry,
+      ])
+      now = 25_000
+      window.dispatchEvent(new Event('pagehide'))
+      await delay(0)
+
+      const frame = exporter.getFinishedSpans().find(({ name }) => name === 'browser.long_animation_frame')
+      const summary = exporter.getFinishedSpans().find(({ name }) => name === 'browser.main_thread_window')
+      expect(frame?.attributes).toMatchObject({
+        'browser.long_animation_frame.blocking_duration': 150,
+        'browser.long_animation_frame.script.source_url': 'https://cdn.example.com/chart.js',
+        'logfire.page.route': '/integration',
+        'logfire.session.account_tier': 'pro',
+        'logfire.span_type': 'log',
+      })
+      expect(frame?.attributes['session.id']).toBeTypeOf('string')
+      expect(frame?.resource.attributes['service.version']).toBe('2026.09.03')
+      expect(summary?.attributes).toMatchObject({
+        'browser.main_thread_window.blocking_duration': 150,
+        'browser.main_thread_window.foreground_duration': 25_000,
+        'browser.main_thread_window.long_animation_frame_count': 1,
+        'logfire.page.route': '/integration',
+        'logfire.session.account_tier': 'pro',
+      })
     } finally {
       await cleanup()
     }

@@ -80,7 +80,7 @@ or 4 hours of total duration by default. Spans get the OpenTelemetry
 
 Use `getRouteName` for the application's normalized route template and
 `getSessionAttributes` for low-cardinality dimensions that should remain stable
-for a browser session:
+for a browser session. Use `getUser` for the application's current user:
 
 ```js
 logfire.configure({
@@ -91,14 +91,31 @@ logfire.configure({
       getRouteName: () => router.currentRoute.value.matched.at(-1)?.path,
       getSessionAttributes: () => ({
         account_tier: currentAccount.tier,
-        beta_user: currentUser.isBeta,
+        beta_user: currentUser?.isBeta,
       }),
+      getUser: () =>
+        currentUser === undefined
+          ? undefined
+          : {
+              id: currentUser.id,
+              name: currentUser.name,
+              email: currentUser.email,
+            },
     },
   },
 })
 ```
 
 `getRouteName` is evaluated for each span and becomes `logfire.page.route`.
+`getUser` is also evaluated for each span. A non-empty `id` becomes `user.id`;
+non-empty `name` and `email` values become `user.name` and `user.email`.
+Use an opaque application id. Name and email are opt-in PII. The SDK emits
+accepted strings unchanged, does not persist them, does not add them to Web
+Vitals metric labels, and does not rotate the browser session when the current
+user changes or logs out. Returning `undefined` represents an anonymous user or
+logout. These client-asserted values are observational context, not
+authentication, authorization, billing, or audit evidence.
+
 `getSessionAttributes` is evaluated once for each browser session, persisted
 across same-tab reloads, and refreshed when the session rotates. Accepted
 values become span attributes prefixed with `logfire.session.` and are also
@@ -168,6 +185,10 @@ Each span includes base attributes such as `web_vital.name`,
 `web_vital.navigation_type`. Attribution fields include values such as
 `web_vital.lcp.target`, `web_vital.inp.target`, and
 `web_vital.cls.largest_shift_target`.
+When INP attribution identifies a culprit Long Animation Frame script, the INP
+span also includes its normalized source URL, bounded function name, invoker,
+and duration as `web_vital.inp.script.*` attributes. These diagnostic fields
+remain span-only and are not added to Web Vitals metrics.
 
 `rum.webVitals` implies default `rum.session` behavior so Web Vital spans get
 session and URL attributes. If you need to sanitize URLs, pass session options
@@ -245,6 +266,73 @@ separate route or soft-navigation instrumentation. To add a route dimension to m
 low-cardinality template such as `/products/:id` through
 `rum.webVitals.metrics.attributes`.
 
+## RUM Long Animation Frames
+
+Enable `rum.longAnimationFrames` to detect and diagnose severe main-thread
+congestion in supported Chromium browsers:
+
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+logfire.configure({
+  traceUrl: '/client-traces',
+  serviceName: 'browser-app',
+  serviceVersion: '2026.09.03',
+  rum: {
+    longAnimationFrames: true,
+  },
+})
+```
+
+The Long Animation Frames API observes frames over 50 ms. It is available in
+Chromium-based browsers, but not in Firefox or Safari at the time of writing.
+It does not cover all main-thread work and cannot attribute cross-origin
+frames, workers, or extension isolated worlds. Treat it as a high-coverage
+sentinel for severe congestion, complementary to INP, request volume, journey
+timing, and synthetic monitoring.
+
+The feature is off by default. When enabled, the SDK feature-detects
+`long-animation-frame`, samples 10% of browser sessions, and observes with
+`buffered: true`. Sampled-out and unsupported sessions do not install an
+observer, timer, or lifecycle listeners.
+
+For sampled sessions, the SDK emits two log-type span shapes:
+
+- `browser.long_animation_frame` diagnoses frames whose `blockingDuration` is
+  at least 100 ms. Frames are ranked within each foreground window, and the
+  worst frames are emitted up to a fixed cap of 20 per browser session.
+- `browser.main_thread_window` summarizes each foreground window with its real
+  foreground duration, total blocking duration, LoAF count, dropped diagnostic
+  count, and the top three scripts by summed duration. Hidden time is excluded,
+  and a partial window is emitted on document hide or `pagehide`.
+
+The default ranking and summary window is 60 seconds. You can tune collection
+without changing the SDK-owned event and script caps:
+
+```js
+logfire.configure({
+  traceUrl: '/client-traces',
+  rum: {
+    longAnimationFrames: {
+      blockingDurationThresholdMs: 150,
+      sessionSampleRate: 0.25,
+      windowDurationMs: 30_000,
+    },
+  },
+})
+```
+
+`sessionSampleRate` is clamped to `0..1`. The window has a 10-second minimum to
+prevent accidental span floods. HTTP(S) script source URLs have credentials,
+query strings, and fragments removed and are capped at 2,048 Unicode code
+points. Payload-bearing and per-load URL schemes use stable scheme or origin
+placeholders. Function names are capped at 200 Unicode code points. Periodic
+window summaries do not extend the browser session idle timeout, but diagnostic
+frame spans count as session activity. LoAF data is emitted only as spans, never
+as OpenTelemetry metrics. The existing browser session processor adds session
+id, route, sanitized page URL, replay state, and service-version context to both
+span shapes.
+
 ## Session replay
 
 Session replay is experimental while Logfire Platform replay ingest and playback
@@ -301,6 +389,11 @@ initializes and touches the session once before loading the optional peer, but
 subsequent replay events only peek at the session id and do not refresh the
 timeout. Span starts are the ongoing automatic activity;
 `getBrowserSessionId()` also explicitly touches the session.
+
+When `sessionReplay.getDistinctId` is not configured, replay uses the current
+`rum.session.getUser()?.id` so replay rows and span `user.id` agree. An explicit
+`getDistinctId` remains authoritative. A static `sessionReplay.distinctId`
+remains the fallback while the selected live getter returns `undefined`.
 
 Use the same restricted frontend application token for traces, metrics, and
 session replay. Derive the regional replay endpoint from the generated trace
@@ -441,12 +534,13 @@ idempotent: repeated or concurrent calls share one promise and run the lifecycle
 once in this order:
 
 1. await session replay startup and stop replay when enabled
-2. unregister configured instrumentations
-3. await Web Vitals startup and shutdown when enabled
-4. force-flush and shut down metrics when configured
-5. force-flush spans
-6. shut down the tracer provider
-7. clear SDK-owned browser session state
+2. close and shut down Long Animation Frame reporting when enabled
+3. unregister configured instrumentations
+4. await Web Vitals startup and shutdown when enabled
+5. force-flush and shut down metrics when configured
+6. force-flush spans
+7. shut down the tracer provider
+8. clear SDK-owned browser session state
 
 If any cleanup step fails, Logfire still attempts the later steps before
 returning the first failure. Later calls return the same settled cleanup promise

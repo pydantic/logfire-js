@@ -9,6 +9,13 @@ import type { BrowserSessionReplayRuntime } from './sessionReplay'
 
 class TestSpan {
   readonly attributes: Record<string, unknown> = {}
+  readonly instrumentationScope: { name: string }
+  readonly name: string
+
+  constructor(name = 'test span', instrumentationScopeName = 'test-tracer') {
+    this.name = name
+    this.instrumentationScope = { name: instrumentationScopeName }
+  }
 
   setAttribute(key: string, value: unknown): this {
     this.attributes[key] = value
@@ -110,6 +117,58 @@ describe('BrowserSessionSpanProcessor', () => {
     expect(span.attributes).not.toHaveProperty('browser.session.id')
   })
 
+  it('does not treat periodic main-thread summaries as session activity', () => {
+    let now = 0
+    let sessionNumber = 0
+    const sessionManager = new BrowserSessionManager({
+      generateId: () => `session-${(++sessionNumber).toString()}`,
+      idleTimeoutMs: 30_000,
+      now: () => now,
+      storage: new MemoryStorage(),
+      storageKey: 'test-session',
+      urlAttributes: false,
+    })
+    const processor = new BrowserSessionSpanProcessor(sessionManager)
+    const firstSpan = new TestSpan()
+    startSpan(processor, firstSpan)
+
+    now = 20_000
+    const firstSummary = new TestSpan('browser.main_thread_window', 'logfire-long-animation-frames')
+    startSpan(processor, firstSummary)
+    now = 31_000
+    const secondSummary = new TestSpan('browser.main_thread_window', 'logfire-long-animation-frames')
+    startSpan(processor, secondSummary)
+
+    expect(firstSpan.attributes['session.id']).toBe('session-1')
+    expect(firstSummary.attributes['session.id']).toBe('session-1')
+    expect(secondSummary.attributes['session.id']).toBe('session-2')
+  })
+
+  it('continues to treat long-animation-frame diagnostics as session activity', () => {
+    let now = 0
+    let sessionNumber = 0
+    const sessionManager = new BrowserSessionManager({
+      generateId: () => `session-${(++sessionNumber).toString()}`,
+      idleTimeoutMs: 30_000,
+      now: () => now,
+      storage: new MemoryStorage(),
+      storageKey: 'test-session',
+      urlAttributes: false,
+    })
+    const processor = new BrowserSessionSpanProcessor(sessionManager)
+    startSpan(processor, new TestSpan())
+
+    now = 20_000
+    const diagnostic = new TestSpan('browser.long_animation_frame', 'logfire-long-animation-frames')
+    startSpan(processor, diagnostic)
+    now = 31_000
+    const summary = new TestSpan('browser.main_thread_window', 'logfire-long-animation-frames')
+    startSpan(processor, summary)
+
+    expect(diagnostic.attributes['session.id']).toBe('session-1')
+    expect(summary.attributes['session.id']).toBe('session-1')
+  })
+
   it('stamps session dimensions and evaluates the route for each span', () => {
     let route = '/products/:id'
     const processor = createProcessor({
@@ -140,6 +199,71 @@ describe('BrowserSessionSpanProcessor', () => {
       'session.id': 'session-1',
     })
     expect(secondSpan.attributes['logfire.page.route']).toBe('')
+  })
+
+  it('follows the current user without rotating the browser session', () => {
+    let user: { id: string; name?: string; email?: string } | undefined
+    const processor = createProcessor({
+      getRouteName: () => '/account',
+      getUser: () => user,
+      urlAttributes: false,
+    })
+    const anonymous = createSpan()
+    startSpan(processor, anonymous)
+    user = { email: 'alice@example.com', id: 'user-a', name: 'Alice' }
+    const identified = createSpan()
+    startSpan(processor, identified)
+    user = { id: 'user-b' }
+    const switched = createSpan()
+    startSpan(processor, switched)
+    user = undefined
+    const loggedOut = createSpan()
+    startSpan(processor, loggedOut)
+
+    expect(anonymous.attributes).toEqual({ 'logfire.page.route': '/account', 'session.id': 'session-1' })
+    expect(identified.attributes).toEqual({
+      'logfire.page.route': '/account',
+      'session.id': 'session-1',
+      'user.email': 'alice@example.com',
+      'user.id': 'user-a',
+      'user.name': 'Alice',
+    })
+    expect(switched.attributes).toEqual({
+      'logfire.page.route': '/account',
+      'session.id': 'session-1',
+      'user.id': 'user-b',
+    })
+    expect(loggedOut.attributes).toEqual({ 'logfire.page.route': '/account', 'session.id': 'session-1' })
+  })
+
+  it('contains hostile user callbacks without suppressing other context', () => {
+    const replayState = new BrowserSessionReplayState()
+    replayState.setReplay(createReplayRuntime('full'))
+    const span = createSpan()
+
+    expect(() => {
+      startSpan(
+        createProcessor(
+          {
+            getRouteName: () => '/account',
+            getSessionAttributes: () => ({ tier: 'pro' }),
+            getUser: () => {
+              throw new Error('identity unavailable')
+            },
+            urlAttributes: false,
+          },
+          replayState
+        ),
+        span
+      )
+    }).not.toThrow()
+    expect(span.attributes).toEqual({
+      'logfire.page.route': '/account',
+      'logfire.session.tier': 'pro',
+      'logfire.session_replay.active': true,
+      'logfire.session_replay.mode': 'full',
+      'session.id': 'session-1',
+    })
   })
 
   it('keeps route evaluation independent from URL sanitization failures', () => {

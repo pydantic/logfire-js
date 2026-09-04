@@ -5,7 +5,7 @@ import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import type { Instrumentation } from '@opentelemetry/instrumentation'
 import { registerInstrumentations } from '@opentelemetry/instrumentation'
 import { resourceFromAttributes } from '@opentelemetry/resources'
-import type { BufferConfig, SpanProcessor } from '@opentelemetry/sdk-trace-web'
+import type { BatchSpanProcessorBrowserConfig, SpanProcessor } from '@opentelemetry/sdk-trace-web'
 import { BatchSpanProcessor, ParentBasedSampler, TraceIdRatioBasedSampler, WebTracerProvider } from '@opentelemetry/sdk-trace-web'
 import {
   ATTR_SERVICE_NAME,
@@ -56,6 +56,8 @@ import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
 import { clearConfiguredBrowserSession, configureBrowserSession, getBrowserSessionId } from './browserSession'
 import type { RUMOptions } from './browserSession'
 import type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
+import { startBrowserLongAnimationFrames } from './longAnimationFrames'
+import type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
 import { BrowserSessionReplayState, startBrowserSessionReplay } from './sessionReplay'
 import type { BrowserSessionReplayControl, BrowserSessionReplayOptions } from './sessionReplay'
 import { startBrowserWebVitals } from './webVitals'
@@ -80,9 +82,11 @@ export type {
   BrowserSessionAttributeValue,
   BrowserSessionOptions,
   BrowserSessionUrlAttributes,
+  BrowserUser,
   RUMOptions,
 } from './browserSession'
 export type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
+export type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
 export type { BrowserSessionReplayOptions } from './sessionReplay'
 export type { BrowserWebVitalsOptions } from './webVitals'
 
@@ -106,7 +110,7 @@ export interface LogfireConfigOptions {
   /**
    * The configuration of the batch span processor.
    */
-  batchSpanProcessorConfig?: BufferConfig
+  batchSpanProcessorConfig?: BatchSpanProcessorBrowserConfig
   /**
    * Active OpenTelemetry baggage keys to copy to Logfire manual spans/logs as span attributes.
    */
@@ -243,6 +247,16 @@ function resolveBrowserWebVitalsOptions(webVitals: RUMOptions['webVitals'] | und
   return webVitals === true ? {} : webVitals
 }
 
+function resolveBrowserLongAnimationFramesOptions(
+  longAnimationFrames: RUMOptions['longAnimationFrames'] | undefined
+): BrowserLongAnimationFramesOptions | undefined {
+  if (longAnimationFrames === undefined || longAnimationFrames === false) {
+    return undefined
+  }
+
+  return longAnimationFrames === true ? {} : longAnimationFrames
+}
+
 function resolveBrowserMetricsOptions(metrics: LogfireConfigOptions['metrics']): BrowserMetricsOptions | undefined {
   if (metrics === undefined || metrics === false) {
     return undefined
@@ -279,8 +293,9 @@ function resolveBrowserSessionOptions(
   sessionReplayOptions: BrowserSessionReplayOptions | undefined
 ): RUMOptions['session'] | undefined {
   const webVitalsOptions = resolveBrowserWebVitalsOptions(rum?.webVitals)
+  const longAnimationFramesOptions = resolveBrowserLongAnimationFramesOptions(rum?.longAnimationFrames)
   const sessionReplayRequiresSession = sessionReplayOptions !== undefined
-  if (webVitalsOptions === undefined && !sessionReplayRequiresSession) {
+  if (webVitalsOptions === undefined && longAnimationFramesOptions === undefined && !sessionReplayRequiresSession) {
     return rum?.session
   }
 
@@ -290,9 +305,8 @@ function resolveBrowserSessionOptions(
         'logfire-browser: sessionReplay requires browser session attributes; remove rum.session: false or disable sessionReplay'
       )
     }
-    throw new Error(
-      'logfire-browser: rum.webVitals requires browser session attributes; remove rum.session: false or disable rum.webVitals'
-    )
+    const feature = webVitalsOptions === undefined ? 'rum.longAnimationFrames' : 'rum.webVitals'
+    throw new Error(`logfire-browser: ${feature} requires browser session attributes; remove rum.session: false or disable ${feature}`)
   }
 
   return rum?.session ?? true
@@ -458,6 +472,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   assertProviderLifecycleAvailable()
 
   const webVitalsOptions = resolveBrowserWebVitalsOptions(options.rum?.webVitals)
+  const longAnimationFramesOptions = resolveBrowserLongAnimationFramesOptions(options.rum?.longAnimationFrames)
   const sessionReplayOptions = resolveBrowserSessionReplayOptions(options.sessionReplay)
   const browserMetricsOptions = resolveBrowserMetricsOptions(options.metrics)
   const webVitalsMetricOptions = resolveBrowserWebVitalsMetricOptions(webVitalsOptions)
@@ -696,6 +711,24 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
             return undefined
           })
 
+  const longAnimationFramesHandle =
+    longAnimationFramesOptions === undefined || browserSessionManager === undefined
+      ? undefined
+      : (() => {
+          try {
+            return startBrowserLongAnimationFrames({
+              ...longAnimationFramesOptions,
+              autoFlushOnDocumentHide: options.batchSpanProcessorConfig?.disableAutoFlushOnDocumentHide !== true,
+              forceFlush: async () => tracerProvider.forceFlush(),
+              sessionManager: browserSessionManager,
+              tracer: tracerProvider.getTracer('logfire-long-animation-frames'),
+            })
+          } catch (error) {
+            diag.error('logfire-browser: failed to start Long Animation Frame reporting', error)
+            return undefined
+          }
+        })()
+
   let cleanupPromise: Promise<void> | undefined
 
   // Return the stored promise directly so repeated cleanup calls preserve identity.
@@ -725,6 +758,9 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
       diag.info('logfire-browser: shutting down')
       if (sessionReplayHandle !== undefined) {
         await runCleanupStep('session replay shutdown', async () => sessionReplayHandle.stop())
+      }
+      if (longAnimationFramesHandle !== undefined) {
+        await runCleanupStep('long animation frames shutdown', async () => longAnimationFramesHandle.shutdown())
       }
       await runCleanupStep('instrumentation unregister', unregisterInstrumentations)
       if (webVitalsStartupPromise !== undefined) {

@@ -81,5 +81,5 @@ If replay fails to start locally with `ERR_BLOCKED_BY_CLIENT`, a browser privacy
 extension may be blocking dev URLs that contain terms such as `session-replay`.
 Test in a clean profile or disable the extension for this local app. This
 example uses a neutral Vite virtual module named `lf-browser-recorder` so local
-workspace testing avoids blocker-sensitive module URLs and resolves rrweb to its
-browser ESM build.
+workspace testing avoids blocker-sensitive module URLs and resolves the recorder
+to its browser ESM build.
