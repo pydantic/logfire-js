@@ -1941,6 +1941,25 @@ describe('browser cleanup', () => {
     expect(tracerProvider.shutdownCalls).toBe(1)
   })
 
+  it('reports an unregister that throws undefined instead of resolving', async () => {
+    // An unregister callback is user supplied, so `undefined` is a legal thing for it to throw.
+    // The raw value used to be the failure sentinel, and cleanup resolved as if nothing failed.
+    mocks.failStep('unregister', undefined)
+    cleanup = configure({ traceUrl: 'http://localhost:8989/client-traces' })
+
+    const rejection: unknown = await cleanup().then(
+      () => 'RESOLVED',
+      (error: unknown) => error
+    )
+
+    expect(rejection).toBeInstanceOf(Error)
+    expect((rejection as Error).message).toBe('logfire-browser: instrumentation unregister failed')
+    // Wrapped once more by the cleanup-step reporter, the same as any other step failure.
+    expect((rejection as Error).cause).toBeInstanceOf(Error)
+    expect(((rejection as Error).cause as Error).message).toBe('logfire-browser: instrumentation unregister failed')
+    cleanup = undefined
+  })
+
   it('memoizes cleanup failure from unregister without retrying later', async () => {
     expect.hasAssertions()
     await expectCleanupFailureIsMemoized('unregister')

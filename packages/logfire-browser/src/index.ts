@@ -420,18 +420,20 @@ function startBrowserInstrumentations(options: {
         ...unregisterConfigured,
         ...(unregisterAutoInstrumentations === undefined ? [] : [unregisterAutoInstrumentations]),
       ]
-      let firstError: unknown
+      let firstError: Error | undefined
       for (let index = unregisters.length - 1; index >= 0; index -= 1) {
         try {
           unregisters[index]?.()
         } catch (error) {
-          firstError ??= error
+          // Normalized at capture, like the other error accumulators in this file: an unregister
+          // callback is user supplied, so it can throw `undefined` or `null`, which the raw value
+          // as the `??=` sentinel misread as no failure or overwrote with a later error.
+          firstError ??= error instanceof Error ? error : new Error('logfire-browser: instrumentation unregister failed', { cause: error })
         }
       }
       if (firstError !== undefined) {
-        throw firstError instanceof Error
-          ? firstError
-          : new Error('logfire-browser: instrumentation unregister failed', { cause: firstError })
+        // eslint-disable-next-line no-throw-literal -- always an Error, normalized at capture
+        throw firstError
       }
     })()
     return cleanupPromise
