@@ -32,6 +32,7 @@ type RetryAfter = { kind: 'delay'; milliseconds: number } | { kind: 'fallback' }
 
 interface ReplayTransportOptions {
   holdUntilActivity?: boolean
+  takeFullSnapshot?: () => void
 }
 
 const DEFAULT_COMPRESSION: Compression = { gzip, gzipSync }
@@ -48,6 +49,11 @@ export class ReplayTransport {
   private started = false
   private held: boolean
   private heldBufferIncomplete = false
+  private minimumBufferIncomplete = false
+  private minimumDurationSatisfied = false
+  private firstObservedTimestamp: number | undefined
+  private lastObservedTimestamp: number | undefined
+  private refreshingMinimumSnapshot = false
   private mode: 'full' | 'buffer'
   private flushing: Promise<void> | undefined
   private reservedKeepaliveBytes = 0
@@ -57,6 +63,7 @@ export class ReplayTransport {
   private readonly storage: Storage | null
   private readonly sessionId: string
   private readonly sessionAttributes: SessionAttributes
+  private readonly takeFullSnapshot: (() => void) | undefined
 
   constructor(
     config: ResolvedSessionReplayConfig,
@@ -74,6 +81,8 @@ export class ReplayTransport {
     this.storage = storage
     this.compression = compression
     this.held = options.holdUntilActivity === true && mode === 'full'
+    this.takeFullSnapshot = options.takeFullSnapshot
+    this.minimumDurationSatisfied = config.minSessionDurationMs === 0
     this.seq = this.loadSeq(sessionId)
     this.startedAt = this.config.now()
     this.lastUserActivityAt = this.startedAt
@@ -88,15 +97,24 @@ export class ReplayTransport {
   }
 
   add(event: RrwebEvent): void {
+    if (!this.minimumDurationSatisfied) {
+      this.firstObservedTimestamp ??= event.timestamp
+      this.lastObservedTimestamp = Math.max(this.lastObservedTimestamp ?? event.timestamp, event.timestamp)
+    }
     if (isUserActivityEvent(event)) {
       this.lastUserActivityAt = this.config.now()
     }
     const eventBytes = estimateBytes(event)
-    if (this.mode === 'buffer' || this.held) {
+    const enforcingMinimum = !this.minimumDurationSatisfied
+    if (this.mode === 'buffer' || this.held || enforcingMinimum) {
       if (event.type === EventType.Meta) {
         this.buffer = [event]
         this.bufferHasFullSnapshot = false
         this.pendingBytes = eventBytes
+        if (enforcingMinimum) {
+          this.firstObservedTimestamp = event.timestamp
+          this.finishMinimumBufferingEvent()
+        }
         return
       }
       if (event.type === EventType.FullSnapshot) {
@@ -106,6 +124,11 @@ export class ReplayTransport {
         this.bufferHasFullSnapshot = true
         this.pendingBytes = eventBytes + (retainedMeta === undefined ? 0 : estimateBytes(retainedMeta))
         this.heldBufferIncomplete = false
+        this.minimumBufferIncomplete = false
+        if (enforcingMinimum) {
+          this.firstObservedTimestamp = retainedMeta?.timestamp ?? event.timestamp
+          this.finishMinimumBufferingEvent()
+        }
         return
       }
       // Incremental rrweb events are only useful after a full-snapshot anchor.
@@ -113,19 +136,34 @@ export class ReplayTransport {
       // state transition that was trimmed from the buffer.
       if (!this.bufferHasFullSnapshot || eventBytes > this.config.maxBufferBytes) {
         this.heldBufferIncomplete ||= this.held
+        this.minimumBufferIncomplete ||= enforcingMinimum
+        if (enforcingMinimum) {
+          this.finishMinimumBufferingEvent()
+        }
         return
       }
       if (this.pendingBytes + eventBytes > this.config.maxBufferBytes) {
         this.heldBufferIncomplete ||= this.held
+        this.minimumBufferIncomplete ||= enforcingMinimum
+        if (enforcingMinimum) {
+          this.finishMinimumBufferingEvent()
+        }
         return
       }
     }
 
     this.buffer.push(event)
     this.pendingBytes += eventBytes
+    if (this.refreshingMinimumSnapshot) {
+      return
+    }
+    if (enforcingMinimum && this.minimumDurationReached()) {
+      this.flushAndReport()
+      return
+    }
 
     if (this.mode === 'full' && this.pendingBytes >= this.config.maxBufferBytes) {
-      this.flushAndReport({ ignoreMinimumDuration: true })
+      this.flushAndReport()
     } else {
       this.scheduleFlush()
     }
@@ -147,12 +185,18 @@ export class ReplayTransport {
     return this.flushInternal(options)
   }
 
-  private async flushInternal(options: { ignoreMinimumDuration?: boolean; keepalive?: boolean }): Promise<void> {
+  private async flushInternal(options: { keepalive?: boolean } = {}): Promise<void> {
     if (this.mode === 'buffer' || this.held || this.buffer.length === 0) {
       return
     }
-    if (options.ignoreMinimumDuration !== true && !this.minimumDurationReached()) {
-      this.scheduleMinimumDurationFlush()
+    if (!this.minimumDurationReached()) {
+      this.scheduleFlush()
+      return
+    }
+    this.minimumDurationSatisfied = true
+    // Overflow mutations were dropped to keep the pre-minimum buffer bounded.
+    // A new snapshot restores a valid rrweb state chain before the buffer ships.
+    if (this.minimumBufferIncomplete && !this.refreshMinimumBuffer()) {
       return
     }
 
@@ -160,6 +204,7 @@ export class ReplayTransport {
     const events = this.buffer
     this.buffer = []
     this.bufferHasFullSnapshot = false
+    this.minimumBufferIncomplete = false
     this.pendingBytes = 0
     const eventChunks = options.keepalive === true ? splitKeepaliveEventChunks(events) : [events]
     const seq = this.seq
@@ -216,6 +261,7 @@ export class ReplayTransport {
     this.clearScheduledFlush()
     this.buffer = []
     this.bufferHasFullSnapshot = false
+    this.minimumBufferIncomplete = false
     this.pendingBytes = 0
   }
 
@@ -241,14 +287,14 @@ export class ReplayTransport {
     }
     this.held = false
     if (this.pendingBytes >= this.config.maxBufferBytes) {
-      this.flushAndReport({ ignoreMinimumDuration: true })
+      this.flushAndReport()
     } else {
       this.scheduleFlush()
     }
   }
 
-  private flushAndReport(options: { ignoreMinimumDuration?: boolean } = {}): void {
-    this.flushInternal(options).catch((error: unknown) => {
+  private flushAndReport(): void {
+    this.flushInternal().catch((error: unknown) => {
       safeReportError(this.config.onError, error)
     })
   }
@@ -257,12 +303,6 @@ export class ReplayTransport {
     const now = this.config.now()
     const minimumDelay = Math.max(0, this.config.minSessionDurationMs - (now - this.startedAt))
     const interval = Math.max(resolveFlushInterval(this.config.flushIntervalMs, now - this.lastUserActivityAt), minimumDelay)
-    this.scheduleFlushIn(now, interval)
-  }
-
-  private scheduleMinimumDurationFlush(): void {
-    const now = this.config.now()
-    const interval = Math.max(0, this.config.minSessionDurationMs - (now - this.startedAt))
     this.scheduleFlushIn(now, interval)
   }
 
@@ -292,7 +332,43 @@ export class ReplayTransport {
   }
 
   private minimumDurationReached(): boolean {
-    return this.config.now() - this.startedAt >= this.config.minSessionDurationMs
+    if (this.minimumDurationSatisfied || this.config.minSessionDurationMs === 0) {
+      return true
+    }
+    if (this.firstObservedTimestamp === undefined || this.lastObservedTimestamp === undefined) {
+      return false
+    }
+    return this.lastObservedTimestamp - this.firstObservedTimestamp >= this.config.minSessionDurationMs
+  }
+
+  private finishMinimumBufferingEvent(): void {
+    if (this.minimumDurationReached()) {
+      this.flushAndReport()
+    } else {
+      this.scheduleFlush()
+    }
+  }
+
+  private refreshMinimumBuffer(): boolean {
+    this.minimumBufferIncomplete = false
+    const refreshStartIndex = this.buffer.length
+    if (this.takeFullSnapshot !== undefined) {
+      this.refreshingMinimumSnapshot = true
+      try {
+        this.takeFullSnapshot()
+      } catch (error) {
+        safeReportError(this.config.onError, error)
+      } finally {
+        this.refreshingMinimumSnapshot = false
+      }
+    }
+    if (this.buffer.slice(refreshStartIndex).some((event) => event.type === EventType.FullSnapshot)) {
+      return true
+    }
+    this.buffer = []
+    this.bufferHasFullSnapshot = false
+    this.pendingBytes = 0
+    return false
   }
 
   private createEnvelope(events: RrwebEvent[], seq: number): ChunkEnvelope {
