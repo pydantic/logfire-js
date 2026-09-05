@@ -305,8 +305,13 @@ describe('ReplayTransport full mode', () => {
       expect(calls).toHaveLength(0)
 
       await vi.advanceTimersByTimeAsync(1)
-      expect(calls).toHaveLength(1)
-      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot])
+      expect(calls).toHaveLength(0)
+      const endOfMinimum = { ...mutation, timestamp: 5_001 }
+      transport.add(endOfMinimum)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, endOfMinimum])
       await transport.shutdown()
     } finally {
       vi.useRealTimers()
@@ -332,7 +337,50 @@ describe('ReplayTransport full mode', () => {
     }
   })
 
-  it('flushes at the buffer limit before the minimum session duration', async () => {
+  it('holds a buffer-limit flush until the minimum session duration', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const { calls, fetchImpl } = recordingFetch()
+      const refreshedSnapshot = { ...fullSnapshot, timestamp: 5_001 }
+      const takeFullSnapshot = vi.fn()
+      const transport = new ReplayTransport(
+        { ...makeConfig(fetchImpl), maxBufferBytes: 80, minSessionDurationMs: 5_000, now: () => Date.now() },
+        'sess-short-cap',
+        'full',
+        null,
+        immediateCompression(),
+        {},
+        { takeFullSnapshot }
+      )
+      takeFullSnapshot.mockImplementation(() => {
+        transport.add(refreshedSnapshot)
+      })
+      transport.start()
+      transport.add(fullSnapshot)
+      await vi.advanceTimersByTimeAsync(180)
+      transport.add(click)
+
+      expect(calls).toHaveLength(0)
+
+      await vi.advanceTimersByTimeAsync(4_819)
+      expect(calls).toHaveLength(0)
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(calls).toHaveLength(0)
+      transport.add({ ...mutation, timestamp: 5_001 })
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(takeFullSnapshot).toHaveBeenCalledOnce()
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, refreshedSnapshot])
+      await transport.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('discards a buffer-limit replay stopped before the minimum session duration', async () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(0)
@@ -343,16 +391,44 @@ describe('ReplayTransport full mode', () => {
       })
       transport.start()
       transport.add(fullSnapshot)
+      await vi.advanceTimersByTimeAsync(180)
       transport.add(click)
 
-      await vi.waitFor(() => {
-        expect(calls).toHaveLength(1)
-      })
-      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, click])
       await transport.shutdown()
+      await vi.advanceTimersByTimeAsync(4_820)
+
+      expect(calls).toHaveLength(0)
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('measures the minimum from a replacement full snapshot', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport(
+      { ...makeConfig(fetchImpl), minSessionDurationMs: 5_000 },
+      'sess-replaced-anchor',
+      'full',
+      null,
+      immediateCompression()
+    )
+    const replacementSnapshot = { ...fullSnapshot, timestamp: 4_000 }
+    const tooEarly = { ...mutation, timestamp: 5_001 }
+    const endOfMinimum = { ...mutation, timestamp: 9_000 }
+
+    transport.start()
+    transport.add(fullSnapshot)
+    transport.add(replacementSnapshot)
+    transport.add(tooEarly)
+    await transport.flush()
+    expect(calls).toHaveLength(0)
+
+    transport.add(endOfMinimum)
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(1)
+    })
+    expect(decodeBody(calls[0]!.init.body).events).toEqual([replacementSnapshot, tooEarly, endOfMinimum])
+    await transport.shutdown()
   })
 
   it('uses UTF-8 bytes rather than UTF-16 code units for the buffer threshold', async () => {
@@ -1061,12 +1137,45 @@ describe('ReplayTransport buffer mode', () => {
       expect(calls).toHaveLength(0)
 
       await vi.advanceTimersByTimeAsync(1)
-      expect(calls).toHaveLength(1)
-      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot])
+      expect(calls).toHaveLength(0)
+      const endOfMinimum = { ...mutation, timestamp: 5_001 }
+      transport.add(endOfMinimum)
+      await vi.waitFor(() => {
+        expect(calls).toHaveLength(1)
+      })
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, endOfMinimum])
       await transport.shutdown()
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('re-anchors a capped error buffer when it is promoted', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const refreshedSnapshot = { ...fullSnapshot, timestamp: 5_001 }
+    const takeFullSnapshot = vi.fn()
+    const transport = new ReplayTransport(
+      { ...makeConfig(fetchImpl), maxBufferBytes: 80, minSessionDurationMs: 5_000 },
+      'sess-capped-error',
+      'buffer',
+      null,
+      immediateCompression(),
+      {},
+      { takeFullSnapshot }
+    )
+    takeFullSnapshot.mockImplementation(() => {
+      transport.add(refreshedSnapshot)
+    })
+
+    transport.add(fullSnapshot)
+    transport.add(click)
+    transport.add({ ...mutation, timestamp: 5_001 })
+    await transport.triggerFlush()
+
+    expect(takeFullSnapshot).toHaveBeenCalledOnce()
+    expect(calls).toHaveLength(1)
+    expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, refreshedSnapshot])
+    await transport.shutdown()
   })
 
   it('does not upload until triggered', async () => {

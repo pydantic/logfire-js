@@ -142,14 +142,17 @@ seconds by default). After 30 seconds without recorded pointer, input, touch,
 scroll, media, resize, drag, or selection activity, background events use the
 greater of `flushIntervalMs` and 60 seconds. New user activity restores the
 configured cadence. After five minutes without activity, background events use
-the greater of `flushIntervalMs` and five minutes. Reaching `maxBufferBytes`
-still flushes immediately.
+the greater of `flushIntervalMs` and five minutes. After the replay reaches its
+minimum duration, reaching `maxBufferBytes` still flushes immediately.
 
-Replays must reach `minSessionDurationMs` (5 seconds by default) before they are
-uploaded. An earlier flush keeps the events buffered for the remaining time,
-while stopping the recorder before the minimum discards them. Set the option to
-`0` when an application must upload a shorter replay. The `maxBufferBytes`
-memory bound still takes precedence over the duration floor.
+Replays must contain at least `minSessionDurationMs` of recorded events (5
+seconds by default) before they are uploaded. While waiting, events stay
+buffered even if a single event exceeds
+`maxBufferBytes`; the five-second default bounds this temporary exception. If
+later events would grow the buffer further, they are dropped and a fresh full
+snapshot re-anchors the recording when the minimum is reached. Stopping the
+recorder before the minimum discards the recording. Set the option to `0` when
+an application must upload a shorter replay.
 
 Sessions created only by background timeout monitoring remain held until the
 next user activity. Calling `flush()`, hiding the page, or stopping the recorder
