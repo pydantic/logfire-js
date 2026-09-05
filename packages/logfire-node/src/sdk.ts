@@ -171,9 +171,9 @@ async function flushRuntime(runtime: ActiveRuntime, deadline: Deadline): Promise
     ...runtime.metricReaders.map(async (reader) => reader.forceFlush({ timeoutMillis: remainingTimeoutMillis(deadline) })),
   ]
   // Each failure is recorded as its own pipeline settles, the same way `shutdownRuntime` collects
-  // its two teardowns. `Promise.all` rejected on the first failure, so a second failing pipeline
-  // went unreported and its rejection was left unhandled, and reading a combined result instead
-  // would lose an early failure whenever another pipeline outlives the deadline.
+  // its two teardowns. `Promise.all` rejects with the first failure and never surfaces the rest,
+  // so a second failing pipeline went unreported, and reading a combined result instead would
+  // lose an early failure whenever another pipeline outlives the deadline.
   const errors: unknown[] = []
   const settled = Promise.all(
     pipelines.map(async (pipeline) => {
