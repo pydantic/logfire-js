@@ -251,6 +251,26 @@ describe('browser metrics runtime', () => {
     expect(getHistogram(expectedInstruments.TTFB.name).records[0]?.value).toBe(300)
   })
 
+  it('keeps a metric attribute named like an Object.prototype member', async () => {
+    const runtime = await startBrowserMetrics({ metricUrl: '/v1/metrics/browser' }, { attributes: {} } as never)
+    const recorder = runtime.createWebVitalsMetricRecorder({
+      // Built by entries: an object literal `__proto__` key sets the prototype and creates no key.
+      attributes: () =>
+        Object.fromEntries([
+          ['__proto__', 'proto-value'],
+          ['app.route', '/products/:id'],
+        ]) as never,
+    })
+
+    recorder.record(createMetric('LCP', 2500))
+
+    const recorded = getHistogram(expectedInstruments.LCP.name).records[0]?.attributes ?? {}
+    // The `__proto__` entry used to vanish, because assigning it ran the inherited setter.
+    expect(Object.getOwnPropertyDescriptor(recorded, '__proto__')?.value).toBe('proto-value')
+    expect(recorded['app.route']).toBe('/products/:id')
+    expect(Object.getPrototypeOf(recorded)).toBe(Object.prototype)
+  })
+
   it('keeps Web Vital metric attributes low-cardinality', async () => {
     const runtime = await startBrowserMetrics({ metricUrl: '/v1/metrics/browser' }, { attributes: {} } as never)
     const recorder = runtime.createWebVitalsMetricRecorder({

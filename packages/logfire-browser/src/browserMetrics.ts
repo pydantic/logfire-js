@@ -138,13 +138,18 @@ function setPrimitiveAttribute(attributes: Attributes, key: string, value: unkno
   }
 
   if (typeof value === 'string' || typeof value === 'boolean') {
-    attributes[key] = value
+    defineAttribute(attributes, key, value)
     return
   }
 
   if (typeof value === 'number' && Number.isFinite(value)) {
-    attributes[key] = value
+    defineAttribute(attributes, key, value)
   }
+}
+
+/** Attribute keys come from user callbacks, and a plain write to `__proto__` drops the entry. */
+function defineAttribute(attributes: Attributes, key: string, value: boolean | number | string): void {
+  Object.defineProperty(attributes, key, { configurable: true, enumerable: true, value, writable: true })
 }
 
 function copyPrimitiveAttributes(target: Attributes, source: Attributes | undefined): void {
