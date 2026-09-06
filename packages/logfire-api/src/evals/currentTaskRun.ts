@@ -20,18 +20,11 @@ interface ALSLike<T> {
 }
 
 let alsImpl: ALSLike<TaskRunState> | null = null
-let alsProbeComplete = false
+let alsProbe: null | Promise<void> = null
 /** Fallback storage cell for runtimes without ALS. Single-slot, single-execute. */
 let fallbackStore: null | TaskRunState = null
 
-async function ensureALS(): Promise<void> {
-  if (alsImpl !== null) {
-    return
-  }
-  if (alsProbeComplete) {
-    return
-  }
-  alsProbeComplete = true
+async function probeALS(): Promise<void> {
   if (!hasAsyncLocalStorage()) {
     return
   }
@@ -44,6 +37,14 @@ async function ensureALS(): Promise<void> {
   } catch {
     alsImpl = null
   }
+}
+
+async function ensureALS(): Promise<void> {
+  // Cached as a promise, not a "probe started" flag: a flag let every caller that arrived while
+  // the import was still in flight skip the await, miss `alsImpl`, and land in the single-slot
+  // fallback store — which is exactly what concurrent eval cases must not share.
+  alsProbe ??= probeALS()
+  await alsProbe
 }
 
 /** Run `fn` with `state` set as the current task-run context. */

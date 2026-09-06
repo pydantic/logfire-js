@@ -790,4 +790,24 @@ describe('offline evals — span attribute parity', () => {
     // A corrupted metric propagates: `sum += value` on a string yields a non-numeric mean.
     expect(computeAverages('proto-names', result.cases).metrics[inherited]).toEqual({ count: 1, mean: 8 })
   })
+  it('gives every concurrent case its own task run on the first evaluate', async () => {
+    // A fresh module instance: the ALS probe runs once per module and the rest of this file has
+    // already warmed it. The first evaluate of a process is the case that matters - callers that
+    // arrive while the `node:async_hooks` import is still in flight must await it rather than
+    // fall through to the single-slot fallback store.
+    vi.resetModules()
+    const { getCurrentTaskRun, runWithTaskRun } = await import('../currentTaskRun')
+
+    const seen: (string | undefined)[] = []
+    await Promise.all(
+      ['a', 'b', 'c', 'd'].map(async (id) =>
+        runWithTaskRun({ attributes: {}, exporterContextId: id, metrics: {} }, async () => {
+          await sleep(5)
+          seen.push(getCurrentTaskRun()?.exporterContextId)
+        })
+      )
+    )
+
+    expect([...seen].sort()).toEqual(['a', 'b', 'c', 'd'])
+  })
 })
