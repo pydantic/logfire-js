@@ -25,6 +25,7 @@ describe('logfire config', () => {
   const originalOtelServiceName = process.env['OTEL_SERVICE_NAME']
   const originalOtelServiceVersion = process.env['OTEL_SERVICE_VERSION']
   const originalToken = process.env['LOGFIRE_TOKEN']
+  const originalTraceSampleRate = process.env['LOGFIRE_TRACE_SAMPLE_RATE']
   const originalCredentialsDir = process.env['LOGFIRE_CREDENTIALS_DIR']
   const tmpDirs: string[] = []
 
@@ -41,6 +42,7 @@ describe('logfire config', () => {
     delete process.env['LOGFIRE_TOKEN']
     delete process.env['LOGFIRE_CREDENTIALS_DIR']
     delete process.env['LOGFIRE_DISTRIBUTED_TRACING']
+    delete process.env['LOGFIRE_TRACE_SAMPLE_RATE']
     configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     await shutdownVariables()
   })
@@ -100,6 +102,11 @@ describe('logfire config', () => {
       delete process.env['LOGFIRE_CREDENTIALS_DIR']
     } else {
       process.env['LOGFIRE_CREDENTIALS_DIR'] = originalCredentialsDir
+    }
+    if (originalTraceSampleRate === undefined) {
+      delete process.env['LOGFIRE_TRACE_SAMPLE_RATE']
+    } else {
+      process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = originalTraceSampleRate
     }
     for (const dir of tmpDirs.splice(0)) {
       rmSync(dir, { force: true, recursive: true })
@@ -308,6 +315,33 @@ describe('logfire config', () => {
     expect(() => {
       configure()
     }).toThrow(`Expected LOGFIRE_CONSOLE to be a boolean, got ${JSON.stringify(value)}`)
+  })
+
+  it('rejects a LOGFIRE_TRACE_SAMPLE_RATE that is not a number from 0 to 1, and keeps the rates that are', () => {
+    // Head sampling is off by default, so an unparsed rate used to export every trace without a
+    // word. `-1` was the worst of it: the user asked for no traces and got all of them, and
+    // `0.1x` was accepted as `0.1` because `parseFloat` stops at the first character it cannot
+    // read. The accepted half is asserted too, since a rejection test alone would still pass if
+    // every value threw.
+    for (const value of ['10%', '0.1x', '-1', '1.5']) {
+      process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = value
+      expect(() => {
+        configure()
+      }).toThrow(`Expected LOGFIRE_TRACE_SAMPLE_RATE to be a number from 0 to 1, got ${JSON.stringify(value)}`)
+    }
+
+    // Both bounds are meaningful: `0` drops every trace, so it must not be read as "unset".
+    process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = '0'
+    configure()
+    expect(logfireConfig.sampling).toEqual({ head: 0 })
+
+    process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = '1'
+    configure()
+    expect(logfireConfig.sampling).toEqual({ head: 1 })
+
+    process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = '0.1'
+    configure()
+    expect(logfireConfig.sampling).toEqual({ head: 0.1 })
   })
 
   it('rejects a LOGFIRE_DISTRIBUTED_TRACING value that is not a boolean', () => {

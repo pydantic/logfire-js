@@ -407,17 +407,22 @@ function configureSharedApi(apiConfig: logfireApi.LogfireApiConfigOptions, minLe
 }
 
 function resolveSampling(option: SamplingOptions | undefined): SamplingOptions | undefined {
-  const envRate = process.env['LOGFIRE_TRACE_SAMPLE_RATE']
   if (option) {
     return option
   }
-  if (envRate !== undefined) {
-    const rate = parseFloat(envRate)
-    if (!isNaN(rate) && rate >= 0 && rate <= 1) {
-      return { head: rate }
-    }
+  const envRate = readNonEmptyEnv(process.env, 'LOGFIRE_TRACE_SAMPLE_RATE')
+  if (envRate === undefined) {
+    return undefined
   }
-  return undefined
+  // Same policy as `parseBooleanEnv` above, and as Python's `float(value)` cast for this
+  // parameter: a value nobody recognises is a typo, and quietly sampling everything hides it.
+  // `Number` rather than `parseFloat`, which reads a leading number out of `0.1x` and drops
+  // the rest, so a truncated value used to be accepted as though it were written that way.
+  const rate = Number(envRate)
+  if (!Number.isFinite(rate) || rate < 0 || rate > 1) {
+    throw new Error(`Expected LOGFIRE_TRACE_SAMPLE_RATE to be a number from 0 to 1, got ${JSON.stringify(envRate)}`)
+  }
+  return { head: rate }
 }
 
 function resolveSendToLogfire(option: LogfireConfigOptions['sendToLogfire'], token: LogfireToken | undefined): boolean {

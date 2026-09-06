@@ -20,7 +20,9 @@ logfire.configure({
 })
 ```
 
-In Node.js, `LOGFIRE_TRACE_SAMPLE_RATE=0.1` configures head sampling from the environment.
+In Node.js, `LOGFIRE_TRACE_SAMPLE_RATE=0.1` configures head sampling from the environment. The
+value must be a number from `0` to `1`; anything else raises at `configure()` rather than leaving
+head sampling off, since a rate nobody can read is a typo and quietly exporting every trace hides it.
 
 ## Tail Sampling
 

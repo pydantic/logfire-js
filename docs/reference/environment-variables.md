@@ -20,7 +20,7 @@ description: Environment variables used by the Logfire TypeScript SDK packages.
 | `LOGFIRE_MIN_LEVEL`           | Minimum manual Logfire level to emit.                                    |
 | `LOGFIRE_SEND_TO_LOGFIRE`     | Set sending behavior. `true`, `false`, or `if-token-present`.            |
 | `LOGFIRE_DISTRIBUTED_TRACING` | Set to `false` to suppress extraction of incoming trace context.         |
-| `LOGFIRE_TRACE_SAMPLE_RATE`   | Head sampling rate from `0` to `1`.                                      |
+| `LOGFIRE_TRACE_SAMPLE_RATE`   | Head sampling rate from `0` to `1`. Anything else is an error.           |
 | `LOGFIRE_BASE_URL`            | Override the Logfire API base URL.                                       |
 | `LOGFIRE_CREDENTIALS_DIR`     | Directory containing `logfire_credentials.json` for local Node projects. |
 | `OTEL_SERVICE_NAME`           | Service name fallback when `LOGFIRE_SERVICE_NAME` is unset.              |
