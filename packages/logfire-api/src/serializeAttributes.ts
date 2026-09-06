@@ -26,6 +26,8 @@ type ContainerKind = 'array' | 'object' | 'top-level'
 /** OTLP encodes every integral number attribute as a signed 64-bit `intValue`. */
 const OTLP_MAX_INT = 9223372036854775807n
 const OTLP_MIN_INT = -9223372036854775808n
+const MAX_EXACT_DOUBLE_INT = 9007199254740991n
+const MIN_EXACT_DOUBLE_INT = -9007199254740991n
 
 const MAX_SCHEMA_DEPTH = 4
 const MAX_OBJECT_PROPERTIES = 20
@@ -63,6 +65,8 @@ export function serializeAttributes(attributes: RawAttributes): SerializedAttrib
       nullArgs.push(key)
     } else if (typeof value === 'number') {
       result.set(key, serializeNumberAttribute(value))
+    } else if (typeof value === 'bigint') {
+      result.set(key, serializeBigIntAttribute(value))
     } else if (typeof value === 'string' || typeof value === 'boolean') {
       result.set(key, value)
     } else if (value instanceof Date) {
@@ -123,6 +127,15 @@ function serializeNumberAttribute(value: number): number | string {
   return exact.toString()
 }
 
+/**
+ * A BigInt, exact by definition, follows the same rule as the seams above: the value itself when
+ * the double that carries it to OTLP is exact, its decimal string once it is not. `JSON.stringify`
+ * throws on a BigInt, so before this every attribute holding one collapsed to `[unserializable]`.
+ */
+function serializeBigIntAttribute(value: bigint): number | string {
+  return value >= MIN_EXACT_DOUBLE_INT && value <= MAX_EXACT_DOUBLE_INT ? Number(value) : value.toString()
+}
+
 function serializeJsonAttribute(
   key: string,
   value: unknown,
@@ -164,9 +177,12 @@ function stringifyJsonAttribute(value: unknown): string | undefined {
     // JSON writes NaN and Infinity as `null`, so a nested one is lost at any depth. Python's
     // encoder returns `str(o)` for a non-finite float wherever it appears, and
     // `serializeNumberAttribute` already sends the string for a top-level one.
-    const serialized = JSON.stringify(value, (_key, item: unknown) =>
-      typeof item === 'number' && !Number.isFinite(item) ? String(item) : item
-    )
+    const serialized = JSON.stringify(value, (_key, item: unknown) => {
+      if (typeof item === 'bigint') {
+        return serializeBigIntAttribute(item)
+      }
+      return typeof item === 'number' && !Number.isFinite(item) ? String(item) : item
+    })
     return typeof serialized === 'string' ? serialized : undefined
   } catch {
     return undefined
@@ -200,7 +216,8 @@ function inferJsonSchema(
     case 'string':
       return { type: 'string' }
     case 'bigint':
-      return undefined
+      // Serialized as a number while the double is exact, as a decimal string beyond that.
+      return value >= MIN_EXACT_DOUBLE_INT && value <= MAX_EXACT_DOUBLE_INT ? { type: 'number' } : { type: 'string' }
     case 'function':
     case 'symbol':
       return state.container === 'array' ? { type: 'null' } : undefined
