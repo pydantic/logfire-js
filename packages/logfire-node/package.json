@@ -25,7 +25,7 @@
     "stats",
     "monitoring"
   ],
-  "version": "0.18.22",
+  "version": "0.18.23",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

@@ -1,5 +1,14 @@
 # @pydantic/logfire-browser
 
+## 0.19.2
+
+### Patch Changes
+
+- 5a52742: Keep a metric or session attribute whose name is an `Object.prototype` member. A plain record write to a `__proto__` key runs the inherited setter and silently drops the entry; every user-keyed attribute write in the package now defines an own property instead.
+- Updated dependencies [4d26af7]
+- Updated dependencies [5269001]
+  - logfire@0.22.7
+
 ## 0.19.1
 
 ### Patch Changes

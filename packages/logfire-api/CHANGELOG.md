@@ -1,5 +1,12 @@
 # @pydantic/logfire-api
 
+## 0.22.7
+
+### Patch Changes
+
+- 4d26af7: Keep a BigInt attribute instead of discarding it. `JSON.stringify` throws on a BigInt, so an attribute holding one anywhere — a nested `id` field took the whole surrounding object with it — collapsed to `[unserializable]`. A BigInt now follows the same rule as oversized number integers: sent as a number while the carrying double is exact, as its exact decimal string beyond that.
+- 5269001: Give every concurrent eval case its own task-run context on the first `Dataset.evaluate` of a process. The `AsyncLocalStorage` probe marked itself done before awaiting its dynamic import, so cases starting while the import was in flight fell through to the shared single-slot fallback and their `setEvalAttribute` / `incrementEvalMetric` calls were silently dropped. The probe is now cached as a promise every caller awaits.
+
 ## 0.22.6
 
 ### Patch Changes
