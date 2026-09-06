@@ -35,6 +35,25 @@ export function traceExporter(): SpanExporter {
   })
 }
 
+/**
+ * Wait for both lifecycle calls rather than awaiting them in sequence, which skipped the second
+ * one whenever the first rejected. The wrapped processor is the batch that holds unexported
+ * spans, so letting a console failure skip its `shutdown` drops everything still queued. Both
+ * calls are already in flight by the time this runs, so waiting for both costs nothing and also
+ * stops a slow console flush from eating into the caller's deadline. A lone failure is rethrown
+ * unchanged; several are raised together.
+ */
+async function settleBoth(consoleCall: Promise<void> | undefined, wrappedCall: Promise<void>): Promise<void> {
+  const settled = await Promise.allSettled([consoleCall, wrappedCall])
+  const errors = settled.filter((result) => result.status === 'rejected').map((result) => result.reason as unknown)
+  if (errors.length === 1) {
+    throw errors[0]
+  }
+  if (errors.length > 1) {
+    throw new AggregateError(errors, 'logfire SDK: span processor lifecycle failed')
+  }
+}
+
 class LogfireSpanProcessor implements SpanProcessor {
   private readonly console?: SpanProcessor
   private readonly wrapped: SpanProcessor
@@ -48,8 +67,7 @@ class LogfireSpanProcessor implements SpanProcessor {
   }
 
   async forceFlush(): Promise<void> {
-    await this.console?.forceFlush()
-    return this.wrapped.forceFlush()
+    await settleBoth(this.console?.forceFlush(), this.wrapped.forceFlush())
   }
 
   onEnd(span: ReadableSpan): void {
@@ -66,7 +84,6 @@ class LogfireSpanProcessor implements SpanProcessor {
   }
 
   async shutdown(): Promise<void> {
-    await this.console?.shutdown()
-    return this.wrapped.shutdown()
+    await settleBoth(this.console?.shutdown(), this.wrapped.shutdown())
   }
 }
