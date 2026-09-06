@@ -1,5 +1,11 @@
 # @pydantic/logfire-session-replay
 
+## 0.3.3
+
+### Patch Changes
+
+- 5a52742: Define session attributes as own properties so a prototype-named key can never run an inherited setter, independent of the key-pattern guard in front of the write.
+
 ## 0.3.2
 
 ### Patch Changes
