@@ -380,6 +380,40 @@ describe('ReplayTransport full mode', () => {
     }
   })
 
+  it('retries a failed minimum-duration snapshot refresh without losing the valid prefix', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const refreshedSnapshot = { ...fullSnapshot, timestamp: 5_001 }
+    const takeFullSnapshot = vi.fn()
+    const transport = new ReplayTransport(
+      { ...makeConfig(fetchImpl), maxBufferBytes: 80, minSessionDurationMs: 5_000 },
+      'sess-refresh-retry',
+      'full',
+      null,
+      immediateCompression(),
+      {},
+      { takeFullSnapshot }
+    )
+    takeFullSnapshot
+      .mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => {
+        transport.add(refreshedSnapshot)
+      })
+
+    transport.start()
+    transport.add(fullSnapshot)
+    transport.add(click)
+    transport.add({ ...mutation, timestamp: 5_001 })
+
+    expect(takeFullSnapshot).toHaveBeenCalledOnce()
+    expect(calls).toHaveLength(0)
+
+    await transport.flush()
+    expect(takeFullSnapshot).toHaveBeenCalledTimes(2)
+    expect(calls).toHaveLength(1)
+    expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, refreshedSnapshot])
+    await transport.shutdown()
+  })
+
   it('discards a buffer-limit replay stopped before the minimum session duration', async () => {
     vi.useFakeTimers()
     try {

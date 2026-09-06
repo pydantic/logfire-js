@@ -147,12 +147,12 @@ minimum duration, reaching `maxBufferBytes` still flushes immediately.
 
 Replays must contain at least `minSessionDurationMs` of recorded events (5
 seconds by default) before they are uploaded. While waiting, events stay
-buffered even if a single event exceeds
-`maxBufferBytes`; the five-second default bounds this temporary exception. If
-later events would grow the buffer further, they are dropped and a fresh full
-snapshot re-anchors the recording when the minimum is reached. Stopping the
-recorder before the minimum discards the recording. Set the option to `0` when
-an application must upload a shorter replay.
+buffered. The initial `Meta` and `FullSnapshot` anchor is retained even when it
+exceeds `maxBufferBytes`; later events are kept only while the estimated buffer
+remains within the limit. After an overflow, a fresh full snapshot re-anchors
+the recording when the minimum is reached. Stopping the recorder before the
+minimum discards the recording. Set the option to `0` when an application must
+upload a shorter replay.
 
 Sessions created only by background timeout monitoring remain held until the
 next user activity. Calling `flush()`, hiding the page, or stopping the recorder

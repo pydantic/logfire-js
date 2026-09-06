@@ -349,8 +349,10 @@ function createActiveRuntime(options: {
       transport,
       deactivate: async () => {
         deactivation ??= (async () => {
+          const finalFlush = transport.flush({ keepalive: false })
           active = false
           stopCleanup(cleanup)
+          await finalFlush
           await transport.shutdown({ keepalive: false })
         })()
         return deactivation

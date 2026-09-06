@@ -105,6 +105,11 @@ export class ReplayTransport {
       this.lastUserActivityAt = this.config.now()
     }
     const eventBytes = estimateBytes(event)
+    if (this.refreshingMinimumSnapshot) {
+      this.buffer.push(event)
+      this.pendingBytes += eventBytes
+      return
+    }
     const enforcingMinimum = !this.minimumDurationSatisfied
     if (this.mode === 'buffer' || this.held || enforcingMinimum) {
       if (event.type === EventType.Meta) {
@@ -154,9 +159,6 @@ export class ReplayTransport {
 
     this.buffer.push(event)
     this.pendingBytes += eventBytes
-    if (this.refreshingMinimumSnapshot) {
-      return
-    }
     if (enforcingMinimum && this.minimumDurationReached()) {
       this.flushAndReport()
       return
@@ -193,12 +195,13 @@ export class ReplayTransport {
       this.scheduleFlush()
       return
     }
-    this.minimumDurationSatisfied = true
     // Overflow mutations were dropped to keep the pre-minimum buffer bounded.
     // A new snapshot restores a valid rrweb state chain before the buffer ships.
     if (this.minimumBufferIncomplete && !this.refreshMinimumBuffer()) {
+      this.scheduleFlush()
       return
     }
+    this.minimumDurationSatisfied = true
 
     this.clearScheduledFlush()
     const events = this.buffer
@@ -350,8 +353,8 @@ export class ReplayTransport {
   }
 
   private refreshMinimumBuffer(): boolean {
-    this.minimumBufferIncomplete = false
     const refreshStartIndex = this.buffer.length
+    const refreshStartBytes = this.pendingBytes
     if (this.takeFullSnapshot !== undefined) {
       this.refreshingMinimumSnapshot = true
       try {
@@ -363,11 +366,11 @@ export class ReplayTransport {
       }
     }
     if (this.buffer.slice(refreshStartIndex).some((event) => event.type === EventType.FullSnapshot)) {
+      this.minimumBufferIncomplete = false
       return true
     }
-    this.buffer = []
-    this.bufferHasFullSnapshot = false
-    this.pendingBytes = 0
+    this.buffer.length = refreshStartIndex
+    this.pendingBytes = refreshStartBytes
     return false
   }
 
