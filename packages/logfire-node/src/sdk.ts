@@ -164,16 +164,48 @@ function removeProcessListeners(runtime: ActiveRuntime): void {
   runtime.processListeners = undefined
 }
 
-async function flushRuntime(runtime: ActiveRuntime, deadline: Deadline): Promise<void> {
-  await withDeadline(
-    'forceFlush',
-    deadline,
-    Promise.all([
-      ...runtime.spanProcessors.map(async (processor) => processor.forceFlush()),
-      ...runtime.logRecordProcessors.map(async (processor) => processor.forceFlush()),
-      ...runtime.metricReaders.map(async (reader) => reader.forceFlush({ timeoutMillis: remainingTimeoutMillis(deadline) })),
-    ]).then(() => undefined)
+/**
+ * Await every operation, collecting each failure as its own operation settles rather than reading
+ * a combined result. `Promise.all` rejects with the first failure and never surfaces the rest,
+ * and waiting for a combined settled result instead would lose an early failure whenever another
+ * operation outlives the deadline. All operations are already in flight, so this only waits for
+ * what was started, and the deadline still bounds the wait (a deadline error joins the list).
+ */
+async function settleWithDeadline(label: string, deadline: Deadline, operations: Promise<unknown>[]): Promise<unknown[]> {
+  const errors: unknown[] = []
+  const settled = Promise.all(
+    operations.map(async (operation) => {
+      try {
+        await operation
+      } catch (e: unknown) {
+        errors.push(e)
+      }
+    })
   )
+  try {
+    await withDeadline(
+      label,
+      deadline,
+      settled.then(() => undefined)
+    )
+  } catch (e: unknown) {
+    errors.push(e)
+  }
+  return errors
+}
+
+async function flushRuntime(runtime: ActiveRuntime, deadline: Deadline): Promise<void> {
+  const errors = await settleWithDeadline('forceFlush', deadline, [
+    ...runtime.spanProcessors.map(async (processor) => processor.forceFlush()),
+    ...runtime.logRecordProcessors.map(async (processor) => processor.forceFlush()),
+    ...runtime.metricReaders.map(async (reader) => reader.forceFlush({ timeoutMillis: remainingTimeoutMillis(deadline) })),
+  ])
+  if (errors.length === 1) {
+    throw errors[0]
+  }
+  if (errors.length > 1) {
+    throw new AggregateError(errors, 'logfire SDK: forceFlush failed')
+  }
 }
 
 async function forceFlushBestEffort(runtime: ActiveRuntime, reason: string): Promise<void> {
@@ -260,33 +292,7 @@ async function shutdownRuntime(runtime: ActiveRuntime, options: ShutdownRuntimeO
       if (options.shutdownVariables !== false) {
         shutdownOperations.push(shutdownVariables())
       }
-      // Each failure is recorded as its own operation settles, rather than read off a combined
-      // result. `Promise.all` rejected on the first failure, leaving the other shutdown running
-      // past this call with its error dropped; waiting for a combined result instead would lose
-      // an early failure whenever the other operation outlives the deadline. Both are already in
-      // flight, so this only waits for what was started, and the deadline still bounds it.
-      const operationErrors: unknown[] = []
-      const allSettled = Promise.all(
-        shutdownOperations.map(async (operation) => {
-          try {
-            await operation
-          } catch (e: unknown) {
-            operationErrors.push(e)
-          }
-        })
-      )
-      let deadlineError: unknown
-      let deadlineExceeded = false
-      try {
-        await withDeadline('shutdown', deadline, allSettled)
-      } catch (e: unknown) {
-        deadlineError = e
-        deadlineExceeded = true
-      }
-      errors.push(...operationErrors)
-      if (deadlineExceeded) {
-        errors.push(deadlineError)
-      }
+      errors.push(...(await settleWithDeadline('shutdown', deadline, shutdownOperations)))
 
       if (errors.length === 1) {
         throw errors[0]

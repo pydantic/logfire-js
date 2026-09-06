@@ -660,6 +660,46 @@ describe('sdk lifecycle helpers', () => {
     await shutdown({ flush: false })
   })
 
+  it('reports every failing flush pipeline, not just the first', async () => {
+    const firstError = new Error('first processor flush failed')
+    const secondError = new Error('second processor flush failed')
+    const failing = (error: Error): SpanProcessor => ({
+      forceFlush: async () => Promise.reject(error),
+      onEnd: () => undefined,
+      onStart: () => undefined,
+      shutdown: async () => Promise.resolve(),
+    })
+    Object.assign(logfireConfig, { additionalSpanProcessors: [failing(firstError), failing(secondError)] })
+    start()
+
+    // `Promise.all` rejected on the first failure, so the second went unreported.
+    const error: unknown = await forceFlush().catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(AggregateError)
+    expect((error as AggregateError).message).toBe('logfire SDK: forceFlush failed')
+    expect((error as AggregateError).errors).toEqual([firstError, secondError])
+    // The runtime is still active with failing processors, so consume the teardown rejection.
+    await shutdown().catch(() => undefined)
+  })
+
+  it('still reports a single flush failure directly', async () => {
+    const flushError = new Error('only processor flush failed')
+    Object.assign(logfireConfig, {
+      additionalSpanProcessors: [
+        {
+          forceFlush: async () => Promise.reject(flushError),
+          onEnd: () => undefined,
+          onStart: () => undefined,
+          shutdown: async () => Promise.resolve(),
+        } satisfies SpanProcessor,
+      ],
+    })
+    start()
+
+    await expect(forceFlush()).rejects.toBe(flushError)
+    await shutdown().catch(() => undefined)
+  })
+
   it('shutdown still closes the SDK when the pre-shutdown flush fails', async () => {
     const flushError = new Error('flush failed')
     const additionalProcessor: SpanProcessor = {
