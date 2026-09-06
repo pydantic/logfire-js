@@ -77,7 +77,15 @@ export function snapshotSessionAttributes(
       continue
     }
 
-    attributes[key] = attributeValue as SessionAttributeValue
+    // Defined as an own key: a plain write to a prototype-named key would run the inherited
+    // setter and drop the entry. The key pattern above rejects `__proto__` today, but the write
+    // must not depend on that guard staying in place.
+    Object.defineProperty(attributes, key, {
+      configurable: true,
+      enumerable: true,
+      value: attributeValue as SessionAttributeValue,
+      writable: true,
+    })
     accepted += 1
     if (accepted === MAX_SESSION_ATTRIBUTES) {
       break

@@ -14,6 +14,8 @@ import type {
 import type { BrowserWebVitalsMetricOptions, BrowserWebVitalsMetricRecorder } from './browserMetrics'
 import { normalizeScriptEntry } from './scriptAttributes'
 
+import { setOwn } from './ownRecord'
+
 const LOGFIRE_SPAN_TYPE_KEY = 'logfire.span_type'
 
 export interface BrowserWebVitalsOptions {
@@ -108,12 +110,12 @@ function createHandle(
 
 function setPrimitiveAttribute(attributes: Attributes, key: string, value: unknown): void {
   if (typeof value === 'string' || typeof value === 'boolean') {
-    attributes[key] = value
+    setOwn(attributes, key, value)
     return
   }
 
   if (typeof value === 'number' && Number.isFinite(value)) {
-    attributes[key] = value
+    setOwn(attributes, key, value)
   }
 }
 

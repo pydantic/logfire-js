@@ -5,6 +5,8 @@ import type { Resource } from '@opentelemetry/resources'
 import type { MeterProvider, MetricReader, PeriodicExportingMetricReaderOptions } from '@opentelemetry/sdk-metrics'
 import type { MetricWithAttribution } from 'web-vitals/attribution'
 
+import { setOwn } from './ownRecord'
+
 export interface BrowserMetricsOptions {
   /**
    * Browser-safe OTLP metrics URL, either direct Logfire ingest or a proxy.
@@ -138,12 +140,12 @@ function setPrimitiveAttribute(attributes: Attributes, key: string, value: unkno
   }
 
   if (typeof value === 'string' || typeof value === 'boolean') {
-    attributes[key] = value
+    setOwn(attributes, key, value)
     return
   }
 
   if (typeof value === 'number' && Number.isFinite(value)) {
-    attributes[key] = value
+    setOwn(attributes, key, value)
   }
 }
 

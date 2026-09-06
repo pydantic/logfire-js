@@ -1,6 +1,8 @@
 import type { BrowserWebVitalsOptions } from './webVitals'
 import type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
 
+import { setOwn } from './ownRecord'
+
 export const BROWSER_SESSION_ACTIVITY_WRITE_DELAY_MS = 1_000
 const MAX_SESSION_ATTRIBUTES = 20
 const MAX_SESSION_ATTRIBUTE_STRING_CODE_POINTS = 200
@@ -210,7 +212,7 @@ function normalizeBrowserSessionAttributes(value: unknown): BrowserSessionAttrib
       continue
     }
 
-    attributes[key] = attributeValue as BrowserSessionAttributeValue
+    setOwn(attributes, key, attributeValue as BrowserSessionAttributeValue)
     accepted += 1
     if (accepted === MAX_SESSION_ATTRIBUTES) {
       break
