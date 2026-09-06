@@ -327,7 +327,17 @@ describe('logfire config', () => {
       process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = value
       expect(() => {
         configure()
-      }).toThrow(`Expected LOGFIRE_TRACE_SAMPLE_RATE to be a number from 0 to 1, got ${JSON.stringify(value)}`)
+        // An Error rather than a string, which Vitest matches as a substring.
+      }).toThrow(new Error(`Expected LOGFIRE_TRACE_SAMPLE_RATE to be a number from 0 to 1, got ${JSON.stringify(value)}`))
+    }
+
+    // Blank is unset, not a typo. Python's `load_param` says so in as many words, "`None` (unset)
+    // and `''` (empty string) are generally considered the same", and `parseBooleanEnv` above
+    // returns `false` for `''` rather than raising.
+    for (const blank of ['', '   ']) {
+      process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = blank
+      configure()
+      expect(logfireConfig.sampling).toBe(undefined)
     }
 
     // Both bounds are meaningful: `0` drops every trace, so it must not be read as "unset".
