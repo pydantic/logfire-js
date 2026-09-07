@@ -1000,6 +1000,31 @@ describe('renderReport', () => {
     expect(text).toContain('ok=✓')
   })
 
+  it('renders a case whose output JSON.stringify cannot return a string for', () => {
+    // A task that returns nothing is ordinary, and `JSON.stringify(undefined)` is `undefined`,
+    // not `'undefined'`, so `truncate` read `.length` off it and the whole render threw. A BigInt
+    // anywhere in the value throws outright, which is the seam `serializeAttributes` already
+    // covers with a replacer.
+    const report: EvaluationReport = {
+      analyses: [],
+      cases: [
+        makeReportCase({ inputs: 'a', name: 'empty', output: undefined }),
+        makeReportCase({ inputs: 'b', name: 'big', output: { tokens: 9007199254740993n } }),
+      ],
+      failures: [],
+      name: 'demo',
+      report_evaluator_failures: [],
+      span_id: 's',
+      trace_id: 't',
+    }
+
+    const text = renderReport(report, { includeOutput: true })
+
+    expect(text).toContain('undefined')
+    // The exact value, not the rounded double `9007199254740992` that `Number` would give.
+    expect(text).toContain('{"tokens":"9007199254740993"}')
+  })
+
   it('does not leave a lone surrogate when truncating a rendered input', () => {
     // The repr is '"' + value + '"' and the limit is 30, so the cut lands on the
     // emoji's high half.

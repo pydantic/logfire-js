@@ -604,7 +604,9 @@ function encodeReturnAttribute(output: unknown): boolean | number | string {
     return `${output.name}: ${output.message}`
   }
   try {
-    return JSON.stringify(output)
+    // Same BigInt replacer as the other output seams: without it a returned BigInt, or any
+    // object carrying one, collapses to `[unserializable]` and takes every sibling field with it.
+    return JSON.stringify(output, (_key, item: unknown) => (typeof item === 'bigint' ? item.toString() : item))
   } catch {
     return '[unserializable]'
   }

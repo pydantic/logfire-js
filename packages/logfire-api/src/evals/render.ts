@@ -57,10 +57,10 @@ function renderCaseTable<I, O, M>(cases: readonly ReportCase<I, O, M>[], opts: R
   for (const c of cases) {
     const row: string[] = [c.name, c.task_duration.toFixed(3)]
     if (opts.includeInput === true) {
-      row.push(truncate(JSON.stringify(c.inputs), 30))
+      row.push(truncate(renderCell(c.inputs), 30))
     }
     if (opts.includeOutput === true) {
-      row.push(truncate(JSON.stringify(c.output), 30))
+      row.push(truncate(renderCell(c.output), 30))
     }
     row.push(formatResultMap(c.scores), formatResultMap(c.labels), formatResultMap(c.assertions))
     rows.push(row)
@@ -89,6 +89,24 @@ function formatValue(v: unknown): string {
     return v.toFixed(3).replace(/\.?0+$/u, '')
   }
   return String(v)
+}
+
+/**
+ * `JSON.stringify` is not total, and both of its gaps reach this table through a task's own
+ * return value. It gives back `undefined` rather than a string for `undefined`, a function or a
+ * symbol, and a task that returns nothing is ordinary, so `truncate` was reading `.length` off
+ * `undefined` and taking the whole report render with it. It also throws on a BigInt at any
+ * depth, the same seam `serializeAttributes` covers with a replacer.
+ */
+function renderCell(value: unknown): string {
+  try {
+    // A `typeof` check rather than `??`, the same way `stringifyJsonAttribute` reads this result:
+    // `JSON.stringify` is typed as returning `string` even though it does not always.
+    const serialized = JSON.stringify(value, (_key, item: unknown) => (typeof item === 'bigint' ? item.toString() : item))
+    return typeof serialized === 'string' ? serialized : String(value)
+  } catch {
+    return '[unserializable]'
+  }
 }
 
 function truncate(s: string, max: number): string {
