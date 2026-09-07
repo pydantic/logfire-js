@@ -1020,9 +1020,21 @@ describe('renderReport', () => {
 
     const text = renderReport(report, { includeOutput: true })
 
-    expect(text).toContain('undefined')
-    // The exact value, not the rounded double `9007199254740992` that `Number` would give.
-    expect(text).toContain('{"tokens":"9007199254740993"}')
+    // The whole table, so column widths and row placement are pinned too. The BigInt cell holds
+    // the exact value, not the rounded double `9007199254740992` that `Number` would give.
+    expect(text).toBe(
+      [
+        'Experiment: demo',
+        'Cases: 2, Failures: 0',
+        '',
+        '+-------+-------------+-------------------------------+--------+--------+------------+',
+        '| name  | duration(s) | output                        | scores | labels | assertions |',
+        '+=======+=============+===============================+========+========+============+',
+        '| empty | 0.100       | undefined                     | -      | -      | -          |',
+        '| big   | 0.100       | {"tokens":"9007199254740993"} | -      | -      | -          |',
+        '+-------+-------------+-------------------------------+--------+--------+------------+',
+      ].join('\n')
+    )
   })
 
   it('does not leave a lone surrogate when truncating a rendered input', () => {
