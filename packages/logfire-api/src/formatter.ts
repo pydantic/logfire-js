@@ -265,7 +265,14 @@ export function truncateString(str: string, maxLength: number): string {
     return str
   }
 
-  return str.substring(0, floorCodePointBoundary(str, maxLength - 3)) + '...'
+  // The ellipsis goes in the middle, keeping both ends, which is what Python's `truncate_string`
+  // does for the two values this is called with: a formatted message field and a baggage value.
+  // Dropping only the tail loses the part that usually tells two values apart, the id at the end
+  // of a path or the filename at the end of a URL.
+  const half = Math.max(0, Math.floor((maxLength - 3) / 2))
+  const head = str.slice(0, floorCodePointBoundary(str, half))
+  const tail = str.slice(ceilCodePointBoundary(str, str.length - half))
+  return `${head}...${tail}`
 }
 
 /**

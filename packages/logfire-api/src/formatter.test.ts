@@ -78,18 +78,22 @@ describe('message template nested field access', () => {
 })
 
 describe('truncateString', () => {
-  test('does not split a surrogate pair at the cut', () => {
-    // The emoji straddles the cut, so a code-unit slice would keep only its high half.
-    const value = `${'a'.repeat(96)}\u{1F600}${'b'.repeat(20)}`
+  test('does not split a surrogate pair at either cut', () => {
+    // Both ends are kept now, so there are two cuts to land wrong. An emoji straddles each one:
+    // the head cut at 48 and the tail cut at length - 48. A code-unit slice would keep the high
+    // half of the first and the low half of the second.
+    const value = `${'a'.repeat(47)}\u{1F600}${'m'.repeat(30)}\u{1F600}${'b'.repeat(47)}`
     const truncated = truncateString(value, 100)
 
-    expect(truncated).toBe(`${'a'.repeat(96)}...`)
+    expect(truncated).toBe(`${'a'.repeat(47)}...${'b'.repeat(47)}`)
     expect(truncated.split('').some((char) => char >= '\uD800' && char <= '\uDFFF')).toBe(false)
     expect(JSON.stringify(truncated).includes('\\ud')).toBe(false)
   })
 
-  test('cuts at the limit when the boundary is not a surrogate', () => {
-    expect(truncateString('a'.repeat(120), 100)).toBe(`${'a'.repeat(97)}...`)
+  test('keeps both ends when the boundaries are not surrogates', () => {
+    // Python's `truncate_string` is `seq[:half] + middle + seq[-half:]`, so the tail survives and
+    // the result can be one shorter than the limit when the remainder is odd.
+    expect(truncateString(`${'a'.repeat(60)}${'b'.repeat(60)}`, 100)).toBe(`${'a'.repeat(48)}...${'b'.repeat(48)}`)
     expect(truncateString('short', 100)).toBe('short')
   })
 })
