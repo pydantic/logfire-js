@@ -30,6 +30,31 @@ write token server-side. They demonstrate a local proxy, not a production proxy
 design. For direct ingest, use a restricted frontend application token. Never
 put a normal Logfire write token in browser code.
 
+## Resource timing detail
+
+When browser auto-instrumentation is enabled, compact resource timing keeps the
+`documentLoad`, `documentFetch`, and per-asset `resourceFetch` spans while
+omitting their DNS, connection, TLS, request, response, and DOM timing events:
+
+```js
+logfire.configure({
+  traceUrl: '/client-traces',
+  autoInstrumentations: true,
+  resourceTiming: { detail: 'summary' },
+})
+```
+
+`summary` is the default when `resourceTiming` is configured. Use
+`detail: 'full'` for detailed phase events at a higher telemetry volume.
+Omitting `resourceTiming` preserves the OpenTelemetry default and any raw
+document-load configuration.
+
+This option does not enable auto-instrumentation or an explicitly disabled
+document-load instrumentation. It takes precedence over the raw
+`ignoreNetworkEvents` field when both are present and preserves other raw
+document-load options. Summary mode keeps paint events; use the upstream
+`ignorePerformancePaintEvents` option to omit those separately.
+
 ## Managed Variables
 
 Browser applications can use local managed variables from `logfire/vars` when

@@ -94,6 +94,11 @@ type TraceExporterConfig = NonNullable<typeof OTLPTraceExporter extends new (con
 export type BrowserInstrumentationInput = Instrumentation | Instrumentation[] | (() => Instrumentation | Instrumentation[])
 export type AutoInstrumentationsConfig = WebAutoInstrumentationConfigMap & { enabled?: boolean }
 
+export interface BrowserResourceTimingOptions {
+  /** Resource timing detail. Defaults to `summary` when configured. */
+  detail?: 'summary' | 'full'
+}
+
 export interface BrowserSessionReplayHandle {
   readonly mode: 'full' | 'buffer' | 'off'
   readonly recording: boolean
@@ -190,6 +195,11 @@ export interface LogfireConfigOptions {
    */
   rum?: RUMOptions
   /**
+   * Controls document-load resource timing detail when auto-instrumentations
+   * are enabled. Summary mode omits network and DOM timing events.
+   */
+  resourceTiming?: BrowserResourceTimingOptions
+  /**
    * Experimental browser session replay options. Replay is disabled unless this
    * is configured.
    *
@@ -255,6 +265,21 @@ function resolveBrowserLongAnimationFramesOptions(
   }
 
   return longAnimationFrames === true ? {} : longAnimationFrames
+}
+
+function resolveBrowserResourceTimingOptions(resourceTiming: unknown): BrowserResourceTimingOptions | undefined {
+  if (resourceTiming === undefined) {
+    return undefined
+  }
+  if (typeof resourceTiming !== 'object' || resourceTiming === null || Array.isArray(resourceTiming)) {
+    throw new Error('logfire-browser: resourceTiming must be an object')
+  }
+
+  const detail = (resourceTiming as { detail?: unknown }).detail ?? 'summary'
+  if (detail !== 'summary' && detail !== 'full') {
+    throw new Error('logfire-browser: resourceTiming.detail must be "summary" or "full"')
+  }
+  return { detail }
 }
 
 function resolveBrowserMetricsOptions(metrics: LogfireConfigOptions['metrics']): BrowserMetricsOptions | undefined {
@@ -327,6 +352,7 @@ function flattenInstrumentations(instrumentations: Instrumentation | Instrumenta
 
 function resolveAutoInstrumentationsConfig(
   autoInstrumentations: LogfireConfigOptions['autoInstrumentations'],
+  resourceTiming: LogfireConfigOptions['resourceTiming'],
   telemetryUrls: { metricUrl?: string | undefined; replayUrl?: string | undefined; traceUrl: string }
 ): WebAutoInstrumentationConfigMap | undefined {
   if (autoInstrumentations === undefined || autoInstrumentations === false) {
@@ -346,11 +372,21 @@ function resolveAutoInstrumentationsConfig(
   ])
   const fetchKey = '@opentelemetry/instrumentation-fetch'
   const xhrKey = '@opentelemetry/instrumentation-xml-http-request'
+  const documentLoadKey = '@opentelemetry/instrumentation-document-load'
   const fetchConfig = instrumentationConfig[fetchKey]
   const xhrConfig = instrumentationConfig[xhrKey]
+  const documentLoadConfig = instrumentationConfig[documentLoadKey]
 
   return {
     ...instrumentationConfig,
+    ...(resourceTiming === undefined
+      ? {}
+      : {
+          [documentLoadKey]: {
+            ...documentLoadConfig,
+            ignoreNetworkEvents: resourceTiming.detail !== 'full',
+          },
+        }),
     [fetchKey]: {
       ...fetchConfig,
       ignoreUrls: [...(fetchConfig?.ignoreUrls ?? []), ...endpointPatterns],
@@ -369,6 +405,7 @@ function noopUnregister(): void {
 function startBrowserInstrumentations(options: {
   autoInstrumentations: LogfireConfigOptions['autoInstrumentations']
   instrumentations: LogfireConfigOptions['instrumentations']
+  resourceTiming: LogfireConfigOptions['resourceTiming']
   telemetryUrls: { metricUrl?: string | undefined; replayUrl?: string | undefined; traceUrl: string }
   tracerProvider: WebTracerProvider
 }): () => Promise<void> {
@@ -390,7 +427,11 @@ function startBrowserInstrumentations(options: {
       diag.error('logfire-browser: failed to start configured browser instrumentation group', error)
     }
   }
-  const autoInstrumentationsConfig = resolveAutoInstrumentationsConfig(options.autoInstrumentations, options.telemetryUrls)
+  const autoInstrumentationsConfig = resolveAutoInstrumentationsConfig(
+    options.autoInstrumentations,
+    options.resourceTiming,
+    options.telemetryUrls
+  )
   const unregisterAutoInstrumentationsPromise =
     autoInstrumentationsConfig === undefined
       ? undefined
@@ -477,6 +518,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   const longAnimationFramesOptions = resolveBrowserLongAnimationFramesOptions(options.rum?.longAnimationFrames)
   const sessionReplayOptions = resolveBrowserSessionReplayOptions(options.sessionReplay)
   const browserMetricsOptions = resolveBrowserMetricsOptions(options.metrics)
+  const resourceTimingOptions = resolveBrowserResourceTimingOptions(options.resourceTiming)
   const webVitalsMetricOptions = resolveBrowserWebVitalsMetricOptions(webVitalsOptions)
   if (webVitalsMetricOptions !== undefined && browserMetricsOptions === undefined) {
     throw new Error('logfire-browser: rum.webVitals.metrics requires top-level metrics.metricUrl')
@@ -607,6 +649,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   const unregisterInstrumentations = startBrowserInstrumentations({
     autoInstrumentations: options.autoInstrumentations,
     instrumentations: options.instrumentations,
+    resourceTiming: resourceTimingOptions,
     telemetryUrls: {
       metricUrl: browserMetricsOptions?.metricUrl,
       replayUrl:
