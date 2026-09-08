@@ -1,5 +1,13 @@
 # @pydantic/logfire-browser
 
+## 0.20.0
+
+### Minor Changes
+
+- 724bcd6: Add a first-class browser resource timing detail policy. Summary mode keeps
+  document and resource spans while reducing telemetry volume by omitting network
+  and DOM phase events; full mode retains them for detailed diagnostics.
+
 ## 0.19.2
 
 ### Patch Changes
