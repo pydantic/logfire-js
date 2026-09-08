@@ -96,4 +96,14 @@ describe('truncateString', () => {
     expect(truncateString(`${'a'.repeat(60)}${'b'.repeat(60)}`, 100)).toBe(`${'a'.repeat(48)}...${'b'.repeat(48)}`)
     expect(truncateString('short', 100)).toBe('short')
   })
+
+  test('never returns more than it was given, however small the limit', () => {
+    // Without the clamp on `half` these produce a result longer than the input, which is what
+    // Python's `truncate_string` does today: `truncate_string('abcdefghij', max_length=1)` is
+    // `'abcdefghi...bcdefghij'`. Neither caller passes a limit this small, but the clamp is one
+    // `Math.max` and this pins it.
+    for (const limit of [0, 1, 2, 3, 4]) {
+      expect(truncateString('abcdefghij', limit)).toBe('...')
+    }
+  })
 })
