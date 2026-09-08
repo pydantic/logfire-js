@@ -40,6 +40,34 @@ Logfire associates the token with the frontend application's service name, so it
 
 `autoInstrumentations` is opt-in and lazily loads OpenTelemetry browser auto-instrumentations after the Logfire browser provider is ready. For advanced integrations, `instrumentations` also accepts factories, so custom instrumentation construction can be deferred until `configure()` has registered the provider.
 
+### Resource timing detail
+
+Use compact resource timing to keep the `documentLoad`, `documentFetch`, and
+per-asset `resourceFetch` spans while omitting their DNS, connection, TLS,
+request, response, and DOM timing events:
+
+```ts
+logfire.configure({
+  ...frontendApplicationConfig,
+  autoInstrumentations: true,
+  resourceTiming: { detail: 'summary' },
+})
+```
+
+`summary` is the default when `resourceTiming` is configured, so
+`resourceTiming: {}` is equivalent. Use `detail: 'full'` when you need the
+phase events for detailed diagnostics. Full detail increases telemetry volume,
+especially on pages with many static assets.
+
+`resourceTiming` controls only the document-load instrumentation created by
+`autoInstrumentations`; it does not enable auto-instrumentation or override an
+explicitly disabled document-load instrumentation. When the raw
+`@opentelemetry/instrumentation-document-load.ignoreNetworkEvents` option is
+also present, `resourceTiming.detail` takes precedence. Other raw document-load
+options remain unchanged. Summary mode does not remove `firstPaint` or
+`firstContentfulPaint`; use the upstream `ignorePerformancePaintEvents` option
+if you also want to omit paint events.
+
 Use `diagLogLevel` while troubleshooting local browser instrumentation:
 
 ```ts

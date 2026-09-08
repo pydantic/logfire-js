@@ -1,5 +1,5 @@
 /* eslint-disable import/first */
-import type { Context, ContextManager } from '@opentelemetry/api'
+import type { Context, ContextManager, Span } from '@opentelemetry/api'
 import { context, diag, ROOT_CONTEXT, trace } from '@opentelemetry/api'
 import type { Instrumentation } from '@opentelemetry/instrumentation'
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-web'
@@ -1060,6 +1060,104 @@ describe('browser span processors', () => {
     })
   })
 
+  it.each([
+    [{}, true],
+    [{ detail: 'summary' as const }, true],
+    [{ detail: 'full' as const }, false],
+  ])('maps resource timing detail to document-load network events', async (resourceTiming, ignoreNetworkEvents) => {
+    cleanup = configure({
+      autoInstrumentations: true,
+      resourceTiming,
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    const config = mocks.autoInstrumentationConfigs.at(-1) as Record<string, { ignoreNetworkEvents?: boolean }>
+    expect(config['@opentelemetry/instrumentation-document-load']?.ignoreNetworkEvents).toBe(ignoreNetworkEvents)
+  })
+
+  it.each([
+    [null, 'logfire-browser: resourceTiming must be an object'],
+    [true, 'logfire-browser: resourceTiming must be an object'],
+    [{ detail: 'verbose' }, 'logfire-browser: resourceTiming.detail must be "summary" or "full"'],
+  ])('rejects invalid resource timing config before provider activation', (resourceTiming, expectedError) => {
+    expect(() =>
+      configure({
+        autoInstrumentations: true,
+        resourceTiming: resourceTiming as never,
+        traceUrl: 'http://localhost:8989/client-traces',
+      })
+    ).toThrow(expectedError)
+    expect(mocks.lifecycleEvents).toEqual([])
+  })
+
+  it('preserves raw document-load configuration unless the first-class policy owns the network detail', async () => {
+    const documentLoad = vi.fn<(span: Span) => void>()
+    const documentFetch = vi.fn<(span: Span) => void>()
+    const resourceFetch = vi.fn<(span: Span, resource: PerformanceResourceTiming) => void>()
+    const documentLoadConfig = {
+      applyCustomAttributesOnSpan: { documentFetch, documentLoad, resourceFetch },
+      enabled: false,
+      ignoreNetworkEvents: false,
+      ignorePerformancePaintEvents: true,
+      semconvStabilityOptIn: 'http',
+    }
+    const autoInstrumentations = {
+      '@opentelemetry/instrumentation-document-load': documentLoadConfig,
+    }
+
+    cleanup = configure({
+      autoInstrumentations,
+      resourceTiming: { detail: 'summary' },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    const resolved = (
+      mocks.autoInstrumentationConfigs.at(-1) as Record<
+        string,
+        {
+          applyCustomAttributesOnSpan?: unknown
+          enabled?: boolean
+          ignoreNetworkEvents?: boolean
+          ignorePerformancePaintEvents?: boolean
+          semconvStabilityOptIn?: string
+        }
+      >
+    )['@opentelemetry/instrumentation-document-load']
+    expect(resolved).toEqual({ ...documentLoadConfig, ignoreNetworkEvents: true })
+    expect(resolved?.applyCustomAttributesOnSpan).toBe(documentLoadConfig.applyCustomAttributesOnSpan)
+    expect(autoInstrumentations['@opentelemetry/instrumentation-document-load']).toBe(documentLoadConfig)
+    expect(documentLoadConfig.ignoreNetworkEvents).toBe(false)
+  })
+
+  it('leaves the raw document-load network policy unchanged when resource timing is omitted', async () => {
+    cleanup = configure({
+      autoInstrumentations: {
+        '@opentelemetry/instrumentation-document-load': { ignoreNetworkEvents: true },
+      },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    const config = mocks.autoInstrumentationConfigs.at(-1) as Record<string, { ignoreNetworkEvents?: boolean }>
+    expect(config['@opentelemetry/instrumentation-document-load']?.ignoreNetworkEvents).toBe(true)
+  })
+
+  it('lets full resource timing override a raw compact network policy', async () => {
+    cleanup = configure({
+      autoInstrumentations: {
+        '@opentelemetry/instrumentation-document-load': { ignoreNetworkEvents: true },
+      },
+      resourceTiming: { detail: 'full' },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    const config = mocks.autoInstrumentationConfigs.at(-1) as Record<string, { ignoreNetworkEvents?: boolean }>
+    expect(config['@opentelemetry/instrumentation-document-load']).toEqual({ ignoreNetworkEvents: false })
+  })
+
   it('merges every SDK endpoint into fetch and XHR ignores without mutating caller config', async () => {
     const fetchIgnores = [/consumer-fetch/u]
     const xhrIgnores = ['https://app.example/consumer-xhr']
@@ -1177,6 +1275,7 @@ describe('browser span processors', () => {
   it('does not load first-class browser auto-instrumentations when disabled', async () => {
     cleanup = configure({
       autoInstrumentations: { enabled: false },
+      resourceTiming: { detail: 'summary' },
       traceUrl: 'http://localhost:8989/client-traces',
     })
     await waitForConfigureMicrotasks()
