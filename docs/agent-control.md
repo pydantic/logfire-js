@@ -140,7 +140,7 @@ The stored JSON schema is pinned by `SCHEMA_SHA256`, and the cross-language rule
 
 The core is framework-neutral on purpose: it knows about instruction blocks, tool definitions, and settings, and about no framework's spelling of them. An adapter is what maps one framework onto those three: it enumerates a baseline, installs the framework's hook, and calls the pure helpers.
 
-TypeScript adapters for **Mastra**, the **Vercel AI SDK**, and the **OpenAI Codex SDK** are in progress, each as its own package, because a project that uses one has no reason to install the other two. Until they land, the paragraph below is how to drive Agent Control from any framework directly.
+[**Mastra**](frameworks/mastra.md) has one: `@pydantic/logfire-agent-control-mastra`, a processor you add to an agent's `inputProcessors`. Adapters for the **Vercel AI SDK** and the **OpenAI Codex SDK** are in progress, each as its own package, because a project that uses one has no reason to install the other two. Until they land, the paragraph below is how to drive Agent Control from any framework directly.
 
 Python users get the same contract from [`logfire`](https://logfire.pydantic.dev/docs/) and [`pydantic-ai-harness`](https://github.com/pydantic/pydantic-ai-harness). A config published from the Logfire UI drives every one of them, because the variable name, the baseline, and the parse are the same three rules in both languages.
 
