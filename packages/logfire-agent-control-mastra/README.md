@@ -50,8 +50,8 @@ const { text } = await checkout.generate('What is the weather in Paris?')
 
 That is the whole installation. The agent's config lives in a Logfire variable named
 `agent__checkout_assistant` — the agent's Mastra `id`, normalized by the core's rule (trimmed,
-lowercased, everything outside `[a-z0-9_]` replaced with `_`), or a `name` you pass to `agentControl`
-instead. The first request publishes a description of the agent, so the Logfire editor shows what it
+lowercased, everything outside `[a-z0-9_]` replaced with `_`, runs of `_` collapsed, and `_` stripped
+from both ends), or a `name` you pass to `agentControl` instead. The first request publishes a description of the agent, so the Logfire editor shows what it
 is you are changing.
 
 ## The factory
