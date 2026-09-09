@@ -13,6 +13,7 @@ This repository is the Pydantic Logfire JavaScript SDK monorepo. It provides Ope
 - `packages/logfire-cf-workers` publishes `@pydantic/logfire-cf-workers`, which adapts Logfire to Cloudflare Workers.
 - `packages/otel-cf-workers` publishes `@pydantic/otel-cf-workers`, the lower-level Cloudflare Workers OpenTelemetry implementation used by the Logfire wrapper.
 - `packages/logfire-browser` publishes `@pydantic/logfire-browser`, which adapts Logfire to browser tracing.
+- `packages/logfire-agent-control-codex-sdk` publishes `@pydantic/logfire-agent-control-codex-sdk`, the Agent Control adapter for the OpenAI Codex SDK. It is a package rather than a subpath of `@pydantic/logfire-node` because it takes `@openai/codex-sdk` as a peer dependency, and ESM-only because that peer publishes no `require` condition.
 - `packages/logfire-session-replay` publishes `@pydantic/logfire-session-replay`, the optional standalone rrweb recorder used by the browser package's session replay integration.
 - `vite.shared.ts` holds the build helpers every package config imports: `packageDefines()` stamps `PACKAGE_VERSION` and `PACKAGE_TIMESTAMP` from the package's own `package.json`, and `copyCjsDeclarations()` emits the `.d.cts` files.
 - `vite.config.ts` and `tsconfig.base.json` at the repository root hold the shared format, lint, task, and TypeScript configuration.
