@@ -78,18 +78,22 @@ describe('message template nested field access', () => {
 })
 
 describe('truncateString', () => {
-  test('does not split a surrogate pair at the cut', () => {
-    // The emoji straddles the cut, so a code-unit slice would keep only its high half.
-    const value = `${'a'.repeat(96)}\u{1F600}${'b'.repeat(20)}`
+  test('does not split a surrogate pair at either cut', () => {
+    // One emoji straddles the head cut (index 48) and one the tail cut (length - 48), so
+    // there are two ways for a code-unit slice to keep half a pair.
+    const value = `${'a'.repeat(47)}\u{1F600}${'m'.repeat(40)}\u{1F600}${'b'.repeat(47)}`
     const truncated = truncateString(value, 100)
 
-    expect(truncated).toBe(`${'a'.repeat(96)}...`)
+    expect(truncated).toBe(`${'a'.repeat(47)}...${'b'.repeat(47)}`)
     expect(truncated.split('').some((char) => char >= '\uD800' && char <= '\uDFFF')).toBe(false)
     expect(JSON.stringify(truncated).includes('\\ud')).toBe(false)
   })
 
-  test('cuts at the limit when the boundary is not a surrogate', () => {
-    expect(truncateString('a'.repeat(120), 100)).toBe(`${'a'.repeat(97)}...`)
+  test('keeps both ends when the boundary is not a surrogate', () => {
+    // Python's truncate_string keeps head and tail around the ellipsis; the tail is usually
+    // what tells two long values apart.
+    expect(truncateString('a'.repeat(120), 100)).toBe(`${'a'.repeat(48)}...${'a'.repeat(48)}`)
+    expect(truncateString(`head-${'x'.repeat(120)}-tail`, 100)).toBe(`head-${'x'.repeat(43)}...${'x'.repeat(43)}-tail`)
     expect(truncateString('short', 100)).toBe('short')
   })
 })

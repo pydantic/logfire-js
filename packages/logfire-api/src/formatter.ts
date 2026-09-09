@@ -254,18 +254,18 @@ export function logfireFormatWithExtras(
 }
 
 /**
- * Truncates a string if it exceeds the specified maximum length.
- *
- * @param str The string to truncate
- * @param maxLength The maximum allowed length
- * @returns The truncated string
+ * Truncates a string that exceeds `maxLength`, keeping both ends around a middle ellipsis the
+ * way Python's `truncate_string` does. The tail is usually what tells two long values apart — a
+ * URL's asset hash, an ID at the end of a path — so cutting only the head turned distinguishable
+ * values into identical ones. Both cuts respect surrogate pairs.
  */
 export function truncateString(str: string, maxLength: number): string {
   if (str.length <= maxLength) {
     return str
   }
 
-  return str.substring(0, floorCodePointBoundary(str, maxLength - 3)) + '...'
+  const half = Math.floor((maxLength - 3) / 2)
+  return `${str.slice(0, floorCodePointBoundary(str, half))}...${str.slice(ceilCodePointBoundary(str, str.length - half))}`
 }
 
 /**

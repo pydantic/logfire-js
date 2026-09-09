@@ -308,7 +308,7 @@ describe('baggage span attributes', () => {
 
     info('event')
 
-    expect(getStartSpanAttributes()['baggage.tenant']).toBe(`${'x'.repeat(997)}...`)
+    expect(getStartSpanAttributes()['baggage.tenant']).toBe(`${'x'.repeat(498)}...${'x'.repeat(498)}`)
   })
 
   test('copies baggage for startSpan', () => {
