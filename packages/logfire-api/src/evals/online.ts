@@ -16,6 +16,7 @@ import type { Evaluator } from './Evaluator'
 import type { EvaluationResultJson, EvaluatorContext, EvaluatorFailureRecord, EvaluatorOutput } from './types'
 
 import { ATTR_EVALUATOR_NAME, SPAN_MSG_TEMPLATE_EVALUATOR, SPAN_NAME_EVALUATOR_LITERAL } from './constants'
+import { attributeJsonReplacer } from '../serializeAttributes'
 import { getCurrentTaskRun } from './currentTaskRun'
 import { buildEvaluatorFailureRecord, evaluationResultsFromOutput } from './evaluatorResults'
 import { extractMetricsFromSpanTree } from './extractMetrics'
@@ -604,7 +605,11 @@ function encodeReturnAttribute(output: unknown): boolean | number | string {
     return `${output.name}: ${output.message}`
   }
   try {
-    return JSON.stringify(output)
+    // The replacer the attribute seam applies: without it one BigInt field took the entire
+    // return value to '[unserializable]'. This write goes through `span.setAttribute` directly,
+    // so `serializeAttributes` never sees it.
+    const serialized: unknown = JSON.stringify(output, attributeJsonReplacer)
+    return typeof serialized === 'string' ? serialized : '[unserializable]'
   } catch {
     return '[unserializable]'
   }

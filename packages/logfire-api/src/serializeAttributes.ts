@@ -136,6 +136,19 @@ function serializeBigIntAttribute(value: bigint): number | string {
   return value >= MIN_EXACT_DOUBLE_INT && value <= MAX_EXACT_DOUBLE_INT ? Number(value) : value.toString()
 }
 
+/**
+ * Replacer carrying the values `JSON.stringify` has no representation for: a BigInt (which
+ * otherwise throws, taking the whole attribute with it) and a non-finite number (which JSON
+ * writes as `null`). Shared with the evals output seams so every user value serializes under
+ * one rule.
+ */
+export function attributeJsonReplacer(_key: string, item: unknown): unknown {
+  if (typeof item === 'bigint') {
+    return serializeBigIntAttribute(item)
+  }
+  return typeof item === 'number' && !Number.isFinite(item) ? String(item) : item
+}
+
 function serializeJsonAttribute(
   key: string,
   value: unknown,
@@ -177,12 +190,7 @@ function stringifyJsonAttribute(value: unknown): string | undefined {
     // JSON writes NaN and Infinity as `null`, so a nested one is lost at any depth. Python's
     // encoder returns `str(o)` for a non-finite float wherever it appears, and
     // `serializeNumberAttribute` already sends the string for a top-level one.
-    const serialized = JSON.stringify(value, (_key, item: unknown) => {
-      if (typeof item === 'bigint') {
-        return serializeBigIntAttribute(item)
-      }
-      return typeof item === 'number' && !Number.isFinite(item) ? String(item) : item
-    })
+    const serialized = JSON.stringify(value, attributeJsonReplacer)
     return typeof serialized === 'string' ? serialized : undefined
   } catch {
     return undefined

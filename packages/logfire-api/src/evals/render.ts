@@ -7,6 +7,7 @@
 import type { EvaluationReport, ReportCase, ReportCaseFailure } from './reporting'
 
 import { floorCodePointBoundary } from '../formatter'
+import { attributeJsonReplacer } from '../serializeAttributes'
 
 export interface RenderOptions {
   includeFailures?: boolean
@@ -57,10 +58,10 @@ function renderCaseTable<I, O, M>(cases: readonly ReportCase<I, O, M>[], opts: R
   for (const c of cases) {
     const row: string[] = [c.name, c.task_duration.toFixed(3)]
     if (opts.includeInput === true) {
-      row.push(truncate(JSON.stringify(c.inputs), 30))
+      row.push(truncate(stringifyCell(c.inputs), 30))
     }
     if (opts.includeOutput === true) {
-      row.push(truncate(JSON.stringify(c.output), 30))
+      row.push(truncate(stringifyCell(c.output), 30))
     }
     row.push(formatResultMap(c.scores), formatResultMap(c.labels), formatResultMap(c.assertions))
     rows.push(row)
@@ -89,6 +90,20 @@ function formatValue(v: unknown): string {
     return v.toFixed(3).replace(/\.?0+$/u, '')
   }
   return String(v)
+}
+
+/**
+ * Total where `JSON.stringify` is not: it hands back `undefined` (not a string) for `undefined`,
+ * a function or a symbol, which crashed the whole render at `truncate`, and it throws on a
+ * BigInt at any depth. A task typed `Promise<void>` reaches both cells.
+ */
+function stringifyCell(value: unknown): string {
+  try {
+    const serialized: unknown = JSON.stringify(value, attributeJsonReplacer)
+    return typeof serialized === 'string' ? serialized : String(value)
+  } catch {
+    return '[unserializable]'
+  }
 }
 
 function truncate(s: string, max: number): string {

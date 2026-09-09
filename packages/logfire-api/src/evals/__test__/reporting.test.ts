@@ -1061,4 +1061,27 @@ describe('renderReport', () => {
 
     expect(renderReport(report, { includeFailures: false })).not.toContain('\nFailures:\n')
   })
+
+  it('renders a cell for every value JSON.stringify cannot carry', () => {
+    const report: EvaluationReport = {
+      analyses: [],
+      cases: [
+        makeReportCase({ inputs: { tokens: 9007199254740993n }, name: 'bigint', output: { small: 5n, tokens: 9007199254740993n } }),
+        makeReportCase({ name: 'void', output: undefined }),
+      ],
+      failures: [],
+      name: 'total-cells',
+      report_evaluator_failures: [],
+      span_id: 's',
+      trace_id: 't',
+    }
+
+    // JSON.stringify throws on a BigInt and hands back undefined for undefined; either one
+    // killed the entire report render, not just the cell.
+    const text = renderReport(report, { includeInput: true, includeOutput: true })
+
+    expect(text).toContain('{"tokens":"9007199254740993"}')
+    expect(text).toContain('{"small":5,"tokens":"90071992…')
+    expect(text).toContain('undefined')
+  })
 })

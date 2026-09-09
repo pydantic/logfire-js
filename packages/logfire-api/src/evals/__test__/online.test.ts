@@ -785,6 +785,24 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     expect(logs[0]?.attributes['tenant']).toBe('acme')
   })
 
+  it('records a return value containing a BigInt field', async () => {
+    const fn = withOnlineEvaluation(async () => ({ model: 'gpt', small: 5n, tokens: 9007199254740993n }), {
+      evaluators: [new AlwaysPass()],
+      recordReturn: true,
+      target: 'bigint-return',
+    })
+
+    const { spans } = await withMemoryLogExporter(async () => {
+      await fn()
+      await waitForEvaluations()
+    })
+
+    const callSpan = spans.find((s) => s.name === 'Calling bigint-return')!
+    // One BigInt field used to take the whole return value to '[unserializable]'. The exact
+    // string matters: a Number conversion would round to 9007199254740992.
+    expect(callSpan.attributes['return']).toBe('{"model":"gpt","small":5,"tokens":"9007199254740993"}')
+  })
+
   it('propagates baggage keys that collide with object members', async () => {
     const fn = withOnlineEvaluation(async (input: string) => input, {
       evaluators: [new AlwaysPass()],
