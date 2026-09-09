@@ -177,3 +177,50 @@ await generateText({
   },
 })
 ```
+
+## Agent Control
+
+[Agent Control](../agent-control.md) lets someone change what a running agent does — its instructions, its model, its model settings, the names and descriptions its tools are advertised under — from the Logfire UI, without a deploy. `@pydantic/logfire-agent-control-ai-sdk` is the adapter for the AI SDK: it installs as a [language model middleware](https://ai-sdk.dev/docs/ai-sdk-core/middleware), so it applies to every model request whether you use `ToolLoopAgent`, `generateText`, or `streamText`.
+
+```bash
+npm install @pydantic/logfire-agent-control-ai-sdk
+```
+
+Pass a `ToolLoopAgent`'s settings through `agentControl`:
+
+```ts
+import { anthropic } from '@ai-sdk/anthropic'
+import { agentControl } from '@pydantic/logfire-agent-control-ai-sdk'
+import * as logfire from '@pydantic/logfire-node'
+import { ToolLoopAgent } from 'ai'
+
+logfire.configure({ serviceName: 'checkout' })
+
+const agent = new ToolLoopAgent(
+  agentControl({
+    settings: {
+      id: 'checkout_assistant',
+      model: anthropic('claude-fable-5-1'),
+      instructions: 'You are a concise checkout assistant.',
+      tools: { get_weather },
+    },
+  })
+)
+```
+
+That is the whole installation. This agent's config lives in a Logfire variable named `agent__checkout_assistant`, and the first model request publishes a description of the agent as written, so the editor shows what it is you are changing. Until someone publishes a value — and any time Logfire cannot be reached — the agent runs exactly as the code defines it.
+
+For `generateText` and `streamText`, pass a `model` instead of `settings`, along with what your code declares:
+
+```ts
+const model = agentControl({
+  model: anthropic('claude-fable-5-1'),
+  name: 'checkout_assistant',
+  codeInstructions: 'You are a concise checkout assistant.',
+  codeSettings: { temperature: 0.2 },
+})
+```
+
+A renamed tool is a costume the tool wears in front of the model: the request advertises the managed name, and your `get_weather` implementation still runs, still under that name in `result.steps` and `response.messages`.
+
+See the [package README](https://github.com/pydantic/logfire-js/tree/main/packages/logfire-agent-control-ai-sdk) for the full table of what becomes editable, how a published setting interacts with a per-call one, and what each provider was observed to do with a published setting.

@@ -1,0 +1,86 @@
+{
+  "name": "@pydantic/logfire-agent-control-ai-sdk",
+  "description": "Logfire Agent Control for the Vercel AI SDK - https://pydantic.dev/logfire",
+  "author": {
+    "name": "The Pydantic Team",
+    "email": "engineering@pydantic.dev",
+    "url": "https://pydantic.dev"
+  },
+  "repository": {
+    "url": "git+https://github.com/pydantic/logfire-js.git",
+    "directory": "packages/logfire-agent-control-ai-sdk"
+  },
+  "sideEffects": false,
+  "homepage": "https://pydantic.dev/logfire",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "agent",
+    "ai-sdk",
+    "llm",
+    "logfire",
+    "observability",
+    "prompt-management",
+    "vercel"
+  ],
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "scripts": {
+    "dev": "vp pack --watch",
+    "build": "vp pack",
+    "lint": "vp lint",
+    "preview": "vp preview",
+    "typecheck": "tsc",
+    "prepack": "cp ../../LICENSE .",
+    "postpublish": "rm LICENSE",
+    "test": "vp test"
+  },
+  "devDependencies": {
+    "@ai-sdk/anthropic": "catalog:",
+    "@ai-sdk/gateway": "catalog:",
+    "@ai-sdk/google": "catalog:",
+    "@ai-sdk/openai": "catalog:",
+    "@ai-sdk/provider": "catalog:",
+    "@ai-sdk/provider-utils": "catalog:",
+    "@opentelemetry/api": "catalog:",
+    "@opentelemetry/context-async-hooks": "catalog:",
+    "@pydantic/logfire-node": "workspace:*",
+    "@types/json-schema": "catalog:",
+    "ai": "catalog:",
+    "vitest": "catalog:",
+    "zod": "catalog:"
+  },
+  "peerDependencies": {
+    "@ai-sdk/gateway": "catalog:",
+    "@ai-sdk/provider": "catalog:",
+    "@ai-sdk/provider-utils": "catalog:",
+    "@pydantic/logfire-node": "workspace:^",
+    "ai": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@ai-sdk/gateway": {
+      "optional": true
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ]
+}

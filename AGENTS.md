@@ -14,6 +14,7 @@ This repository is the Pydantic Logfire JavaScript SDK monorepo. It provides Ope
 - `packages/otel-cf-workers` publishes `@pydantic/otel-cf-workers`, the lower-level Cloudflare Workers OpenTelemetry implementation used by the Logfire wrapper.
 - `packages/logfire-browser` publishes `@pydantic/logfire-browser`, which adapts Logfire to browser tracing.
 - `packages/logfire-session-replay` publishes `@pydantic/logfire-session-replay`, the optional standalone rrweb recorder used by the browser package's session replay integration.
+- `packages/logfire-agent-control-ai-sdk` publishes `@pydantic/logfire-agent-control-ai-sdk`, the Vercel AI SDK adapter for Agent Control. It peer-depends on `@pydantic/logfire-node` and on `ai`, which is why it is a package rather than another subpath of the Node SDK.
 - `vite.shared.ts` holds the build helpers every package config imports: `packageDefines()` stamps `PACKAGE_VERSION` and `PACKAGE_TIMESTAMP` from the package's own `package.json`, and `copyCjsDeclarations()` emits the `.d.cts` files.
 - `vite.config.ts` and `tsconfig.base.json` at the repository root hold the shared format, lint, task, and TypeScript configuration.
 - `examples/` contains runnable examples for Express, Next.js, Deno, Cloudflare Workers, browser usage, and related integrations.
@@ -120,6 +121,7 @@ vp run logfire#typecheck
 - Relevant environment variables include `LOGFIRE_TOKEN`, `LOGFIRE_SERVICE_NAME`, `LOGFIRE_SERVICE_VERSION`, `LOGFIRE_ENVIRONMENT`, `LOGFIRE_CONSOLE`, `LOGFIRE_SEND_TO_LOGFIRE`, and `LOGFIRE_DISTRIBUTED_TRACING`.
 - `packages/logfire-api` is the base API package and should not depend on runtime-specific packages.
 - `packages/logfire-node/src/agent-control/spec` is vendored from the Python repository, which owns those cross-language conformance vectors. It is excluded from `vp fmt` and pinned by a digest test; re-vendor by copying the files and updating the digests, never by editing them here.
+- `packages/logfire-agent-control-ai-sdk/src/__test__/cassettes` holds recorded provider responses so the live-provider tests replay offline with no credentials. Re-record with `node scripts/record-live-cassettes.mjs --env-file <path>`; the recorder stores no request headers, so no key can reach a cassette.
 - Cloudflare Workers code should stay compatible with Worker runtime constraints.
 - Browser code should avoid Node-only APIs.
 
