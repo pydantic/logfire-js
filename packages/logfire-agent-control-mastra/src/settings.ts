@@ -276,10 +276,15 @@ function same(a: unknown, b: unknown): boolean {
  * contract names are described, so a value the Logfire editor offers is a value that can be published
  * back. `core.buildBaseline` filters to the canonical keys again, which makes this the place to get
  * the *units* right rather than the vocabulary.
+ *
+ * `provider` is the one the agent's code-defined model names, and it decides which namespace
+ * `parallel_tool_calls` is read from -- an agent may carry provider options for a provider it is not
+ * running on, and those are not settings this agent has.
  */
 export function raiseSettings(
   modelSettings: Readonly<Record<string, unknown>> | undefined,
-  providerOptions: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined
+  providerOptions: Readonly<Record<string, Readonly<Record<string, unknown>>>> | undefined,
+  provider: string | undefined
 ): Record<string, unknown> {
   const settings: Record<string, unknown> = {}
   if (modelSettings !== undefined) {
@@ -299,11 +304,13 @@ export function raiseSettings(
       settings['thinking'] = thinking
     }
   }
-  for (const [provider, option] of Object.entries(PARALLEL_TOOL_CALLS)) {
-    const value = providerOptions?.[provider]?.[option.key]
-    if (typeof value === 'boolean') {
-      settings['parallel_tool_calls'] = option.negated ? !value : value
-    }
+  // Only the provider that will serve the agent. Options under another provider's namespace are
+  // inert for this agent, and raising one would describe the agent as having a setting it does not
+  // have -- which a publish would then turn into a setting it does.
+  const option = provider === undefined ? undefined : PARALLEL_TOOL_CALLS[provider]
+  const value = option === undefined || provider === undefined ? undefined : providerOptions?.[provider]?.[option.key]
+  if (option !== undefined && typeof value === 'boolean') {
+    settings['parallel_tool_calls'] = option.negated ? !value : value
   }
   return settings
 }

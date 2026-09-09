@@ -43,7 +43,7 @@ describe('the published baseline', () => {
       tools: { getWeather },
       defaultOptions: {
         modelSettings: { temperature: 0.2, maxOutputTokens: 100, timeout: { stepMs: 30_000 } },
-        providerOptions: { openai: { parallelToolCalls: false } },
+        providerOptions: { anthropic: { disableParallelToolUse: true } },
       },
       inputProcessors: [agentControl()],
     })

@@ -8,8 +8,9 @@ reached, the agent runs exactly as your code defines it.
 
 You need Mastra (`@mastra/core` 1.65 or newer), the Logfire Node SDK, and a Logfire project. Nothing
 here reads an environment variable of its own: the Logfire SDK's own configuration decides where the
-variable is read from — `logfire.configure({ apiKey })` or `LOGFIRE_TOKEN`, with `LOGFIRE_BASE_URL`
-naming the region.
+variable is read from — `logfire.configure({ apiKey })` or `LOGFIRE_API_KEY`, with `LOGFIRE_BASE_URL`
+naming the region. That is the platform API key, which is what a managed variable is read through;
+`LOGFIRE_TOKEN` is the write token for telemetry and does not resolve one.
 
 ```bash
 npm install @pydantic/logfire-agent-control-mastra @pydantic/logfire-node
@@ -204,7 +205,15 @@ Three consequences worth knowing:
 - Instruction ids are positional unless an entry declares one. Reordering the entries in your code
   re-points every id after the one you moved, so a published override then addresses a different
   block, and a block whose source is deleted takes its id with it. Declare
-  `providerOptions: { logfire: { id: … } }` on the entries you intend to manage.
+  `providerOptions: { logfire: { id: … } }` on the entries you intend to manage. An id two entries
+  both declare addresses neither of them: both fall back to their positional ids and the override is
+  reported, rather than one winning by declaration order. `tag:` is reserved for Mastra's own prompt
+  sections, so an entry that declares an id in it keeps its positional id too.
+- A per-run `instructions:` option that _starts_ with your agent's own text — a call passing
+  `['A', 'something for this call']` to an agent whose code says `['A']` — cannot be told from that
+  agent plus a block a subsystem added, because Mastra puts both in the same untagged bucket and
+  offers a processor nothing that says which is which. A published override on the block whose text
+  the two agree on applies there; the rest of what the call passed is untouched.
 - `thinking` cannot be applied to a model named as a `provider/model` router string; see the table.
 - A per-run setting equal to the agent's own default cannot be told from an inherited one, and loses
   to a published value; see the precedence section.

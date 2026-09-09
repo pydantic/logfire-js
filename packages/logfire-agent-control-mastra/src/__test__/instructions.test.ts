@@ -65,6 +65,54 @@ describe('the instructions section', () => {
     expect(systemPrompt(model)).toEqual(['Always confirm the order total.', 'You are a refund specialist.'])
   })
 
+  it('keeps an entry that declares an id in the reserved `tag:` namespace, under its position', async () => {
+    const id = nextAgentId()
+    useManagedAgent(id, { instructions: ['Added.'] })
+    const model = mockModel()
+    const agent = new Agent({
+      id,
+      name: 'A',
+      instructions: [
+        // `tag:` names Mastra's own buckets, and a block carrying one is dropped from the prompt
+        // rather than sent -- so an entry claiming one keeps its positional id instead.
+        { role: 'system' as const, content: 'Persona.', providerOptions: { logfire: { id: 'tag:persona' } } },
+        { role: 'system' as const, content: 'Second.' },
+      ],
+      model,
+      inputProcessors: [agentControl()],
+    })
+
+    await run(agent)
+
+    expect(systemPrompt(model)).toEqual(['Persona.', 'Second.', 'Added.'])
+    expect(warnings.messages).toEqual([])
+  })
+
+  it('refuses an id two entries both declare, rather than letting one override rewrite both', async () => {
+    const id = nextAgentId()
+    useManagedAgent(id, { instructions: [{ id: 'persona', instructions: 'Rewritten.' }] })
+    const model = mockModel()
+    const agent = new Agent({
+      id,
+      name: 'A',
+      instructions: [
+        { role: 'system' as const, content: 'First.', providerOptions: { logfire: { id: 'persona' } } },
+        { role: 'system' as const, content: 'Second.', providerOptions: { logfire: { id: 'persona' } } },
+      ],
+      model,
+      inputProcessors: [agentControl()],
+    })
+
+    await run(agent)
+
+    // Both fall back to their positional ids, so the ambiguous id addresses nothing and is reported;
+    // the alternative is one of the two winning by declaration order, silently.
+    expect(systemPrompt(model)).toEqual(['First.', 'Second.'])
+    expect(warnings.messages).toEqual([
+      expect.stringContaining("addresses instruction block 'persona', which this request does not assemble"),
+    ])
+  })
+
   it("adds a block after the agent's own text and before what Mastra adds per request", async () => {
     const id = nextAgentId()
     useManagedAgent(id, { instructions: 'Escalate anything over $500 to a human.' })
@@ -251,5 +299,9 @@ describe('the instructions section', () => {
     // appended to what the previous step returned, would move the provider's cache boundary.
     expect(systemPrompt(model, 0)).toEqual(['Managed.', 'Second.'])
     expect(systemPrompt(model, 1)).toEqual(['Managed.', 'Second.'])
+    // And nothing is reported on the second step. Mastra rebuilds a step's system messages from the
+    // agent rather than from what the previous step returned, so the already-managed text is never
+    // compared against the code's and read as a per-run option that replaced it.
+    expect(warnings.messages).toEqual([])
   })
 })

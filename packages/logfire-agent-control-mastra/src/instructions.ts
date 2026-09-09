@@ -104,15 +104,29 @@ export function readCodeInstructions(value: unknown): CodeInstructions | null {
     return null
   }
   if (Array.isArray(value)) {
+    const entries = value as unknown[]
+    // Counted before any id is assigned, because an id two entries both declare names neither of
+    // them: an override written against it would rewrite both blocks, which is the thing declared
+    // ids exist to avoid. Both fall back to their positional ids, so the id addresses nothing and
+    // the core reports it, rather than one of the two winning by declaration order.
+    const declared = new Map<string, number>()
+    for (const entry of entries) {
+      const id = declaredId(entry)
+      if (id !== undefined) {
+        declared.set(id, (declared.get(id) ?? 0) + 1)
+      }
+    }
     const blocks: CodeBlock[] = []
-    for (const [index, entry] of (value as unknown[]).entries()) {
+    for (const [index, entry] of entries.entries()) {
       const text = entryText(entry)
       // One unreadable entry makes the whole value unaddressable rather than shifting every id after
       // it: an id that points at the wrong block is worse than no ids at all.
       if (text === null) {
         return null
       }
-      blocks.push({ id: declaredId(entry) ?? `${AGENT_BLOCK_ID}:${String(index)}`, text })
+      const id = declaredId(entry)
+      const unique = id !== undefined && declared.get(id) === 1
+      blocks.push({ id: unique ? id : `${AGENT_BLOCK_ID}:${String(index)}`, text })
     }
     return { blocks }
   }
@@ -141,7 +155,10 @@ function entryText(entry: unknown): string | null {
  * silently ignored because it was written in the other dialect is worse than no id at all.
  *
  * Anything that is not a non-empty string is no id: a half-filled value should fall back to the
- * positional id rather than make a block addressable under `''` or `123`.
+ * positional id rather than make a block addressable under `''` or `123`. Neither is anything in the
+ * reserved `tag:` namespace, which names Mastra's own buckets: `toSystemMessages` drops those blocks
+ * because they belong to the subsystems that write them, so an entry that claimed one would go
+ * missing from the prompt instead of being addressable under it.
  */
 function declaredId(entry: unknown): string | undefined {
   if (typeof entry !== 'object' || entry === null) {
@@ -157,7 +174,7 @@ function declaredId(entry: unknown): string | undefined {
     return undefined
   }
   const id = namespace['id']
-  return typeof id === 'string' && id !== '' ? id : undefined
+  return typeof id === 'string' && id !== '' && !id.startsWith(TAG_PREFIX) ? id : undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -182,6 +199,13 @@ export type Unaddressable =
  * duplicated block is an agent that cannot be addressed until its blocks say different things.
  *
  * `'duplicated'` wins when both are true, because it is the one with something to fix.
+ *
+ * The one case this cannot see is a per-run option that *starts* with the agent's own text -- a call
+ * passing `['A', 'something for this call']` to an agent whose code says `['A']` reads exactly like
+ * that agent plus a block a subsystem added, because Mastra puts both in the same untagged bucket
+ * and offers a processor nothing that says which is which. The published value then applies to the
+ * block whose text the two agree on. It is the same shape of gap as the one on settings, and it is
+ * documented in the README rather than guessed at.
  */
 export function unaddressable(systemMessages: readonly SystemMessage[], code: CodeInstructions): Unaddressable | null {
   if (code.blocks.every((block, index) => systemMessages[index]?.content === block.text)) {

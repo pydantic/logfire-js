@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vite-plus/test'
 import { z } from 'zod'
 
 import { agentControl } from '../index'
+import { applyToTools, readTools } from '../tools'
 import { captureWarnings, callAt, mockModel, nextAgentId, run, text, toolCall, toolsOf, useManagedAgent } from './helpers'
 
 /** The tool names in a prompt or a run's messages, in order, wherever a part names one. */
@@ -268,5 +269,24 @@ describe('the tool definitions section', () => {
     await run(agent)
 
     expect(toolsOf(model)).toMatchObject([{ name: 'getWeather', description: 'Get the weather for a city.' }])
+  })
+})
+
+describe('rebuilding the tool record', () => {
+  it('keeps a tool whose key is `__proto__`', () => {
+    // A record built with a computed key can carry one, and `__proto__` is a legal function name to
+    // every provider -- so a rebuild that assigned into a plain object would run the prototype setter
+    // and lose the tool from every request a config was applied to.
+    const tools = {
+      ['__proto__']: { description: 'Reflect on yourself.', parameters: { jsonSchema: {} } },
+      getWeather: { description: 'Get the weather.', parameters: { jsonSchema: {} } },
+    }
+    const { definitions } = readTools(tools)
+    const applied = definitions.map((def) => ({ ...def, description: 'Patched.' }))
+
+    const rebuilt = applyToTools(tools, definitions, applied)
+
+    expect(Object.keys(rebuilt)).toEqual(['__proto__', 'getWeather'])
+    expect(rebuilt).toMatchObject({ ['__proto__']: { description: 'Patched.' }, getWeather: { description: 'Patched.' } })
   })
 })

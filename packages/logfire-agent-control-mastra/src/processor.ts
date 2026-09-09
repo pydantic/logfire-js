@@ -216,7 +216,7 @@ class AgentControlProcessor implements Processor {
       buildBaseline({
         instructions: baselineBlocks(blocks, session.code),
         model: toCanonicalModelId(session.modelConfig) ?? null,
-        settings: raiseSettings(session.defaultModelSettings, session.defaultProviderOptions),
+        settings: raiseSettings(session.defaultModelSettings, session.defaultProviderOptions, providerOf(session.modelConfig)),
         tools: definitions,
       }),
       { source: 'observed' }

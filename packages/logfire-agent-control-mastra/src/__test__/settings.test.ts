@@ -229,7 +229,8 @@ describe('raising Mastra settings back to the contract', () => {
           timeout: { stepMs: 30_000, totalMs: 120_000 },
           reasoning: 'high',
         },
-        { anthropic: { disableParallelToolUse: true } }
+        { anthropic: { disableParallelToolUse: true } },
+        'anthropic'
       )
     ).toEqual({
       max_tokens: 100,
@@ -247,12 +248,22 @@ describe('raising Mastra settings back to the contract', () => {
   })
 
   it('reads the two reasoning levels that stand for a boolean, and describes nothing it cannot', () => {
-    expect(raiseSettings({ reasoning: 'provider-default' }, undefined)).toEqual({ thinking: true })
-    expect(raiseSettings({ reasoning: 'none' }, undefined)).toEqual({ thinking: false })
+    expect(raiseSettings({ reasoning: 'provider-default' }, undefined, undefined)).toEqual({ thinking: true })
+    expect(raiseSettings({ reasoning: 'none' }, undefined, undefined)).toEqual({ thinking: false })
     // A run-wide budget is not the contract's per-request `timeout`, and a level this SDK does not
     // know is not one it can name.
-    expect(raiseSettings({ timeout: { totalMs: 1000 }, reasoning: 'exhaustive' }, undefined)).toEqual({})
-    expect(raiseSettings(undefined, undefined)).toEqual({})
+    expect(raiseSettings({ timeout: { totalMs: 1000 }, reasoning: 'exhaustive' }, undefined, undefined)).toEqual({})
+    expect(raiseSettings(undefined, undefined, undefined)).toEqual({})
+  })
+
+  it('reads `parallel_tool_calls` from the provider serving the agent, and no other', () => {
+    const options = { openai: { parallelToolCalls: false } }
+
+    expect(raiseSettings(undefined, options, 'openai')).toEqual({ parallel_tool_calls: false })
+    // An agent may carry options for a provider it is not running on. Describing one as this agent's
+    // setting would make a publish of the baseline apply it -- inverted -- to the provider it is.
+    expect(raiseSettings(undefined, options, 'anthropic')).toEqual({})
+    expect(raiseSettings(undefined, options, 'groq')).toEqual({})
   })
 })
 

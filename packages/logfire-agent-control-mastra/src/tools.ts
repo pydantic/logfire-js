@@ -93,17 +93,19 @@ export function applyToTools(tools: ToolRecord, definitions: readonly ToolDef[],
       patches.set(def.name, result)
     }
   }
-  const rebuilt: ToolRecord = {}
-  let changed = false
-  for (const [name, tool] of Object.entries(tools)) {
+  const original = Object.entries(tools)
+  const entries = original.map(([name, tool]): [string, unknown] => {
     const def = patches.get(name)
-    const patched = def === undefined ? tool : patch(tool, def)
-    if (patched !== tool) {
-      changed = true
-    }
-    rebuilt[name] = patched
+    return [name, def === undefined ? tool : patch(tool, def)]
+  })
+  if (entries.every(([, tool], index) => tool === original[index]?.[1])) {
+    return tools
   }
-  return changed ? rebuilt : tools
+  // `Object.fromEntries` rather than assignment in a loop, because `rebuilt[name] = tool` for a tool
+  // keyed `__proto__` -- which a record built with a computed key can carry, and which is a name
+  // every provider's function-name grammar allows -- runs the prototype setter instead of creating a
+  // property, and the tool would vanish from every request a config was applied to.
+  return Object.fromEntries(entries)
 }
 
 /** Overlay a definition's description and parameter schema onto one built tool, or return it unchanged. */
