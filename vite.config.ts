@@ -221,7 +221,8 @@ export default defineConfig({
       'no-inline-comments': 'off',
       'no-negated-condition': 'off',
       'no-shadow': 'off',
-      'no-underscore-dangle': ['error', { allow: ['_resetRegistry', '_spanName'] }],
+      // `__getOverridableFields` is Mastra's own public accessor name, read by the agent-control adapter.
+      'no-underscore-dangle': ['error', { allow: ['__getOverridableFields', '_resetRegistry', '_spanName'] }],
       'no-unsafe-optional-chaining': 'off',
       'no-warning-comments': 'off',
       'require-await': 'off',
