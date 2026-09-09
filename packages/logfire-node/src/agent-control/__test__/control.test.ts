@@ -289,6 +289,31 @@ describe('AgentControl', () => {
       expect(created?.example).toBe(example)
     })
 
+    it('refreshes the provider before deciding whether the variable exists', async () => {
+      // `getVariableConfig` answers out of the provider's cached config and never fetches, so a
+      // process that has not resolved yet would see every existing variable as missing, take the
+      // create path, conflict, and -- because the publish guard is already marked -- never retry.
+      useLocalVariables(emptyVariable('agent__checkout', { example: '{"model": "stale"}' }))
+      const provider = getVariableProvider() as { refresh?: (force?: boolean) => void }
+      const forced: (boolean | undefined)[] = []
+      provider.refresh = (force?: boolean) => {
+        forced.push(force)
+      }
+      new AgentControl('checkout').publishBaseline(baseline)
+      await settle()
+      expect(forced).toEqual([true])
+    })
+
+    it('publishes through a provider that has no refresh at all', async () => {
+      // `refresh` is optional on `VariableProvider`, and a provider reading a config it was handed
+      // has nothing to refresh from. The publish still has to happen.
+      useLocalVariables(emptyVariable('agent__checkout', { example: '{"model": "stale"}' }))
+      expect('refresh' in getVariableProvider()).toBe(false)
+      new AgentControl('checkout').publishBaseline(baseline)
+      await settle()
+      expect(storedConfigFor('agent__checkout')?.example).toBe(example)
+    })
+
     it('writes back the read it took immediately before the write, never an earlier one', async () => {
       // The lost-update window is one HTTP round trip and cannot be closed from this side, so what
       // *can* be done is: never write a definition read before the decision to write. This test

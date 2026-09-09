@@ -354,18 +354,24 @@ export class AgentControl {
    * update endpoint takes the whole definition and no revision or `If-Match`. Everything a client can
    * do to narrow that window is done, and it is worth being exact about what is and is not left:
    *
-   * - The variable is only ever *created* when the read says it is missing, so the common case for a
-   *   new agent involves no overwrite at all.
+   * - The provider is **refreshed from the server first**. `getVariableConfig` answers out of the
+   *   provider's cached config rather than fetching, so without this the existence check could be
+   *   answered by a cache that was never populated -- reporting a variable that does exist as
+   *   missing, taking the create path, and failing on a conflict that the once-per-process guard
+   *   then never retries -- and the read-modify-write below could be modifying state as old as the
+   *   polling interval.
+   * - The variable is only ever *created* when that refreshed read says it is missing, so the common
+   *   case for a new agent involves no overwrite at all.
    * - An existing variable is **re-read immediately before the write**, and the object written is
-   *   that fresh read with `example` replaced -- never one read earlier, and never one a caller passed
-   *   in. Whatever the UI saved up to that read is preserved: values, labels, rollout, description.
-   * - The write is skipped entirely when the fresh read already carries this `example`, which is the
+   *   that read with `example` replaced -- never one read earlier, and never one a caller passed in.
+   *   Whatever the UI saved up to the refresh is preserved: values, labels, rollout, description.
+   * - The write is skipped entirely when that read already carries this `example`, which is the
    *   steady state for a deployed agent, so the overwhelmingly common outcome is no write.
    * - It runs at most once per process per variable, off the request path.
    *
-   * What remains is one HTTP round trip: a value or label saved in the Logfire UI *between* the fresh
-   * read returning and the write landing is overwritten by the older state that read returned, and the
-   * UI reports success for the publish it just lost. Closing it needs an example-only `PATCH`, or a
+   * What remains is one HTTP round trip: a value or label saved in the Logfire UI *between* the
+   * refresh returning and the write landing is overwritten by the older state that refresh returned,
+   * and the UI reports success for the publish it just lost. Closing it needs an example-only `PATCH`, or a
    * conditional write on a revision or ETag, on the platform API:
    * https://github.com/pydantic/pydantic-ai-harness/issues/565. Until then, a deployment that cannot
    * tolerate that window sets `publishBaseline: false` and creates the variable in the UI, and a
@@ -407,6 +413,11 @@ export class AgentControl {
     if (provider instanceof NoOpVariableProvider) {
       return
     }
+    // `getVariableConfig` answers out of the provider's cached config and does not fetch, so both
+    // reads below are only as fresh as the last poll -- and before the first one there is no cache
+    // at all, which would report every existing variable as missing. `variablesPush` refreshes for
+    // the same reason before its own read-modify-write; this is that, once per process.
+    await provider.refresh?.(true)
     const existing = await provider.getVariableConfig?.(this.variableName)
     // `== null` rather than a strict pair: the provider interface types this as `VariableConfig |
     // undefined`, and a custom provider that answers `null` should still read as "no such variable".
@@ -422,8 +433,8 @@ export class AgentControl {
     // Deliberately its own read rather than reusing the one that decided the variable exists: the
     // value written back is the whole variable definition, so every moment between reading it and
     // writing it is a moment in which someone else's edit is inside the object about to be
-    // overwritten. Taking the read here makes that window one round trip instead of two, and makes
-    // "never write from a config read earlier" a property of the code rather than a rule to remember.
+    // overwritten. Taking the read here makes "never write from a config read earlier" a property of
+    // the code rather than a rule to remember.
     const fresh = await provider.getVariableConfig?.(this.variableName)
     // Vanished between the two reads, or already carries this baseline. Either way there is nothing
     // to write, and re-creating a variable someone just deleted is not this call's decision to make.

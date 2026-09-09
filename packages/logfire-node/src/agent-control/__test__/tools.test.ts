@@ -273,6 +273,28 @@ describe('routing identity', () => {
     expect('constructor' in routes).toBe(false)
     expect('toString' in routes).toBe(false)
   })
+
+  it('keeps a parameter called `__proto__` in the schema it patches', () => {
+    // A schema from JSON can carry `__proto__` as an ordinary own property. Rebuilding `properties`
+    // on a plain object would have assigned it to the prototype instead, so a code-defined
+    // parameter would vanish out of the schema the model is sent -- with nothing reported, because
+    // the entry that reached nothing was the tool's own parameter rather than a published one.
+    const schema = JSON.parse('{"type":"object","properties":{"__proto__":{"type":"string"},"city":{"type":"string"}}}') as Record<
+      string,
+      unknown
+    >
+    const patched = withParameterDescriptions(schema, { city: { description: 'City to look up.' } })
+    const properties = patched['properties'] as Record<string, unknown>
+    expect(Object.keys(properties)).toEqual(['__proto__', 'city'])
+    expect(properties['city']).toEqual({ type: 'string', description: 'City to look up.' })
+  })
+
+  it('patches a parameter called `__proto__` like any other', () => {
+    const schema = JSON.parse('{"type":"object","properties":{"__proto__":{"type":"string"}}}') as Record<string, unknown>
+    const patched = withParameterDescriptions(schema, { ['__proto__']: { description: 'Nothing special.' } })
+    const properties = patched['properties'] as Record<string, unknown>
+    expect(properties['__proto__']).toEqual({ type: 'string', description: 'Nothing special.' })
+  })
 })
 
 describe('a rename collision goes through onUnmatched like every other decision', () => {

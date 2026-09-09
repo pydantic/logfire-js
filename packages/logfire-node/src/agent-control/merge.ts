@@ -68,7 +68,11 @@ export type SettingsLayer = Readonly<Record<string, unknown>> | null | undefined
  * provider-specific key only `code` carries simply survives with `'code'` provenance.
  */
 export function mergeSettings(code?: SettingsLayer, published?: SettingsLayer, runExplicit?: SettingsLayer): Provenance {
-  const settings: Record<string, unknown> = {}
+  // Null-prototype, like `sources` is a `Map`: the keys come from a framework's settings and,
+  // through the published layer, from JSON, so `settings[key] =` on a plain object would let a
+  // `__proto__` key replace the prototype rather than become an entry -- and `sources` would then
+  // report a key the merged patch does not carry.
+  const settings = Object.create(null) as Record<string, unknown>
   const sources = new Map<string, SettingSource>()
   for (const [layer, source] of [
     [code, 'code'],

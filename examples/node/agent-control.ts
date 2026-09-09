@@ -53,7 +53,10 @@ logfire.configure({
 // The agent as written. `dynamic` marks a block the agent recomputes per request: it cannot be
 // addressed by a managed value, because replacing it would pin one rendering forever and dropping
 // it would remove the computation, and its text is never published to the shared baseline.
-const codeBlocks: InstructionBlock[] = [
+// A function, not a constant: `dynamic: true` says the framework recomputes this block on every
+// request, so evaluating the date once at startup would have a long-running process telling the
+// model yesterday's date. Its text is never published either way -- the baseline gets the seam.
+const buildCodeBlocks = (): InstructionBlock[] => [
   { dynamic: false, id: 'agent', text: 'You are a concise checkout assistant.' },
   { dynamic: false, id: 'agent:refunds', text: 'Always confirm the order total.' },
   { dynamic: true, id: 'agent:today', text: `Today is ${new Date().toDateString()}.` },
@@ -80,7 +83,7 @@ console.log('display name:', control.name, '-> variable:', control.variableName)
 
 // Once per process: describe the agent for the Logfire editor to layer a value onto. It writes in
 // the background, at most once per variable, and never throws.
-control.publishBaseline(buildBaseline({ instructions: codeBlocks, model: codeModel, settings: codeSettings, tools: codeTools }))
+control.publishBaseline(buildBaseline({ instructions: buildCodeBlocks(), model: codeModel, settings: codeSettings, tools: codeTools }))
 
 // Once per run: resolve, then do the whole run inside the resolution's telemetry context, so every
 // span carries the label the run was actually driven by.
@@ -92,6 +95,8 @@ await control.run(async ({ config, label, reason, version }) => {
   }
 
   const options = { onUnmatched: control.onUnmatched }
+  // Rebuilt for this run, so the dynamic block carries this run's date rather than the process's.
+  const codeBlocks = buildCodeBlocks()
   const { blocks, unapplied: unappliedInstructions } = applyInstructions(codeBlocks, config, options)
   const { tools, routes, unapplied: unappliedTools } = applyToolDefinitions(codeTools, config, options)
   const settings = { ...codeSettings, ...applySettings(config, options) }

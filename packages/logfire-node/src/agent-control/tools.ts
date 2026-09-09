@@ -212,7 +212,11 @@ function patchParameters(schema: JsonSchema, parameters: Record<string, Paramete
   if (!isRecord(properties)) {
     return { schema, unknown, unpatchable, noProperties: true }
   }
-  const newProperties: Record<string, unknown> = {}
+  // Null-prototype, for the same reason `routes` is: both sides of this come from JSON, so a
+  // parameter genuinely called `__proto__` is an own key on the way in, and `newProperties[name] =`
+  // on a plain object would set the prototype instead of that key -- dropping a code-defined
+  // parameter out of the schema the model is sent.
+  const newProperties = Object.create(null) as Record<string, unknown>
   let changed = false
   for (const [name, propertySchema] of Object.entries(properties)) {
     const description = Object.hasOwn(parameters, name) ? parameters[name]?.description : undefined

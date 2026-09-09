@@ -50,4 +50,23 @@ describe('mergeSettings', () => {
     expect(settings).toEqual({})
     expect(sources.size).toBe(0)
   })
+
+  it('keeps a `__proto__` key as an entry rather than letting it become a prototype', () => {
+    // The published layer comes from JSON, where `__proto__` parses as an ordinary own key. On a
+    // plain object `settings[key] =` would have replaced the prototype instead, so `sources` would
+    // report a key the merged patch does not carry -- and the run would silently not get it.
+    const published = JSON.parse('{"__proto__": 1, "temperature": 0.5}') as Record<string, unknown>
+    const { settings, sources } = mergeSettings({ temperature: 0.1 }, published)
+    expect(Object.hasOwn(settings, '__proto__')).toBe(true)
+    expect(settings['__proto__']).toBe(1)
+    expect(sources.get('__proto__')).toBe('published')
+  })
+
+  it('clears a `__proto__` key a run explicitly unset, like any other', () => {
+    const published = JSON.parse('{"__proto__": 1}') as Record<string, unknown>
+    const runExplicit = JSON.parse('{"__proto__": null}') as Record<string, unknown>
+    const { settings, sources } = mergeSettings(undefined, published, runExplicit)
+    expect(Object.hasOwn(settings, '__proto__')).toBe(false)
+    expect(sources.get('__proto__')).toBe('run')
+  })
 })

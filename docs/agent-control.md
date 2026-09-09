@@ -120,7 +120,7 @@ Two rules about what a baseline carries are worth stating outright, because both
 
 `buildBaseline` produces the document and `control.publishBaseline` writes it. The write happens in the background, at most once per process per variable, and never throws. Pass `{ source: 'observed' }` when the earliest anything could be read was one request rather than the agent object, because the two mean different things to whoever reads them. If the variable does not exist it is created with the contract's stored JSON schema, which the Logfire backend then validates every written value against.
 
-Set `publishBaseline: false` when the variables token is intentionally read-only, or when code must not write variable metadata. Updating an existing variable is read-modify-write — the platform API takes the whole definition and offers no conditional write — so a value saved in the Logfire UI during that one round trip can be overwritten. The variable is re-read immediately before the write and the write is skipped when the baseline is already current, which is the steady state for a deployed agent, but a deployment that cannot tolerate that window should turn the publish off and create the variable in the UI.
+Set `publishBaseline: false` when the variables token is intentionally read-only, or when code must not write variable metadata. Updating an existing variable is read-modify-write — the platform API takes the whole definition and offers no conditional write — so a value saved in the Logfire UI during that one round trip can be overwritten. The provider is refreshed from the server first, the variable is re-read immediately before the write, and the write is skipped when the baseline is already current, which is the steady state for a deployed agent; a deployment that cannot tolerate that window should turn the publish off and create the variable in the UI.
 
 ## The Contract
 
@@ -138,7 +138,9 @@ The stored JSON schema is pinned by `SCHEMA_SHA256`, and the cross-language rule
 
 ## Framework Adapters
 
-The core is framework-neutral on purpose: it knows about instruction blocks, tool definitions, and settings, and about no framework's spelling of them. An adapter enumerates a baseline, installs its framework's hook, and calls the pure helpers. Three TypeScript adapters are built on it — for **Mastra**, the **Vercel AI SDK**, and the **OpenAI Codex SDK** — each its own package, because a project that uses one has no reason to install the other two.
+The core is framework-neutral on purpose: it knows about instruction blocks, tool definitions, and settings, and about no framework's spelling of them. An adapter is what maps one framework onto those three: it enumerates a baseline, installs the framework's hook, and calls the pure helpers.
+
+TypeScript adapters for **Mastra**, the **Vercel AI SDK**, and the **OpenAI Codex SDK** are in progress, each as its own package, because a project that uses one has no reason to install the other two. Until they land, the paragraph below is how to drive Agent Control from any framework directly.
 
 Python users get the same contract from [`logfire`](https://logfire.pydantic.dev/docs/) and [`pydantic-ai-harness`](https://github.com/pydantic/pydantic-ai-harness). A config published from the Logfire UI drives every one of them, because the variable name, the baseline, and the parse are the same three rules in both languages.
 
