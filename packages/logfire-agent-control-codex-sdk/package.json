@@ -53,7 +53,7 @@
   },
   "peerDependencies": {
     "@openai/codex-sdk": ">=0.153.4 <1",
-    "@pydantic/logfire-node": "workspace:^0.18.24"
+    "@pydantic/logfire-node": "workspace:^"
   },
   "engines": {
     "node": ">=20"
