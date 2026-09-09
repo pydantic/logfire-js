@@ -11,7 +11,9 @@ import { resolveConsoleOptions } from './consoleOptions'
 import { VoidTraceExporter } from './VoidTraceExporter'
 
 export function logfireSpanProcessor(consoleConfig: ConsoleConfig | undefined): SpanProcessor {
-  return new LogfireSpanProcessor(new BatchSpanProcessor(traceExporter()), consoleConfig)
+  const consoleOptions = resolveConsoleOptions(consoleConfig)
+  const consoleProcessor = consoleOptions.enabled ? new SimpleSpanProcessor(new LogfireConsoleSpanExporter(consoleOptions)) : undefined
+  return new LogfireSpanProcessor(new BatchSpanProcessor(traceExporter()), consoleProcessor)
 }
 
 /**
@@ -35,21 +37,17 @@ export function traceExporter(): SpanExporter {
   })
 }
 
-class LogfireSpanProcessor implements SpanProcessor {
-  private readonly console?: SpanProcessor
+export class LogfireSpanProcessor implements SpanProcessor {
+  private readonly console: SpanProcessor | undefined
   private readonly wrapped: SpanProcessor
 
-  constructor(wrapped: SpanProcessor, consoleConfig: ConsoleConfig | undefined) {
-    const consoleOptions = resolveConsoleOptions(consoleConfig)
-    if (consoleOptions.enabled) {
-      this.console = new SimpleSpanProcessor(new LogfireConsoleSpanExporter(consoleOptions))
-    }
+  constructor(wrapped: SpanProcessor, consoleProcessor: SpanProcessor | undefined) {
+    this.console = consoleProcessor
     this.wrapped = wrapped
   }
 
   async forceFlush(): Promise<void> {
-    await this.console?.forceFlush()
-    return this.wrapped.forceFlush()
+    await settleBoth('logfire SDK: span processor forceFlush failed', [this.console?.forceFlush(), this.wrapped.forceFlush()])
   }
 
   onEnd(span: ReadableSpan): void {
@@ -66,7 +64,31 @@ class LogfireSpanProcessor implements SpanProcessor {
   }
 
   async shutdown(): Promise<void> {
-    await this.console?.shutdown()
-    return this.wrapped.shutdown()
+    await settleBoth('logfire SDK: span processor shutdown failed', [this.console?.shutdown(), this.wrapped.shutdown()])
+  }
+}
+
+/**
+ * Start both lifecycle calls at once and report every failure. Awaiting them in sequence skipped
+ * the batch processor — the half whose queued spans are unrecoverable — exactly when the console
+ * half rejected, the shape `TailSamplingProcessor.runBoth` and the SDK's `settleWithDeadline`
+ * already settled. A lone failure is rethrown unchanged to keep the existing rejection contract.
+ */
+async function settleBoth(label: string, operations: (Promise<void> | undefined)[]): Promise<void> {
+  const errors: unknown[] = []
+  await Promise.all(
+    operations.map(async (operation) => {
+      try {
+        await operation
+      } catch (e: unknown) {
+        errors.push(e)
+      }
+    })
+  )
+  if (errors.length === 1) {
+    throw errors[0]
+  }
+  if (errors.length > 1) {
+    throw new AggregateError(errors, label)
   }
 }
