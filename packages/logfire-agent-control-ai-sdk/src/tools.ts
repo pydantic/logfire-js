@@ -89,8 +89,11 @@ export function applyToTools(tools: CallTools | undefined, config: AgentConfig, 
   // function tool at the same offset -- keyed back by code-side name, since that is what survives.
   // A lookup that misses is a provider-defined tool, which was never handed to the core at all.
   const definitions = new Map(defs.map((def, index) => [def.name, applied.tools[index]]))
-  const routes: Record<string, string> = {}
-  const renames: Record<string, string> = {}
+  // Null-prototype, because these are keyed by tool names the model and the caller choose. On an
+  // ordinary object a tool called `constructor` would read back `Object.prototype.constructor` and
+  // route a call to a function, and one called `__proto__` could not be written at all.
+  const routes: Record<string, string> = Object.create(null) as Record<string, string>
+  const renames: Record<string, string> = Object.create(null) as Record<string, string>
   // A managed definition is applied to a copy: the request's tools belong to the caller.
   const result: CallTools = (tools ?? []).map((tool) => {
     const definition = isFunctionTool(tool) ? definitions.get(tool.name) : undefined

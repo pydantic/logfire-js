@@ -154,15 +154,23 @@ export function createModelResolver(
 ): (id: string) => Promise<LanguageModelV4 | undefined> {
   const registry = options.providers === undefined ? undefined : createProviderRegistry(options.providers)
   const registered = new Set(Object.keys(options.providers ?? {}))
-  const resolved = new Map<string, LanguageModelV4 | undefined>()
+  // The *promise* rather than the model, so two requests that arrive on the same new id while the
+  // first resolution is still in flight share it. Caching only the settled value would let both run
+  // `resolveModel`, build two model objects for one id, and split whatever the provider caches
+  // between them. A resolution that produced no model is cached too, so a published id nothing can
+  // build is reported once rather than retried on every request.
+  const resolved = new Map<string, Promise<LanguageModelV4 | undefined>>()
 
+  // `async` with nothing awaited, deliberately: the body runs to completion synchronously, so the
+  // promise is in the map before any caller can get back here on a later tick.
   return async (id: string): Promise<LanguageModelV4 | undefined> => {
-    if (resolved.has(id)) {
-      return resolved.get(id)
+    const cached = resolved.get(id)
+    if (cached !== undefined) {
+      return cached
     }
-    const model = await resolveOnce(id, options.resolveModel, registry, registered, report)
-    resolved.set(id, model)
-    return model
+    const pending = resolveOnce(id, options.resolveModel, registry, registered, report)
+    resolved.set(id, pending)
+    return pending
   }
 }
 

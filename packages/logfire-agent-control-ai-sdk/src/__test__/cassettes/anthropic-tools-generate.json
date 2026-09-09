@@ -48,13 +48,13 @@
       "status": 200,
       "response": {
         "model": "claude-haiku-4-5-20251001",
-        "id": "msg_011Cetj8Fjx5ZY8obScfA3LL",
+        "id": "msg_011CetkcNtxJGprL3tkR5ipG",
         "type": "message",
         "role": "assistant",
         "content": [
           {
             "type": "tool_use",
-            "id": "toolu_01WvcvBNe25Kdr4R8d9ZEHKg",
+            "id": "toolu_01KbA6wxWkj3QmK3GW14rYNt",
             "name": "lookup_weather",
             "input": {
               "city": "London"
@@ -109,7 +109,7 @@
             "content": [
               {
                 "type": "tool_use",
-                "id": "toolu_01WvcvBNe25Kdr4R8d9ZEHKg",
+                "id": "toolu_01KbA6wxWkj3QmK3GW14rYNt",
                 "name": "lookup_weather",
                 "input": {
                   "city": "London"
@@ -125,7 +125,7 @@
             "content": [
               {
                 "type": "tool_result",
-                "tool_use_id": "toolu_01WvcvBNe25Kdr4R8d9ZEHKg",
+                "tool_use_id": "toolu_01KbA6wxWkj3QmK3GW14rYNt",
                 "content": "sunny in London"
               }
             ]
@@ -156,13 +156,13 @@
       "status": 200,
       "response": {
         "model": "claude-haiku-4-5-20251001",
-        "id": "msg_011Cetj8KcsDKrHbCTcWyrfL",
+        "id": "msg_011CetkcSr61z6aoUrd5BW3d",
         "type": "message",
         "role": "assistant",
         "content": [
           {
             "type": "text",
-            "text": "The weather in London is currently **sunny**! ☀️"
+            "text": "The weather in London is **sunny**!"
           }
         ],
         "container": null,
@@ -177,7 +177,7 @@
             "ephemeral_5m_input_tokens": 0,
             "ephemeral_1h_input_tokens": 0
           },
-          "output_tokens": 17,
+          "output_tokens": 12,
           "service_tier": "standard",
           "inference_geo": "not_available"
         }

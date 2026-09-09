@@ -91,6 +91,33 @@ describe('model', () => {
     expect(seen).toEqual(['acme:big'])
   })
 
+  it('resolves an id once even when two requests reach it at the same time', async () => {
+    useLocalVariables(publishedValue('agent__concurrent', { model: 'acme:big' }))
+    const code = stubModel([textResult('one'), textResult('two')])
+    const managed = stubModel([textResult('managed'), textResult('managed again')], 'acme.chat', 'big')
+    const seen: string[] = []
+    const model = agentControl({
+      model: code,
+      name: 'concurrent',
+      label: 'production',
+      resolveModel: async (id) => {
+        seen.push(id)
+        // A provider factory that awaits anything -- credentials, a discovery call -- leaves a
+        // window in which a second request arrives before the first has an answer to cache.
+        await new Promise((resolve) => {
+          setTimeout(resolve, 5)
+        })
+        return managed
+      },
+    })
+
+    await Promise.all([generateText({ model, prompt: 'hi' }), generateText({ model, prompt: 'hi again' })])
+
+    expect(managed.doGenerateCalls).toHaveLength(2)
+    // One model object for one id, however many requests are in flight when it is first asked for.
+    expect(seen).toEqual(['acme:big'])
+  })
+
   it('falls back to the provider a bare string model would have gone through', async () => {
     useLocalVariables(publishedValue('agent__gateway_fallback', { model: 'anthropic:claude-fable-5-1' }))
     const managed = stubModel([textResult('from the gateway')], 'gateway', 'anthropic/claude-fable-5-1')

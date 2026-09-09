@@ -21,6 +21,14 @@
  * difference between "this agent regressed" and "this agent regressed on the value someone saved at
  * 14:02". It is also what makes the model swap ordinary rather than special: a managed model is just
  * a different object to call with the same params.
+ *
+ * Calling `model.doGenerate` in place of the `doGenerate` we were handed does not step out of the
+ * middleware chain. `wrapLanguageModel` builds that continuation as `() => model.doGenerate(params)`
+ * over the very `model` it also passes us (`ai/src/middleware/wrap-language-model.ts`), and this
+ * middleware declares no `transformParams`, so the two are the same call with different params --
+ * and `model` is already wrapped in whatever middleware sits *inside* this one. Only the managed
+ * model is different, and that is the point of it: a config that names another model is asking for
+ * another model, not for this one with different arguments.
  */
 
 import type { AgentConfig, OnUnmatched } from '@pydantic/logfire-node/agent-control'
@@ -152,9 +160,11 @@ export function agentControlMiddleware(options: AgentControlOptions): LanguageMo
   // model and a `prepareStep` can change the set per step -- which the README's limits say out loud.
   const baselineSource = options.codeInstructions !== undefined && options.codeSettings !== undefined ? 'code' : 'observed'
 
-  // Learned from the first request when the agent did not declare its instructions; see
-  // `CodeInstructions`.
-  let code = declared.length > 0 ? CodeInstructions.declared(declared) : CodeInstructions.unknown()
+  // Learned from the first request only when the agent declared *nothing*; see `CodeInstructions`.
+  // An agent that declares an empty `instructions` has said something -- that every system message
+  // reaching the model came from somewhere else -- and an empty declaration is what says so, where
+  // falling through to `unknown()` would make an injected block addressable on the first request.
+  let code = options.codeInstructions === undefined ? CodeInstructions.unknown() : CodeInstructions.declared(declared)
 
   /** Publish the baseline once, then apply whatever the resolved config changes. */
   async function prepare(params: LanguageModelV4CallOptions, model: LanguageModelV4, config: AgentConfig | null): Promise<PreparedRequest> {

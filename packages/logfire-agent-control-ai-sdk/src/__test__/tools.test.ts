@@ -87,6 +87,48 @@ describe('tool definitions', () => {
     expect(result.steps[0]?.content.map((part) => ('toolName' in part ? part.toolName : part.type))).toEqual(['get_weather', 'get_weather'])
   })
 
+  it('leaves a call to a tool name that is also an `Object.prototype` key as the string it is', async () => {
+    useLocalVariables(
+      publishedValue('agent__prototype_names', {
+        tool_definitions: [{ name: 'get_weather', new_name: 'lookup_weather' }],
+      })
+    )
+    const model = stubModel([
+      {
+        ...textResult(''),
+        content: [
+          { type: 'tool-call' as const, toolCallId: 'call-0', toolName: 'lookup_weather', input: JSON.stringify({ city: 'Paris' }) },
+          // Never advertised, and a key every plain object inherits. On an ordinary routing table
+          // this reads back `Object.prototype.toString` and the name becomes a function.
+          { type: 'tool-call' as const, toolCallId: 'call-1', toolName: 'toString', input: '{}' },
+        ],
+        finishReason: { unified: 'tool-calls' as const, raw: 'tool_use' },
+      },
+      textResult('sunny'),
+    ])
+    const result = await generateText({
+      model: agentControl({ model, name: 'prototype_names', label: 'production' }),
+      prompt: 'weather in Paris?',
+      stopWhen: stepCountIs(3),
+      tools: { get_weather: weather },
+    })
+
+    // Strings, in the order the step carries them: two calls, then the results. The point is that
+    // the unadvertised name is the string `'toString'` and not `Object.prototype.toString`.
+    expect(result.steps[0]?.content.flatMap((part) => ('toolName' in part ? [part.toolName] : []))).toEqual([
+      'get_weather',
+      'toString',
+      'toString',
+      'get_weather',
+    ])
+    // And the same on the way back out, where the history is re-renamed: the tool that was renamed
+    // carries its managed name and the unadvertised one is left exactly as the model wrote it.
+    const history = (model.doGenerateCalls[1]?.prompt ?? []).flatMap((message) =>
+      Array.isArray(message.content) ? message.content.flatMap((part) => ('toolName' in part ? [part.toolName] : [])) : []
+    )
+    expect(history.sort()).toEqual(['lookup_weather', 'lookup_weather', 'toString', 'toString'])
+  })
+
   it('re-renames the history the SDK writes back, so the model sees one consistent tool set', async () => {
     useLocalVariables(
       publishedValue('agent__renamed_history', {

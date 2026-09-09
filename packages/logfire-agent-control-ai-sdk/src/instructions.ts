@@ -212,7 +212,20 @@ export function writeSystemMessages(
   slots: readonly SystemSlot[],
   blocks: readonly InstructionBlock[]
 ): LanguageModelV4Prompt {
-  const byId = new Map(slots.map((slot) => [slot.id, slot]))
+  // A queue per id rather than one slot per id. Two system messages can carry the same one -- a
+  // `providerOptions.logfire.id` declared twice, or a hook injecting a message under a name the code
+  // already uses -- and the core addresses them together, in the order it was handed them. Keeping
+  // only the last would write both returned blocks into the last message and drop the earlier one
+  // from the prompt, which is a message lost to a typo.
+  const byId = new Map<string, SystemSlot[]>()
+  for (const slot of slots) {
+    const queue = byId.get(slot.id)
+    if (queue === undefined) {
+      byId.set(slot.id, [slot])
+    } else {
+      queue.push(slot)
+    }
+  }
   // Walked once to sort the returned blocks into "text for the slot at this index" and "added text to
   // emit just before that slot". An added block comes back with `id: null`; everything else is one of
   // the messages we handed in.
@@ -220,7 +233,7 @@ export function writeSystemMessages(
   const additions = new Map<number, string[]>()
   let pending: string[] = []
   for (const block of blocks) {
-    const slot = block.id === null ? undefined : byId.get(block.id)
+    const slot = block.id === null ? undefined : byId.get(block.id)?.shift()
     if (slot === undefined) {
       pending.push(block.text)
       continue

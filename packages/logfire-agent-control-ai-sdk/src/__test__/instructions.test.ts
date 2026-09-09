@@ -153,6 +153,48 @@ describe('instructions', () => {
     expect(warnings.messages).toContainEqual(expect.stringContaining('recomputes'))
   })
 
+  it('keeps both messages when two of them declare the same id', async () => {
+    useLocalVariables(publishedValue('agent__duplicate_ids', { instructions: [{ id: 'policy', instructions: 'One policy.' }] }))
+    const model = stubModel([textResult('ok')])
+    const block = (content: string) => ({
+      role: 'system' as const,
+      content,
+      providerOptions: { logfire: { id: 'policy' } },
+    })
+    await generateText({
+      model: agentControl({ model, name: 'duplicate_ids', label: 'production' }),
+      instructions: [block('Refund on request.'), block('Escalate anything over $500.')],
+      prompt: 'hi',
+    })
+
+    // Both messages carry one id, so the override addresses both -- and, above all, neither message
+    // is dropped from the prompt on the way back into it.
+    expect(systemMessages(model)).toEqual([block('One policy.'), block('One policy.')])
+  })
+
+  it('protects an injected block from the first request when the agent declares no instructions at all', async () => {
+    useLocalVariables(publishedValue('agent__empty_declaration', { instructions: [{ id: 'system:0', instructions: 'Tenant: pinned.' }] }))
+    const model = stubModel([textResult('ok')])
+    const agent = new ToolLoopAgent(
+      agentControl({
+        settings: {
+          id: 'empty_declaration',
+          model,
+          // Declared, and empty: every system message this agent sends comes from its hook.
+          instructions: [],
+          prepareStep: () => ({ instructions: [{ role: 'system' as const, content: 'Tenant: acme.' }] }),
+        },
+        label: 'production',
+      })
+    )
+    await agent.generate({ prompt: 'hi' })
+
+    // An empty declaration is a declaration. Reading it as "nothing was declared" would leave the
+    // first request with nothing to compare against and pin one tenant's text.
+    expect(systemMessages(model)).toEqual([{ role: 'system', content: 'Tenant: acme.' }])
+    expect(warnings.messages).toContainEqual(expect.stringContaining('recomputes'))
+  })
+
   it('learns the code-side text from the first request when nothing was declared', async () => {
     useLocalVariables(publishedValue('agent__learned', { instructions: [{ id: 'system:0', instructions: 'Managed.' }] }))
     const model = stubModel([textResult('one'), textResult('two')])

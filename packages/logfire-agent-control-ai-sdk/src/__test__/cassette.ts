@@ -112,9 +112,10 @@ async function requestBody(input: RequestInfo | URL, init: RequestInit | undefin
  * The cassette named `name`, as a `fetch` plus the request bodies it saw.
  *
  * Replay is ordinal: the n-th request of a test is answered by the n-th interaction of its cassette,
- * and a mismatched method or URL fails rather than answering with the wrong turn's response. That is
- * strict on purpose -- these tests exist to prove what reaches a provider, and a recorder that
- * quietly matched a different request would prove nothing.
+ * and a mismatched method, URL, or *body* fails rather than answering anyway. The body is what makes
+ * the cassette a regression test rather than a stub: these tests exist to prove what reaches a
+ * provider, so a change in what this adapter sends has to fail here and be re-recorded deliberately,
+ * not pass on a response recorded for a different request.
  */
 export function cassette(name: string): Cassette {
   const path = join(CASSETTES, `${name}.json`)
@@ -153,10 +154,12 @@ export function cassette(name: string): Cassette {
     if (interaction === undefined) {
       throw new Error(`Cassette '${name}' has no interaction ${String(index)}; re-record it.`)
     }
-    if (interaction.method !== method || interaction.url !== url) {
+    const drifted = JSON.stringify(interaction.request) !== JSON.stringify(parseBody(body))
+    if (interaction.method !== method || interaction.url !== url || drifted) {
       throw new Error(
-        `Cassette '${name}' interaction ${String(index)} recorded ${interaction.method} ${interaction.url}, ` +
-          `but this run sent ${method} ${url}; re-record it.`
+        `Cassette '${name}' interaction ${String(index)} recorded ${interaction.method} ${interaction.url}` +
+          `${drifted ? ' with a different request body' : ''}, but this run sent ${method} ${url}; ` +
+          're-record it.'
       )
     }
     const text = interaction.stream === true ? String(interaction.response) : JSON.stringify(interaction.response)

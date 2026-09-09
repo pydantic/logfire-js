@@ -31,7 +31,7 @@
               "parts": [
                 {
                   "text": "Paris",
-                  "thoughtSignature": "El4KXAERTTIPClqqfYiPr+5yVya6Eq0f/yYVI0/b9xYLtFvSiTo+eMj9BfduUVW+bZxN3wISvZ8490Zkuu3xCFpyeIOnL5NCLPY1rz6Zij5RhCmFcB5Hw0cysZnaHNDR"
+                  "thoughtSignature": "El4KXAERTTIPiV5mp4/wQaf676UGhDL5MPyx//Ue+N7XfkCMLawGfcm86kXcDzLY5aQjT2skGndIOMkUZSAPfxQYFoYlGj+ESclY5ynnEBWu1Eg0eC2dhyg8J71M/ZYb"
                 }
               ],
               "role": "model"
@@ -53,7 +53,7 @@
           "serviceTier": "standard"
         },
         "modelVersion": "gemini-3.5-flash-lite",
-        "responseId": "reqharGzEaSd6dkP8MX82AE"
+        "responseId": "Eu-harOVL9CGz7IPp-vl-Q8"
       }
     }
   ]
