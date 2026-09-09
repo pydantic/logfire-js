@@ -6,6 +6,8 @@
  * published is text that anyone who can read the project can read.
  */
 
+import { dirname } from 'node:path'
+
 import { describe, expect, it } from 'vite-plus/test'
 
 import { agentControl } from '../index'
@@ -62,6 +64,30 @@ describe('the published baseline', () => {
     // Nothing replaced it, so the built-in prompt is not offered as an empty box to overwrite.
     const builtIn = agentControl({ name: uniqueName(), publishBaseline: false })
     expect(JSON.stringify(builtIn.baseline())).not.toContain('base_instructions')
+  })
+
+  it("expands a leading `~` the way Codex does, so a home-relative prompt is not 'unreadable'", () => {
+    // Codex reads `~/base.md`; `resolve` would have joined the `~` onto the working directory and
+    // this package would have warned about a file that is perfectly readable, and published a
+    // baseline missing the one block the agent replaced.
+    const file = tempFile('base.md', 'You are a release bot.')
+    const home = process.env['HOME']
+    process.env['HOME'] = dirname(file)
+    try {
+      const managed = agentControl({
+        name: uniqueName(),
+        codex: { config: { model_instructions_file: '~/base.md' } },
+        publishBaseline: false,
+      })
+      expect(managed.baseline().instructions).toContainEqual({
+        id: 'base_instructions',
+        instructions: 'You are a release bot.',
+        dynamic: false,
+      })
+      expect(warnings.messages).toEqual([])
+    } finally {
+      process.env['HOME'] = home
+    }
   })
 
   it('says so when the base prompt cannot be read, and publishes the rest', () => {

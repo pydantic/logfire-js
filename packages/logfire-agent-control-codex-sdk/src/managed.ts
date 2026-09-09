@@ -231,7 +231,14 @@ export class ManagedCodex {
    */
   #apply(config: AgentConfig | null, overrides: ThreadOptions): ManagedCodexConfiguration {
     if (config === null) {
-      return { codex: { ...this.#codex }, thread: { ...this.#thread, ...overrides } }
+      // `config` is copied too, not just the options object around it. The managed path below builds
+      // a fresh one, and a caller that edits what it got back must not be editing this agent's own
+      // options on the run where nothing was published either.
+      const codex: CodexOptions = { ...this.#codex }
+      if (codex.config !== undefined) {
+        codex.config = { ...codex.config }
+      }
+      return { codex, thread: { ...this.#thread, ...overrides } }
     }
     const onUnmatched = this.control.onUnmatched
 

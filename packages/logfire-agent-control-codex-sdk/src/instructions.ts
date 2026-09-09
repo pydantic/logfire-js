@@ -19,7 +19,7 @@
 
 import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import type { InstructionBlock } from '@pydantic/logfire-node/agent-control'
@@ -86,7 +86,7 @@ export function codeInstructions(codex: CodexOptions | undefined, thread: Thread
 }
 
 function readBaseInstructions(file: string, workingDirectory: string | undefined): string {
-  const path = resolve(workingDirectory ?? process.cwd(), file)
+  const path = resolve(workingDirectory ?? process.cwd(), expandTilde(file))
   try {
     return readFileSync(path, 'utf8')
   } catch (error) {
@@ -98,6 +98,25 @@ function readBaseInstructions(file: string, workingDirectory: string | undefined
     )
     return ''
   }
+}
+
+/**
+ * Expand a leading `~` the way Codex does before it reads the file.
+ *
+ * The binary expands `~` and `~/` in `model_instructions_file` to the home directory: verified
+ * against codex-cli 0.153.4, which reads a `~/prompt.md` that exists and fails with `failed to read
+ * model instructions file` on one that does not. `resolve` would instead join `~` onto the working
+ * directory, so without this a path Codex reads perfectly well would be reported here as unreadable
+ * and its text left out of the baseline. `~user` is not expanded, which is also what Codex does.
+ */
+function expandTilde(file: string): string {
+  if (file === '~') {
+    return homedir()
+  }
+  if (file.startsWith('~/')) {
+    return join(homedir(), file.slice(2))
+  }
+  return file
 }
 
 /**

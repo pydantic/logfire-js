@@ -308,8 +308,14 @@ describe('when the agent is running on code', () => {
 
     expect(codex).toEqual(code.codex)
     expect(thread).toEqual({ model: 'gpt-5.5', skipGitRepoCheck: true, sandboxMode: 'read-only' })
-    // A copy, so a caller that edits what it got back does not edit the agent.
+    // A copy all the way down, so a caller that edits what it got back does not edit the agent.
+    // The `config` object is the one that matters: it is where every key this contract touches
+    // lives, and a shallow copy of the options around it would have shared it.
     expect(codex).not.toBe(code.codex)
+    expect(codex.config).not.toBe(code.codex?.config)
+    codex.config = { ...codex.config, developer_instructions: 'Edited by the caller.' }
+    const again = await agent.resolveOptions()
+    expect(again.codex.config).toEqual({ developer_instructions: 'Be terse.' })
     expect(warnings.messages).toEqual([])
   })
 

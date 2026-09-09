@@ -16,7 +16,8 @@ first because this package must use the copy of the SDK your code builds threads
 because Logfire's variable provider is a module-level singleton and a second copy of it would read a
 different one. Nothing here reads an environment variable of its own: the Logfire SDK's own
 configuration decides where the variable is read from — `logfire.configure({ apiKey })` or
-`LOGFIRE_API_KEY` / `LOGFIRE_TOKEN`, with `LOGFIRE_BASE_URL` naming the region.
+`LOGFIRE_API_KEY`, with `LOGFIRE_BASE_URL` naming the region. An API key is what remote variables
+need; `LOGFIRE_TOKEN` is the write token for spans and does not resolve one.
 
 ```bash
 npm install @pydantic/logfire-agent-control-codex-sdk @openai/codex-sdk @pydantic/logfire-node
