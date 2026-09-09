@@ -12,7 +12,7 @@
  * point is what says so in a way a reviewer can see at the import line.
  *
  * ```ts
- * import { resetAgentControl } from '@pydantic/logfire-agent-control/testing';
+ * import { resetAgentControl } from '@pydantic/logfire-node/agent-control/testing'
  *
  * beforeEach(resetAgentControl);
  * ```
