@@ -28,6 +28,7 @@ overrides:
   'vitest': '4.1.9'
 
 catalog:
+  '@openai/codex-sdk': ^0.153.4
   '@opentelemetry/api': ^1.9.1
   '@opentelemetry/api-logs': '>=0.219.0 <0.300.0'
   '@opentelemetry/auto-instrumentations-node': '>=0.77.0 <0.100.0'
