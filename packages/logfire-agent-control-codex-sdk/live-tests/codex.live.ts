@@ -156,13 +156,16 @@ describe.skipIf(!LOGGED_IN)('a live Codex turn', () => {
     // The session's own developer message wins. A published change is a new-thread affair.
     expect(answer.trim()).toBe(PUBLISHED_CODEWORD)
   })
+})
 
-  it.skipIf(OPENAI_API_KEY === undefined)('sends a published non-`openai` provider id to that provider', async () => {
+describe.skipIf(OPENAI_API_KEY === undefined)('a live turn on a provider the machine defines itself', () => {
+  it('sends a published non-`openai` provider id to that provider', async () => {
     // `model_provider` indexes into the `model_providers` table of the machine's `config.toml`, a
     // file this package never reads -- so "a published `ollama:qwen3` reaches Ollama" was, until
     // this test, an argument from the flag rather than an observation. A `CODEX_HOME` holding one
     // extra provider entry and no `auth.json` makes the observation: nothing but that entry can
-    // serve the turn, and the ChatGPT login the other tests run on is not reachable from here.
+    // serve the turn. That is also why this one is not under the login guard the others are: it
+    // brings its own Codex home and its own credential, so a machine with only an API key runs it.
     const home = scratchDirectory()
     writeFileSync(
       join(home, 'config.toml'),

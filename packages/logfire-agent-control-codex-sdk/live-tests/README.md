@@ -38,7 +38,8 @@ Requirements:
   through the environment rather than putting it on a command line.
 
 Each test runs one turn on a small model, in a fresh temporary working directory, with a prompt whose
-only job is to echo one word back — no repository is read and nothing is written.
+only job is to echo one word back — except the resumed-session test, which needs two: one to start the
+session and one on the resume. No repository is read and nothing is written.
 
 Two environment variables adjust the run:
 

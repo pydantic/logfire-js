@@ -39,7 +39,10 @@ describe('a managed base prompt on disk', () => {
     expect(existsSync(first)).toBe(false)
   })
 
-  it('fails loudly when the prompt cannot be written at all', () => {
+  // Root ignores the directory mode this test relies on, so a suite run as root -- which a
+  // container often is -- would see the write succeed and the assertion fail. The behaviour under
+  // test is unprivileged behaviour; skipping is honest, and CI runs unprivileged.
+  it.skipIf(process.getuid?.() === 0)('fails loudly when the prompt cannot be written at all', () => {
     const path = writeBaseInstructions('You are a release bot.')
     const directory = dirname(path)
     // Not an already-written file this time but a directory nothing may write to, which is the

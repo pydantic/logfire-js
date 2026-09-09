@@ -8,7 +8,9 @@ The agent's configuration lives in one Logfire variable named `agent__<name>`. E
 _patch_ on the agent as written: a section that is present is managed from Logfire, a section that is
 absent keeps what your code does, and deleting a section in Logfire is a deliberate revert to code.
 If Logfire is unreachable, if nothing has been published, or if a published value cannot be
-understood, the agent runs exactly as your code defines it.
+understood at all, the agent runs exactly as your code defines it. Below that, leniency is per
+section: an entry or a setting this release cannot make sense of costs only itself, and the rest of
+the published value still applies.
 
 **Prerequisites.** Node 20+, ESM, the `codex` CLI on the machine, and a Logfire project. Both
 `@openai/codex-sdk` and `@pydantic/logfire-node` are peer dependencies you install yourself — the
