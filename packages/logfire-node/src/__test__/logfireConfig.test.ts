@@ -594,6 +594,56 @@ describe('logfire config', () => {
     })
   })
 
+  describe('trace sample rate environment variable', () => {
+    const originalSampleRate = process.env['LOGFIRE_TRACE_SAMPLE_RATE']
+
+    afterEach(() => {
+      if (originalSampleRate === undefined) {
+        delete process.env['LOGFIRE_TRACE_SAMPLE_RATE']
+      } else {
+        process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = originalSampleRate
+      }
+    })
+
+    it('accepts every readable in-range rate, including 0', () => {
+      // 0 drops every trace and must not be read as unset.
+      for (const [value, head] of [
+        ['0', 0],
+        ['0.25', 0.25],
+        ['1', 1],
+      ] as const) {
+        process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = value
+        configure({ sendToLogfire: false })
+        expect(logfireConfig.sampling).toEqual({ head })
+      }
+    })
+
+    it('rejects an unreadable or out-of-range rate instead of exporting everything', () => {
+      // Silently dropping the value turned head sampling off: '-1' asked for no traces and
+      // delivered all of them, and parseFloat accepted '0.1x' by ignoring the trailing junk.
+      for (const value of ['10%', '-1', '1.5', '0.1x', 'abc']) {
+        process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = value
+        expect(() => {
+          configure({ sendToLogfire: false })
+        }).toThrow(`Expected LOGFIRE_TRACE_SAMPLE_RATE to be a number between 0 and 1, got ${JSON.stringify(value)}`)
+      }
+    })
+
+    it('an explicit sampling option wins over an unreadable environment value', () => {
+      process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = '10%'
+      configure({ sampling: { head: 0.5 }, sendToLogfire: false })
+      expect(logfireConfig.sampling).toEqual({ head: 0.5 })
+    })
+
+    it('treats an empty or whitespace-only value as unset', () => {
+      for (const value of ['', '   ']) {
+        process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = value
+        configure({ sendToLogfire: false })
+        expect(logfireConfig.sampling).toBeUndefined()
+      }
+    })
+  })
+
   function makeCredentialsDir(credentials: { logfire_api_url: string; project_name: string; project_url: string; token: string }): string {
     const dataDir = makeTmpDir()
     writeFileSync(join(dataDir, 'logfire_credentials.json'), `${JSON.stringify(credentials)}\n`)

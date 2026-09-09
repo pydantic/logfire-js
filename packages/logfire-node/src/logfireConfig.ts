@@ -406,18 +406,27 @@ function configureSharedApi(apiConfig: logfireApi.LogfireApiConfigOptions, minLe
   }
 }
 
+/**
+ * Same policy as `parseBooleanEnv`: a value nobody recognises is a typo, and silently dropping
+ * it turned head sampling off — `-1` asked for no traces and delivered all of them. Python's
+ * `TRACE_SAMPLE_RATE` runs `float(value)`, which raises on `10%` and `0.1x` alike; `Number`
+ * matches that where `parseFloat` accepted the truncated prefix.
+ */
 function resolveSampling(option: SamplingOptions | undefined): SamplingOptions | undefined {
-  const envRate = process.env['LOGFIRE_TRACE_SAMPLE_RATE']
   if (option) {
     return option
   }
-  if (envRate !== undefined) {
-    const rate = parseFloat(envRate)
-    if (!isNaN(rate) && rate >= 0 && rate <= 1) {
-      return { head: rate }
-    }
+  const envRate = process.env['LOGFIRE_TRACE_SAMPLE_RATE']?.trim()
+  if (envRate === undefined || envRate === '') {
+    return undefined
   }
-  return undefined
+  const rate = Number(envRate)
+  if (Number.isNaN(rate) || rate < 0 || rate > 1) {
+    throw new Error(
+      `Expected LOGFIRE_TRACE_SAMPLE_RATE to be a number between 0 and 1, got ${JSON.stringify(process.env['LOGFIRE_TRACE_SAMPLE_RATE'])}`
+    )
+  }
+  return { head: rate }
 }
 
 function resolveSendToLogfire(option: LogfireConfigOptions['sendToLogfire'], token: LogfireToken | undefined): boolean {

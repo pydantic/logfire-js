@@ -9,22 +9,22 @@ description: Environment variables used by the Logfire TypeScript SDK packages.
 
 `@pydantic/logfire-node` reads these variables:
 
-| Variable                      | Purpose                                                                  |
-| ----------------------------- | ------------------------------------------------------------------------ |
-| `LOGFIRE_TOKEN`               | Write token used to send traces, metrics, and logs to Logfire.           |
-| `LOGFIRE_API_KEY`             | API key for platform APIs such as remote managed variables.              |
-| `LOGFIRE_SERVICE_NAME`        | Service name resource metadata.                                          |
-| `LOGFIRE_SERVICE_VERSION`     | Service version resource metadata.                                       |
-| `LOGFIRE_ENVIRONMENT`         | Deployment environment resource metadata.                                |
-| `LOGFIRE_CONSOLE`             | Set to `true` to also print spans to the console. Boolean-only.          |
-| `LOGFIRE_MIN_LEVEL`           | Minimum manual Logfire level to emit.                                    |
-| `LOGFIRE_SEND_TO_LOGFIRE`     | Set sending behavior. `true`, `false`, or `if-token-present`.            |
-| `LOGFIRE_DISTRIBUTED_TRACING` | Set to `false` to suppress extraction of incoming trace context.         |
-| `LOGFIRE_TRACE_SAMPLE_RATE`   | Head sampling rate from `0` to `1`.                                      |
-| `LOGFIRE_BASE_URL`            | Override the Logfire API base URL.                                       |
-| `LOGFIRE_CREDENTIALS_DIR`     | Directory containing `logfire_credentials.json` for local Node projects. |
-| `OTEL_SERVICE_NAME`           | Service name fallback when `LOGFIRE_SERVICE_NAME` is unset.              |
-| `OTEL_SERVICE_VERSION`        | Service version fallback when `LOGFIRE_SERVICE_VERSION` is unset.        |
+| Variable                      | Purpose                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ |
+| `LOGFIRE_TOKEN`               | Write token used to send traces, metrics, and logs to Logfire.                                   |
+| `LOGFIRE_API_KEY`             | API key for platform APIs such as remote managed variables.                                      |
+| `LOGFIRE_SERVICE_NAME`        | Service name resource metadata.                                                                  |
+| `LOGFIRE_SERVICE_VERSION`     | Service version resource metadata.                                                               |
+| `LOGFIRE_ENVIRONMENT`         | Deployment environment resource metadata.                                                        |
+| `LOGFIRE_CONSOLE`             | Set to `true` to also print spans to the console. Boolean-only.                                  |
+| `LOGFIRE_MIN_LEVEL`           | Minimum manual Logfire level to emit.                                                            |
+| `LOGFIRE_SEND_TO_LOGFIRE`     | Set sending behavior. `true`, `false`, or `if-token-present`.                                    |
+| `LOGFIRE_DISTRIBUTED_TRACING` | Set to `false` to suppress extraction of incoming trace context.                                 |
+| `LOGFIRE_TRACE_SAMPLE_RATE`   | Head sampling rate from `0` to `1`. An unreadable or out-of-range value throws at `configure()`. |
+| `LOGFIRE_BASE_URL`            | Override the Logfire API base URL.                                                               |
+| `LOGFIRE_CREDENTIALS_DIR`     | Directory containing `logfire_credentials.json` for local Node projects.                         |
+| `OTEL_SERVICE_NAME`           | Service name fallback when `LOGFIRE_SERVICE_NAME` is unset.                                      |
+| `OTEL_SERVICE_VERSION`        | Service version fallback when `LOGFIRE_SERVICE_VERSION` is unset.                                |
 
 For service metadata, precedence is code configuration, then `LOGFIRE_*`, then
 `OTEL_*`.
