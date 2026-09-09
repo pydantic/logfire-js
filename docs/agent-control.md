@@ -144,7 +144,7 @@ TypeScript adapters for **Mastra**, the **Vercel AI SDK**, and the **OpenAI Code
 
 Python users get the same contract from [`logfire`](https://logfire.pydantic.dev/docs/) and [`pydantic-ai-harness`](https://github.com/pydantic/pydantic-ai-harness). A config published from the Logfire UI drives every one of them, because the variable name, the baseline, and the parse are the same three rules in both languages.
 
-Writing an adapter for something else is five things and nothing else: construct an `AgentControl`, resolve once per run, call `applyInstructions` / `applyToolDefinitions` / `applySettings`, build a baseline with `buildBaseline`, and publish it. `reportUnmatched` is how an adapter puts a section its framework cannot honor at all — a published `model` where models cannot be switched — through the same policy as everything else, rather than dropping it in silence.
+Writing an adapter for something else is five things and nothing else: construct an `AgentControl`, resolve once per run, call `applyInstructions` / `applyToolDefinitions` / `applySettings`, build a baseline with `buildBaseline`, and publish it. `control.reportUnmatched(message)` is how an adapter puts a section its framework cannot honor at all — a published `model` where models cannot be switched — through the same policy as everything else, rather than dropping it in silence; `reportUnapplied(keys)` does the same for the settings keys it has no knob for.
 
 See `examples/node/agent-control.ts` for a complete runnable example against a local variables config.
 
