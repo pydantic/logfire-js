@@ -1,0 +1,71 @@
+{
+  "interactions": [
+    {
+      "method": "POST",
+      "url": "https://api.anthropic.com/v1/messages",
+      "request": {
+        "model": "claude-haiku-4-5",
+        "max_tokens": 6656,
+        "stop_sequences": ["STOP"],
+        "thinking": {
+          "type": "enabled",
+          "budget_tokens": 6400
+        },
+        "system": [
+          {
+            "type": "text",
+            "text": "You are a helpful assistant."
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What is the capital of France?"
+              }
+            ]
+          }
+        ]
+      },
+      "status": 200,
+      "response": {
+        "model": "claude-haiku-4-5-20251001",
+        "id": "msg_011CetjBiWbw5YgqeiBLUe65",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": "This is a straightforward factual question. The capital of France is Paris.",
+            "signature": "EsgCCpoBCBEYAipA7FzLnXgJFslHS7O6tCvLqF0BnHKbYuZusrA4RzKuAG26T6WjU8905eB+Q7Jcc8UwoQ3W77lWyw0wBTlqhpIDtDIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNDRhZTY3NmMtOTU4Zi00ZDY4LTkxMDgtZWFlOWRlN2IzNjZiqAGs1YfVBhIM9ljY3IWDNpcaRM1gGgyqsJB/gZaL23AzhswiMD7Gfkoq+WGIHIGJJ13uXNyc6vZDYiK8L3mzUEWRjPQWa/zf8nLgFNyMKWUm6u7NTSpbtZCeo7yGl0ht1yvU3jjLEtpixwmkNB8u0pBdbickAtRlFmghMz3WyP8T+uV797Wt/CDav1SzfvYsjdxsWhxaBib4xq1qOvOnlednzTBJ9J5IKUrr4z1+129aqRgB"
+          },
+          {
+            "type": "text",
+            "text": "The capital of France is Paris."
+          }
+        ],
+        "container": null,
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+          "input_tokens": 50,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          },
+          "output_tokens": 34,
+          "output_tokens_details": {
+            "thinking_tokens": 21
+          },
+          "service_tier": "standard",
+          "inference_geo": "not_available"
+        }
+      }
+    }
+  ]
+}
