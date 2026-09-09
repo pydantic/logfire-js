@@ -153,6 +153,34 @@ describe('instructions', () => {
     expect(warnings.messages).toContainEqual(expect.stringContaining('recomputes'))
   })
 
+  it('adds a block ahead of conversation content when every existing block was removed', async () => {
+    useLocalVariables(
+      publishedValue('agent__trailing_system', {
+        instructions: [{ id: 'system:0' }, { id: 'system:1' }, 'Escalate anything over $500.'],
+      })
+    )
+    const model = stubModel([textResult('ok')])
+    const front = { role: 'system' as const, content: 'You are a concise checkout assistant.' }
+    const behind = { role: 'system' as const, content: 'Tenant: acme.' }
+    await generateText({
+      // `messages` may carry a system message of its own, so the second declared block sits behind
+      // user content -- and once a managed value removes both there is no system run left to append
+      // an added block to.
+      model: agentControl({ model, name: 'trailing_system', label: 'production', codeInstructions: [front, behind] }),
+      instructions: front,
+      messages: [{ role: 'user', content: 'hi' }, behind],
+      allowSystemInMessages: true,
+    })
+
+    // Both declared blocks are gone and the added one is at the front -- not appended after the
+    // system message that sat behind the conversation, which would have put a managed instruction
+    // past the user's own turn.
+    expect(model.doGenerateCalls[0]?.prompt).toEqual([
+      { role: 'system', content: 'Escalate anything over $500.' },
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], providerOptions: undefined },
+    ])
+  })
+
   it('keeps both messages when two of them declare the same id', async () => {
     useLocalVariables(publishedValue('agent__duplicate_ids', { instructions: [{ id: 'policy', instructions: 'One policy.' }] }))
     const model = stubModel([textResult('ok')])

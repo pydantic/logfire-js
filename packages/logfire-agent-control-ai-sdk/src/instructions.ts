@@ -204,8 +204,9 @@ export class CodeInstructions {
  * them: immediately before the block that followed them, which is the end of the static group, so a
  * managed value never moves a provider's prompt-cache boundary.
  *
- * A prompt with no system message at all gets the added blocks at the front, since that is the only
- * place a system message can go.
+ * A prompt with no surviving system message -- because it carried none, or because a managed value
+ * removed every one of them -- gets the added blocks at the front, since that is the only place a
+ * system message can go.
  */
 export function writeSystemMessages(
   prompt: LanguageModelV4Prompt,
@@ -245,13 +246,15 @@ export function writeSystemMessages(
     survivors.set(slot.index, block.text)
   }
 
-  const lastSlot = slots.at(-1)
-  if (lastSlot === undefined) {
-    return [...pending.map(systemMessage), ...prompt]
-  }
-
+  // Where anything still pending goes: right after the last block that *survived*, which is the end
+  // of the system run this request will actually send. Going by the last slot instead would put an
+  // added block after a `system` message sitting behind user content -- and so past that content --
+  // whenever the trailing block was the one a managed value removed. With nothing surviving at all,
+  // because the prompt carried no system message or because a managed value removed every one of
+  // them, the front of the prompt is the only place a system message can go.
+  const lastSurvivor = Math.max(-1, ...survivors.keys())
   const slotIndices = new Set(slots.map((slot) => slot.index))
-  const result: LanguageModelV4Prompt = []
+  const result: LanguageModelV4Prompt = lastSurvivor === -1 ? pending.map(systemMessage) : []
   for (const [index, message] of prompt.entries()) {
     if (!slotIndices.has(index)) {
       result.push(message)
@@ -267,7 +270,7 @@ export function writeSystemMessages(
       result.push({ ...(message as SystemMessage), content: surviving })
     }
     // Anything the core added after the last surviving block belongs at the end of the system run.
-    if (index === lastSlot.index) {
+    if (index === lastSurvivor) {
       result.push(...pending.map(systemMessage))
     }
   }
