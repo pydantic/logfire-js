@@ -223,4 +223,48 @@ describe('one resolution, two hooks', () => {
     expect(resolution.label).toBeNull()
     expect(await useResolution(resolution, () => baggageFor('agent__checkout'))).toBe('<code_default>')
   })
+
+  describe('a pinned label with nothing published under it', () => {
+    // `Variable.get` does not keep a pinned label on the way down: with nothing published under it, it
+    // retries the read without the label and hands back whatever the rollout would have picked. A
+    // control pinned to `staging` came back holding `production`'s value, applied, under
+    // `reason: 'resolved'` and `label: 'production'` -- the one outcome pinning a label exists to
+    // prevent.
+    const staging = (): AgentControl => new AgentControl('checkout', { label: 'staging' })
+
+    it('runs on code rather than on another label’s value', async () => {
+      useLocalVariables(publishedValue('agent__checkout', { model: 'openai:gpt-5.6-sol' }, 'production'))
+      expect(await staging().resolution()).toEqual({
+        config: null,
+        variableName: 'agent__checkout',
+        label: null,
+        version: null,
+        reason: 'code_default',
+      })
+    })
+
+    it('says so once, because a deployment pinned that label expecting a value under it', async () => {
+      useLocalVariables(publishedValue('agent__checkout', { model: 'openai:gpt-5.6-sol' }, 'production'))
+      await staging().resolution()
+      await staging().resolution()
+      expect(warnings.messages).toEqual([
+        "Logfire managed variable 'agent__checkout' has nothing published under the pinned label " +
+          "'staging'; the project resolved 'production' instead, which this control does not apply. " +
+          'Running on the code-defined agent.',
+      ])
+    })
+
+    it('does not tag the run’s spans with the label whose value it refused', async () => {
+      useLocalVariables(publishedValue('agent__checkout', { model: 'openai:gpt-5.6-sol' }, 'production'))
+      expect(await staging().run(async () => baggageFor('agent__checkout'))).toBe('<code_default>')
+    })
+
+    it('still applies the value once that label has one', async () => {
+      useLocalVariables(publishedValue('agent__checkout', { model: 'openai:gpt-5.6-sol' }, 'staging'))
+      const resolution = await staging().resolution()
+      expect(resolution.config).toEqual({ model: 'openai:gpt-5.6-sol' })
+      expect(resolution.label).toBe('staging')
+      expect(warnings.messages).toEqual([])
+    })
+  })
 })

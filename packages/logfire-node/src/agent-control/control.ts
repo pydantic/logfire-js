@@ -310,7 +310,9 @@ export class AgentControl {
    * disagreeing.
    */
   async #resolve(): Promise<{ resolved: ResolvedVariable<AgentConfig>; resolution: Resolution }> {
-    const resolved: ResolvedVariable<AgentConfig> = await this.#variable.get(this.label === undefined ? {} : { label: this.label })
+    const resolved: ResolvedVariable<AgentConfig> = this.#pinned(
+      await this.#variable.get(this.label === undefined ? {} : { label: this.label })
+    )
     const applied = APPLIED_REASONS.has(resolved.reason)
     if (!applied && NOTEWORTHY_REASONS.has(resolved.reason)) {
       warnOnce(
@@ -328,6 +330,40 @@ export class AgentControl {
         reason: resolved.reason,
       },
     }
+  }
+
+  /**
+   * Hold a pinned label to what it says, discarding a value the SDK resolved under another one.
+   *
+   * A label with nothing published does not stay pinned on the way down: `Variable.get` retries the
+   * read without the label and hands back whatever the rollout would have picked, so a control pinned
+   * to `staging` comes back holding `production`'s value under `reason: 'resolved'` -- applied, and
+   * reported as `production` by a control the deployment pinned to `staging`.
+   *
+   * Pinning a label is a statement about which value this process runs, so another label's value is
+   * not this control's value. It is the "nothing targeted at this label" outcome named in
+   * `APPLIED_REASONS`, and it lands where every one of those lands: the agent runs on code. Returned
+   * as a fresh code-default `ResolvedVariable` rather than by nulling the flat fields, so `run`'s
+   * baggage says `<code_default>` too and a span cannot be tagged with a label whose value the run
+   * never saw.
+   *
+   * Worth one warning: unlike a variable nobody has configured, someone wrote this label into a
+   * deployment and expects the agent to be running what is under it.
+   */
+  #pinned(resolved: ResolvedVariable<AgentConfig>): ResolvedVariable<AgentConfig> {
+    if (this.label === undefined || resolved.label === undefined || resolved.label === this.label) {
+      return resolved
+    }
+    warnOnce(
+      `Logfire managed variable '${this.variableName}' has nothing published under the pinned label ` +
+        `'${this.label}'; the project resolved '${resolved.label}' instead, which this control does not ` +
+        'apply. Running on the code-defined agent.'
+    )
+    return new ResolvedVariable<AgentConfig>({
+      name: this.variableName,
+      reason: 'code_default',
+      value: {} as AgentConfig,
+    })
   }
 
   /**

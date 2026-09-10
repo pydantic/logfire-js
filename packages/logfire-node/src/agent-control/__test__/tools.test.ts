@@ -126,6 +126,68 @@ describe('applyToolDefinitions', () => {
       )
     })
 
+    it('is allowed when an earlier rename freed the name it takes', () => {
+      // A renamed tool stops answering to its code-side name, so that name is free for a later tool.
+      // Every code-side name starts out taken, so this used to be refused: `docs/search` was still in
+      // the namespace after the only tool holding it had renamed away.
+      const { tools, routes, unapplied } = applyToolDefinitions(codeTools.slice(1), {
+        tool_definitions: [
+          { name: 'search', new_name: 'lookup' },
+          { name: 'refund', new_name: 'search' },
+        ],
+      })
+      expect(tools.map((tool) => tool.name)).toEqual(['lookup', 'search'])
+      expect(unapplied).toEqual([])
+      expect(warnings.messages).toEqual([])
+      expect(routes).toEqual({ lookup: 'search', search: 'refund' })
+    })
+
+    it('does not free a name a second tool still answers to', () => {
+      // Under the default global scope `crm/search` and `docs/search` both advertise `search`, so
+      // `crm/search` renaming away does not free it. Bookkeeping that only remembered whether a name
+      // was taken, rather than how many tools held it, let `refund` take it here and advertised two
+      // tools as `search`.
+      // `refund` ahead of `docs/search`, so the second holder of `search` is not reached until after
+      // the rename that would take it.
+      const reordered = [codeTools[0], codeTools[2], codeTools[1]].filter((tool) => tool !== undefined)
+      const { tools, unapplied } = applyToolDefinitions(
+        reordered,
+        {
+          tool_definitions: [
+            { name: 'search', toolset: 'crm', new_name: 'lookup' },
+            { name: 'refund', new_name: 'search' },
+          ],
+        },
+        { onUnmatched: 'ignore' }
+      )
+      expect(tools.map((tool) => tool.name)).toEqual(['lookup', 'refund', 'search'])
+      expect(unapplied.map((entry) => [entry.reason, entry.tool])).toEqual([['rename-collision', 'refund']])
+    })
+
+    it('does not free the original name for a later tool when the rename was refused', () => {
+      // The refused rename keeps the original name, so it is still taken. Freeing it on the way to a
+      // collision would advertise two tools under it.
+      const { tools, unapplied } = applyToolDefinitions(
+        [
+          { name: 'a', parametersJsonSchema: { type: 'object', properties: {} } },
+          { name: 'b', parametersJsonSchema: { type: 'object', properties: {} } },
+          { name: 'c', parametersJsonSchema: { type: 'object', properties: {} } },
+        ],
+        {
+          tool_definitions: [
+            { name: 'a', new_name: 'b' },
+            { name: 'c', new_name: 'a' },
+          ],
+        },
+        { onUnmatched: 'ignore' }
+      )
+      expect(tools.map((tool) => tool.name)).toEqual(['a', 'b', 'c'])
+      expect(unapplied.map((entry) => [entry.reason, entry.tool])).toEqual([
+        ['rename-collision', 'a'],
+        ['rename-collision', 'c'],
+      ])
+    })
+
     it('is dropped when the collision is with a name an earlier rename produced', () => {
       const { tools } = applyToolDefinitions(codeTools, {
         tool_definitions: [
@@ -329,6 +391,31 @@ describe('a parameter patch that reaches nothing', () => {
           'that patch applies to nothing.',
       },
     ])
+  })
+
+  it('reports nothing for an entry that asks for no change at all', () => {
+    // `'no-patchable-schema'` is "no object schema to patch a description *into*", so an entry with no
+    // description is not a gap between Logfire and the agent -- and under `'error'` it used to fail
+    // the run for asking nothing. The same empty entry on a tool that does have properties was always
+    // silent, so this is the two paths agreeing.
+    const { unapplied } = applyToolDefinitions(
+      [{ name: 'raw', parametersJsonSchema: { type: 'string' } }],
+      { tool_definitions: [{ name: 'raw', parameters: { q: {} } }] },
+      { onUnmatched: 'error' }
+    )
+    expect(unapplied).toEqual([])
+    expect(warnings.messages).toEqual([])
+  })
+
+  it('still reports a parameter this deployment does not have, patch or no patch', () => {
+    // Not gated on a description: naming a parameter the tool has no property for is drift between
+    // what the Logfire editor showed and what the agent advertises, whichever fields the entry sets.
+    const { unapplied } = applyToolDefinitions(
+      [{ name: 'ok', parametersJsonSchema: { type: 'object', properties: { q: { type: 'string' } } } }],
+      { tool_definitions: [{ name: 'ok', parameters: { nope: {} } }] },
+      { onUnmatched: 'ignore' }
+    )
+    expect(unapplied.map((entry) => [entry.reason, entry.parameter])).toEqual([['unknown-parameter', 'nope']])
   })
 
   it('reports a parameter whose schema is not an object to patch a description into', () => {

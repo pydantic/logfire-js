@@ -189,6 +189,74 @@ describe('what reached nothing comes back structured', () => {
     expect(unapplied[1]?.message).not.toContain('for instruction block')
   })
 
+  describe('and the budget is the total across entries, not a per-entry allowance', () => {
+    // `parseInstructions` already charges a published value this way. A typed caller reaching
+    // `applyInstructions` directly went through a per-entry check only, so two entries each at the
+    // budget both applied and the request carried twice the limit.
+    const half = 'a'.repeat(MAX_MODEL_FACING_TEXT_LENGTH / 2)
+
+    it('refuses the entry that does not fit in what is left', () => {
+      const { blocks, unapplied } = applyInstructions(
+        codeBlocks,
+        {
+          instructions: [
+            { id: 'agent', instructions: half },
+            { id: 'toolset:crm', instructions: half },
+            { id: 'capability:clock', instructions: 'x' },
+          ],
+        },
+        { onUnmatched: 'ignore' }
+      )
+      // The first two fill the budget exactly; the third is refused for the budget, not for being
+      // dynamic, because it never gets that far.
+      expect(blocks[0]?.text).toBe(half)
+      expect(blocks[1]?.text).toBe(half)
+      expect(unapplied.map((entry) => [entry.reason, entry.instructionId])).toEqual([['dynamic-id', 'capability:clock']])
+
+      const over = applyInstructions(
+        codeBlocks,
+        {
+          instructions: [
+            { id: 'agent', instructions: half },
+            { id: 'toolset:crm', instructions: `${half}a` },
+          ],
+        },
+        { onUnmatched: 'ignore' }
+      )
+      expect(over.blocks[0]?.text).toBe(half)
+      expect(over.blocks[1]?.text).toBe('Use the CRM tools.')
+      expect(over.unapplied.map((entry) => [entry.reason, entry.instructionId])).toEqual([['oversized-text', 'toolset:crm']])
+      expect(over.unapplied[0]?.message).toContain('does not fit in the 32768 remaining')
+    })
+
+    it('charges added blocks against the same budget as replacements', () => {
+      const { blocks, unapplied } = applyInstructions(
+        codeBlocks,
+        { instructions: [{ id: 'agent', instructions: half }, half, 'one more'] },
+        { onUnmatched: 'ignore' }
+      )
+      expect(blocks.some((block) => block.text === 'one more')).toBe(false)
+      expect(unapplied.map((entry) => [entry.reason, entry.instructionId])).toEqual([['oversized-text', undefined]])
+    })
+
+    it('charges only the text that survives, so one refused entry does not shrink the budget', () => {
+      // The refused entry adds nothing to the request, so charging it would make the entries a value
+      // keeps depend on the ones it does not.
+      const { blocks, unapplied } = applyInstructions(
+        codeBlocks,
+        {
+          instructions: [
+            { id: 'agent', instructions: 'a'.repeat(MAX_MODEL_FACING_TEXT_LENGTH + 1) },
+            { id: 'toolset:crm', instructions: half },
+          ],
+        },
+        { onUnmatched: 'ignore' }
+      )
+      expect(blocks[1]?.text).toBe(half)
+      expect(unapplied.map((entry) => entry.reason)).toEqual(['oversized-text'])
+    })
+  })
+
   it('measures that budget in code points, the way the contract counts text', () => {
     // An astral character is one code point and two UTF-16 units; counting units would put this
     // exactly at twice the budget in one core and inside it in the other.

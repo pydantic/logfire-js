@@ -130,9 +130,14 @@ export interface ApplyToolDefinitionsOptions {
   /**
    * What to do with a published entry this request did not apply.
    *
-   * Every decision `applyToolDefinitions` makes goes through it, a dropped rename included: a rename
-   * refused for colliding is as much a gap between what Logfire shows and what the agent does as an
-   * override naming a tool that is not there.
+   * Every *request-level* decision goes through it -- an unknown tool, an unknown parameter, a
+   * parameter with no schema to patch, and a dropped rename alike -- so `'ignore'` silences all four
+   * and `'error'` fails on all four: a rename refused for colliding is as much a gap between what
+   * Logfire shows and what the agent does as an override naming a tool that is not there.
+   *
+   * Not what the *value* itself is malformed about. A config naming the same tool twice is the same
+   * on every request in the process, so it warns once from indexing and takes no policy, like the
+   * parser's other value-level warnings; see `UnappliedReason`.
    */
   onUnmatched?: OnUnmatched
   /**
@@ -272,7 +277,17 @@ function applyOverride(tool: ToolDef, override: ToolDefinitionOverride): { tool:
       patched.parametersJsonSchema = result.schema
       changed = true
     }
-    const missing = result.noProperties ? Object.keys(override.parameters) : result.unknown
+    // `'no-patchable-schema'` is "no object schema to patch a description *into*", so an entry
+    // carrying no description asks for nothing and is not a gap between Logfire and the agent worth
+    // reporting -- let alone worth failing the run under `onUnmatched: 'error'`. Gated the way
+    // `patchParameters` already gates its per-property `unpatchable` case. `unknown` is deliberately
+    // not gated: naming a parameter this deployment does not have is drift whether or not the entry
+    // goes on to patch it.
+    const missing = result.noProperties
+      ? Object.entries(override.parameters)
+          .filter(([, entry]) => entry.description !== undefined)
+          .map(([name]) => name)
+      : result.unknown
     const because = result.noProperties ? 'has no top-level parameters' : 'has no parameter of that name'
     const reason = result.noProperties ? 'no-patchable-schema' : 'unknown-parameter'
     for (const name of missing) {
@@ -290,15 +305,38 @@ function namespaceOf(tool: ToolDef, scope: CollisionScope): string | null {
   return scope === 'toolset' ? (tool.toolset ?? null) : null
 }
 
-/** The names already taken in one namespace, created empty the first time it is asked for. */
-function namesTakenIn(taken: Map<string | null, Set<string>>, namespace: string | null): Set<string> {
+/**
+ * How many tools answer to each name in one namespace, created empty the first time it is asked for.
+ *
+ * Counted rather than a `Set` because a name can genuinely be held twice: under the default global
+ * scope, `crm/search` and `docs/search` both advertise `search`. A rename has to put its code-side
+ * name back down before checking -- otherwise a tool cannot rename into a name an earlier rename
+ * freed -- and a set cannot tell "the only holder let go" from "one of two holders let go", which
+ * would let a later rename take a name another tool still answers to.
+ */
+function namesTakenIn(taken: Map<string | null, Map<string, number>>, namespace: string | null): Map<string, number> {
   const existing = taken.get(namespace)
   if (existing !== undefined) {
     return existing
   }
-  const names = new Set<string>()
+  const names = new Map<string, number>()
   taken.set(namespace, names)
   return names
+}
+
+/** Record one more tool answering to `name`. */
+function claim(names: Map<string, number>, name: string): void {
+  names.set(name, (names.get(name) ?? 0) + 1)
+}
+
+/** Record one fewer tool answering to `name`, dropping the key when the last holder lets go. */
+function release(names: Map<string, number>, name: string): void {
+  const count = (names.get(name) ?? 0) - 1
+  if (count > 0) {
+    names.set(name, count)
+  } else {
+    names.delete(name)
+  }
 }
 
 /**
@@ -339,9 +377,9 @@ export function applyToolDefinitions(
   // A namespace is the set of advertised names that compete: one for the whole request, or one per
   // toolset. Every code-side name starts out taken, so a rename onto a tool later in the list is a
   // collision rather than a name that is free until that tool is reached.
-  const taken = new Map<string | null, Set<string>>()
+  const taken = new Map<string | null, Map<string, number>>()
   for (const tool of tools) {
-    namesTakenIn(taken, namespaceOf(tool, collisionScope)).add(tool.name)
+    claim(namesTakenIn(taken, namespaceOf(tool, collisionScope)), tool.name)
   }
 
   const unapplied: UnappliedEntry[] = []
@@ -370,19 +408,29 @@ export function applyToolDefinitions(
       unapplied.push(...result.unapplied)
     }
     const names = namesTakenIn(taken, namespaceOf(tool, collisionScope))
-    if (patched.name !== tool.name && (names.has(patched.name) || reserved.has(patched.name))) {
-      unapplied.push({
-        reason: 'rename-collision',
-        toolset: tool.toolset ?? null,
-        tool: tool.name,
-        message:
-          `Managed tool definition override renames ${repr(tool.name)} to ${repr(patched.name)}, ` +
-          `which is already advertised by another tool; keeping the original name ${repr(tool.name)}.`,
-      })
-      patched = { ...patched, name: tool.name }
-    } else {
-      names.add(patched.name)
+    if (patched.name !== tool.name) {
+      // A renamed tool stops answering to its code-side name, so that name is free for a later tool to
+      // rename into and must not count against this rename either. Released for the check and claimed
+      // again below by whichever name wins: the new one on a rename that lands, the original on one
+      // that collides. Leaving it held would refuse the valid `a -> x` then `b -> a`; releasing it
+      // without claiming again would let a refused `a -> b` free `a` for a later `c -> a` and
+      // advertise two tools under it.
+      release(names, tool.name)
+      if (names.has(patched.name) || reserved.has(patched.name)) {
+        unapplied.push({
+          reason: 'rename-collision',
+          toolset: tool.toolset ?? null,
+          tool: tool.name,
+          message:
+            `Managed tool definition override renames ${repr(tool.name)} to ${repr(patched.name)}, ` +
+            `which is already advertised by another tool; keeping the original name ${repr(tool.name)}.`,
+        })
+        patched = { ...patched, name: tool.name }
+      }
+      claim(names, patched.name)
     }
+    // A tool that did not rename still holds the name the fill above claimed for it, so there is
+    // nothing to release and nothing to claim again.
     applied.push(patched)
     if (!Object.hasOwn(routes, patched.name)) {
       routes[patched.name] = tool.name

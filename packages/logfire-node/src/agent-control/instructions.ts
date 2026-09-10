@@ -67,15 +67,19 @@ export interface AppliedInstructions {
 }
 
 /** One entry whose text is past the budget, refused rather than truncated. */
-function oversized(text: string, instructionId?: string): UnappliedEntry {
+function oversized(text: string, remaining: number, instructionId?: string): UnappliedEntry {
   const where = instructionId === undefined ? '' : `for instruction block ${repr(instructionId)} `
+  const limit =
+    remaining === MAX_MODEL_FACING_TEXT_LENGTH
+      ? `past the ${String(MAX_MODEL_FACING_TEXT_LENGTH)}-character limit on what this section may add to `
+      : `which does not fit in the ${String(remaining)} remaining of the ${String(MAX_MODEL_FACING_TEXT_LENGTH)}-character ` +
+        `limit across all entries on what this section may add to `
   return {
     reason: 'oversized-text',
     ...(instructionId === undefined ? {} : { instructionId }),
     message:
       `Managed agent config publishes instruction text ${where}of ${String(codePointLength(text))} characters, ` +
-      `past the ${String(MAX_MODEL_FACING_TEXT_LENGTH)}-character limit on what one managed entry may add to ` +
-      `every model request; that entry is not applied.`,
+      `${limit}every model request; that entry is not applied.`,
   }
 }
 
@@ -178,6 +182,14 @@ export function applyInstructions(
   const unapplied: UnappliedEntry[] = []
   const matched = new Set<string>()
   const result: InstructionBlock[] = []
+  // The bound is on what this section adds to every model request, so it is the total across entries
+  // and not just each one: the same text written as one entry and as ten has to cost the same, or the
+  // limit means nothing. `parseInstructions` already charges a published value this way; a typed
+  // caller reaching `applyInstructions` directly -- an adapter with its own config, a test -- went
+  // through a per-entry check only, and two 65,536-character entries both applied. Only text that
+  // survives is charged, as in the parser: an entry refused here adds nothing to the request, so
+  // charging it would let one oversized entry shrink the budget for the good ones.
+  let remaining = MAX_MODEL_FACING_TEXT_LENGTH
   for (const block of blocks) {
     if (block.id === null || !overrides.has(block.id)) {
       result.push(block)
@@ -202,11 +214,13 @@ export function applyInstructions(
     if (replacement === null) {
       continue
     }
-    if (codePointLength(replacement) > MAX_MODEL_FACING_TEXT_LENGTH) {
-      unapplied.push(oversized(replacement, block.id))
+    const length = codePointLength(replacement)
+    if (length > remaining) {
+      unapplied.push(oversized(replacement, remaining, block.id))
       result.push(block)
       continue
     }
+    remaining -= length
     result.push({ ...block, text: replacement })
   }
   for (const id of overrides.keys()) {
@@ -223,9 +237,11 @@ export function applyInstructions(
 
   const additions: InstructionBlock[] = []
   for (const text of added) {
-    if (codePointLength(text) > MAX_MODEL_FACING_TEXT_LENGTH) {
-      unapplied.push(oversized(text))
+    const length = codePointLength(text)
+    if (length > remaining) {
+      unapplied.push(oversized(text, remaining))
     } else {
+      remaining -= length
       additions.push({ id: null, text, dynamic: false })
     }
   }
