@@ -123,6 +123,82 @@ function overridesById(config: AgentConfig): Map<string, string | null> {
 }
 
 /**
+ * Which entries do not fit the section's budget, decided in the order the value published them.
+ *
+ * The bound is on what this section adds to every model request, so it is the total across entries
+ * and not just each one: the same text written as one entry and as ten has to cost the same, or the
+ * limit means nothing. A typed caller reaching `applyInstructions` directly -- an adapter with its
+ * own config, a test -- used to go through a per-entry check alone, so two entries at the limit both
+ * applied and the request carried twice it.
+ *
+ * Charged in `instructionEntries` order rather than in the order the entries are *applied*, which is
+ * replacements first and then additions. `parseInstructions` charges a published value in published
+ * order, and the two have to agree: with a 40,000-character addition published before a
+ * 40,000-character replacement, block order keeps the replacement while the parser keeps the
+ * addition, so the same value would apply differently depending on whether it arrived as JSON or as
+ * a typed config. Hence a pass of its own before anything is applied.
+ *
+ * Only text that survives is charged, as in the parser: an entry refused for the budget adds nothing
+ * to the request, so charging it would let one oversized entry shrink the budget for the good ones
+ * and make the entries a value keeps depend on the ones it does not. An entry that reaches no block,
+ * addresses a dynamic one, or only removes text adds nothing either, so none of them is charged.
+ *
+ * Returns the remaining budget at the point each refused entry was measured, keyed by instruction id
+ * for a replacement and by index into `added` for an addition, so the message can say how much room
+ * was actually left rather than quoting the whole limit.
+ */
+function spendBudget(
+  blocks: readonly InstructionBlock[],
+  config: AgentConfig,
+  overrides: ReadonlyMap<string, string | null>
+): { ids: Map<string, number>; additions: Map<number, number> } {
+  const byId = new Map<string, InstructionBlock>()
+  for (const block of blocks) {
+    if (block.id !== null && !byId.has(block.id)) {
+      byId.set(block.id, block)
+    }
+  }
+  const ids = new Map<string, number>()
+  const additions = new Map<number, number>()
+  const charged = new Set<string>()
+  let remaining = MAX_MODEL_FACING_TEXT_LENGTH
+  let index = -1
+  for (const entry of instructionEntries(config)) {
+    let text: string
+    if (entry.id === undefined) {
+      if (typeof entry.instructions !== 'string') {
+        continue
+      }
+      index += 1
+      text = entry.instructions
+    } else {
+      // Only the first entry naming an id is applied, so only the first is charged.
+      if (charged.has(entry.id)) {
+        continue
+      }
+      charged.add(entry.id)
+      const replacement = overrides.get(entry.id)
+      const block = byId.get(entry.id)
+      if (typeof replacement !== 'string' || block === undefined || block.dynamic) {
+        continue
+      }
+      text = replacement
+    }
+    const length = codePointLength(text)
+    if (length > remaining) {
+      if (entry.id === undefined) {
+        additions.set(index, remaining)
+      } else {
+        ids.set(entry.id, remaining)
+      }
+      continue
+    }
+    remaining -= length
+  }
+  return { ids, additions }
+}
+
+/**
  * Where an added block goes: before the first dynamic block, or at the end when there is none.
  *
  * Frameworks that care about prompt caching group static text ahead of dynamic text so the provider
@@ -182,14 +258,7 @@ export function applyInstructions(
   const unapplied: UnappliedEntry[] = []
   const matched = new Set<string>()
   const result: InstructionBlock[] = []
-  // The bound is on what this section adds to every model request, so it is the total across entries
-  // and not just each one: the same text written as one entry and as ten has to cost the same, or the
-  // limit means nothing. `parseInstructions` already charges a published value this way; a typed
-  // caller reaching `applyInstructions` directly -- an adapter with its own config, a test -- went
-  // through a per-entry check only, and two 65,536-character entries both applied. Only text that
-  // survives is charged, as in the parser: an entry refused here adds nothing to the request, so
-  // charging it would let one oversized entry shrink the budget for the good ones.
-  let remaining = MAX_MODEL_FACING_TEXT_LENGTH
+  const budget = spendBudget(blocks, config, overrides)
   for (const block of blocks) {
     if (block.id === null || !overrides.has(block.id)) {
       result.push(block)
@@ -214,13 +283,12 @@ export function applyInstructions(
     if (replacement === null) {
       continue
     }
-    const length = codePointLength(replacement)
-    if (length > remaining) {
-      unapplied.push(oversized(replacement, remaining, block.id))
+    const refusedAt = budget.ids.get(block.id)
+    if (refusedAt !== undefined) {
+      unapplied.push(oversized(replacement, refusedAt, block.id))
       result.push(block)
       continue
     }
-    remaining -= length
     result.push({ ...block, text: replacement })
   }
   for (const id of overrides.keys()) {
@@ -236,15 +304,14 @@ export function applyInstructions(
   }
 
   const additions: InstructionBlock[] = []
-  for (const text of added) {
-    const length = codePointLength(text)
-    if (length > remaining) {
-      unapplied.push(oversized(text, remaining))
+  added.forEach((text, index) => {
+    const refusedAt = budget.additions.get(index)
+    if (refusedAt !== undefined) {
+      unapplied.push(oversized(text, refusedAt))
     } else {
-      remaining -= length
       additions.push({ id: null, text, dynamic: false })
     }
-  }
+  })
   result.splice(insertionIndex(result), 0, ...additions)
   return { blocks: result, unapplied: reportUnappliedEntries(onUnmatched, unapplied) }
 }

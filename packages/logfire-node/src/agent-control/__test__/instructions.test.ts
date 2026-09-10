@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vite-plus/test'
 
-import { applyInstructions, instructionEntries, MAX_MODEL_FACING_TEXT_LENGTH, UnmatchedConfigError } from '../index'
+import { applyInstructions, instructionEntries, MAX_MODEL_FACING_TEXT_LENGTH, parseAgentConfig, UnmatchedConfigError } from '../index'
 import type { InstructionBlock } from '../index'
 import { captureWarnings } from './helpers'
 
@@ -237,6 +237,25 @@ describe('what reached nothing comes back structured', () => {
       )
       expect(blocks.some((block) => block.text === 'one more')).toBe(false)
       expect(unapplied.map((entry) => [entry.reason, entry.instructionId])).toEqual([['oversized-text', undefined]])
+    })
+
+    it('charges in published order, so a typed config keeps what the same JSON would keep', () => {
+      // Entries are *applied* replacements-first and additions-second, but `parseInstructions`
+      // charges a published value in the order it was written. Charging in apply order made the two
+      // disagree about which entries survive: with a 40,000-character addition published before a
+      // 40,000-character replacement, the parser kept the addition and `applyInstructions` kept the
+      // replacement -- the same value applying differently depending on how it reached the SDK.
+      const big = 'a'.repeat(40_000)
+      const config = { instructions: [big, { id: 'agent', instructions: big }] }
+
+      const { blocks, unapplied } = applyInstructions(codeBlocks, config, { onUnmatched: 'ignore' })
+      expect(blocks.map((block) => block.text)).toContain(big)
+      expect(blocks[0]?.text).toBe('You are a checkout assistant.')
+      expect(unapplied.map((entry) => [entry.reason, entry.instructionId])).toEqual([['oversized-text', 'agent']])
+
+      // The parser, given the same value, keeps the same entry.
+      const parsed = parseAgentConfig(config)
+      expect(parsed.instructions).toEqual([{ instructions: big }])
     })
 
     it('charges only the text that survives, so one refused entry does not shrink the budget', () => {
