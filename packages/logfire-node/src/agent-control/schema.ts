@@ -226,10 +226,16 @@ export const AGENT_CONFIG_JSON_SCHEMA: JsonSchema = {
 /**
  * The SHA-256 of `AGENT_CONFIG_JSON_SCHEMA` in its canonical form.
  *
- * Canonical means the JSON with object keys sorted recursively and no whitespace, which is exactly
- * Python's `json.dumps(schema, sort_keys=True, separators=(',', ':'))`. Sorting is what makes the
- * digest comparable across SDKs: neither side's literal has to be written in the other's key order
- * for the two to be provably the same document.
+ * Canonical means the JSON with object keys sorted recursively, no whitespace, and non-ASCII
+ * characters emitted rather than escaped -- exactly Python's
+ * `json.dumps(schema, sort_keys=True, separators=(',', ':'), ensure_ascii=False)`, encoded as UTF-8,
+ * and exactly what `JSON.stringify` does here. Sorting is what makes the digest comparable across
+ * SDKs: neither side's literal has to be written in the other's key order for the two to be provably
+ * the same document. `ensure_ascii=False` is what makes it comparable across *languages*: `json.dumps`
+ * escapes non-ASCII by default and `JSON.stringify` does not, so the first non-ASCII character in a
+ * description or a sample value would otherwise give the two copies different digests for the same
+ * schema. The schema is ASCII today, so that clause is currently invisible on both sides; it is
+ * stated so it stays that way.
  *
  * It is a constant rather than something computed at import time so that a change to the schema
  * shows up as a diff on this line -- a value someone has to look at and update deliberately --
