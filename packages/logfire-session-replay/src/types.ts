@@ -111,10 +111,10 @@ export interface SessionReplayConfig {
    */
   headers?: () => MaybePromise<Record<string, string>>
   /**
-   * Convenience token source for callers that do not supply an Authorization
-   * header. Only restricted frontend application tokens are safe in browsers.
-   * When provided, the SDK adds `Authorization: Bearer ${token}` to replay
-   * uploads.
+   * Convenience token source. A non-empty value sets
+   * `Authorization: Bearer ${token}` and overrides an Authorization value
+   * returned by `headers`. Only restricted frontend application tokens are safe
+   * in browsers.
    */
   token?: string | (() => MaybePromise<string>)
   /**

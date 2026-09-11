@@ -69,6 +69,13 @@ should be attached to all telemetry from the configured provider:
 ```js
 import * as logfire from '@pydantic/logfire-browser'
 
+const frontendApplicationConfig = {
+  traceUrl: '<generated-regional-trace-url>',
+  traceExporterHeaders: () => ({
+    Authorization: 'Bearer <frontend-application-token>',
+  }),
+}
+
 logfire.configure({
   ...frontendApplicationConfig,
   resourceAttributes: {
