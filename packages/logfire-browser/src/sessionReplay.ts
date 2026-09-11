@@ -79,9 +79,9 @@ export interface BrowserSessionReplayOptions {
    */
   headers?: () => MaybePromise<Record<string, string>>
   /**
-   * Convenience token source. A non-empty value sets `Authorization: Bearer`
-   * and overrides an Authorization value returned by `headers`. Only restricted
-   * frontend application tokens are safe in browsers.
+   * Convenience token source. A non-empty value removes any case-insensitive
+   * Authorization entry returned by `headers`, then sets `Authorization: Bearer`.
+   * Only restricted frontend application tokens are safe in browsers.
    */
   token?: string | (() => MaybePromise<string>)
 
