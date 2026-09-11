@@ -240,7 +240,8 @@ export interface LogfireConfigOptions {
   traceExporterHeaders?: () => Record<string, string>
 
   /**
-   * The URL of your trace exporter proxy endpoint.
+   * Browser-safe trace exporter URL, either direct Logfire ingest with a
+   * restricted frontend application token or an application-owned proxy.
    */
   traceUrl: string
 }
@@ -288,7 +289,7 @@ function resolveBrowserMetricsOptions(metrics: LogfireConfigOptions['metrics']):
   }
 
   if (metrics.metricUrl === '') {
-    throw new Error('logfire-browser: metrics.metricUrl must be a non-empty browser-safe metrics proxy URL')
+    throw new Error('logfire-browser: metrics.metricUrl must be a non-empty browser-safe metrics URL')
   }
 
   return metrics

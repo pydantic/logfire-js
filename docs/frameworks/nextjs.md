@@ -80,45 +80,6 @@ logfire.configure({
 
 ### Optional Proxy
 
-Use a proxy route or middleware if you need to authenticate browser requests, restrict origins, or apply application-specific rate limits.
-
-For Next.js 16 and later, place this code in `proxy.ts` in the project root, or in `src/proxy.ts` if your app uses `src`.
-
-Store the write token in a server-only environment variable such as `LOGFIRE_TOKEN`. Do not use a `NEXT_PUBLIC_` variable for the token.
-
-```ts title="proxy.ts"
-import { NextRequest, NextResponse } from 'next/server'
-
-export default function proxy(request: NextRequest) {
-  const url = request.nextUrl.clone()
-
-  if (url.pathname === '/logfire-proxy/v1/traces') {
-    const requestHeaders = new Headers(request.headers)
-    requestHeaders.set('Authorization', process.env.LOGFIRE_TOKEN!)
-
-    return NextResponse.rewrite(new URL(process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ?? 'https://logfire-api.pydantic.dev/v1/traces'), {
-      request: {
-        headers: requestHeaders,
-      },
-    })
-  }
-}
-
-export const config = {
-  matcher: '/logfire-proxy/:path*',
-}
-```
-
-Then point `instrumentation-client.ts` at the proxy:
-
-```ts title="instrumentation-client.ts"
-import * as logfire from '@pydantic/logfire-browser'
-
-logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'nextjs-browser',
-  autoInstrumentations: true,
-})
-```
+The restricted frontend application token does not need a proxy to keep it secret. Preserve an existing telemetry proxy, or add one only when the application needs its own authentication, origin restrictions, or rate limits. Follow the [browser package's optional proxy guidance](../packages/browser.md#optional-backend-proxy) rather than treating a Next.js rewrite as part of normal setup.
 
 See `examples/nextjs` and `examples/nextjs-client-side-instrumentation` for working projects.

@@ -70,14 +70,16 @@ should be attached to all telemetry from the configured provider:
 import * as logfire from '@pydantic/logfire-browser'
 
 logfire.configure({
-  traceUrl: '/client-traces',
-  serviceName: 'browser-app',
+  ...frontendApplicationConfig,
   resourceAttributes: {
-    'service.namespace': 'my-company',
     'app.installation.id': installationId,
   },
 })
 ```
+
+`frontendApplicationConfig` is the generated `traceUrl` and restricted token
+configuration from **Project settings > Frontend applications**. That application
+owns the service name, namespace, and optional environment.
 
 Do not use resource attributes for per-request values or sensitive user data.
 First-class options such as `serviceName`, `serviceVersion`, and `environment`
@@ -245,7 +247,7 @@ warning. If the initial lazy load or observer startup fails, a later
 `configure()` call retries it.
 
 To emit native OpenTelemetry histogram metrics in parallel with those spans,
-configure a browser-safe metrics proxy and opt Web Vitals into metrics:
+configure a browser-safe metrics endpoint and opt Web Vitals into metrics:
 
 ```js
 logfire.configure({

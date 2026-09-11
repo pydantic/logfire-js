@@ -69,18 +69,18 @@ export interface BrowserSessionReplayOptions {
    */
   load: () => MaybePromise<BrowserSessionReplayModule>
   /**
-   * Replay upload endpoint. Browser apps should normally point this at a
-   * backend proxy.
+   * Browser-safe replay upload endpoint, either direct Logfire ingest or an
+   * application-owned proxy.
    */
   replayUrl: string
   /**
-   * Headers added to each replay upload, usually for authenticating to the
-   * caller's backend proxy.
+   * Headers added to each replay upload. Direct Logfire ingest uses the same
+   * restricted frontend application headers as traces and metrics.
    */
   headers?: () => MaybePromise<Record<string, string>>
   /**
-   * Advanced direct-ingest escape hatch. Prefer replayUrl + headers through a
-   * backend proxy for browser applications.
+   * Convenience token source for callers that do not supply an Authorization
+   * header. Only restricted frontend application tokens are safe in browsers.
    */
   token?: string | (() => MaybePromise<string>)
 
