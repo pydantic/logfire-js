@@ -38,7 +38,7 @@ const frontendApplicationConfig = {
 logfire.configure({
   ...frontendApplicationConfig,
   resourceAttributes: {
-    'app.installation.id': installationId,
+    'app.installation.id': '<stable-installation-id>',
   },
 })
 ```
