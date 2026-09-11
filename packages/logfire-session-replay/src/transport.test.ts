@@ -281,7 +281,11 @@ describe('ReplayTransport full mode', () => {
     transport.add(fullSnapshot)
     await transport.flush()
 
-    expect(calls[0]!.init.headers).toMatchObject({ authorization: 'Bearer caller-token' })
+    expect(calls[0]!.init.headers).toEqual({
+      authorization: 'Bearer caller-token',
+      'Content-Type': 'application/json',
+      'Content-Encoding': 'gzip',
+    })
   })
 
   it('uses getDistinctId over static distinctId when provided', async () => {
