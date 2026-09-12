@@ -6,18 +6,44 @@ type CacheFns = Cache[keyof Cache]
 
 const tracer = trace.getTracer('cache instrumentation')
 
-function sanitiseURL(url: string): string {
-  const u = new URL(url)
-  return `${u.protocol}//${u.host}${u.pathname}${u.search}`
+function sanitiseURL(url: string): string | undefined {
+  try {
+    const u = new URL(url)
+    return `${u.protocol}//${u.host}${u.pathname}${u.search}`
+  } catch {
+    // Never let attribute building break the caller's cache call.
+    return undefined
+  }
+}
+
+/**
+ * The Cache methods accept `RequestInfo | URL`, so the key can be a `Request`, a bare string, or a
+ * `URL`, and only the first of those carries a `url` property.
+ */
+function cacheKeyUrl(key: unknown): string | undefined {
+  if (typeof key === 'string') {
+    return sanitiseURL(key)
+  }
+  if (key instanceof URL) {
+    return sanitiseURL(key.href)
+  }
+  if (typeof key === 'object' && key !== null) {
+    const requestUrl = (key as { url?: unknown }).url
+    if (typeof requestUrl === 'string') {
+      return sanitiseURL(requestUrl)
+    }
+  }
+  return undefined
 }
 
 function instrumentFunction<T extends CacheFns>(fn: T, cacheName: string, op: string): T {
   const handler: ProxyHandler<typeof fn> = {
     async apply(target, thisArg, argArray) {
+      const url = cacheKeyUrl(argArray[0])
       const attributes = {
         'cache.name': cacheName,
         'cache.operation': op,
-        ...(argArray[0].url !== undefined ? { 'http.url': sanitiseURL(argArray[0].url) } : {}),
+        ...(url !== undefined ? { 'http.url': url } : {}),
       }
       const options: SpanOptions = { kind: SpanKind.CLIENT, attributes }
       return tracer.startActiveSpan(`Cache ${cacheName} ${op}`, options, async (span) => {
