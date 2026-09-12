@@ -427,6 +427,48 @@ describe('report-level evaluators land on the experiment span', () => {
     expect(result.analyses).toEqual([{ title: 'Async Result', type: 'scalar', value: 42 }])
   })
 
+  it('ConfusionMatrixEvaluator labels an output that JSON.stringify cannot serialize', () => {
+    // `safeStringify` ended on a bare `JSON.stringify`, which throws on a BigInt at any depth.
+    // `runEvaluators` catches that, so the whole analysis was replaced by a report-evaluator
+    // failure rather than the matrix the user asked for.
+    const evaluator = new ConfusionMatrixEvaluator({ expected: { from: 'expected_output' }, predicted: { from: 'output' } })
+    const analyse = (output: unknown): unknown => {
+      const report: EvaluationReport = {
+        analyses: [],
+        cases: [makeReportCase({ expected_output: 'A', output } as never)],
+        failures: [],
+        name: 'bigint-label',
+        report_evaluator_failures: [],
+        span_id: null,
+        trace_id: null,
+      }
+      return evaluator.evaluate({ cases: report.cases, name: report.name, report })
+    }
+
+    // A top-level BigInt reads as the bare exact value, the way a number or boolean label does,
+    // not as the quoted `"9007199254740993"` a JSON round trip would give.
+    expect(analyse(9007199254740993n)).toEqual({
+      class_labels: ['9007199254740993', 'A'],
+      matrix: [
+        [0, 0],
+        [1, 0],
+      ],
+      title: 'Confusion Matrix',
+      type: 'confusion_matrix',
+    })
+
+    // Nested, the sibling fields survive instead of the whole object being lost.
+    expect(analyse({ model: 'gpt', tokens: 9007199254740993n })).toEqual({
+      class_labels: ['A', '{"model":"gpt","tokens":"9007199254740993"}'],
+      matrix: [
+        [0, 1],
+        [0, 0],
+      ],
+      title: 'Confusion Matrix',
+      type: 'confusion_matrix',
+    })
+  })
+
   it("ConfusionMatrixEvaluator with from='labels' requires a key", () => {
     const evaluator = new ConfusionMatrixEvaluator({
       expected: { from: 'expected_output' },
