@@ -42,5 +42,5 @@ export type { AppliedTools, ApplyToolDefinitionsOptions, CollisionScope, ToolDef
 
 export { isRepresentableTimeout, MAX_TIMEOUT_MILLISECONDS, MAX_TIMEOUT_SECONDS, toMilliseconds } from './units'
 
-export { droppedByProvider, UnmatchedConfigError, warnOnce } from './warnings'
+export { droppedByProvider, reportIssues, UnmatchedConfigError, warnOnce } from './warnings'
 export type { ApplyIssue, ApplyIssueReason, OnUnmatched } from './warnings'

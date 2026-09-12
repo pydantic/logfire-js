@@ -283,6 +283,11 @@ export function droppedByProvider(setting: string, detail: string): ApplyIssue {
  * `'error'` throws after every section has been planned, naming all of it, rather than on the first
  * entry of the first section -- which used to mean the strictest policy reported the least.
  *
+ * `AgentControl.report` is this with the policy read off the control, and is what an adapter built on
+ * one should call. This is the same thing for an adapter that carries the policy itself -- one whose
+ * framework has its own notion of a managed capability, and so never holds an `AgentControl` to ask.
+ * Either way, an adapter with its own error type translates it without restating a message.
+ *
  * Throws `UnmatchedConfigError`, naming every issue, when `policy` is `'error'`.
  */
 export function reportIssues(policy: OnUnmatched, issues: readonly ApplyIssue[]): void {

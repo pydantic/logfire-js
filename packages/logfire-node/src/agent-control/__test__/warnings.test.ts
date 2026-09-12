@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vite-plus/test'
 
-import { UnmatchedConfigError } from '../index'
-import { droppedByProvider, repr, reportIssues, reportUnmatched, warnOnce } from '../warnings'
+import { droppedByProvider, reportIssues as reportIssuesFromIndex, UnmatchedConfigError } from '../index'
+import { droppedByProvider as droppedByProviderLocal, repr, reportIssues, reportUnmatched, warnOnce } from '../warnings'
 import type { ApplyIssue } from '../warnings'
 import { captureWarnings } from './helpers'
 
@@ -73,6 +73,13 @@ describe('reportIssues', () => {
     reportIssues('ignore', [first])
     reportIssues('error', [])
     expect(warnings.messages).toEqual([])
+  })
+
+  it('is part of the package, for an adapter that carries the policy and holds no control', () => {
+    // The same pair the Python core exports, so an adapter author reading either one finds the same
+    // two ways in: the method when there is a control to ask, the function when there is not.
+    expect(reportIssuesFromIndex).toBe(reportIssues)
+    expect(droppedByProvider).toBe(droppedByProviderLocal)
   })
 })
 
