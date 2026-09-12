@@ -129,13 +129,13 @@ function warnedBy(run: () => void): string[] {
  * failure prints.
  */
 const SPEC_SHA256: Record<string, string> = {
-  'README.md': '41b9ed72b6a4bac856fcaeece17278cae979627172bb95d880280dc6c1fb6bf5',
+  'README.md': 'e98e744cf2e55fde90a2882371288cec9daa584b268f36ec94e0147d8c295e58',
   'agent-name.json': '431a25d2745cc211d6489bb9d7ca1e2c47a6e3bbd8436125cf7e123c23c453df',
   'baseline.json': '589fb0f3ef6a3fd0a8d24fe91a105cb5feb3c5a33bbf23b180fc827d19dfab94',
   'config-parsing.json': '6e48cbef934dcc9950e3c33c2db7c83ff80df28171bdffb5c576d5fa36e41515',
   'instructions-apply.json': '053111c38a39c1b807673df103919ff10627072c8c6a9b7bc6acaca552babcef',
   'merge.json': 'f933baa835bf0f8f25635fe917ec5b44b60499b58c5a65830f0b910a6854e2eb',
-  'settings-apply.json': 'b4f874485892c0f0bb50c385acc2a0da4ff72adecb95db36a23aaf2f30281b1c',
+  'settings-apply.json': '65ff72964b022b895e5cf6749787bf29df68aeeeba04084dc082588e8dfdc836',
   'tools-apply.json': '64e27b93c29e66f7f6d387fe68a39483a535dbcd2145453c4c12c750ea5fa2ef',
 }
 
@@ -259,7 +259,7 @@ describe('spec/tools-apply.json', () => {
 describe('spec/settings-apply.json', () => {
   it('applies every published settings section the way both cores apply it', () => {
     const all = vectors('settings-apply.json')
-    expect(all).toHaveLength(8)
+    expect(all).toHaveLength(9)
     for (const vector of all) {
       const input = expandRepeats(vector.input) as { config: unknown; support?: unknown }
       const expected = expandRepeats(vector.expected) as { settings?: unknown; issues: unknown[] }

@@ -104,6 +104,9 @@ function sectionIssues(config: AgentConfig, support: AgentSupport | null | undef
  * - a top-level key this release has no section for (`'unknown-section'`);
  * - a section this adapter declared it cannot apply (`'unsupported-section'`).
  *
+ * An adapter that declares it cannot apply the `settings` section at all gets an empty patch and the
+ * one `'unsupported-section'` issue, whatever its `AgentSupport.settings` says.
+ *
  * The last two are about the whole config rather than about settings, and they are here because this
  * is the helper every adapter can call with the whole config and its own support declaration,
  * whatever hooks its framework gives it: an adapter that never calls `applyInstructions` would
@@ -117,7 +120,11 @@ export function applySettings(config: AgentConfig, options: ApplySettingsOptions
   const { support } = options
   const issues = sectionIssues(config, support)
   const settings = config.settings
-  if (settings === undefined) {
+  if (settings === undefined || (support !== undefined && support !== null && !support.sections.includes('settings'))) {
+    // An adapter that declared it cannot apply the section has already been told so, once, by
+    // `sectionIssues`. Handing it the patch anyway would be this function contradicting that
+    // declaration, and reporting every key in it a second time would bury the one report that
+    // matters under a list of keys the adapter was never going to reach.
     return { settings: {}, issues }
   }
   for (const name of settings[UNRECOGNIZED_SETTINGS] ?? []) {

@@ -87,6 +87,16 @@ describe('applySettings', () => {
       expect(issues[1]?.message).toContain("publishes a 'model' section, which this agent framework has no way to apply")
     })
 
+    it('yields no patch for a settings section it cannot apply, whatever keys it lists', () => {
+      // Handing back the patch anyway would be this helper contradicting the declaration it was
+      // just given, and reporting each key again would bury the one report that matters.
+      const config = parseAgentConfig({ settings: { temperature: 0.4 } })
+      const support: AgentSupport = { sections: ['instructions'], settings: ['temperature'] }
+      const { settings, issues } = applySettings(config, { support })
+      expect(settings).toEqual({})
+      expect(issues.map((issue) => [issue.section, issue.reason])).toEqual([['settings', 'unsupported-section']])
+    })
+
     it('says nothing about a section the adapter declares', () => {
       const config = parseAgentConfig({ model: 'openai:gpt-5.6-sol' })
       expect(applySettings(config, { support: { sections: ['model'] } }).issues).toEqual([])
