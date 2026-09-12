@@ -111,4 +111,23 @@ describe('User-Agent', () => {
       method: 'POST',
     })
   })
+
+  it('exportTailEventsToLogfire exports every trace entry in the batch', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response('ok'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    vi.resetModules()
+    const { exportTailEventsToLogfire } = await import('./exportTailEventsToLogfire')
+
+    // A tail batch carries one payload per producing invocation, and a single
+    // invocation can flush more than once.
+    const events = [
+      { logs: [{ message: [{ resourceSpans: ['first'] }] }, { message: [{ resourceSpans: ['second'] }] }] },
+      { logs: [{ message: [{ resourceSpans: ['third'] }] }] },
+    ]
+    await exportTailEventsToLogfire(events, { LOGFIRE_TOKEN: 'test-token' })
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock.mock.lastCall?.[1]?.body).toBe(JSON.stringify({ resourceSpans: ['first', 'second', 'third'] }))
+  })
 })
