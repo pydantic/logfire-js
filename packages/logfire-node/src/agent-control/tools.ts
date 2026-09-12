@@ -8,8 +8,8 @@
 
 import type { AgentConfig, ParameterOverride, ToolDefinitionOverride } from './config'
 import type { JsonSchema } from './schema'
-import { reportUnappliedEntries, repr, warnOnce } from './warnings'
-import type { OnUnmatched, UnappliedEntry, UnappliedReason } from './warnings'
+import { repr } from './warnings'
+import type { ApplyIssue, ApplyIssueReason } from './warnings'
 
 /**
  * One tool's LLM-facing definition as a framework advertises it, and as this package hands it back.
@@ -118,28 +118,15 @@ export interface AppliedTools {
    */
   reverse: ReadonlyMap<ToolKey, string>
   /**
-   * Every published tool entry, or part of one, this request did not apply; see `UnappliedEntry`.
+   * Every published tool entry, or part of one, this request did not apply; see `ApplyIssue`.
    *
-   * Already reported under the caller's `onUnmatched` policy before it is returned.
+   * Reported by nothing here; hand them to `AgentControl.report` with the rest.
    */
-  unapplied: readonly UnappliedEntry[]
+  issues: readonly ApplyIssue[]
 }
 
 /** Options for `applyToolDefinitions`. */
 export interface ApplyToolDefinitionsOptions {
-  /**
-   * What to do with a published entry this request did not apply.
-   *
-   * Every *request-level* decision goes through it -- an unknown tool, an unknown parameter, a
-   * parameter with no schema to patch, and a dropped rename alike -- so `'ignore'` silences all four
-   * and `'error'` fails on all four: a rename refused for colliding is as much a gap between what
-   * Logfire shows and what the agent does as an override naming a tool that is not there.
-   *
-   * Not what the *value* itself is malformed about. A config naming the same tool twice is the same
-   * on every request in the process, so it warns once from indexing and takes no policy, like the
-   * parser's other value-level warnings; see `UnappliedReason`.
-   */
-  onUnmatched?: OnUnmatched
   /**
    * Advertised names this adapter needs kept free.
    *
@@ -158,18 +145,33 @@ export interface ApplyToolDefinitionsOptions {
  *
  * An entry without a `toolset` is keyed under `null`, so the same `name` can carry one unqualified
  * entry and one per toolset side by side; only two entries with the same pair collide.
+ *
+ * The duplicates come back rather than being warned from here: it is an apply-time decision about a
+ * value, so it belongs under the caller's `onUnmatched` policy like every other one -- warning
+ * directly, as this used to, meant `'ignore'` still warned and `'error'` did not throw.
  */
-function overridesByKey(config: AgentConfig): Map<ToolKey, ToolDefinitionOverride> {
+function overridesByKey(config: AgentConfig): {
+  overrides: Map<ToolKey, ToolDefinitionOverride>
+  duplicates: ApplyIssue[]
+} {
   const overrides = new Map<ToolKey, ToolDefinitionOverride>()
+  const duplicates: ApplyIssue[] = []
   for (const override of config.tool_definitions ?? []) {
     const key = toolKey(override.toolset, override.name)
     if (overrides.has(key)) {
-      warnOnce(`Managed agent config names ${describeToolKey(key)} more than once; keeping the first entry and ignoring the rest.`)
+      const [toolset, name] = splitToolKey(key)
+      duplicates.push({
+        section: 'tool_definitions',
+        reason: 'duplicate-entry',
+        toolset,
+        tool: name,
+        message: `Managed agent config names ${describeToolKey(key)} more than once; keeping the first entry and ignoring the rest.`,
+      })
       continue
     }
     overrides.set(key, override)
   }
-  return overrides
+  return { overrides, duplicates }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -177,12 +179,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function parameterEntry(
-  reason: Extract<UnappliedReason, 'unknown-parameter' | 'no-patchable-schema'>,
+  reason: Extract<ApplyIssueReason, 'unknown-parameter' | 'no-patchable-schema'>,
   tool: ToolDef,
   parameter: string,
   because: string
-): UnappliedEntry {
+): ApplyIssue {
   return {
+    section: 'tool_definitions',
     reason,
     toolset: tool.toolset ?? null,
     tool: tool.name,
@@ -252,16 +255,16 @@ function patchParameters(schema: JsonSchema, parameters: Record<string, Paramete
  *
  * Returns the original object when nothing changed, so an adapter that compares by identity can tell
  * a patched schema from an untouched one. Reporting is the caller's here: `applyToolDefinitions` is
- * what turns a patch that reached nothing into an `UnappliedEntry` under a policy.
+ * what turns a patch that reached nothing into an `ApplyIssue` under a policy.
  */
 export function withParameterDescriptions(schema: JsonSchema, parameters: Record<string, ParameterOverride>): JsonSchema {
   return patchParameters(schema, parameters).schema
 }
 
 /** Apply the LLM-facing parts of one override, returning the original definition for a no-op. */
-function applyOverride(tool: ToolDef, override: ToolDefinitionOverride): { tool: ToolDef; unapplied: UnappliedEntry[] } {
+function applyOverride(tool: ToolDef, override: ToolDefinitionOverride): { tool: ToolDef; issues: ApplyIssue[] } {
   const patched: ToolDef = { ...tool }
-  const unapplied: UnappliedEntry[] = []
+  const issues: ApplyIssue[] = []
   let changed = false
   if (override.new_name !== undefined && override.new_name !== tool.name) {
     patched.name = override.new_name
@@ -291,13 +294,13 @@ function applyOverride(tool: ToolDef, override: ToolDefinitionOverride): { tool:
     const because = result.noProperties ? 'has no top-level parameters' : 'has no parameter of that name'
     const reason = result.noProperties ? 'no-patchable-schema' : 'unknown-parameter'
     for (const name of missing) {
-      unapplied.push(parameterEntry(reason, tool, name, because))
+      issues.push(parameterEntry(reason, tool, name, because))
     }
     for (const name of result.unpatchable) {
-      unapplied.push(parameterEntry('no-patchable-schema', tool, name, 'describes that parameter with no schema object'))
+      issues.push(parameterEntry('no-patchable-schema', tool, name, 'describes that parameter with no schema object'))
     }
   }
-  return { tool: changed ? patched : tool, unapplied }
+  return { tool: changed ? patched : tool, issues }
 }
 
 /** The set of advertised names this tool competes in; see `CollisionScope`. */
@@ -362,17 +365,20 @@ function release(names: Map<string, number>, name: string): void {
  *   is dynamic: a framework can advertise different tools from one step to the next, and a report
  *   from one listing is a report about that listing.
  *
- * Every one of those decisions goes through `onUnmatched` and comes back on `unapplied`.
+ * - Two overrides naming one `(toolset, name)` keep the first and report the rest
+ *   (`'duplicate-entry'`).
+ *
+ * Every one of those decisions comes back as an `ApplyIssue` on `issues`, and is reported by nothing
+ * here: hand them to `AgentControl.report` along with the other sections'.
  */
 export function applyToolDefinitions(
   tools: readonly ToolDef[],
   config: AgentConfig,
   options: ApplyToolDefinitionsOptions = {}
 ): AppliedTools {
-  const onUnmatched = options.onUnmatched ?? 'warn'
   const collisionScope = options.collisionScope ?? 'global'
   const reserved = new Set(options.reserved ?? [])
-  const overrides = overridesByKey(config)
+  const { overrides, duplicates } = overridesByKey(config)
 
   // A namespace is the set of advertised names that compete: one for the whole request, or one per
   // toolset. Every code-side name starts out taken, so a rename onto a tool later in the list is a
@@ -382,7 +388,7 @@ export function applyToolDefinitions(
     claim(namesTakenIn(taken, namespaceOf(tool, collisionScope)), tool.name)
   }
 
-  const unapplied: UnappliedEntry[] = []
+  const issues: ApplyIssue[] = [...duplicates]
   const matched = new Set<ToolKey>()
   const applied: ToolDef[] = []
   // Null-prototype, so `'constructor' in routes` is a question about this request's tools rather than
@@ -405,7 +411,7 @@ export function applyToolDefinitions(
     if (override !== undefined) {
       const result = applyOverride(tool, override)
       patched = result.tool
-      unapplied.push(...result.unapplied)
+      issues.push(...result.issues)
     }
     const names = namesTakenIn(taken, namespaceOf(tool, collisionScope))
     if (patched.name !== tool.name) {
@@ -417,7 +423,8 @@ export function applyToolDefinitions(
       // advertise two tools under it.
       release(names, tool.name)
       if (names.has(patched.name) || reserved.has(patched.name)) {
-        unapplied.push({
+        issues.push({
+          section: 'tool_definitions',
           reason: 'rename-collision',
           toolset: tool.toolset ?? null,
           tool: tool.name,
@@ -444,7 +451,8 @@ export function applyToolDefinitions(
       continue
     }
     const [toolset, name] = splitToolKey(key)
-    unapplied.push({
+    issues.push({
+      section: 'tool_definitions',
       reason: 'unknown-tool',
       toolset,
       tool: name,
@@ -453,5 +461,5 @@ export function applyToolDefinitions(
         'this request; that override applies to nothing.',
     })
   }
-  return { tools: applied, routes, forward, reverse, unapplied: reportUnappliedEntries(onUnmatched, unapplied) }
+  return { tools: applied, routes, forward, reverse, issues }
 }

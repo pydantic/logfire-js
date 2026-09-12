@@ -39,6 +39,22 @@ import { repr, warnOnce } from './warnings'
 export const UNRECOGNIZED_SETTINGS: unique symbol = Symbol('logfire.agentControl.unrecognizedSettings')
 
 /**
+ * Where the top-level keys a published value asked for and this release has no section for are kept.
+ *
+ * The same mechanism as `UNRECOGNIZED_SETTINGS`, one level up, and for the same reason: ignoring a
+ * key this release has no section for is what lets a future `mcp_servers` or `skills` section be
+ * published against an older SDK, and saying so is what stops the first person who does it from
+ * getting a silently degraded agent. A symbol, so a parsed config still serializes back to exactly
+ * the contract.
+ *
+ * Not exported from the package index: an adapter gets these reported for it by `applySettings`.
+ */
+export const UNRECOGNIZED_SECTIONS: unique symbol = Symbol('logfire.agentControl.unrecognizedSections')
+
+/** The top-level keys this release has a section for; everything else is remembered and reported. */
+const SECTION_KEYS: readonly string[] = ['instructions', 'model', 'settings', 'tool_definitions']
+
+/**
  * Canonical model settings managed as one section of an `AgentConfig`.
  *
  * The keys are the contract: the settings every framework Agent Control drives has a knob for, under
@@ -153,6 +169,8 @@ export interface AgentConfig {
   settings?: AgentConfigSettings
   /** LLM-facing overlays, each naming the tool it patches; see `ToolDefinitionOverride`. */
   tool_definitions?: ToolDefinitionOverride[]
+  /** The published top-level keys this release has no section for, in the order they were written. */
+  [UNRECOGNIZED_SECTIONS]?: readonly string[]
 }
 
 /**
@@ -536,6 +554,13 @@ export function parseAgentConfig(data: unknown): AgentConfig {
   const toolDefinitions = parseToolDefinitions(data['tool_definitions'])
   if (toolDefinitions !== undefined) {
     config.tool_definitions = toolDefinitions
+  }
+  const unrecognized = Object.keys(data).filter((name) => !SECTION_KEYS.includes(name))
+  if (unrecognized.length > 0) {
+    Object.defineProperty(config, UNRECOGNIZED_SECTIONS, {
+      value: Object.freeze(unrecognized),
+      enumerable: false,
+    })
   }
   return config
 }

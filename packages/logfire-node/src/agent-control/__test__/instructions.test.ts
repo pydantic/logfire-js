@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vite-plus/test'
 
-import { applyInstructions, instructionEntries, MAX_MODEL_FACING_TEXT_LENGTH, parseAgentConfig, UnmatchedConfigError } from '../index'
+import { applyInstructions, instructionEntries, MAX_MODEL_FACING_TEXT_LENGTH, parseAgentConfig } from '../index'
 import type { InstructionBlock } from '../index'
 import { captureWarnings } from './helpers'
 
@@ -91,62 +91,60 @@ describe('applyInstructions', () => {
   })
 
   describe('a dynamic block cannot be addressed', () => {
-    it('warns and keeps what the code produces', () => {
-      const { blocks: result } = applyInstructions(codeBlocks, {
+    it('keeps what the code produces and says which entry it refused', () => {
+      const { blocks: result, issues } = applyInstructions(codeBlocks, {
         instructions: [{ id: 'capability:clock', instructions: 'Today is never.' }],
       })
       expect(result).toEqual(codeBlocks)
-      expect(warnings.messages).toHaveLength(1)
-      expect(warnings.messages[0]).toContain("addresses instruction block 'capability:clock', which the agent recomputes")
+      expect(issues.map((issue) => [issue.section, issue.reason, issue.instructionId])).toEqual([
+        ['instructions', 'dynamic-id', 'capability:clock'],
+      ])
+      expect(issues[0]?.message).toContain("addresses instruction block 'capability:clock', which the agent recomputes")
     })
 
     it('is not reported a second time as a key nothing carries', () => {
-      applyInstructions(codeBlocks, { instructions: [{ id: 'capability:clock' }] })
-      expect(warnings.messages).toHaveLength(1)
-      expect(warnings.messages[0]).not.toContain('does not assemble')
+      const { issues } = applyInstructions(codeBlocks, { instructions: [{ id: 'capability:clock' }] })
+      expect(issues).toHaveLength(1)
+      expect(issues[0]?.message).not.toContain('does not assemble')
     })
   })
 
-  describe('onUnmatched', () => {
-    const config = { instructions: [{ id: 'toolset:gone', instructions: 'Never seen.' }] }
-
-    it("warns by default, once per process, because another deployment's config may be right", () => {
-      applyInstructions(codeBlocks, config)
-      applyInstructions(codeBlocks, config)
-      expect(warnings.messages).toEqual([
-        "Managed agent config addresses instruction block 'toolset:gone', which this request does not " +
-          'assemble; that entry applies to nothing.',
-      ])
-    })
-
-    it('says nothing under ignore', () => {
-      applyInstructions(codeBlocks, config, { onUnmatched: 'ignore' })
-      expect(warnings.messages).toEqual([])
-    })
-
-    it('fails the run under error, with the message the warning would have carried', () => {
-      expect(() => applyInstructions(codeBlocks, config, { onUnmatched: 'error' })).toThrow(UnmatchedConfigError)
-      expect(() => applyInstructions(codeBlocks, config, { onUnmatched: 'error' })).toThrow(
-        /addresses instruction block 'toolset:gone', which this request does not assemble/u
-      )
-    })
-
-    it('governs the dynamic case too', () => {
-      expect(() => applyInstructions(codeBlocks, { instructions: [{ id: 'capability:clock' }] }, { onUnmatched: 'error' })).toThrow(
-        /which the agent recomputes per request/u
-      )
-    })
+  it('reports nothing itself, whatever it could not apply', () => {
+    // The policy is applied once per request, by `AgentControl.report`, so that `'error'` fails on
+    // everything the request got wrong rather than on whichever section was applied first.
+    const { issues } = applyInstructions(codeBlocks, { instructions: [{ id: 'toolset:gone', instructions: 'x' }] })
+    expect(issues).toHaveLength(1)
+    expect(warnings.messages).toEqual([])
   })
 
-  it('keeps the first of two entries naming the same id', () => {
-    const { blocks: result } = applyInstructions(codeBlocks, {
+  it('keeps the first of two entries naming the same id and reports the rest', () => {
+    // It used to warn straight from indexing, which made `'ignore'` warn anyway and `'error'` not
+    // throw at all -- the one decision the policy never governed.
+    const { blocks: result, issues } = applyInstructions(codeBlocks, {
       instructions: [
         { id: 'agent', instructions: 'First wins.' },
         { id: 'agent', instructions: 'Second loses.' },
       ],
     })
     expect(result[0]?.text).toBe('First wins.')
-    expect(warnings.messages[0]).toContain("names instruction id 'agent' more than once")
+    expect(issues.map((issue) => [issue.section, issue.reason, issue.instructionId])).toEqual([
+      ['instructions', 'duplicate-entry', 'agent'],
+    ])
+    expect(issues[0]?.message).toContain("names instruction id 'agent' more than once")
+    expect(warnings.messages).toEqual([])
+  })
+
+  it('carries a duplicate back even when nothing else is published', () => {
+    // The duplicate is found while indexing, before the early return for a config that addresses no
+    // block this request assembles.
+    const { blocks: result, issues } = applyInstructions([], {
+      instructions: [
+        { id: 'agent', instructions: 'First.' },
+        { id: 'agent', instructions: 'Last.' },
+      ],
+    })
+    expect(result).toEqual([])
+    expect(issues.map((issue) => issue.reason)).toEqual(['duplicate-entry', 'unknown-id'])
   })
 })
 
@@ -160,12 +158,10 @@ describe('instructionEntries', () => {
 
 describe('what reached nothing comes back structured', () => {
   it('names the entry rather than leaving an adapter to parse a message', () => {
-    const { unapplied } = applyInstructions(
-      codeBlocks,
-      { instructions: [{ id: 'toolset:gone', instructions: 'Never seen.' }, { id: 'capability:clock' }] },
-      { onUnmatched: 'ignore' }
-    )
-    expect(unapplied.map((entry) => [entry.reason, entry.instructionId])).toEqual([
+    const { issues } = applyInstructions(codeBlocks, {
+      instructions: [{ id: 'toolset:gone', instructions: 'Never seen.' }, { id: 'capability:clock' }],
+    })
+    expect(issues.map((entry) => [entry.reason, entry.instructionId])).toEqual([
       ['dynamic-id', 'capability:clock'],
       ['unknown-id', 'toolset:gone'],
     ])
@@ -175,18 +171,14 @@ describe('what reached nothing comes back structured', () => {
     // Half a prompt is not a smaller version of the prompt. The parser caps a published value, so
     // reaching here means an adapter built the config itself -- and the answer is the same.
     const oversized = 'a'.repeat(MAX_MODEL_FACING_TEXT_LENGTH + 1)
-    const { blocks, unapplied } = applyInstructions(
-      codeBlocks,
-      { instructions: [{ id: 'agent', instructions: oversized }, oversized] },
-      { onUnmatched: 'ignore' }
-    )
+    const { blocks, issues } = applyInstructions(codeBlocks, { instructions: [{ id: 'agent', instructions: oversized }, oversized] })
     expect(blocks).toEqual(codeBlocks)
-    expect(unapplied.map((entry) => [entry.reason, entry.instructionId])).toEqual([
+    expect(issues.map((entry) => [entry.reason, entry.instructionId])).toEqual([
       ['oversized-text', 'agent'],
       ['oversized-text', undefined],
     ])
-    expect(unapplied[0]?.message).toContain("for instruction block 'agent'")
-    expect(unapplied[1]?.message).not.toContain('for instruction block')
+    expect(issues[0]?.message).toContain("for instruction block 'agent'")
+    expect(issues[1]?.message).not.toContain('for instruction block')
   })
 
   describe('and the budget is the total across entries, not a per-entry allowance', () => {
@@ -196,47 +188,35 @@ describe('what reached nothing comes back structured', () => {
     const half = 'a'.repeat(MAX_MODEL_FACING_TEXT_LENGTH / 2)
 
     it('refuses the entry that does not fit in what is left', () => {
-      const { blocks, unapplied } = applyInstructions(
-        codeBlocks,
-        {
-          instructions: [
-            { id: 'agent', instructions: half },
-            { id: 'toolset:crm', instructions: half },
-            { id: 'capability:clock', instructions: 'x' },
-          ],
-        },
-        { onUnmatched: 'ignore' }
-      )
+      const { blocks, issues } = applyInstructions(codeBlocks, {
+        instructions: [
+          { id: 'agent', instructions: half },
+          { id: 'toolset:crm', instructions: half },
+          { id: 'capability:clock', instructions: 'x' },
+        ],
+      })
       // The first two fill the budget exactly; the third is refused for the budget, not for being
       // dynamic, because it never gets that far.
       expect(blocks[0]?.text).toBe(half)
       expect(blocks[1]?.text).toBe(half)
-      expect(unapplied.map((entry) => [entry.reason, entry.instructionId])).toEqual([['dynamic-id', 'capability:clock']])
+      expect(issues.map((entry) => [entry.reason, entry.instructionId])).toEqual([['dynamic-id', 'capability:clock']])
 
-      const over = applyInstructions(
-        codeBlocks,
-        {
-          instructions: [
-            { id: 'agent', instructions: half },
-            { id: 'toolset:crm', instructions: `${half}a` },
-          ],
-        },
-        { onUnmatched: 'ignore' }
-      )
+      const over = applyInstructions(codeBlocks, {
+        instructions: [
+          { id: 'agent', instructions: half },
+          { id: 'toolset:crm', instructions: `${half}a` },
+        ],
+      })
       expect(over.blocks[0]?.text).toBe(half)
       expect(over.blocks[1]?.text).toBe('Use the CRM tools.')
-      expect(over.unapplied.map((entry) => [entry.reason, entry.instructionId])).toEqual([['oversized-text', 'toolset:crm']])
-      expect(over.unapplied[0]?.message).toContain('does not fit in the 32768 remaining')
+      expect(over.issues.map((entry) => [entry.reason, entry.instructionId])).toEqual([['oversized-text', 'toolset:crm']])
+      expect(over.issues[0]?.message).toContain('does not fit in the 32768 remaining')
     })
 
     it('charges added blocks against the same budget as replacements', () => {
-      const { blocks, unapplied } = applyInstructions(
-        codeBlocks,
-        { instructions: [{ id: 'agent', instructions: half }, half, 'one more'] },
-        { onUnmatched: 'ignore' }
-      )
+      const { blocks, issues } = applyInstructions(codeBlocks, { instructions: [{ id: 'agent', instructions: half }, half, 'one more'] })
       expect(blocks.some((block) => block.text === 'one more')).toBe(false)
-      expect(unapplied.map((entry) => [entry.reason, entry.instructionId])).toEqual([['oversized-text', undefined]])
+      expect(issues.map((entry) => [entry.reason, entry.instructionId])).toEqual([['oversized-text', undefined]])
     })
 
     it('charges in published order, so a typed config keeps what the same JSON would keep', () => {
@@ -248,10 +228,10 @@ describe('what reached nothing comes back structured', () => {
       const big = 'a'.repeat(40_000)
       const config = { instructions: [big, { id: 'agent', instructions: big }] }
 
-      const { blocks, unapplied } = applyInstructions(codeBlocks, config, { onUnmatched: 'ignore' })
+      const { blocks, issues } = applyInstructions(codeBlocks, config)
       expect(blocks.map((block) => block.text)).toContain(big)
       expect(blocks[0]?.text).toBe('You are a checkout assistant.')
-      expect(unapplied.map((entry) => [entry.reason, entry.instructionId])).toEqual([['oversized-text', 'agent']])
+      expect(issues.map((entry) => [entry.reason, entry.instructionId])).toEqual([['oversized-text', 'agent']])
 
       // The parser, given the same value, keeps the same entry.
       const parsed = parseAgentConfig(config)
@@ -261,18 +241,14 @@ describe('what reached nothing comes back structured', () => {
     it('charges only the text that survives, so one refused entry does not shrink the budget', () => {
       // The refused entry adds nothing to the request, so charging it would make the entries a value
       // keeps depend on the ones it does not.
-      const { blocks, unapplied } = applyInstructions(
-        codeBlocks,
-        {
-          instructions: [
-            { id: 'agent', instructions: 'a'.repeat(MAX_MODEL_FACING_TEXT_LENGTH + 1) },
-            { id: 'toolset:crm', instructions: half },
-          ],
-        },
-        { onUnmatched: 'ignore' }
-      )
+      const { blocks, issues } = applyInstructions(codeBlocks, {
+        instructions: [
+          { id: 'agent', instructions: 'a'.repeat(MAX_MODEL_FACING_TEXT_LENGTH + 1) },
+          { id: 'toolset:crm', instructions: half },
+        ],
+      })
       expect(blocks[1]?.text).toBe(half)
-      expect(unapplied.map((entry) => entry.reason)).toEqual(['oversized-text'])
+      expect(issues.map((entry) => entry.reason)).toEqual(['oversized-text'])
     })
   })
 
@@ -280,14 +256,14 @@ describe('what reached nothing comes back structured', () => {
     // An astral character is one code point and two UTF-16 units; counting units would put this
     // exactly at twice the budget in one core and inside it in the other.
     const atBudget = '\u{1D11E}'.repeat(MAX_MODEL_FACING_TEXT_LENGTH)
-    const { unapplied } = applyInstructions([], { instructions: [atBudget] }, { onUnmatched: 'ignore' })
-    expect(unapplied).toEqual([])
+    const { issues } = applyInstructions([], { instructions: [atBudget] })
+    expect(issues).toEqual([])
   })
 
   it('reports nothing, and copies the blocks, when the config touches instructions at all', () => {
-    const { blocks, unapplied } = applyInstructions(codeBlocks, { model: 'openai:gpt-5.6-sol' })
+    const { blocks, issues } = applyInstructions(codeBlocks, { model: 'openai:gpt-5.6-sol' })
     expect(blocks).toEqual(codeBlocks)
     expect(blocks).not.toBe(codeBlocks)
-    expect(unapplied).toEqual([])
+    expect(issues).toEqual([])
   })
 })

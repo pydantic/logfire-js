@@ -9,8 +9,8 @@
 
 import type { AgentConfig, InstructionBlockConfig } from './config'
 import { codePointLength, MAX_MODEL_FACING_TEXT_LENGTH } from './schema'
-import { reportUnappliedEntries, repr, warnOnce } from './warnings'
-import type { OnUnmatched, UnappliedEntry } from './warnings'
+import { repr } from './warnings'
+import type { ApplyIssue } from './warnings'
 
 /**
  * One instruction block as a framework assembles it, and as this package hands it back.
@@ -41,33 +41,21 @@ export interface InstructionBlock {
   dynamic: boolean
 }
 
-/** Options for `applyInstructions`. */
-export interface ApplyInstructionsOptions {
-  /**
-   * What to do with a published entry this request did not apply.
-   *
-   * Every decision `applyInstructions` makes goes through it -- an unknown id, a dynamic one, and
-   * text past the budget alike -- so `'ignore'` silences all three and `'error'` fails on all three.
-   */
-  onUnmatched?: OnUnmatched
-}
-
 /** What `applyInstructions` returns: the blocks to send, and what reached nothing. */
 export interface AppliedInstructions {
   /** The blocks to send, with published text swapped in, removed, or added. */
   blocks: InstructionBlock[]
   /**
-   * Every published instruction entry this request did not apply; see `UnappliedEntry`.
+   * Every published instruction entry this request did not apply; see `ApplyIssue`.
    *
-   * Already reported under the caller's `onUnmatched` policy before it is returned, so this is for an
-   * adapter that wants to do something *else* with them -- put them on a span, count them -- rather
-   * than the way they are surfaced.
+   * Reported by nothing here. Hand these to `AgentControl.report`, with the other sections' issues,
+   * and the policy the user configured is applied to all of it at once.
    */
-  unapplied: readonly UnappliedEntry[]
+  issues: readonly ApplyIssue[]
 }
 
 /** One entry whose text is past the budget, refused rather than truncated. */
-function oversized(text: string, remaining: number, instructionId?: string): UnappliedEntry {
+function oversized(text: string, remaining: number, instructionId?: string): ApplyIssue {
   const where = instructionId === undefined ? '' : `for instruction block ${repr(instructionId)} `
   const limit =
     remaining === MAX_MODEL_FACING_TEXT_LENGTH
@@ -75,6 +63,7 @@ function oversized(text: string, remaining: number, instructionId?: string): Una
       : `which does not fit in the ${String(remaining)} remaining of the ${String(MAX_MODEL_FACING_TEXT_LENGTH)}-character ` +
         `limit across all entries on what this section may add to `
   return {
+    section: 'instructions',
     reason: 'oversized-text',
     ...(instructionId === undefined ? {} : { instructionId }),
     message:
@@ -101,25 +90,35 @@ export function instructionEntries(config: AgentConfig): InstructionBlockConfig[
 }
 
 /**
- * Index entries by key, keeping the first of any duplicates with a warning.
+ * Index entries by key, keeping the first of any duplicates and naming the rest.
  *
  * A published value can name the same block twice -- by a hand edit, or by a UI bug. Keeping the
  * first is what keeps the run predictable and lets the ignored entry be named, rather than the last
  * writer silently winning depending on how the JSON happened to be ordered.
+ *
+ * Deliberately not warned from here: this is an apply-time decision about a value, so it belongs
+ * under the caller's `onUnmatched` policy like every other one -- warning directly, as this used to,
+ * meant `'ignore'` still warned and `'error'` did not throw.
  */
-function overridesById(config: AgentConfig): Map<string, string | null> {
+function overridesById(config: AgentConfig): { overrides: Map<string, string | null>; duplicates: ApplyIssue[] } {
   const overrides = new Map<string, string | null>()
+  const duplicates: ApplyIssue[] = []
   for (const entry of instructionEntries(config)) {
     if (entry.id === undefined) {
       continue
     }
     if (overrides.has(entry.id)) {
-      warnOnce(`Managed agent config names instruction id ${repr(entry.id)} more than once; keeping the first entry and ignoring the rest.`)
+      duplicates.push({
+        section: 'instructions',
+        reason: 'duplicate-entry',
+        instructionId: entry.id,
+        message: `Managed agent config names instruction id ${repr(entry.id)} more than once; keeping the first entry and ignoring the rest.`,
+      })
       continue
     }
     overrides.set(entry.id, entry.instructions ?? null)
   }
-  return overrides
+  return { overrides, duplicates }
 }
 
 /**
@@ -227,35 +226,32 @@ function insertionIndex(blocks: readonly InstructionBlock[]): number {
  *   about the managed value says which was meant.
  * - An entry with **no `id`** adds a static block at the end of the static group; see
  *   `insertionIndex`.
- * - An `id` that **matches no block** applies nothing and is reported under `onUnmatched`, per call
- *   rather than once, because an agent whose instructions vary with its input can carry a block on
- *   one request and not the next.
+ * - An `id` that **matches no block** applies nothing and is reported, per call rather than once,
+ *   because an agent whose instructions vary with its input can carry a block on one request and not
+ *   the next.
  * - Text **past the contract's budget** is refused rather than truncated: half a prompt is not a
  *   smaller version of the prompt.
+ * - The second and later entries naming one `id` are kept out and reported (`'duplicate-entry'`).
  *
- * All three decisions come back as `UnappliedEntry` records on `unapplied`, already reported under
- * `onUnmatched`, so an adapter can put them on a span or count them without parsing a message.
+ * Every one of those decisions comes back as an `ApplyIssue` on `issues` and is reported by nothing
+ * here: hand them to `AgentControl.report` along with the other sections', which is what lets
+ * `'error'` fail once naming all of it rather than on whichever section was applied first.
  *
  * Added blocks come back with `id: null` and `dynamic: false`: they are new text, nothing addresses
  * them yet, and they are fixed by construction. Each added entry becomes its own block rather than
  * being joined into one, so an adapter can attribute them individually; joining them is a
  * `map(...).join('\n\n')` away for a framework that wants one string.
  */
-export function applyInstructions(
-  blocks: readonly InstructionBlock[],
-  config: AgentConfig,
-  options: ApplyInstructionsOptions = {}
-): AppliedInstructions {
-  const onUnmatched = options.onUnmatched ?? 'warn'
-  const overrides = overridesById(config)
+export function applyInstructions(blocks: readonly InstructionBlock[], config: AgentConfig): AppliedInstructions {
+  const { overrides, duplicates } = overridesById(config)
   const added = instructionEntries(config)
     .filter((entry) => entry.id === undefined && typeof entry.instructions === 'string')
     .map((entry) => entry.instructions as string)
   if (overrides.size === 0 && added.length === 0) {
-    return { blocks: [...blocks], unapplied: [] }
+    return { blocks: [...blocks], issues: duplicates }
   }
 
-  const unapplied: UnappliedEntry[] = []
+  const issues: ApplyIssue[] = [...duplicates]
   const matched = new Set<string>()
   const result: InstructionBlock[] = []
   const budget = spendBudget(blocks, config, overrides)
@@ -268,7 +264,8 @@ export function applyInstructions(
     // a key nothing carries.
     matched.add(block.id)
     if (block.dynamic) {
-      unapplied.push({
+      issues.push({
+        section: 'instructions',
         reason: 'dynamic-id',
         instructionId: block.id,
         message:
@@ -285,7 +282,7 @@ export function applyInstructions(
     }
     const refusedAt = budget.ids.get(block.id)
     if (refusedAt !== undefined) {
-      unapplied.push(oversized(replacement, refusedAt, block.id))
+      issues.push(oversized(replacement, refusedAt, block.id))
       result.push(block)
       continue
     }
@@ -293,7 +290,8 @@ export function applyInstructions(
   }
   for (const id of overrides.keys()) {
     if (!matched.has(id)) {
-      unapplied.push({
+      issues.push({
+        section: 'instructions',
         reason: 'unknown-id',
         instructionId: id,
         message:
@@ -307,11 +305,11 @@ export function applyInstructions(
   added.forEach((text, index) => {
     const refusedAt = budget.additions.get(index)
     if (refusedAt !== undefined) {
-      unapplied.push(oversized(text, refusedAt))
+      issues.push(oversized(text, refusedAt))
     } else {
       additions.push({ id: null, text, dynamic: false })
     }
   })
   result.splice(insertionIndex(result), 0, ...additions)
-  return { blocks: result, unapplied: reportUnappliedEntries(onUnmatched, unapplied) }
+  return { blocks: result, issues }
 }

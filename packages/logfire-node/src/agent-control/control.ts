@@ -16,8 +16,8 @@ import { parseAgentConfig } from './config'
 import type { AgentConfig } from './config'
 import { agentVariableName } from './names'
 import { AGENT_CONFIG_JSON_SCHEMA } from './schema'
-import { reportUnmatched as report, warnOnce } from './warnings'
-import type { OnUnmatched } from './warnings'
+import { reportIssues, reportUnmatched as report, warnOnce } from './warnings'
+import type { ApplyIssue, OnUnmatched } from './warnings'
 
 /**
  * The resolution outcomes that mean a published value was actually applied.
@@ -153,7 +153,13 @@ export interface AgentControlOptions {
    * without a targeting rule.
    */
   label?: string
-  /** What to do with a published entry that reaches nothing; passed on to the `apply*` helpers. */
+  /**
+   * What to do with a published entry that reaches nothing.
+   *
+   * Applied by `report`, which is the one place it is applied: the `apply*` helpers plan a request
+   * and hand back what they could not apply, so an adapter reports every section's issues together
+   * and `'error'` names all of them.
+   */
   onUnmatched?: OnUnmatched
   /**
    * Whether to publish the code-side baseline to the variable's `example`.
@@ -205,7 +211,7 @@ export class AgentControl {
   readonly variableName: string
   /** The label this control reads, or `undefined` to let the rollout choose. */
   readonly label: string | undefined
-  /** The policy this control passes to the `apply*` helpers by default. */
+  /** The policy `report` applies to a request's issues; see `OnUnmatched`. */
   readonly onUnmatched: OnUnmatched
 
   readonly #publishBaseline: boolean
@@ -287,13 +293,38 @@ export class AgentControl {
   }
 
   /**
-   * Report something this adapter could not apply, under this control's `onUnmatched` policy.
+   * Apply this control's `onUnmatched` policy to everything one request could not apply.
    *
-   * The `apply*` helpers report the entries *they* could not place, but they only see the section
-   * they were given. A whole section an adapter cannot act on at all -- a published `model` on a
-   * framework with no way to switch models, a `tool_definitions` section on one whose tools are
-   * fixed -- is the same gap between what Logfire shows and what the agent does, and has to reach the
-   * same policy rather than a `console.log` in the adapter.
+   * The `apply*` helpers plan and report nothing; this is where the policy the user configured is
+   * applied, once, to every section at once. Which is what makes their return value load-bearing: an
+   * adapter that plans three sections and forgets to report says nothing, visibly, rather than
+   * duplicating a warning that was already emitted.
+   *
+   * ```ts
+   * const instructions = applyInstructions(blocks, config);
+   * const tools = applyToolDefinitions(request.tools, config, { reserved });
+   * const settings = applySettings(config, { support: SUPPORT });
+   * control.report(...instructions.issues, ...tools.issues, ...settings.issues);
+   * ```
+   *
+   * Reporting after everything is planned is the point of collecting them: `'error'` used to throw
+   * inside the first section's apply call, so the strictest policy reported the least -- the other
+   * sections were never planned and their issues were never returned. One call throws one
+   * `UnmatchedConfigError`, naming every issue and carrying them on `issues`, which is what lets an
+   * adapter translate it into its own framework's error type without restating a message.
+   */
+  report(...issues: readonly ApplyIssue[]): void {
+    reportIssues(this.onUnmatched, issues)
+  }
+
+  /**
+   * Report something this adapter could not apply, as a message.
+   *
+   * `report` is the channel for anything the core planned, and anything an adapter can describe as an
+   * `ApplyIssue` -- including a section it cannot reach (`'unsupported-section'`) and a setting its
+   * provider dropped (`droppedByProvider`). This is the same policy for a message with no path to
+   * give, and applies it on its own so a message is not held back waiting for a request's other
+   * sections.
    *
    * Write the message the way the built-in ones read: name what was published, and say what did not
    * happen to it. `'warn'` deduplicates it per process, so it is safe to call per request.

@@ -2,7 +2,8 @@ import { configureVariables, getVariableProvider } from 'logfire/vars'
 import type { SerializedResolvedVariable, VariableConfig } from 'logfire/vars'
 import { describe, expect, it } from 'vite-plus/test'
 
-import { AgentControl, AGENT_CONFIG_JSON_SCHEMA, buildBaseline } from '../index'
+import { AgentControl, AGENT_CONFIG_JSON_SCHEMA, buildBaseline, UnmatchedConfigError } from '../index'
+import type { ApplyIssue } from '../index'
 import { captureWarnings, emptyVariable, publishedValue, settle, storedConfigFor, useLocalVariables, useNoVariables } from './helpers'
 
 const warnings = captureWarnings()
@@ -397,5 +398,54 @@ describe('AgentControl', () => {
         "Failed to publish the code baseline for Logfire managed variable 'agent__checkout': 403 read-only token",
       ])
     })
+  })
+})
+describe('report', () => {
+  const unknownTool: ApplyIssue = {
+    section: 'tool_definitions',
+    reason: 'unknown-tool',
+    tool: 'refund',
+    message: "Managed agent config patches tool 'refund', which no toolset advertises for this request.",
+  }
+  const unknownSetting: ApplyIssue = {
+    section: 'settings',
+    reason: 'unknown-setting',
+    setting: 'service_tier',
+    message: "Managed agent config sets 'service_tier', which this SDK has no model setting for.",
+  }
+
+  it('applies the policy to every section at once', () => {
+    new AgentControl('checkout').report(unknownTool, unknownSetting)
+    expect(warnings.messages).toEqual([unknownTool.message, unknownSetting.message])
+  })
+
+  it('throws once naming every issue, rather than on the first', () => {
+    // The defect this replaces: `'error'` threw inside the first section's apply call, so the other
+    // sections were never planned and the strictest policy reported the least.
+    const control = new AgentControl('checkout', { onUnmatched: 'error' })
+    let thrown: unknown
+    try {
+      control.report(unknownTool, unknownSetting)
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(UnmatchedConfigError)
+    // Carried, so an adapter can raise its own framework's error type without restating a message.
+    expect((thrown as UnmatchedConfigError).message).toBe(`${unknownTool.message}\n${unknownSetting.message}`)
+    expect((thrown as UnmatchedConfigError).issues).toEqual([unknownTool, unknownSetting])
+  })
+
+  it('says nothing under ignore, and nothing at all for a request with no issues', () => {
+    new AgentControl('checkout', { onUnmatched: 'ignore' }).report(unknownTool)
+    new AgentControl('checkout', { onUnmatched: 'error' }).report()
+    expect(warnings.messages).toEqual([])
+  })
+
+  it('still takes a message with no path to give', () => {
+    new AgentControl('checkout').reportUnmatched('Managed agent config selects a model this framework cannot switch.')
+    expect(warnings.messages).toEqual(['Managed agent config selects a model this framework cannot switch.'])
+    expect(() => {
+      new AgentControl('checkout', { onUnmatched: 'error' }).reportUnmatched('nope')
+    }).toThrow(UnmatchedConfigError)
   })
 })

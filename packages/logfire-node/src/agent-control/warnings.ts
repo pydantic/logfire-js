@@ -8,18 +8,52 @@
  * deployment, and what happens to it is the caller's `onUnmatched` policy.
  */
 
-/** What to do with a published entry that reaches nothing in this deployment. */
+/**
+ * What to do with a published entry that reaches nothing in this deployment.
+ *
+ * The policy is applied in one place, by `AgentControl.report`, rather than inside each apply helper:
+ * an adapter plans every section and then reports, so `'error'` fails on everything the request would
+ * have got wrong rather than on whichever section happened to be planned first.
+ */
 export type OnUnmatched = 'ignore' | 'warn' | 'error'
 
 /**
- * Thrown by `onUnmatched: 'error'` for an entry that reached nothing.
+ * Thrown by `onUnmatched: 'error'` for everything one request could not apply.
  *
- * A distinct class rather than a bare `Error` so an adapter can let it through its own error
- * handling deliberately: the run is being failed on purpose, by configuration, and should not be
- * caught by a `catch` meant for a model or tool failure.
+ * A distinct class rather than a bare `Error` so an adapter can let it through its own error handling
+ * deliberately: the run is being failed on purpose, by configuration, and should not be caught by a
+ * `catch` meant for a model or tool failure. It also lets an adapter translate it into its own
+ * framework's error type without restating a single message:
+ *
+ * ```ts
+ * try {
+ *   control.report(...issues)
+ * } catch (error) {
+ *   if (error instanceof UnmatchedConfigError) {
+ *     throw new MyFrameworkError(error.message)
+ *   }
+ *   throw error
+ * }
+ * ```
+ *
+ * Thrown once for a whole request, with every issue's message in `message` and the issues themselves
+ * on `issues`, so an adapter that reports a kind it has never heard of still reports it faithfully.
  */
 export class UnmatchedConfigError extends Error {
   override name = 'UnmatchedConfigError'
+
+  /**
+   * Every issue this request could not apply, in the order they were planned.
+   *
+   * Empty for the string channel -- `AgentControl.reportUnmatched` -- which carries a message and no
+   * path.
+   */
+  readonly issues: readonly ApplyIssue[]
+
+  constructor(message: string, issues: readonly ApplyIssue[] = []) {
+    super(message)
+    this.issues = issues
+  }
 }
 
 /**
@@ -135,12 +169,34 @@ export function resetWarnings(): void {
  *   already answers to. The rename is dropped and the tool keeps its code-side name; the same entry's
  *   other patches still apply.
  *
+ * Settings:
+ *
+ * - `'unknown-setting'` -- a `settings` key this release has no field for, which a newer Logfire UI
+ *   can write.
+ * - `'unsupported-setting'` -- a canonical key this adapter declared it cannot lower; see
+ *   `AgentSupport.settings`.
+ * - `'unrepresentable-timeout'` -- a `timeout` that is not a request budget: negative, not finite, or
+ *   past `MAX_TIMEOUT_SECONDS`.
+ *
+ * Any section:
+ *
+ * - `'unknown-section'` -- a top-level key this release has no section for. Every section is optional
+ *   and unknown keys cost nothing, which is what lets a future section be written against an older
+ *   SDK -- but the drop has to be audible, or the first person to publish one gets a silently
+ *   degraded agent.
+ * - `'unsupported-section'` -- a section this release understands and this adapter cannot apply; see
+ *   `AgentSupport.sections`.
+ * - `'duplicate-entry'` -- the same instruction `id`, or the same `(toolset, name)`, written twice.
+ *   The first is applied and the rest are not.
+ * - `'dropped-by-provider'` -- a setting the adapter did forward and the provider or its SDK dropped;
+ *   see `droppedByProvider`.
+ *
  * These are the runtime decisions: what a *valid* published value did not reach in *this*
  * deployment, on *this* request. They are deliberately not the parser's compatibility warnings -- an
  * entry a newer UI wrote that this release cannot understand -- which are about the value rather than
  * the request, warn once per process from parsing, and never take an `onUnmatched` policy.
  */
-export type UnappliedReason =
+export type ApplyIssueReason =
   | 'unknown-id'
   | 'dynamic-id'
   | 'oversized-text'
@@ -148,48 +204,97 @@ export type UnappliedReason =
   | 'unknown-parameter'
   | 'no-patchable-schema'
   | 'rename-collision'
+  | 'unknown-setting'
+  | 'unsupported-setting'
+  | 'unrepresentable-timeout'
+  | 'unknown-section'
+  | 'unsupported-section'
+  | 'duplicate-entry'
+  | 'dropped-by-provider'
 
 /**
  * One published entry that reached nothing, with the path that says which one.
  *
- * Returned by the apply helpers so an adapter can do more than repeat the message: count them,
- * attach them to a span, decide per section, or feed the tool ones back into its own routing. The
- * fields are a path, and only the ones that apply to `reason` are set -- `tool` and `parameter` on a
- * parameter patch, `instructionId` on an instruction entry -- so an adapter never has to parse
- * `message` to learn what an entry was about.
+ * Returned by the apply helpers, which report nothing themselves: an adapter collects the issues of
+ * every section it planned and hands them to `AgentControl.report` once. That is what makes the
+ * return value load-bearing rather than a duplicate of a warning already emitted, and what lets
+ * `'error'` fail on everything a request got wrong instead of on the first section planned.
  *
- * The helpers report every entry they return under the caller's `onUnmatched` policy before returning
- * it, so an adapter that only wants the configured behavior can ignore these entirely and one that
- * wants both does not get the message twice.
+ * The fields are a path, and only the ones that apply to `reason` are set -- `tool` and `parameter`
+ * on a parameter patch, `instructionId` on an instruction entry, `setting` on a settings key -- so an
+ * adapter never has to parse `message` to learn what an issue was about.
  */
-export interface UnappliedEntry {
-  /** Why it was not applied; see `UnappliedReason`. */
-  readonly reason: UnappliedReason
+export interface ApplyIssue {
+  /**
+   * Which section of the config the issue is about.
+   *
+   * One of the four `Section` names, except for `'unknown-section'`, where it is the unrecognized
+   * top-level key itself: a key this release has no section for has no section name to give, and
+   * naming the key is what makes the report actionable. Typed as a plain string for that reason, in
+   * both cores.
+   */
+  readonly section: string
+  /** Why it was not applied; see `ApplyIssueReason`. */
+  readonly reason: ApplyIssueReason
   /** What the policy reports: what was published, and what was not applied. */
   readonly message: string
   /** The instruction `id` the entry addressed, for the instruction reasons. */
   readonly instructionId?: string
+  /** The instruction destination the entry named, when it named one. */
+  readonly destination?: string
   /** The toolset the entry named or the tool came from, when either has one. */
   readonly toolset?: string | null
   /** The code-side tool name the entry named, for the tool reasons. */
   readonly tool?: string
   /** The parameter the entry patched, for `'unknown-parameter'` and `'no-patchable-schema'`. */
   readonly parameter?: string
+  /** The canonical settings key the issue is about, for the settings reasons. */
+  readonly setting?: string
 }
 
 /**
- * Apply one `onUnmatched` policy to every entry that reached nothing, and hand them back.
+ * One setting the adapter forwarded and the provider, or its own SDK, did not apply.
  *
- * One call site per helper, so the policy governs *all* of a section's decisions rather than the
- * subset that happened to be routed through it: a rename dropped for colliding is as much a gap
- * between what Logfire shows and what the agent does as an override naming a tool that is not there,
- * and `'ignore'` has to silence both while `'error'` has to fail on both.
+ * The one issue the core cannot find for itself: it is discovered *after* the request, by an adapter
+ * reading whatever its framework reports -- the Vercel AI SDK's `result.warnings`, a provider's own
+ * "unsupported parameter" note. Those shapes differ per SDK and the core knows none of them, so it
+ * takes the two things every one of them carries: which canonical setting, and what the SDK said
+ * about it.
  *
- * Throws `UnmatchedConfigError` on the first entry when `policy` is `'error'`.
+ * ```ts
+ * control.report(...result.warnings.map((w) => droppedByProvider('top_k', w.details)))
+ * ```
  */
-export function reportUnappliedEntries(policy: OnUnmatched, entries: readonly UnappliedEntry[]): readonly UnappliedEntry[] {
-  for (const entry of entries) {
-    reportUnmatched(policy, entry.message)
+export function droppedByProvider(setting: string, detail: string): ApplyIssue {
+  return {
+    section: 'settings',
+    reason: 'dropped-by-provider',
+    setting,
+    message:
+      `Managed agent config sets ${repr(setting)}, which the provider did not apply -- ${detail}; ` +
+      'that key had no effect on the request.',
   }
-  return entries
+}
+
+/**
+ * Apply one `onUnmatched` policy to every issue a request's planning produced.
+ *
+ * One call for a whole request, which is the point: the apply helpers plan and report nothing, so
+ * `'error'` throws after every section has been planned, naming all of it, rather than on the first
+ * entry of the first section -- which used to mean the strictest policy reported the least.
+ *
+ * Throws `UnmatchedConfigError`, naming every issue, when `policy` is `'error'`.
+ */
+export function reportIssues(policy: OnUnmatched, issues: readonly ApplyIssue[]): void {
+  if (issues.length === 0) {
+    return
+  }
+  if (policy === 'error') {
+    throw new UnmatchedConfigError(issues.map((issue) => issue.message).join('\n'), issues)
+  }
+  if (policy === 'warn') {
+    for (const issue of issues) {
+      warnOnce(issue.message)
+    }
+  }
 }

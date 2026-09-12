@@ -22,7 +22,7 @@ export { AgentControl, currentResolution, useResolution } from './control'
 export type { AgentControlOptions, BaselineSource, PublishBaselineOptions, Resolution } from './control'
 
 export { applyInstructions, instructionEntries } from './instructions'
-export type { AppliedInstructions, ApplyInstructionsOptions, InstructionBlock } from './instructions'
+export type { AppliedInstructions, InstructionBlock } from './instructions'
 
 export { mergeSettings } from './merge'
 export type { Provenance, SettingsLayer, SettingSource } from './merge'
@@ -32,13 +32,15 @@ export { AGENT_VARIABLE_PREFIX, agentVariableName, normalizeAgentName } from './
 export { AGENT_CONFIG_JSON_SCHEMA, canonicalJson, MAX_MODEL_FACING_TEXT_LENGTH, SCHEMA_SHA256 } from './schema'
 export type { JsonSchema } from './schema'
 
-export { applySettings, reportUnapplied } from './settings'
-export type { ApplySettingsOptions } from './settings'
+export { applySettings } from './settings'
+export type { AppliedSettings, ApplySettingsOptions } from './settings'
+
+export type { AgentSupport, Destination, Section } from './support'
 
 export { applyToolDefinitions, toolKey, withParameterDescriptions } from './tools'
 export type { AppliedTools, ApplyToolDefinitionsOptions, CollisionScope, ToolDef, ToolKey } from './tools'
 
 export { isRepresentableTimeout, MAX_TIMEOUT_MILLISECONDS, MAX_TIMEOUT_SECONDS, toMilliseconds } from './units'
 
-export { UnmatchedConfigError, warnOnce } from './warnings'
-export type { OnUnmatched, UnappliedEntry, UnappliedReason } from './warnings'
+export { droppedByProvider, UnmatchedConfigError, warnOnce } from './warnings'
+export type { ApplyIssue, ApplyIssueReason, OnUnmatched } from './warnings'

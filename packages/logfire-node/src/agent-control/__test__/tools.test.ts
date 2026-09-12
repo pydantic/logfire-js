@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vite-plus/test'
 
-import { applyToolDefinitions, toolKey, UnmatchedConfigError, withParameterDescriptions } from '../index'
+import { applyToolDefinitions, toolKey, withParameterDescriptions } from '../index'
 import type { ToolDef } from '../index'
 import { captureWarnings } from './helpers'
 
@@ -93,14 +93,15 @@ describe('applyToolDefinitions', () => {
   })
 
   it('reports a patch on a parameter the tool does not have, rather than ignoring it', () => {
-    const { tools, unapplied } = applyToolDefinitions(codeTools, {
+    const { tools, issues } = applyToolDefinitions(codeTools, {
       tool_definitions: [{ name: 'refund', parameters: { nonexistent: { description: 'Nothing.' } } }],
     })
     expect(tools[2]).toBe(codeTools[2])
     // From the Logfire UI, a patch naming a parameter the tool does not have looked exactly like one
     // that applied, which is the whole reason this is not silent.
-    expect(unapplied).toEqual([
+    expect(issues).toEqual([
       {
+        section: 'tool_definitions',
         reason: 'unknown-parameter',
         toolset: null,
         tool: 'refund',
@@ -110,17 +111,18 @@ describe('applyToolDefinitions', () => {
           'of that name; that patch applies to nothing.',
       },
     ])
-    expect(warnings.messages).toEqual([unapplied[0]?.message])
+    // Reported by nothing here: the policy is applied once per request, by `AgentControl.report`.
+    expect(warnings.messages).toEqual([])
   })
 
   describe('a rename onto a taken name', () => {
     it("is dropped, with the override's other patches kept", () => {
-      const { tools, routes } = applyToolDefinitions(codeTools, {
+      const { tools, routes, issues } = applyToolDefinitions(codeTools, {
         tool_definitions: [{ name: 'refund', new_name: 'search', description: 'Still applied.' }],
       })
       expect(tools[2]).toEqual({ ...codeTools[2], description: 'Still applied.' })
       expect(routes).toEqual({ search: 'search', refund: 'refund' })
-      expect(warnings.messages[0]).toBe(
+      expect(issues[0]?.message).toBe(
         "Managed tool definition override renames 'refund' to 'search', which is already advertised by " +
           "another tool; keeping the original name 'refund'."
       )
@@ -130,14 +132,14 @@ describe('applyToolDefinitions', () => {
       // A renamed tool stops answering to its code-side name, so that name is free for a later tool.
       // Every code-side name starts out taken, so this used to be refused: `docs/search` was still in
       // the namespace after the only tool holding it had renamed away.
-      const { tools, routes, unapplied } = applyToolDefinitions(codeTools.slice(1), {
+      const { tools, routes, issues } = applyToolDefinitions(codeTools.slice(1), {
         tool_definitions: [
           { name: 'search', new_name: 'lookup' },
           { name: 'refund', new_name: 'search' },
         ],
       })
       expect(tools.map((tool) => tool.name)).toEqual(['lookup', 'search'])
-      expect(unapplied).toEqual([])
+      expect(issues).toEqual([])
       expect(warnings.messages).toEqual([])
       expect(routes).toEqual({ lookup: 'search', search: 'refund' })
     })
@@ -150,24 +152,20 @@ describe('applyToolDefinitions', () => {
       // `refund` ahead of `docs/search`, so the second holder of `search` is not reached until after
       // the rename that would take it.
       const reordered = [codeTools[0], codeTools[2], codeTools[1]].filter((tool) => tool !== undefined)
-      const { tools, unapplied } = applyToolDefinitions(
-        reordered,
-        {
-          tool_definitions: [
-            { name: 'search', toolset: 'crm', new_name: 'lookup' },
-            { name: 'refund', new_name: 'search' },
-          ],
-        },
-        { onUnmatched: 'ignore' }
-      )
+      const { tools, issues } = applyToolDefinitions(reordered, {
+        tool_definitions: [
+          { name: 'search', toolset: 'crm', new_name: 'lookup' },
+          { name: 'refund', new_name: 'search' },
+        ],
+      })
       expect(tools.map((tool) => tool.name)).toEqual(['lookup', 'refund', 'search'])
-      expect(unapplied.map((entry) => [entry.reason, entry.tool])).toEqual([['rename-collision', 'refund']])
+      expect(issues.map((entry) => [entry.reason, entry.tool])).toEqual([['rename-collision', 'refund']])
     })
 
     it('does not free the original name for a later tool when the rename was refused', () => {
       // The refused rename keeps the original name, so it is still taken. Freeing it on the way to a
       // collision would advertise two tools under it.
-      const { tools, unapplied } = applyToolDefinitions(
+      const { tools, issues } = applyToolDefinitions(
         [
           { name: 'a', parametersJsonSchema: { type: 'object', properties: {} } },
           { name: 'b', parametersJsonSchema: { type: 'object', properties: {} } },
@@ -178,25 +176,24 @@ describe('applyToolDefinitions', () => {
             { name: 'a', new_name: 'b' },
             { name: 'c', new_name: 'a' },
           ],
-        },
-        { onUnmatched: 'ignore' }
+        }
       )
       expect(tools.map((tool) => tool.name)).toEqual(['a', 'b', 'c'])
-      expect(unapplied.map((entry) => [entry.reason, entry.tool])).toEqual([
+      expect(issues.map((entry) => [entry.reason, entry.tool])).toEqual([
         ['rename-collision', 'a'],
         ['rename-collision', 'c'],
       ])
     })
 
     it('is dropped when the collision is with a name an earlier rename produced', () => {
-      const { tools } = applyToolDefinitions(codeTools, {
+      const { tools, issues } = applyToolDefinitions(codeTools, {
         tool_definitions: [
           { name: 'search', toolset: 'crm', new_name: 'lookup' },
           { name: 'refund', new_name: 'lookup' },
         ],
       })
       expect(tools.map((tool) => tool.name)).toEqual(['lookup', 'search', 'refund'])
-      expect(warnings.messages[0]).toContain("renames 'refund' to 'lookup'")
+      expect(issues[0]?.message).toContain("renames 'refund' to 'lookup'")
     })
 
     it('leaves every tool reachable under a callable name', () => {
@@ -209,51 +206,56 @@ describe('applyToolDefinitions', () => {
     })
   })
 
-  describe('onUnmatched', () => {
+  describe('an override that matches no tool', () => {
     const config = {
       tool_definitions: [{ name: 'search', toolset: 'billing', description: 'Elsewhere.' }],
     }
 
-    it('warns by default, naming the toolset the entry was narrowed to', () => {
-      applyToolDefinitions(codeTools, config)
-      expect(warnings.messages).toEqual([
-        "Managed agent config patches tool 'search' from toolset 'billing', which no toolset advertises " +
-          'for this request; that override applies to nothing.',
+    it('names the toolset the entry was narrowed to', () => {
+      const { issues } = applyToolDefinitions(codeTools, config)
+      expect(issues.map((entry) => [entry.section, entry.reason, entry.toolset, entry.tool])).toEqual([
+        ['tool_definitions', 'unknown-tool', 'billing', 'search'],
       ])
+      expect(issues[0]?.message).toBe(
+        "Managed agent config patches tool 'search' from toolset 'billing', which no toolset advertises " +
+          'for this request; that override applies to nothing.'
+      )
     })
 
     it('names an unqualified entry without a toolset', () => {
-      applyToolDefinitions(codeTools, { tool_definitions: [{ name: 'nonexistent' }] })
-      expect(warnings.messages[0]).toContain("patches tool 'nonexistent', which no toolset advertises")
+      const { issues } = applyToolDefinitions(codeTools, { tool_definitions: [{ name: 'nonexistent' }] })
+      expect(issues[0]?.message).toContain("patches tool 'nonexistent', which no toolset advertises")
     })
 
-    it('says nothing under ignore', () => {
-      applyToolDefinitions(codeTools, config, { onUnmatched: 'ignore' })
+    it('is reported by nothing here', () => {
+      applyToolDefinitions(codeTools, config)
       expect(warnings.messages).toEqual([])
-    })
-
-    it('fails the run under error', () => {
-      expect(() => applyToolDefinitions(codeTools, config, { onUnmatched: 'error' })).toThrow(UnmatchedConfigError)
     })
   })
 
-  it('keeps the first of two overrides with the same name and toolset', () => {
-    const { tools } = applyToolDefinitions(codeTools, {
+  it('keeps the first of two overrides with the same name and toolset and reports the rest', () => {
+    // It used to warn straight from indexing, which made `'ignore'` warn anyway and `'error'` not
+    // throw at all -- the one decision the policy never governed.
+    const { tools, issues } = applyToolDefinitions(codeTools, {
       tool_definitions: [
         { name: 'refund', description: 'First wins.' },
         { name: 'refund', description: 'Second loses.' },
       ],
     })
     expect(tools[2]?.description).toBe('First wins.')
-    expect(warnings.messages[0]).toContain("names tool 'refund' more than once")
+    expect(issues.map((entry) => [entry.section, entry.reason, entry.toolset, entry.tool])).toEqual([
+      ['tool_definitions', 'duplicate-entry', null, 'refund'],
+    ])
+    expect(issues[0]?.message).toContain("names tool 'refund' more than once")
+    expect(warnings.messages).toEqual([])
   })
 
   it('matches a tool with no toolset against an unqualified override only', () => {
-    const { tools } = applyToolDefinitions(codeTools, {
+    const { tools, issues } = applyToolDefinitions(codeTools, {
       tool_definitions: [{ name: 'refund', toolset: 'crm', description: 'Wrong toolset.' }],
     })
     expect(tools[2]?.description).toBe('Issue a refund.')
-    expect(warnings.messages[0]).toContain("patches tool 'refund' from toolset 'crm'")
+    expect(issues[0]?.message).toContain("patches tool 'refund' from toolset 'crm'")
   })
 })
 
@@ -292,14 +294,14 @@ describe('routing identity', () => {
   })
 
   it('reserves names the adapter needs kept free, so a rename cannot take a handoff', () => {
-    const { tools, unapplied } = applyToolDefinitions(
+    const { tools, issues } = applyToolDefinitions(
       codeTools,
       { tool_definitions: [{ name: 'refund', new_name: 'transfer_to_billing', description: 'Still applied.' }] },
       { reserved: ['transfer_to_billing'] }
     )
     expect(tools[2]?.name).toBe('refund')
     expect(tools[2]?.description).toBe('Still applied.')
-    expect(unapplied.map((entry) => entry.reason)).toEqual(['rename-collision'])
+    expect(issues.map((entry) => entry.reason)).toEqual(['rename-collision'])
   })
 
   it("lets two toolsets each answer to a name when that is what the framework's runtime names mean", () => {
@@ -317,7 +319,7 @@ describe('routing identity', () => {
       { collisionScope: 'toolset' }
     )
     expect(scoped.tools.map((tool) => tool.name)).toEqual(['lookup', 'lookup', 'refund'])
-    expect(scoped.unapplied).toEqual([])
+    expect(scoped.issues).toEqual([])
     expect(scoped.reverse.get(toolKey('crm', 'lookup'))).toBe('search')
 
     // Under the default global scope the same rename is a genuine collision.
@@ -325,7 +327,7 @@ describe('routing identity', () => {
       tool_definitions: [{ name: 'search', toolset: 'crm', new_name: 'lookup' }],
     })
     expect(global.tools.map((tool) => tool.name)).toEqual(['search', 'lookup', 'refund'])
-    expect(global.unapplied.map((entry) => entry.reason)).toEqual(['rename-collision'])
+    expect(global.issues.map((entry) => entry.reason)).toEqual(['rename-collision'])
   })
 
   it('is a table about this request, not about `Object.prototype`', () => {
@@ -359,29 +361,26 @@ describe('routing identity', () => {
   })
 })
 
-describe('a rename collision goes through onUnmatched like every other decision', () => {
+describe('a rename collision comes back like every other decision', () => {
   const config = { tool_definitions: [{ name: 'refund', new_name: 'search' }] }
 
-  it('says nothing under ignore', () => {
-    // It used to warn unconditionally, so `'ignore'` still warned and `'error'` did not fail.
-    applyToolDefinitions(codeTools, config, { onUnmatched: 'ignore' })
+  it('is an issue rather than a warning of its own', () => {
+    // It used to warn unconditionally, so `'ignore'` still warned and `'error'` did not fail. Now
+    // every decision this section makes is one list for one reporter.
+    const { issues } = applyToolDefinitions(codeTools, config)
+    expect(issues.map((entry) => [entry.section, entry.reason, entry.tool])).toEqual([['tool_definitions', 'rename-collision', 'refund']])
     expect(warnings.messages).toEqual([])
-  })
-
-  it('fails the run under error', () => {
-    expect(() => applyToolDefinitions(codeTools, config, { onUnmatched: 'error' })).toThrow(UnmatchedConfigError)
   })
 })
 
 describe('a parameter patch that reaches nothing', () => {
   it('reports a tool with no top-level parameters to patch at all', () => {
-    const { unapplied } = applyToolDefinitions(
-      [{ name: 'raw', parametersJsonSchema: { type: 'string' } }],
-      { tool_definitions: [{ name: 'raw', parameters: { q: { description: 'Query.' } } }] },
-      { onUnmatched: 'ignore' }
-    )
-    expect(unapplied).toEqual([
+    const { issues } = applyToolDefinitions([{ name: 'raw', parametersJsonSchema: { type: 'string' } }], {
+      tool_definitions: [{ name: 'raw', parameters: { q: { description: 'Query.' } } }],
+    })
+    expect(issues).toEqual([
       {
+        section: 'tool_definitions',
         reason: 'no-patchable-schema',
         toolset: null,
         tool: 'raw',
@@ -395,48 +394,44 @@ describe('a parameter patch that reaches nothing', () => {
 
   it('reports nothing for an entry that asks for no change at all', () => {
     // `'no-patchable-schema'` is "no object schema to patch a description *into*", so an entry with no
-    // description is not a gap between Logfire and the agent -- and under `'error'` it used to fail
-    // the run for asking nothing. The same empty entry on a tool that does have properties was always
-    // silent, so this is the two paths agreeing.
-    const { unapplied } = applyToolDefinitions(
-      [{ name: 'raw', parametersJsonSchema: { type: 'string' } }],
-      { tool_definitions: [{ name: 'raw', parameters: { q: {} } }] },
-      { onUnmatched: 'error' }
-    )
-    expect(unapplied).toEqual([])
+    // description is not a gap between Logfire and the agent -- and it used to fail the run under
+    // `'error'` for asking nothing. The same empty entry on a tool that does have properties was
+    // always silent, so this is the two paths agreeing.
+    const { issues } = applyToolDefinitions([{ name: 'raw', parametersJsonSchema: { type: 'string' } }], {
+      tool_definitions: [{ name: 'raw', parameters: { q: {} } }],
+    })
+    expect(issues).toEqual([])
     expect(warnings.messages).toEqual([])
   })
 
   it('still reports a parameter this deployment does not have, patch or no patch', () => {
     // Not gated on a description: naming a parameter the tool has no property for is drift between
     // what the Logfire editor showed and what the agent advertises, whichever fields the entry sets.
-    const { unapplied } = applyToolDefinitions(
+    const { issues } = applyToolDefinitions(
       [{ name: 'ok', parametersJsonSchema: { type: 'object', properties: { q: { type: 'string' } } } }],
-      { tool_definitions: [{ name: 'ok', parameters: { nope: {} } }] },
-      { onUnmatched: 'ignore' }
+      { tool_definitions: [{ name: 'ok', parameters: { nope: {} } }] }
     )
-    expect(unapplied.map((entry) => [entry.reason, entry.parameter])).toEqual([['unknown-parameter', 'nope']])
+    expect(issues.map((entry) => [entry.reason, entry.parameter])).toEqual([['unknown-parameter', 'nope']])
   })
 
   it('reports a parameter whose schema is not an object to patch a description into', () => {
-    const { unapplied } = applyToolDefinitions(
-      [{ name: 'odd', parametersJsonSchema: { type: 'object', properties: { flag: true } } }],
-      { tool_definitions: [{ name: 'odd', parameters: { flag: { description: 'On or off.' } } }] },
-      { onUnmatched: 'ignore' }
-    )
-    expect(unapplied.map((entry) => [entry.reason, entry.parameter])).toEqual([['no-patchable-schema', 'flag']])
+    const { issues } = applyToolDefinitions([{ name: 'odd', parametersJsonSchema: { type: 'object', properties: { flag: true } } }], {
+      tool_definitions: [{ name: 'odd', parameters: { flag: { description: 'On or off.' } } }],
+    })
+    expect(issues.map((entry) => [entry.reason, entry.parameter])).toEqual([['no-patchable-schema', 'flag']])
   })
 
-  it('fails the run under error, which it could not do while it was silent', () => {
-    expect(() =>
-      applyToolDefinitions(codeTools, { tool_definitions: [{ name: 'refund', parameters: { nonexistent: {} } }] }, { onUnmatched: 'error' })
-    ).toThrow(UnmatchedConfigError)
+  it('comes back for one reporter to apply the policy to, which it could not do while it was silent', () => {
+    const { issues } = applyToolDefinitions(codeTools, {
+      tool_definitions: [{ name: 'refund', parameters: { nonexistent: {} } }],
+    })
+    expect(issues.map((entry) => [entry.reason, entry.parameter])).toEqual([['unknown-parameter', 'nonexistent']])
   })
 
   it('says nothing about a parameter entry that asks for no change', () => {
-    const { unapplied } = applyToolDefinitions(codeTools, {
+    const { issues } = applyToolDefinitions(codeTools, {
       tool_definitions: [{ name: 'search', toolset: 'crm', parameters: { q: {} } }],
     })
-    expect(unapplied).toEqual([])
+    expect(issues).toEqual([])
   })
 })
