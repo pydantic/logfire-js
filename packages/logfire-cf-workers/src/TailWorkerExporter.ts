@@ -11,7 +11,7 @@ export class TailWorkerExporter implements SpanExporter {
   }
 
   async shutdown(): Promise<void> {
-    this.sendSpans([])
+    // Nothing to flush: every batch is written to the tail stream as it arrives.
     return Promise.resolve()
   }
 
@@ -35,6 +35,13 @@ export class TailWorkerExporter implements SpanExporter {
   }
 
   private sendSpans(spans: ReadableSpan[], done?: (result: ExportResult) => void): void {
+    // An empty batch still serializes to `{"resourceSpans":[]}`, and the tail worker takes any
+    // logged object with a `resourceSpans` key as the payload to forward, so writing one would
+    // put an empty export in front of the batch's real spans.
+    if (spans.length === 0) {
+      done?.({ code: ExportResultCode.SUCCESS })
+      return
+    }
     const bytes = JsonTraceSerializer.serializeRequest(spans)
     const jsonString = new TextDecoder().decode(bytes)
     const response = JSON.parse(jsonString) as IExportTraceServiceRequest
