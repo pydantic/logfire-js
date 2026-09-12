@@ -4,7 +4,7 @@ import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '
 import { beforeEach, describe, expect, test, vitest } from 'vitest'
 import { AsyncLocalStorageContextManager } from '../../src/context'
 import { instrumentStorage } from '../../src/instrumentation/do-storage'
-import { context, trace } from '@opentelemetry/api'
+import { context, SpanStatusCode, trace } from '@opentelemetry/api'
 
 const exporter = new InMemorySpanExporter()
 
@@ -119,8 +119,8 @@ describe('delete', () => {
     expect(spans[0]?.events).toEqual([])
   })
 
-  test.skip('rejects with spans', async () => {
-    const error = new Error()
+  test('rejects with spans', async () => {
+    const error = new Error('delete failed')
     storage.delete.mockRejectedValue(error)
 
     const instrument = instrumentStorage(storage)
@@ -128,9 +128,16 @@ describe('delete', () => {
 
     const spans = exporter.getFinishedSpans()
     expect(spans).toHaveLength(1)
-    expect(spans[0]?.name).toMatchInlineSnapshot()
-    expect(spans[0]?.attributes).toMatchInlineSnapshot()
-    expect(spans[0]?.events).toEqual([])
+    expect(spans[0]?.name).toBe('Durable Object Storage delete')
+    expect(spans[0]?.attributes).toEqual({
+      'db.operation.name': 'delete',
+      'db.query.text': 'delete key',
+      'db.system.name': 'Cloudflare DO',
+      operation: 'delete',
+    })
+    expect(spans[0]?.status).toEqual({ code: SpanStatusCode.ERROR })
+    expect(spans[0]?.events.map((event) => event.name)).toEqual(['exception'])
+    expect(spans[0]?.events[0]?.attributes?.['exception.message']).toBe('delete failed')
   })
 })
 
@@ -153,7 +160,7 @@ describe('deleteAll', () => {
 		`)
   })
 
-  test.skip('with options', async () => {
+  test('with options', async () => {
     const instrument = instrumentStorage(storage)
     await expect(
       instrument.deleteAll({
@@ -165,12 +172,16 @@ describe('deleteAll', () => {
 
     const spans = exporter.getFinishedSpans()
     expect(spans).toHaveLength(1)
-    expect(spans[0]?.name).toMatchInlineSnapshot('"do:storage:deleteAll"')
+    expect(spans[0]?.name).toBe('Durable Object Storage deleteAll')
     expect(spans[0]?.attributes).toMatchInlineSnapshot(`
 			{
-			  "allowConcurrency": true,
-			  "hasResult": false,
-			  "noCache": true,
+			  "db.cf.do.allow_concurrency": true,
+			  "db.cf.do.allow_unconfirmed": true,
+			  "db.cf.do.has_result": false,
+			  "db.cf.do.no_cache": true,
+			  "db.operation.name": "deleteAll",
+			  "db.query.text": "deleteAll [object Object]",
+			  "db.system.name": "Cloudflare DO",
 			  "operation": "deleteAll",
 			}
 		`)
@@ -248,22 +259,25 @@ describe('get', () => {
     expect(spans[0]?.events).toEqual([])
   })
 
-  test.skip('rejects with spans', async () => {
-    const error = new Error()
+  test('rejects with spans', async () => {
+    const error = new Error('get failed')
     storage.get.mockRejectedValue(error)
 
     const instrument = instrumentStorage(storage)
-    await expect(instrument.list()).rejects.toBe(error)
+    await expect(instrument.get('key')).rejects.toBe(error)
 
     const spans = exporter.getFinishedSpans()
     expect(spans).toHaveLength(1)
-    expect(spans[0]?.name).toMatchInlineSnapshot('"do:storage:get"')
-    expect(spans[0]?.attributes).toMatchInlineSnapshot(`
-			{
-			  "operation": "get",
-			}
-		`)
-    expect(spans[0]?.events).toEqual([])
+    expect(spans[0]?.name).toBe('Durable Object Storage get')
+    expect(spans[0]?.attributes).toEqual({
+      'db.operation.name': 'get',
+      'db.query.text': 'get key',
+      'db.system.name': 'Cloudflare DO',
+      operation: 'get',
+    })
+    expect(spans[0]?.status).toEqual({ code: SpanStatusCode.ERROR })
+    expect(spans[0]?.events.map((event) => event.name)).toEqual(['exception'])
+    expect(spans[0]?.events[0]?.attributes?.['exception.message']).toBe('get failed')
   })
 })
 
@@ -314,8 +328,8 @@ describe('list', () => {
     expect(spans[0]?.events).toEqual([])
   })
 
-  test.skip('rejects with spans', async () => {
-    const error = new Error()
+  test('rejects with spans', async () => {
+    const error = new Error('list failed')
     storage.list.mockRejectedValue(error)
 
     const instrument = instrumentStorage(storage)
@@ -323,13 +337,16 @@ describe('list', () => {
 
     const spans = exporter.getFinishedSpans()
     expect(spans).toHaveLength(1)
-    expect(spans[0]?.name).toMatchInlineSnapshot('"do:storage:list"')
-    expect(spans[0]?.attributes).toMatchInlineSnapshot(`
-			{
-			  "operation": "list",
-			}
-		`)
-    expect(spans[0]?.events).toEqual([])
+    expect(spans[0]?.name).toBe('Durable Object Storage list')
+    expect(spans[0]?.attributes).toEqual({
+      'db.operation.name': 'list',
+      'db.query.text': 'list undefined',
+      'db.system.name': 'Cloudflare DO',
+      operation: 'list',
+    })
+    expect(spans[0]?.status).toEqual({ code: SpanStatusCode.ERROR })
+    expect(spans[0]?.events.map((event) => event.name)).toEqual(['exception'])
+    expect(spans[0]?.events[0]?.attributes?.['exception.message']).toBe('list failed')
   })
 })
 
@@ -445,8 +462,8 @@ describe('put', () => {
     expect(spans[0]?.events).toEqual([])
   })
 
-  test.skip('rejects with spans', async () => {
-    const error = new Error()
+  test('rejects with spans', async () => {
+    const error = new Error('put failed')
     storage.put.mockRejectedValue(error)
 
     const instrument = instrumentStorage(storage)
@@ -454,13 +471,16 @@ describe('put', () => {
 
     const spans = exporter.getFinishedSpans()
     expect(spans).toHaveLength(1)
-    expect(spans[0]?.name).toMatchInlineSnapshot('"do:storage:put"')
-    expect(spans[0]?.attributes).toMatchInlineSnapshot(`
-			{
-			  "operation": "put",
-			}
-		`)
-    expect(spans[0]?.events).toEqual([])
+    expect(spans[0]?.name).toBe('Durable Object Storage put')
+    expect(spans[0]?.attributes).toEqual({
+      'db.operation.name': 'put',
+      'db.query.text': 'put key',
+      'db.system.name': 'Cloudflare DO',
+      operation: 'put',
+    })
+    expect(spans[0]?.status).toEqual({ code: SpanStatusCode.ERROR })
+    expect(spans[0]?.events.map((event) => event.name)).toEqual(['exception'])
+    expect(spans[0]?.events[0]?.attributes?.['exception.message']).toBe('put failed')
   })
 })
 
