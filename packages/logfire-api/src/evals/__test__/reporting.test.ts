@@ -828,6 +828,22 @@ describe('report evaluator edge cases', () => {
       positives: [true, true],
       scores: [0.7, 0.1],
     })
+
+    // A key naming an `Object.prototype` member resolves to the inherited value on a bare index
+    // read. The `labels` branch is the one without a value type-check, so an absent label became
+    // `Boolean(undefined)` and scored every case as a ground-truth negative rather than skipping
+    // it, which silently computes the metric over fabricated ground truth.
+    const inherited = 'toString'
+    expect(buildThresholdInputs(cases, { positiveFrom: 'labels', positiveKey: inherited, scoreFrom: 'scores', scoreKey: 's' })).toEqual({
+      positives: [],
+      scores: [],
+    })
+    // A label genuinely named that way is still read.
+    const named = [makeReportCase({ labels: { toString: resultJson(inherited, 'yes') }, scores: { s: resultJson('s', 0.5) } })]
+    expect(buildThresholdInputs(named, { positiveFrom: 'labels', positiveKey: inherited, scoreFrom: 'scores', scoreKey: 's' })).toEqual({
+      positives: [true],
+      scores: [0.5],
+    })
     expect(() => buildThresholdInputs(cases, { positiveFrom: 'assertions', scoreFrom: 'scores', scoreKey: 's' })).toThrow(
       "'positiveKey' is required when positiveFrom='assertions'"
     )

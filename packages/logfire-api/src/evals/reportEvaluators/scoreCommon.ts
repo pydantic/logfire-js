@@ -6,6 +6,8 @@
 
 import type { ReportCase } from '../reporting'
 
+import { getOwn } from '../../ownRecord'
+
 export type ScoreFrom = 'metrics' | 'scores'
 export type PositiveFrom = 'assertions' | 'expected_output' | 'labels'
 
@@ -39,26 +41,31 @@ export function buildThresholdInputs(cases: readonly ReportCase[], opts: Thresho
   return out
 }
 
+// The score and positive keys are the user's own naming, so every lookup below reads an own
+// property. A bare index read finds the inherited member for a key like `toString`, and the
+// `labels` branch is the one where that mattered: it is the only branch that does not also
+// type-check the value, so an absent label resolved to the inherited function and `Boolean(undefined)`
+// scored the case as a ground-truth negative instead of skipping it.
 function extractScore(c: ReportCase, opts: ThresholdOptions): null | number {
   if (opts.scoreFrom === 'scores') {
-    const r = c.scores[opts.scoreKey]
+    const r = getOwn(c.scores, opts.scoreKey)
     return typeof r?.value === 'number' ? r.value : null
   }
-  const v = c.metrics[opts.scoreKey]
+  const v = getOwn(c.metrics, opts.scoreKey)
   return typeof v === 'number' ? v : null
 }
 
 function extractPositive(c: ReportCase, opts: ThresholdOptions): boolean | null {
   switch (opts.positiveFrom) {
     case 'assertions': {
-      const r = c.assertions[opts.positiveKey!]
+      const r = getOwn(c.assertions, opts.positiveKey!)
       return typeof r?.value === 'boolean' ? r.value : null
     }
     case 'expected_output': {
       return c.expected_output === undefined || c.expected_output === null ? null : Boolean(c.expected_output)
     }
     case 'labels': {
-      const r = c.labels[opts.positiveKey!]
+      const r = getOwn(c.labels, opts.positiveKey!)
       return r === undefined ? null : Boolean(r.value)
     }
     default:
