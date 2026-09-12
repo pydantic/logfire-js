@@ -446,9 +446,15 @@ export class ReplayTransport {
   private async getUploadHeaders(): Promise<Record<string, string>> {
     const headers = this.config.headers === undefined ? {} : await this.config.headers()
     const token = await resolveToken(this.config.token)
+    const tokenHeaders =
+      token === undefined || token.length === 0
+        ? headers
+        : {
+            ...Object.fromEntries(Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'authorization')),
+            Authorization: `Bearer ${token}`,
+          }
     return {
-      ...headers,
-      ...(token === undefined || token.length === 0 ? {} : { Authorization: `Bearer ${token}` }),
+      ...tokenHeaders,
       'Content-Type': 'application/json',
       'Content-Encoding': 'gzip',
     }

@@ -251,7 +251,7 @@ describe('ReplayTransport full mode', () => {
     const { calls, fetchImpl } = recordingFetch()
     const config: ResolvedSessionReplayConfig = {
       ...makeConfig(fetchImpl),
-      headers: async () => ({ 'X-CSRF': 'csrf-token' }),
+      headers: async () => ({ 'X-CSRF': 'csrf-token', authorization: 'Bearer stale-token' }),
       token: async () => 'write-token',
     }
     const transport = new ReplayTransport(config, 'sess-token', 'full', null)
@@ -261,6 +261,28 @@ describe('ReplayTransport full mode', () => {
     expect(calls[0]!.init.headers).toEqual({
       Authorization: 'Bearer write-token',
       'X-CSRF': 'csrf-token',
+      'Content-Type': 'application/json',
+      'Content-Encoding': 'gzip',
+    })
+  })
+
+  it('keeps caller Authorization headers when the direct token is empty', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport(
+      {
+        ...makeConfig(fetchImpl),
+        headers: async () => ({ authorization: 'Bearer caller-token' }),
+        token: async () => '',
+      },
+      'sess-header-token',
+      'full',
+      null
+    )
+    transport.add(fullSnapshot)
+    await transport.flush()
+
+    expect(calls[0]!.init.headers).toEqual({
+      authorization: 'Bearer caller-token',
       'Content-Type': 'application/json',
       'Content-Encoding': 'gzip',
     })

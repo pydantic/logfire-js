@@ -100,20 +100,21 @@ export interface ChunkEnvelope {
  */
 export interface SessionReplayConfig {
   /**
-   * Replay upload endpoint. For normal browser applications this should be a
-   * backend proxy endpoint. With the direct-token escape hatch, this may point
-   * at Logfire ingest. The SDK posts to `${replayUrl}/${sessionId}?seq=${seq}`.
+   * Browser-safe replay upload endpoint, either direct Logfire ingest with a
+   * restricted frontend application token or an application-owned proxy. The
+   * SDK posts to `${replayUrl}/${sessionId}?seq=${seq}`.
    */
   replayUrl: string
   /**
-   * Headers added to each replay upload. Use this for CSRF/session auth to the
-   * caller's backend proxy.
+   * Headers added to each replay upload. Direct Logfire ingest uses the same
+   * restricted frontend application headers as traces and metrics.
    */
   headers?: () => MaybePromise<Record<string, string>>
   /**
-   * Advanced escape hatch for direct Logfire ingest. Prefer `headers` with a
-   * backend proxy for normal browser applications. When provided, the SDK adds
-   * `Authorization: Bearer ${token}` to replay uploads.
+   * Convenience token source. A non-empty value removes any case-insensitive
+   * Authorization entry returned by `headers`, then sets
+   * `Authorization: Bearer ${token}`. Only restricted frontend application
+   * tokens are safe in browsers.
    */
   token?: string | (() => MaybePromise<string>)
   /**
