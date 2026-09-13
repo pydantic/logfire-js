@@ -247,11 +247,85 @@ describe('startSessionReplay full mode', () => {
     expect(calls).toHaveLength(0)
 
     await vi.advanceTimersByTimeAsync(1)
+    expect(calls).toHaveLength(0)
+    const endOfMinimum = { ...click, timestamp: 5_001 }
+    emit(endOfMinimum)
     await vi.waitFor(() => {
       expect(calls).toHaveLength(1)
     })
-    expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot])
+    expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, endOfMinimum])
     await replay.stop()
+  })
+
+  it('re-anchors a capped recording when it reaches the minimum duration', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        flushIntervalMs: 1_000,
+        maxBufferBytes: 80,
+        minSessionDurationMs: 5_000,
+        now: () => Date.now(),
+      })
+    )
+    const refreshedSnapshot = { ...fullSnapshot, timestamp: 5_001 }
+    handle.takeFullSnapshot.mockImplementation(() => {
+      emit(refreshedSnapshot)
+    })
+
+    emit(fullSnapshot)
+    await vi.advanceTimersByTimeAsync(180)
+    emit(click)
+    expect(calls).toHaveLength(0)
+
+    await vi.advanceTimersByTimeAsync(4_820)
+    expect(calls).toHaveLength(0)
+    emit({ ...click, timestamp: 5_001 })
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(1)
+    })
+    expect(handle.takeFullSnapshot).toHaveBeenCalledOnce()
+    expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, refreshedSnapshot])
+    await replay.stop()
+  })
+
+  it('retries a failed re-anchor before stopping the recorder', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        maxBufferBytes: 80,
+        minSessionDurationMs: 5_000,
+      })
+    )
+    const refreshedSnapshot = { ...fullSnapshot, timestamp: 5_001 }
+    const lifecycle: string[] = []
+    handle.takeFullSnapshot
+      .mockImplementationOnce(() => {
+        lifecycle.push('failed re-anchor')
+      })
+      .mockImplementationOnce(() => {
+        lifecycle.push('successful re-anchor')
+        emit(refreshedSnapshot)
+      })
+    handle.stop.mockImplementation(() => {
+      lifecycle.push('stop')
+    })
+
+    emit(fullSnapshot)
+    emit(click)
+    emit({ ...click, timestamp: 5_001 })
+
+    expect(handle.takeFullSnapshot).toHaveBeenCalledOnce()
+    expect(calls).toHaveLength(0)
+
+    await replay.stop()
+
+    expect(handle.takeFullSnapshot).toHaveBeenCalledTimes(2)
+    expect(handle.stop).toHaveBeenCalledOnce()
+    expect(lifecycle).toEqual(['failed re-anchor', 'successful re-anchor', 'stop'])
+    expect(calls).toHaveLength(1)
+    expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, refreshedSnapshot])
   })
 
   it('flushes a chunk through the proxy URL and returns an internal session id', async () => {
