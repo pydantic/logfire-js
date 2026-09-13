@@ -199,14 +199,20 @@ function createActiveRuntime(options: {
   const sessionAttributes = snapshotSessionAttributes(config.getSessionAttributes, (error) => {
     safeReportError(config.onError, error)
   })
-  const transport = new ReplayTransport(config, sessionId, mode, undefined, undefined, sessionAttributes, { holdUntilActivity })
+  let recorder: ReturnType<typeof startRecording>
+  const transport = new ReplayTransport(config, sessionId, mode, undefined, undefined, sessionAttributes, {
+    holdUntilActivity,
+    takeFullSnapshot: () => {
+      recorder.takeFullSnapshot()
+    },
+  })
   const cleanup: (() => void)[] = []
   let active = true
   const isRuntimeActive = () => active
   let deactivation: Promise<void> | undefined
 
   try {
-    const recorder = startRecording({
+    recorder = startRecording({
       beforeUserActivity: () => {
         if (!active || !transport.isHeld()) {
           return
@@ -343,8 +349,10 @@ function createActiveRuntime(options: {
       transport,
       deactivate: async () => {
         deactivation ??= (async () => {
+          const finalFlush = transport.flush({ keepalive: false })
           active = false
           stopCleanup(cleanup)
+          await finalFlush
           await transport.shutdown({ keepalive: false })
         })()
         return deactivation
