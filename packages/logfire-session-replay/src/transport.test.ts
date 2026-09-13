@@ -306,6 +306,7 @@ describe('ReplayTransport full mode', () => {
 
       await vi.advanceTimersByTimeAsync(1)
       expect(calls).toHaveLength(0)
+      expect(vi.getTimerCount()).toBe(0)
       const endOfMinimum = { ...mutation, timestamp: 5_001 }
       transport.add(endOfMinimum)
       await vi.waitFor(() => {

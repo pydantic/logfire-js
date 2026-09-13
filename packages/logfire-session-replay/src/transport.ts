@@ -199,7 +199,6 @@ export class ReplayTransport {
       return
     }
     if (!this.minimumDurationReached()) {
-      this.scheduleFlush()
       return
     }
     this.clearScheduledFlush()
