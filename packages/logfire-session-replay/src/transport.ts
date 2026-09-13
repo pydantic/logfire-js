@@ -98,6 +98,8 @@ export class ReplayTransport {
 
   add(event: RrwebEvent): void {
     if (!this.minimumDurationSatisfied) {
+      // Events rejected by the byte cap still establish observed session duration.
+      // A fresh snapshot restores the replay anchor before any retained prefix ships.
       this.firstObservedTimestamp ??= event.timestamp
       this.lastObservedTimestamp = Math.max(this.lastObservedTimestamp ?? event.timestamp, event.timestamp)
     }
@@ -115,9 +117,12 @@ export class ReplayTransport {
       if (event.type === EventType.Meta) {
         this.buffer = [event]
         this.bufferHasFullSnapshot = false
+        this.minimumBufferIncomplete = false
         this.pendingBytes = eventBytes
         if (enforcingMinimum) {
-          this.firstObservedTimestamp = event.timestamp
+          if (this.mode === 'full') {
+            this.firstObservedTimestamp = event.timestamp
+          }
           this.finishMinimumBufferingEvent()
         }
         return
@@ -131,7 +136,9 @@ export class ReplayTransport {
         this.heldBufferIncomplete = false
         this.minimumBufferIncomplete = false
         if (enforcingMinimum) {
-          this.firstObservedTimestamp = retainedMeta?.timestamp ?? event.timestamp
+          if (this.mode === 'full') {
+            this.firstObservedTimestamp = retainedMeta?.timestamp ?? event.timestamp
+          }
           this.finishMinimumBufferingEvent()
         }
         return
@@ -195,15 +202,14 @@ export class ReplayTransport {
       this.scheduleFlush()
       return
     }
+    this.clearScheduledFlush()
     // Overflow mutations were dropped to keep the pre-minimum buffer bounded.
     // A new snapshot restores a valid rrweb state chain before the buffer ships.
     if (this.minimumBufferIncomplete && !this.refreshMinimumBuffer()) {
-      this.scheduleFlush()
       return
     }
     this.minimumDurationSatisfied = true
 
-    this.clearScheduledFlush()
     const events = this.buffer
     this.buffer = []
     this.bufferHasFullSnapshot = false
