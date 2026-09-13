@@ -1,5 +1,11 @@
 # @pydantic/logfire-session-replay
 
+## 0.3.4
+
+### Patch Changes
+
+- 1d5fd32: Enforce the configured minimum against recorded event duration without letting the initial replay buffer grow unbounded.
+
 ## 0.3.3
 
 ### Patch Changes
