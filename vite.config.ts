@@ -6,7 +6,15 @@ const generatedAndExternalFiles = ['node_modules/**', '.pnpm-store/**', 'pnpm-lo
 
 export default defineConfig({
   fmt: {
-    ignorePatterns: ['CHANGELOG.md', '.changeset/*.md', ...generatedAndExternalFiles],
+    ignorePatterns: [
+      'CHANGELOG.md',
+      '.changeset/*.md',
+      // Cross-language conformance vectors vendored from the Python repository, which owns them.
+      // They are pinned byte-for-byte by a digest test, so reformatting them here would fail that
+      // test and, worse, make a real drift indistinguishable from a formatting pass.
+      'packages/logfire-node/src/agent-control/spec/**',
+      ...generatedAndExternalFiles,
+    ],
     overrides: [
       {
         files: ['examples/cf-worker/**', 'examples/cf-producer-worker/**', 'examples/cf-tail-worker/**'],

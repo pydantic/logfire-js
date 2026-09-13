@@ -60,6 +60,26 @@
         "types": "./dist/vars.d.cts",
         "default": "./dist/vars.cjs"
       }
+    },
+    "./agent-control": {
+      "import": {
+        "types": "./dist/agent-control/index.d.ts",
+        "default": "./dist/agent-control/index.js"
+      },
+      "require": {
+        "types": "./dist/agent-control/index.d.cts",
+        "default": "./dist/agent-control/index.cjs"
+      }
+    },
+    "./agent-control/testing": {
+      "import": {
+        "types": "./dist/agent-control/testing.d.ts",
+        "default": "./dist/agent-control/testing.js"
+      },
+      "require": {
+        "types": "./dist/agent-control/testing.d.cts",
+        "default": "./dist/agent-control/testing.cjs"
+      }
     }
   },
   "scripts": {
@@ -74,7 +94,8 @@
   },
   "dependencies": {
     "logfire": "workspace:*",
-    "picocolors": "^1.1.1"
+    "picocolors": "^1.1.1",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@opentelemetry/api": "catalog:",

@@ -356,6 +356,30 @@ const resolved = await featureEnabled.get({ targetingKey: 'user-123' })
 
 Use local variables for tests and development without network access.
 
+## Agent Control
+
+Agent Control is available from `@pydantic/logfire-node/agent-control`. It backs one agent
+with one `agent__<name>` managed variable, so an agent's instructions, model, model
+settings, and tool definitions can be changed from the Logfire UI without a deploy. Every
+section of a published value is a patch: absent means code, and a value that cannot be
+resolved or understood leaves the agent running exactly as written.
+
+```ts
+import { AgentControl, applyInstructions, buildBaseline } from '@pydantic/logfire-node/agent-control'
+
+const control = new AgentControl('checkout_assistant', { label: 'production' })
+control.publishBaseline(buildBaseline({ instructions: codeBlocks, model, tools }))
+
+const answer = await control.run(async ({ config }) => {
+  const blocks = config === null ? codeBlocks : applyInstructions(codeBlocks, config).blocks
+  return runTheAgent(blocks)
+})
+```
+
+The core is framework-neutral; a framework adapter builds on it. See
+[the Agent Control guide](https://github.com/pydantic/logfire-js/blob/main/docs/agent-control.md)
+and `examples/node/agent-control.ts`.
+
 ## Contributing
 
 See [CONTRIBUTING.md](https://github.com/pydantic/logfire-js/blob/main/CONTRIBUTING.md) for development instructions.

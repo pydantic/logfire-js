@@ -119,6 +119,7 @@ vp run logfire#typecheck
 - `packages/logfire-node/src/logfireConfig.ts` owns Node SDK configuration and environment variable handling.
 - Relevant environment variables include `LOGFIRE_TOKEN`, `LOGFIRE_SERVICE_NAME`, `LOGFIRE_SERVICE_VERSION`, `LOGFIRE_ENVIRONMENT`, `LOGFIRE_CONSOLE`, `LOGFIRE_SEND_TO_LOGFIRE`, and `LOGFIRE_DISTRIBUTED_TRACING`.
 - `packages/logfire-api` is the base API package and should not depend on runtime-specific packages.
+- `packages/logfire-node/src/agent-control/spec` is vendored from the Python repository, which owns those cross-language conformance vectors. It is excluded from `vp fmt` and pinned by a digest test; re-vendor by copying the files and updating the digests, never by editing them here.
 - Cloudflare Workers code should stay compatible with Worker runtime constraints.
 - Browser code should avoid Node-only APIs.
 
