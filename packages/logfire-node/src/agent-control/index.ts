@@ -10,6 +10,10 @@
  * `applyToolDefinitions`, `applySettings`, and `buildBaseline` are pure functions over plain data.
  * An adapter for a new framework is: enumerate a baseline, install the framework's hook, call two
  * pure helpers. See the README for a worked one.
+ *
+ * Nothing in this package ever creates or updates a Logfire variable. An agent reports its code
+ * baseline on an `agent_control_config_hint` span, and Logfire promotes that into a config when
+ * someone asks it to.
  */
 
 export { buildBaseline } from './baseline'
@@ -19,7 +23,7 @@ export type { AgentConfig, AgentConfigSettings, InstructionBlockConfig, Paramete
 export { canonicalSettings, CANONICAL_SETTINGS_KEYS, parseAgentConfig } from './config'
 
 export { AgentControl, currentResolution, useResolution } from './control'
-export type { AgentControlOptions, BaselineSource, PublishBaselineOptions, Resolution } from './control'
+export type { AgentControlOptions, BaselinePublication, BaselineSource, ReportBaselineOptions, Resolution } from './control'
 
 export { applyInstructions, instructionEntries } from './instructions'
 export type { AppliedInstructions, InstructionBlock } from './instructions'

@@ -1,10 +1,24 @@
+import { configureLogfireApi } from 'logfire'
 import { configureVariables, getVariableProvider } from 'logfire/vars'
 import type { SerializedResolvedVariable, VariableConfig } from 'logfire/vars'
 import { describe, expect, it } from 'vite-plus/test'
 
-import { AgentControl, AGENT_CONFIG_JSON_SCHEMA, buildBaseline, UnmatchedConfigError } from '../index'
-import type { ApplyIssue } from '../index'
-import { captureWarnings, emptyVariable, publishedValue, settle, storedConfigFor, useLocalVariables, useNoVariables } from './helpers'
+import { AgentControl, buildBaseline, SCHEMA_SHA256, UnmatchedConfigError } from '../index'
+import type { AgentConfig, ApplyIssue, ReportBaselineOptions, ToolDef } from '../index'
+import { resetProcessState } from '../testing'
+import {
+  captureWarnings,
+  collectHints,
+  collectSpans,
+  emptyVariable,
+  hintAttributes,
+  publishedValue,
+  storedConfigFor,
+  useDeployment,
+  useLocalVariables,
+  useNoVariables,
+} from './helpers'
+import type { CapturedSpan } from './helpers'
 
 const warnings = captureWarnings()
 
@@ -128,274 +142,309 @@ describe('AgentControl', () => {
     })
   })
 
-  describe('publishBaseline', () => {
+  describe('reportBaseline', () => {
     const baseline = buildBaseline({
       instructions: [{ id: 'agent', text: 'You are a checkout assistant.', dynamic: false }],
       model: 'openai:gpt-5.6-sol',
     })
-    const example = JSON.stringify(baseline, null, 2)
+    /** The digest of the canonical form of `baseline`; see the cross-language test below. */
+    const BASELINE_SHA256 = '86905062a7aa7d426d155908a0133fc847a3d91b07ead15cdb2e57086920ad50'
 
-    it('creates the variable with the shared JSON schema when it does not exist', async () => {
+    /** Resolve, report, and hand back the hint spans that produced. */
+    async function reported(
+      control: AgentControl,
+      what: AgentConfig = baseline,
+      options: ReportBaselineOptions = {}
+    ): Promise<Record<string, unknown>[]> {
+      return collectHints(async () => {
+        control.reportBaseline(what, await control.resolution(), options)
+      })
+    }
+
+    it('reports the whole contract on one `agent_control_config_hint` span', async () => {
       useLocalVariables()
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
-      const stored = storedConfigFor('agent__checkout')
-      expect(stored?.name).toBe('agent__checkout')
-      expect(stored?.example).toBe(example)
-      // The stored schema is what the Logfire backend validates every written value against, so
-      // whichever side creates the variable first fixes the contract for the other.
-      expect(stored?.json_schema).toEqual(AGENT_CONFIG_JSON_SCHEMA)
-      expect(warnings.messages).toEqual([])
-    })
-
-    it('publishes exactly the canonical JSON of the baseline', async () => {
-      useLocalVariables()
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
-      expect(storedConfigFor('agent__checkout')?.example).toMatchInlineSnapshot(`
-        "{
-          "instructions": [
-            {
-              "id": "agent",
-              "instructions": "You are a checkout assistant.",
-              "dynamic": false
-            }
-          ],
-          "model": "openai:gpt-5.6-sol"
-        }"
-      `)
-    })
-
-    it('syncs only `example` on a variable that already exists', async () => {
-      useLocalVariables(
-        emptyVariable('agent__checkout', {
-          example: '{"model": "stale"}',
-          description: 'Set by hand in the Logfire UI.',
-          labels: {
-            production: { version: 3, serialized_value: '{"model":"openai:gpt-5.6-sol"}' },
-          },
-          rollout: { labels: { production: 1 } },
-        })
-      )
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
-      const stored = storedConfigFor('agent__checkout')
-      expect(stored?.example).toBe(example)
-      // Every other field of the definition someone edited in the UI survives the write.
-      expect(stored?.description).toBe('Set by hand in the Logfire UI.')
-      expect(stored?.labels['production']).toEqual({
-        version: 3,
-        serialized_value: '{"model":"openai:gpt-5.6-sol"}',
+      useDeployment({ serviceName: 'checkout-api', environment: 'prod', serviceVersion: 'abc123' })
+      const spans = await collectSpans(async () => {
+        const control = new AgentControl('checkout')
+        control.reportBaseline(baseline, await control.resolution())
+      })
+      // The span *name* is what a Logfire-side query selects a hint by, and the message is what a
+      // person reads; both are the contract, and both are shared byte for byte with the Python core.
+      expect(spans.map((span) => span.name)).toEqual(['agent_control_config_hint'])
+      expect(spans[0]?.attributes['logfire.msg']).toBe('Agent Control reported the code baseline for this agent')
+      expect(hintAttributes(spans[0] as CapturedSpan)).toEqual({
+        'agent_control.variable_name': 'agent__checkout',
+        'agent_control.agent_name': 'checkout',
+        'agent_control.framework': 'logfire-node',
+        'agent_control.baseline_source': 'code',
+        'agent_control.schema_sha256': SCHEMA_SHA256,
+        'agent_control.baseline_sha256': BASELINE_SHA256,
+        'agent_control.baseline_reduction': 'none',
+        'agent_control.baseline_bytes': 171,
+        'agent_control.resolution_reason': 'code_default',
+        'agent_control.service_name': 'checkout-api',
+        'agent_control.environment': 'prod',
+        'agent_control.service_version': 'abc123',
+        'agent_control.baseline': JSON.stringify(baseline, null, 2),
       })
     })
 
-    it('writes nothing when `example` already matches', async () => {
-      useLocalVariables(emptyVariable('agent__checkout', { example }))
-      const provider = getVariableProvider() as { updateVariable: unknown }
-      const original = provider.updateVariable
-      let updates = 0
-      provider.updateVariable = (...args: unknown[]) => {
-        updates += 1
-        return (original as (...a: unknown[]) => unknown).apply(provider, args)
+    it('never creates or updates a variable', async () => {
+      // The whole point of the hint. Registration is a person's click on a platform-side flow, so an
+      // SDK that wrote the variable itself would be making that decision for them -- and its write
+      // path is a read-modify-write the platform API offers no conditional write for.
+      useLocalVariables()
+      const provider = getVariableProvider() as {
+        createVariable: unknown
+        updateVariable: unknown
       }
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
-      expect(updates).toBe(0)
-    })
-
-    it('runs at most once per process per variable, however many requests call it', async () => {
-      useLocalVariables()
-      const control = new AgentControl('checkout')
-      control.publishBaseline(baseline)
-      control.publishBaseline(buildBaseline({ model: 'anthropic:claude-fable-5-1' }))
-      new AgentControl('checkout').publishBaseline(buildBaseline({ model: 'anthropic:claude-fable-5-1' }))
-      await settle()
-      // The first snapshot wins: the guard is marked before the work, so a second request cannot
-      // schedule a duplicate write and a failure is not retried by every later run.
-      expect(storedConfigFor('agent__checkout')?.example).toBe(example)
-    })
-
-    it('does nothing at all when it is switched off', async () => {
-      useLocalVariables()
-      new AgentControl('checkout', { publishBaseline: false }).publishBaseline(baseline)
-      await settle()
+      const wrote: string[] = []
+      provider.createVariable = (config: VariableConfig) => {
+        wrote.push(`create ${config.name}`)
+        return config
+      }
+      provider.updateVariable = (name: string, config: VariableConfig) => {
+        wrote.push(`update ${name}`)
+        return config
+      }
+      expect(await reported(new AgentControl('checkout'))).toHaveLength(1)
+      expect(wrote).toEqual([])
       expect(storedConfigFor('agent__checkout')).toBeUndefined()
-    })
-
-    it('does nothing when variables are switched off, since there is nowhere to publish', async () => {
-      useNoVariables()
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
       expect(warnings.messages).toEqual([])
     })
 
-    it('warns and never throws when the write fails', async () => {
+    it('says which agent landed on the key, keeping the name as written', async () => {
+      // The variable name is derived from the agent's name lossily, so the hint is the only thing
+      // that says *which* agent is behind `agent__checkout_assistant`.
       useLocalVariables()
-      const provider = getVariableProvider() as { createVariable: unknown }
-      provider.createVariable = async () => Promise.reject(new Error('403 read-only token'))
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
-      expect(warnings.messages).toEqual([
-        "Failed to publish the code baseline for Logfire managed variable 'agent__checkout': 403 read-only token",
-      ])
+      const hints = await reported(new AgentControl('Checkout Assistant'))
+      expect(hints[0]?.['agent_control.variable_name']).toBe('agent__checkout_assistant')
+      expect(hints[0]?.['agent_control.agent_name']).toBe('Checkout Assistant')
     })
 
-    it('warns and never throws when the baseline will not serialize', async () => {
+    it('leaves off deployment identity the SDK does not know', async () => {
+      // Absent is a state a consumer can act on; `''` is a value it has to learn to disbelieve.
+      useLocalVariables()
+      useDeployment({ serviceVersion: 'abc123' })
+      const hints = await reported(new AgentControl('checkout'))
+      expect(hints[0]).not.toHaveProperty('agent_control.service_name')
+      expect(hints[0]).not.toHaveProperty('agent_control.environment')
+      expect(hints[0]?.['agent_control.service_version']).toBe('abc123')
+    })
+
+    it('reports once per process per variable, however many requests call it', async () => {
+      useLocalVariables()
+      const control = new AgentControl('checkout')
+      const hints = await collectHints(async () => {
+        const resolution = await control.resolution()
+        control.reportBaseline(baseline, resolution)
+        control.reportBaseline(baseline, resolution)
+        new AgentControl('checkout').reportBaseline(baseline, resolution)
+      })
+      expect(hints).toHaveLength(1)
+    })
+
+    it('reports again once the process is pointed at a second project', async () => {
+      // The guard is keyed on the destination, not on the variable's name alone: a process serving
+      // two Logfire projects has to report the agent to each, or the second project never learns
+      // about an agent the first one happened to see first.
+      useLocalVariables()
+      const first = await reported(new AgentControl('checkout'))
+      useLocalVariables()
+      const second = await reported(new AgentControl('checkout'))
+      expect(first).toHaveLength(1)
+      expect(second).toHaveLength(1)
+    })
+
+    it('reports a configured agent too, and says so', async () => {
+      // An agent that reported only while unconfigured would go quiet the moment someone configured
+      // it, and its stored baseline would describe the code as it was that day.
+      useLocalVariables(publishedValue('agent__checkout', { model: 'anthropic:claude-fable-5-1' }))
+      const hints = await reported(new AgentControl('checkout', { label: 'production' }))
+      expect(hints[0]?.['agent_control.resolution_reason']).toBe('resolved')
+      // Still the *code* baseline, not the managed value that is overriding it.
+      expect(hints[0]?.['agent_control.baseline_sha256']).toBe(BASELINE_SHA256)
+    })
+
+    describe('the reporting budget', () => {
+      /** Tool definitions that together push a baseline past the 1 MiB budget. */
+      function manyTools(count: number): ToolDef[] {
+        return Array.from({ length: count }, (_unused, index) => ({
+          name: `tool_${String(index)}`,
+          description: 'x'.repeat(200),
+          parametersJsonSchema: {},
+        }))
+      }
+
+      it('drops whole tool definitions rather than cutting the JSON mid-string', async () => {
+        // The backend truncates a long attribute in place, which for JSON is a string that still
+        // looks like one and no longer parses. What comes off the span is always a whole document.
+        useLocalVariables()
+        const oversize = buildBaseline({
+          instructions: [{ id: 'agent', text: 'You are a checkout assistant.', dynamic: false }],
+          tools: manyTools(6000),
+        })
+        const hints = await reported(new AgentControl('checkout'), oversize)
+        expect(hints[0]?.['agent_control.baseline_reduction']).toBe('tool_definitions')
+        const carried = hints[0]?.['agent_control.baseline'] as string
+        expect(JSON.parse(carried)).toEqual({
+          instructions: [{ id: 'agent', instructions: 'You are a checkout assistant.', dynamic: false }],
+        })
+        // The size is the whole baseline's, before the reduction, so a consumer can threshold on what
+        // the agent actually says rather than on what survived.
+        expect(hints[0]?.['agent_control.baseline_bytes']).toBeGreaterThan(Buffer.byteLength(carried))
+      })
+
+      it('omits a baseline that is too large even without its tool definitions', async () => {
+        useLocalVariables()
+        const huge = buildBaseline({
+          instructions: [{ id: 'agent', text: 'x'.repeat(2 * 1024 * 1024), dynamic: false }],
+          tools: manyTools(10),
+        })
+        const hints = await reported(new AgentControl('checkout'), huge)
+        expect(hints[0]?.['agent_control.baseline_reduction']).toBe('omitted')
+        expect(hints[0]).not.toHaveProperty('agent_control.baseline')
+        // Still says how big it was, and still digests it: the two facts a consumer has left.
+        expect(hints[0]?.['agent_control.baseline_bytes']).toBeGreaterThan(2 * 1024 * 1024)
+        expect(hints[0]?.['agent_control.baseline_sha256']).toEqual(expect.stringMatching(/^[0-9a-f]{64}$/u))
+      })
+
+      it('digests the whole baseline, not the JSON that survived', async () => {
+        // Two oversize reports of *different* code have to differ, and the digest is the only thing
+        // left to tell them apart by. A digest taken after the reduction would make this agent --
+        // which advertises 6000 tools -- indistinguishable from one that advertises none.
+        useLocalVariables()
+        const instructions = [{ id: 'agent', text: 'You are a checkout assistant.', dynamic: false }]
+        const oversize = await reported(new AgentControl('checkout'), buildBaseline({ instructions, tools: manyTools(6000) }))
+        resetProcessState()
+        const survivor = await reported(new AgentControl('checkout'), buildBaseline({ instructions }))
+        expect(oversize[0]?.['agent_control.baseline_reduction']).toBe('tool_definitions')
+        // What each span carries is the same document; what each agent *is* is not.
+        expect(oversize[0]?.['agent_control.baseline']).toBe(survivor[0]?.['agent_control.baseline'])
+        expect(oversize[0]?.['agent_control.baseline_sha256']).not.toBe(survivor[0]?.['agent_control.baseline_sha256'])
+      })
+    })
+
+    describe('how much of the baseline is reported', () => {
+      it('reports every seam and no text under `structure`', async () => {
+        useLocalVariables()
+        const full = buildBaseline({
+          instructions: [
+            { id: 'agent', text: 'You are a checkout assistant.', dynamic: false },
+            { id: 'today', text: '', dynamic: true },
+          ],
+          model: 'openai:gpt-5.6-sol',
+          settings: { temperature: 0.2 },
+          tools: [
+            {
+              name: 'refund',
+              description: 'Refund an order for a named customer.',
+              parametersJsonSchema: { properties: { order_id: { description: 'The order to refund.' } } },
+              toolset: 'billing',
+            },
+          ],
+        })
+        const hints = await reported(new AgentControl('checkout', { reportBaseline: 'structure' }), full)
+        expect(JSON.parse(hints[0]?.['agent_control.baseline'] as string)).toEqual({
+          // Every id an override can address, and the `dynamic` flag that says which of them are not
+          // addressable, with none of the prose.
+          instructions: [
+            { id: 'agent', dynamic: false },
+            { id: 'today', dynamic: true },
+          ],
+          model: 'openai:gpt-5.6-sol',
+          settings: { temperature: 0.2 },
+          tool_definitions: [{ name: 'refund', parameters: { order_id: {} }, toolset: 'billing' }],
+        })
+        // The digest and the size describe what was reported, so two deployments running the same
+        // code under the same policy still agree, and a consumer's check of the one against the
+        // other still holds.
+        expect(hints[0]?.['agent_control.baseline_reduction']).toBe('none')
+      })
+
+      it('holds an observed baseline to its seams by default, and a code one to its text', async () => {
+        // Code-side text is the author's, written knowing it is editable from this Logfire project.
+        // Text snapshotted from a request is whoever's request it happened to be.
+        useLocalVariables()
+        const observed = await reported(new AgentControl('checkout'), baseline, { source: 'observed' })
+        expect(observed[0]?.['agent_control.baseline_source']).toBe('observed')
+        expect(JSON.parse(observed[0]?.['agent_control.baseline'] as string)).toEqual({
+          instructions: [{ id: 'agent', dynamic: false }],
+          model: 'openai:gpt-5.6-sol',
+        })
+
+        resetProcessState()
+        const code = await reported(new AgentControl('checkout'))
+        expect(code[0]?.['agent_control.baseline']).toBe(JSON.stringify(baseline, null, 2))
+      })
+
+      it('still reports an observed baseline in full when the deployment asks for it', async () => {
+        useLocalVariables()
+        const hints = await reported(new AgentControl('checkout', { reportBaseline: 'text' }), baseline, { source: 'observed' })
+        expect(hints[0]?.['agent_control.baseline']).toBe(JSON.stringify(baseline, null, 2))
+      })
+
+      it('reports the agent without its baseline under `off`', async () => {
+        // The agent still registers and is still told apart from another one by its digest; only the
+        // document stays in the process. It lands in the same state an oversize baseline does,
+        // because a second word for "the document is not here" would only be a second thing to learn.
+        useLocalVariables()
+        const hints = await reported(new AgentControl('checkout', { reportBaseline: 'off' }))
+        expect(hints[0]).not.toHaveProperty('agent_control.baseline')
+        expect(hints[0]?.['agent_control.baseline_reduction']).toBe('omitted')
+        expect(hints[0]?.['agent_control.baseline_sha256']).toBe(BASELINE_SHA256)
+        expect(hints[0]?.['agent_control.baseline_bytes']).toBe(171)
+      })
+    })
+
+    it('names the framework the adapter gave it', async () => {
+      // The ids a baseline addresses its instruction blocks by are each implementation's own, so a
+      // consumer has to know whose baseline it is reading.
+      useLocalVariables()
+      const hints = await reported(new AgentControl('checkout', { framework: 'mastra' }))
+      expect(hints[0]?.['agent_control.framework']).toBe('mastra')
+    })
+
+    it('digests the same document the Python core does', async () => {
+      // `JSON.stringify` emits non-ASCII and `json.dumps` escapes it by default, so without
+      // `ensure_ascii=False` on that side the first instruction block with an accent in it would give
+      // two identical baselines two different digests. This literal is
+      // `hashlib.sha256(json.dumps(document, sort_keys=True, separators=(',', ':'),
+      // ensure_ascii=False).encode()).hexdigest()` over the same document.
+      useLocalVariables()
+      const accented = buildBaseline({
+        instructions: [{ id: 'agent', text: 'Grüße, ¿cómo estás?', dynamic: false }],
+        model: 'openai:gpt-5.6-sol',
+      })
+      const hints = await reported(new AgentControl('checkout'), accented)
+      expect(hints[0]?.['agent_control.baseline_sha256']).toBe('c629a0aa59c85031af9c51e5e4dae698d010f825d5d17cc9fad16f5fc7bf7c5e')
+    })
+
+    it('survives a raised minimum level, because a hint is a span and not a log', async () => {
+      // A log below the configured minimum is dropped, and a signal the platform contract depends on
+      // cannot be something a logging setting silently withholds.
+      useLocalVariables()
+      configureLogfireApi({ minLevel: 'error' })
+      try {
+        expect(await reported(new AgentControl('checkout'))).toHaveLength(1)
+      } finally {
+        configureLogfireApi({ minLevel: null })
+      }
+    })
+
+    it('warns once and never throws when the baseline will not serialize', async () => {
+      // Reporting happens in the middle of an agent run. An adapter that assembled an `AgentConfig`
+      // itself can hand in a value `JSON.stringify` refuses, and the run has to keep running.
       useLocalVariables()
       const circular: Record<string, unknown> = {}
       circular['self'] = circular
-      new AgentControl('checkout').publishBaseline({ settings: circular })
-      await settle()
-      expect(warnings.messages[0]).toContain("Failed to publish the code baseline for Logfire managed variable 'agent__checkout'")
-      expect(storedConfigFor('agent__checkout')).toBeUndefined()
-    })
-
-    it('tolerates a provider with no write path at all', async () => {
-      useLocalVariables()
-      const provider = getVariableProvider() as {
-        createVariable?: unknown
-        updateVariable?: unknown
-      }
-      delete provider.createVariable
-      delete provider.updateVariable
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
-      expect(warnings.messages).toEqual([])
-    })
-
-    it('tolerates a provider that cannot be asked what it holds', async () => {
-      useLocalVariables()
-      const provider = getVariableProvider() as { getVariableConfig?: unknown }
-      delete provider.getVariableConfig
-      // Unanswerable reads as "not there", which creates rather than blindly overwriting.
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
-      expect(storedConfigFor('agent__checkout')?.example).toBe(example)
-    })
-
-    it('treats a null definition the same as a missing one', async () => {
-      useLocalVariables()
-      const provider = getVariableProvider() as {
-        getVariableConfig: unknown
-        createVariable: unknown
-      }
-      provider.getVariableConfig = () => null
-      let created: VariableConfig | undefined
-      provider.createVariable = (config: VariableConfig) => {
-        created = config
-        return config
-      }
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
-      expect(created?.example).toBe(example)
-    })
-
-    it('refreshes the provider before deciding whether the variable exists', async () => {
-      // `getVariableConfig` answers out of the provider's cached config and never fetches, so a
-      // process that has not resolved yet would see every existing variable as missing, take the
-      // create path, conflict, and -- because the publish guard is already marked -- never retry.
-      useLocalVariables(emptyVariable('agent__checkout', { example: '{"model": "stale"}' }))
-      const provider = getVariableProvider() as { refresh?: (force?: boolean) => void }
-      const forced: (boolean | undefined)[] = []
-      provider.refresh = (force?: boolean) => {
-        forced.push(force)
-      }
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
-      expect(forced).toEqual([true])
-    })
-
-    it('publishes through a provider that has no refresh at all', async () => {
-      // `refresh` is optional on `VariableProvider`, and a provider reading a config it was handed
-      // has nothing to refresh from. The publish still has to happen.
-      useLocalVariables(emptyVariable('agent__checkout', { example: '{"model": "stale"}' }))
-      expect('refresh' in getVariableProvider()).toBe(false)
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
-      expect(storedConfigFor('agent__checkout')?.example).toBe(example)
-    })
-
-    it('writes back the read it took immediately before the write, never an earlier one', async () => {
-      // The lost-update window is one HTTP round trip and cannot be closed from this side, so what
-      // *can* be done is: never write a definition read before the decision to write. This test
-      // stands in for the UI saving between the two reads -- the write must carry what that later
-      // read returned, not what the first one did.
-      useLocalVariables(emptyVariable('agent__checkout', { example: '{"model": "stale"}' }))
-      const provider = getVariableProvider() as {
-        getVariableConfig: (name: string) => VariableConfig | undefined
-        updateVariable: (name: string, config: VariableConfig) => VariableConfig
-      }
-      const read = provider.getVariableConfig.bind(provider)
-      let reads = 0
-      provider.getVariableConfig = (name: string) => {
-        reads += 1
-        const config = read(name)
-        // Between the existence check and the write, someone publishes in the Logfire UI.
-        if (reads === 1 && config !== undefined) {
-          return {
-            ...config,
-            labels: { production: { version: 7, serialized_value: '{"model":"openai:gpt-5.6-sol"}' } },
-          }
-        }
-        return config
-      }
-      let written: VariableConfig | undefined
-      provider.updateVariable = (_name: string, config: VariableConfig) => {
-        written = config
-        return config
-      }
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
-      expect(reads).toBe(2)
-      // The freshly read definition, with only `example` changed -- not the one read a round trip
-      // earlier, which is the object a stale write would have restored.
-      expect(written?.labels['production']).toBeUndefined()
-      expect(written?.example).toBe(example)
-    })
-
-    it('writes nothing when the variable vanished between the two reads', async () => {
-      useLocalVariables(emptyVariable('agent__checkout', { example: '{"model": "stale"}' }))
-      const provider = getVariableProvider() as {
-        getVariableConfig: (name: string) => VariableConfig | undefined
-        updateVariable: unknown
-      }
-      const read = provider.getVariableConfig.bind(provider)
-      let reads = 0
-      provider.getVariableConfig = (name: string) => (++reads === 1 ? read(name) : undefined)
-      let updates = 0
-      provider.updateVariable = () => {
-        updates += 1
-      }
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
-      // Re-creating a variable someone just deleted is not this call's decision to make.
-      expect(updates).toBe(0)
-    })
-
-    it('says on a new variable whether the example is the code or one observed request', async () => {
-      useLocalVariables()
-      new AgentControl('checkout').publishBaseline(baseline, { source: 'observed' })
-      await settle()
-      expect(storedConfigFor('agent__checkout')?.description).toContain('snapshotted from one request')
-
-      useLocalVariables()
-      new AgentControl('other').publishBaseline(baseline)
-      await settle()
-      expect(storedConfigFor('agent__other')?.description).toContain('the agent as written')
-    })
-
-    it('warns about a failure that is not an Error at all', async () => {
-      useLocalVariables()
-      const provider = getVariableProvider() as { createVariable: unknown }
-      // Deliberately not an `Error`: a hand-rolled provider or a raw HTTP client can reject with a
-      // bare string, and the warning has to name it rather than print `undefined`.
-      const notAnError: unknown = '403 read-only token'
-      // eslint-disable-next-line prefer-promise-reject-errors, @typescript-eslint/prefer-promise-reject-errors -- see above
-      provider.createVariable = async () => Promise.reject(notAnError)
-      new AgentControl('checkout').publishBaseline(baseline)
-      await settle()
+      const hints = await reported(new AgentControl('checkout'), { settings: circular })
+      expect(hints).toEqual([])
       expect(warnings.messages).toEqual([
-        "Failed to publish the code baseline for Logfire managed variable 'agent__checkout': 403 read-only token",
+        "Failed to report the code baseline for Logfire managed variable 'agent__checkout': " +
+          'Converting circular structure to JSON\n' +
+          "    --> starting at object with constructor 'Object'\n" +
+          "    --- property 'self' closes the circle",
       ])
     })
   })

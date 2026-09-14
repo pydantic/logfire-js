@@ -1,5 +1,5 @@
 /**
- * The variable behind one agent's managed config: reading the published value, publishing the
+ * The variable behind one agent's managed config: reading the published value, reporting the
  * baseline.
  *
  * Everything remote lives here. The helpers in `./instructions.ts`, `./tools.ts`, `./settings.ts`,
@@ -9,15 +9,19 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks'
 
-import { defineVar, getVariableProvider, NoOpVariableProvider, ResolvedVariable, Variable } from 'logfire/vars'
-import type { VariableConfig, VariableProvider, VariableResolutionReason } from 'logfire/vars'
+import { defineVar, ResolvedVariable, Variable } from 'logfire/vars'
+import type { VariableResolutionReason } from 'logfire/vars'
 
 import { parseAgentConfig } from './config'
 import type { AgentConfig } from './config'
+import { reportConfigHint, resetConfigHintGuard } from './hint'
+import type { BaselinePublication, BaselineSource } from './hint'
 import { agentVariableName } from './names'
 import { AGENT_CONFIG_JSON_SCHEMA } from './schema'
 import { reportIssues, reportUnmatched as report, warnOnce } from './warnings'
 import type { ApplyIssue, OnUnmatched } from './warnings'
+
+export type { BaselinePublication, BaselineSource } from './hint'
 
 /**
  * The resolution outcomes that mean a published value was actually applied.
@@ -50,55 +54,30 @@ const NOTEWORTHY_REASONS = new Set(['validation_error', 'other_error'])
  */
 const variables = new Map<string, Variable<AgentConfig>>()
 
-/**
- * Where a published baseline came from, which an adapter has to say because it changes what it means.
- *
- * - `'code'` is the agent *as written*: read off the agent object, its declared prompts, its declared
- *   settings, its tool definitions. It describes every request the agent will make.
- * - `'observed'` is one request, snapshotted because the framework offers nothing to read the agent
- *   from until it runs. It describes the request it came from and nothing else, so a prompt or a tool
- *   list assembled from the run's own input is a sample rather than a description -- and text that
- *   came from a request is one tenant's, one user's, one retrieved document's, published into a
- *   variable every member of the Logfire project can read.
- *
- * The distinction is not cosmetic: an adapter that can only observe should mark blocks it did not find
- * in code as dynamic rather than publishing their rendered text, and the editor has to be able to tell
- * a description of the code from a description of one request that happened first.
- */
-export type BaselineSource = 'code' | 'observed'
-
-/** Options for `AgentControl.publishBaseline`. */
-export interface PublishBaselineOptions {
+/** Options for `AgentControl.reportBaseline`. */
+export interface ReportBaselineOptions {
   /**
    * Whether the baseline describes the agent as written or one request that happened to come first.
    *
    * An adapter that reads its framework's agent object leaves this at `'code'`. One whose framework
    * assembles its prompt or tool list from callables, so that the earliest anything can be read is a
    * request, passes `'observed'` and says so, rather than letting a snapshot of one request stand in
-   * for a description of the code. A new process publishes again, so a changed deployment updates
-   * either kind.
+   * for a description of the code. A new process reports again, so a changed deployment updates
+   * either kind. It also chooses how much of the baseline is reported by default; see
+   * `AgentControlOptions.reportBaseline`.
    */
   source?: BaselineSource
 }
 
-/** What a newly created variable says about itself, which depends on what its example actually is. */
-const BASELINE_DESCRIPTIONS: Record<BaselineSource, string> = {
-  code:
-    'Agent Control config for this agent. The example is the agent as written, published by the SDK; ' +
-    'set a value here to change what the agent sends, and remove it to go back to the code.',
-  observed:
-    'Agent Control config for this agent. The example was snapshotted from one request, because this ' +
-    'framework offers nothing to read the agent from until it runs, so it describes that request rather ' +
-    'than every one. Set a value here to change what the agent sends, and remove it to go back to the code.',
-}
-
 /**
- * Destinations a baseline publish has been attempted for in this process.
+ * Which Agent Control SDK a hint came from when nobody said.
  *
- * Marked *before* the work starts, so concurrent first requests cannot schedule duplicate writes and
- * a failure is not retried by every later run.
+ * The core is framework-neutral, so an application driving it directly is not using a framework at
+ * all, and naming one would be a guess. What a consumer actually needs from the attribute is whose
+ * baseline it is reading -- the ids a baseline addresses its instruction blocks by are each
+ * implementation's own -- and for an adapterless agent that answer is this package.
  */
-const baselinePublishAttempted = new Set<string>()
+const DEFAULT_FRAMEWORK = 'logfire-node'
 
 /**
  * What one resolution of an agent's variable came back with.
@@ -162,13 +141,24 @@ export interface AgentControlOptions {
    */
   onUnmatched?: OnUnmatched
   /**
-   * Whether to publish the code-side baseline to the variable's `example`.
+   * Which Agent Control SDK produced this agent's hints, as `agent_control.framework` reports it.
    *
-   * On by default because `example` is documentation for the Logfire editor and is never resolved or
-   * applied to a run, so a failed or stale publish cannot change agent behavior. Turn it off when the
-   * variables token is intentionally read-only, or when code must not write variable metadata.
+   * An adapter names its framework -- `'pydantic-ai'`, `'mastra'` -- because the ids a baseline
+   * addresses its instruction blocks by are each implementation's own, so a consumer has to know
+   * whose baseline it is reading. An application driving this core directly has no framework to name
+   * and can leave it alone; see `DEFAULT_FRAMEWORK`.
    */
-  publishBaseline?: boolean
+  framework?: string
+  /**
+   * How much of the code baseline leaves this process on the hint span; see `BaselinePublication`.
+   *
+   * Defaults to `'structure'` when the baseline was `'observed'` and `'text'` when it was read off
+   * the code, which is where the two differ: code-side text is the author's, written knowing it is
+   * editable from this Logfire project, while text snapshotted from a request is whoever's request it
+   * happened to be. Set it explicitly to hold a code-side baseline to its seams as well, which is what
+   * a deployment whose prompts are not for every member of its Logfire project wants.
+   */
+  reportBaseline?: BaselinePublication
 }
 
 /**
@@ -180,13 +170,18 @@ export interface AgentControlOptions {
  *
  * ```ts
  * const control = new AgentControl('checkout_assistant', { label: 'production' });
- * control.publishBaseline(buildBaseline({ instructions: codeBlocks, model, tools }));
  *
- * return await control.run(async ({ config }) => {
+ * return await control.run(async (resolution) => {
+ *   const { config } = resolution;
+ *   control.reportBaseline(buildBaseline({ instructions: codeBlocks, model, tools }), resolution);
  *   const blocks = config === null ? codeBlocks : applyInstructions(codeBlocks, config).blocks;
  *   return runTheAgent(blocks);
  * });
  * ```
+ *
+ * Nothing here ever creates or updates a Logfire variable. An agent reports its code baseline on a
+ * span and Logfire promotes that into a config when someone asks it to; `logfire vars push` is how a
+ * deployment creates one from code deliberately.
  *
  * Everything inside `run` carries the resolved label on its spans, so a trace says which published
  * version drove it. `resolution()` and `resolve()` are there for an adapter whose framework gives it
@@ -214,7 +209,10 @@ export class AgentControl {
   /** The policy `report` applies to a request's issues; see `OnUnmatched`. */
   readonly onUnmatched: OnUnmatched
 
-  readonly #publishBaseline: boolean
+  /** Which Agent Control SDK this agent's hints report; see `AgentControlOptions.framework`. */
+  readonly framework: string
+
+  readonly #reportBaseline: BaselinePublication | undefined
   readonly #variable: Variable<AgentConfig>
 
   constructor(name: string, options: AgentControlOptions = {}) {
@@ -224,7 +222,10 @@ export class AgentControl {
     this.name = name.trim()
     this.label = options.label
     this.onUnmatched = options.onUnmatched ?? 'warn'
-    this.#publishBaseline = options.publishBaseline ?? true
+    this.framework = options.framework ?? DEFAULT_FRAMEWORK
+    // Left undefined rather than defaulted here: what it defaults to depends on the `source` of the
+    // baseline, which is not known until one is reported.
+    this.#reportBaseline = options.reportBaseline
     this.#variable = agentVariable(this.variableName)
   }
 
@@ -398,117 +399,61 @@ export class AgentControl {
   }
 
   /**
-   * Publish a baseline as the variable's `example`, creating the variable if needed.
+   * Report the code baseline for this agent, once per process, on one hint span.
    *
-   * Returns immediately. The write is a remote round trip and the baseline is documentation for the
-   * Logfire editor that no run ever reads, so making a model request wait on it would trade something
-   * that matters for something that does not. Failures are warned about and never thrown: this is
-   * called from the middle of an agent run, and a variable's metadata not being up to date must not be
-   * what takes that run down.
+   * This is how an agent gets a managed config, and how it stays accurate once it has one. **Nothing
+   * here writes a variable.** Every agent reports what it says in code, and Logfire turns that into a
+   * config for an agent it has none for, or offers to refresh a stored baseline the code has moved on
+   * from -- on a person's click, which is what keeps a managed config something someone decided to
+   * have rather than something a deployment made for them. The span carries the whole contract; see
+   * `reportConfigHint` for every attribute on it.
    *
-   * At most once per process per variable, and the guard is marked *before* the work starts, so
-   * concurrent first requests cannot schedule duplicate writes and a failure is not retried by every
-   * later run. That is also what makes the caller's job easy: call it on every request and let this
-   * decide.
+   * Reported whether or not a config resolved, which is what makes the second half possible: an agent
+   * that reported only while unconfigured would go quiet the moment someone configured it, and its
+   * stored baseline would describe the code as it was that day. `resolution.reason` is what tells the
+   * two apart on the span, which is why the run's resolution is a parameter rather than something
+   * this resolves for itself -- a second resolve could disagree with the one the run is using, and
+   * would report a version the agent never ran on.
    *
-   * If the variable does not exist, it is created with `AGENT_CONFIG_JSON_SCHEMA` as its stored
-   * schema, which is what makes the Logfire UI able to edit it -- the backend validates every value
-   * written against that schema, so whichever side creates the variable first fixes the contract.
+   * At most once per process per destination, and the guard is marked *before* the work, so
+   * concurrent first requests cannot report twice. That is also what makes the caller's job easy:
+   * call it on every request and let this decide.
    *
-   * ## A lost update is still possible here, and cannot be closed from this side
+   * ```ts
+   * await control.run(async (resolution) => {
+   *   control.reportBaseline(buildBaseline({ instructions: codeBlocks, model, tools }), resolution);
+   *   // ...
+   * });
+   * ```
    *
-   * Updating an existing variable is read-modify-write, because the API offers nothing narrower: the
-   * update endpoint takes the whole definition and no revision or `If-Match`. Everything a client can
-   * do to narrow that window is done, and it is worth being exact about what is and is not left:
+   * Never throws. It is called from the middle of an agent run, and describing the agent must not be
+   * what takes that run down -- so a baseline that will not serialize at all warns once and reports
+   * nothing, rather than reaching the caller.
    *
-   * - The provider is **refreshed from the server first**. `getVariableConfig` answers out of the
-   *   provider's cached config rather than fetching, so without this the existence check could be
-   *   answered by a cache that was never populated -- reporting a variable that does exist as
-   *   missing, taking the create path, and failing on a conflict that the once-per-process guard
-   *   then never retries -- and the read-modify-write below could be modifying state as old as the
-   *   polling interval.
-   * - The variable is only ever *created* when that refreshed read says it is missing, so the common
-   *   case for a new agent involves no overwrite at all.
-   * - An existing variable is **re-read immediately before the write**, and the object written is
-   *   that read with `example` replaced -- never one read earlier, and never one a caller passed in.
-   *   Whatever the UI saved up to the refresh is preserved: values, labels, rollout, description.
-   * - The write is skipped entirely when that read already carries this `example`, which is the
-   *   steady state for a deployed agent, so the overwhelmingly common outcome is no write.
-   * - It runs at most once per process per variable, off the request path.
-   *
-   * What remains is one HTTP round trip: a value or label saved in the Logfire UI *between* the
-   * refresh returning and the write landing is overwritten by the older state that refresh returned,
-   * and the UI reports success for the publish it just lost. Closing it needs an example-only `PATCH`, or a
-   * conditional write on a revision or ETag, on the platform API:
-   * https://github.com/pydantic/pydantic-ai-harness/issues/565. Until then, a deployment that cannot
-   * tolerate that window sets `publishBaseline: false` and creates the variable in the UI, and a
-   * successful baseline write is **not** evidence that managed values survived it.
-   *
-   * @param baseline What to publish, from `buildBaseline`.
+   * @param baseline What to report, from `buildBaseline`.
+   * @param resolution The run's resolution, from `run`, `resolution()`, or `currentResolution()`.
    * @param options `source` says whether `baseline` describes the agent as written or one request
    * that happened to come first; see `BaselineSource`.
    */
-  publishBaseline(baseline: AgentConfig, options: PublishBaselineOptions = {}): void {
-    if (!this.#publishBaseline) {
-      return
-    }
-    if (baselinePublishAttempted.has(this.variableName)) {
-      return
-    }
-    baselinePublishAttempted.add(this.variableName)
+  reportBaseline(baseline: AgentConfig, resolution: Resolution, options: ReportBaselineOptions = {}): void {
     const source = options.source ?? 'code'
-    let example: string
     try {
-      example = JSON.stringify(baseline, null, 2)
+      reportConfigHint({
+        variableName: this.variableName,
+        agentName: this.name,
+        framework: this.framework,
+        source,
+        resolutionReason: resolution.reason,
+        baseline,
+        // The source is what decides this when nobody said: see `AgentControlOptions.reportBaseline`.
+        publication: this.#reportBaseline ?? (source === 'observed' ? 'structure' : 'text'),
+      })
     } catch (error) {
-      this.#publishFailed(error)
-      return
+      // Describing the agent is not supposed to be able to fail -- `buildBaseline` produces a plain
+      // JSON document -- but an adapter may hand in an `AgentConfig` it assembled itself, and a value
+      // `JSON.stringify` refuses is the one way that goes wrong. A run keeps running.
+      warnOnce(`Failed to report the code baseline for Logfire managed variable '${this.variableName}': ` + describe(error))
     }
-    this.#publish(example, source).catch((error: unknown) => {
-      this.#publishFailed(error)
-    })
-  }
-
-  #publishFailed(error: unknown): void {
-    warnOnce(`Failed to publish the code baseline for Logfire managed variable '${this.variableName}': ` + describe(error))
-  }
-
-  async #publish(example: string, source: BaselineSource): Promise<void> {
-    const provider: VariableProvider = getVariableProvider()
-    // A provider with no write path is one there is nothing to publish into: the no-op provider
-    // stands in for "variables are switched off", and a custom read-only one is saying the same.
-    if (provider instanceof NoOpVariableProvider) {
-      return
-    }
-    // `getVariableConfig` answers out of the provider's cached config and does not fetch, so both
-    // reads below are only as fresh as the last poll -- and before the first one there is no cache
-    // at all, which would report every existing variable as missing. `variablesPush` refreshes for
-    // the same reason before its own read-modify-write; this is that, once per process.
-    await provider.refresh?.(true)
-    const existing = await provider.getVariableConfig?.(this.variableName)
-    // `== null` rather than a strict pair: the provider interface types this as `VariableConfig |
-    // undefined`, and a custom provider that answers `null` should still read as "no such variable".
-    if (existing == null) {
-      const config: VariableConfig = {
-        ...this.#variable.toConfig(),
-        example,
-        description: BASELINE_DESCRIPTIONS[source],
-      }
-      await provider.createVariable?.(config)
-      return
-    }
-    // Deliberately its own read rather than reusing the one that decided the variable exists: the
-    // value written back is the whole variable definition, so every moment between reading it and
-    // writing it is a moment in which someone else's edit is inside the object about to be
-    // overwritten. Taking the read here makes "never write from a config read earlier" a property of
-    // the code rather than a rule to remember.
-    const fresh = await provider.getVariableConfig?.(this.variableName)
-    // Vanished between the two reads, or already carries this baseline. Either way there is nothing
-    // to write, and re-creating a variable someone just deleted is not this call's decision to make.
-    if (fresh == null || fresh.example === example) {
-      return
-    }
-    await provider.updateVariable?.(this.variableName, { ...fresh, example })
   }
 
   /**
@@ -631,5 +576,5 @@ function describe(error: unknown): string {
 /** Clear this module's process-wide state. Intended for tests only. */
 export function resetProcessState(): void {
   variables.clear()
-  baselinePublishAttempted.clear()
+  resetConfigHintGuard()
 }

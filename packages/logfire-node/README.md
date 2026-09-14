@@ -368,13 +368,17 @@ resolved or understood leaves the agent running exactly as written.
 import { AgentControl, applyInstructions, buildBaseline } from '@pydantic/logfire-node/agent-control'
 
 const control = new AgentControl('checkout_assistant', { label: 'production' })
-control.publishBaseline(buildBaseline({ instructions: codeBlocks, model, tools }))
 
-const answer = await control.run(async ({ config }) => {
+const answer = await control.run(async (resolution) => {
+  const { config } = resolution
+  control.reportBaseline(buildBaseline({ instructions: codeBlocks, model, tools }), resolution)
   const blocks = config === null ? codeBlocks : applyInstructions(codeBlocks, config).blocks
   return runTheAgent(blocks)
 })
 ```
+
+The SDK never creates or updates the variable: an agent reports its code baseline on a span, and
+Logfire turns that into a config when someone asks it to.
 
 The core is framework-neutral; a framework adapter builds on it. See
 [the Agent Control guide](https://github.com/pydantic/logfire-js/blob/main/docs/agent-control.md)

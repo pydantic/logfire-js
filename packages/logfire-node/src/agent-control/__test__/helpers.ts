@@ -1,16 +1,21 @@
 /**
- * Shared test scaffolding: a local variables provider, and a way to see what was warned.
+ * Shared test scaffolding: a local variables provider, a way to see what was warned, and a way to
+ * see what was reported.
  *
  * Everything here is offline. The Logfire SDK's `LocalVariableProvider` is a full provider backed by
- * an in-memory `VariablesConfig` -- it reads, creates, and updates -- so the publish path is
- * exercised against the same interface the remote provider implements, with no network and no
- * recorded fixtures to drift.
+ * an in-memory `VariablesConfig`, and the hint span is read back off a real `InMemorySpanExporter`,
+ * so both paths are exercised against the interfaces the remote ones implement, with no network and
+ * no recorded fixtures to drift.
  */
 
+import { trace as TraceAPI } from '@opentelemetry/api'
+import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { configureLogfireApi } from 'logfire'
 import { configureVariables, getVariableProvider } from 'logfire/vars'
 import type { VariableConfig, VariablesConfig } from 'logfire/vars'
 import { afterEach, beforeEach, vi } from 'vite-plus/test'
 
+import { logfireConfig } from '../../logfireConfig'
 import { resetAgentControl } from '../testing'
 
 /**
@@ -70,19 +75,91 @@ export function captureWarnings(): { messages: string[] } {
   afterEach(() => {
     vi.restoreAllMocks()
     useNoVariables()
+    useDeployment(PRISTINE_DEPLOYMENT)
   })
   return captured
 }
 
-/** Wait for the background baseline publish to settle. */
-export async function settle(): Promise<void> {
-  await Promise.all(Array.from({ length: 5 }, async () => Promise.resolve()))
-  await new Promise<void>((resolve) => {
-    setTimeout(resolve, 0)
-  })
+/**
+ * The deployment identity the process started with, restored after every test by `captureWarnings`.
+ *
+ * `logfireConfig` is seeded from the environment at import, so a machine with `LOGFIRE_SERVICE_NAME`
+ * set would otherwise give a different hint span here than CI does.
+ */
+const PRISTINE_DEPLOYMENT = {
+  serviceName: logfireConfig.serviceName,
+  environment: logfireConfig.deploymentEnvironment,
+  serviceVersion: logfireConfig.serviceVersion,
+}
+
+/**
+ * Say which deployment this process is, for the rest of the test.
+ *
+ * Every field is passed, and a field left out is how a test says the SDK does not know it -- which is
+ * a state the hint has to report differently from knowing an empty string.
+ */
+export function useDeployment(identity: {
+  serviceName?: string | undefined
+  environment?: string | undefined
+  serviceVersion?: string | undefined
+}): void {
+  logfireConfig.serviceName = identity.serviceName
+  logfireConfig.deploymentEnvironment = identity.environment
+  logfireConfig.serviceVersion = identity.serviceVersion
 }
 
 /** Read a variable's stored definition back out of whichever provider is configured. */
 export function storedConfigFor(name: string): VariableConfig | undefined {
   return getVariableProvider().getVariableConfig?.(name) as VariableConfig | undefined
+}
+
+/** One span as this suite reads it: what the platform indexes on, and what it queries. */
+export interface CapturedSpan {
+  /** The OTel span name, which is what a Logfire-side query selects a hint by. */
+  name: string
+  /** Every attribute the span carries, the hint's and Logfire's own alike. */
+  attributes: Record<string, unknown>
+}
+
+/**
+ * Run `body` against a real exporter and hand back the spans it produced.
+ *
+ * A real `BasicTracerProvider` and a real `InMemorySpanExporter` rather than a spy on `logfire.span`,
+ * because what this suite asserts is a cross-language contract the platform queries: the span name
+ * the SDK actually exported, and the attribute keys and value types that actually landed on it.
+ * A spy would agree with whatever the code passed, including a value the exporter drops.
+ *
+ * `configureLogfireApi` is re-run inside, exactly as the API package's own `collectSpans` helper
+ * does: `trace.getTracer` hands back a proxy that caches its delegate the first time a span is
+ * started, so a second test's provider would otherwise never see a span.
+ */
+export async function collectSpans(body: () => Promise<void> | void): Promise<CapturedSpan[]> {
+  const exporter = new InMemorySpanExporter()
+  const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] })
+  TraceAPI.setGlobalTracerProvider(provider)
+  configureLogfireApi({ otelScope: 'logfire' })
+  try {
+    await body()
+    await provider.forceFlush()
+    return exporter.getFinishedSpans().map((span) => ({ name: span.name, attributes: { ...span.attributes } }))
+  } finally {
+    await provider.shutdown()
+    TraceAPI.disable()
+  }
+}
+
+/** The `agent_control.*` half of one span's attributes, which is the contract this suite pins. */
+export function hintAttributes(span: CapturedSpan): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(span.attributes).filter(([name]) => name.startsWith('agent_control.')))
+}
+
+/**
+ * Run `body` and hand back the hint spans it reported, as `[name, attributes]`.
+ *
+ * Every other span a test happens to open is filtered out by name, so a suite asserting "reported
+ * once" is asserting about hints rather than about span traffic in general.
+ */
+export async function collectHints(body: () => Promise<void> | void): Promise<Record<string, unknown>[]> {
+  const spans = await collectSpans(body)
+  return spans.filter((span) => span.name === 'agent_control_config_hint').map(hintAttributes)
 }

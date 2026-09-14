@@ -36,11 +36,13 @@ import { AgentControl, applyInstructions, applySettings, applyToolDefinitions, b
 const control = new AgentControl('checkout_assistant', { label: 'production' })
 const options = { onUnmatched: control.onUnmatched }
 
-// Once per process, so the Logfire editor knows what it is editing.
-control.publishBaseline(buildBaseline({ instructions: codeBlocks, model, settings, tools: codeTools }))
-
 // Once per run: resolve, then do the whole run inside the resolution's telemetry context.
-const answer = await control.run(async ({ config }) => {
+const answer = await control.run(async (resolution) => {
+  const { config } = resolution
+
+  // Once per process, so Logfire knows this agent exists and what it says in code.
+  control.reportBaseline(buildBaseline({ instructions: codeBlocks, model, settings, tools: codeTools }), resolution)
+
   if (config === null) {
     return runTheAgent({ blocks: codeBlocks, tools: codeTools, settings, model })
   }
@@ -91,7 +93,7 @@ A bare `"instructions": "text"` is also valid and means one added block, so a ha
 
 ## The Baseline
 
-The **baseline** is the same shape, describing the agent rather than changing it. The Logfire editor renders it as the thing a managed value is layered onto: it is published as the variable's `example`, and it is never resolved and never applied.
+The **baseline** is the same shape, describing the agent rather than changing it. The Logfire editor renders it as the thing a managed value is layered onto: it becomes the variable's `example`, and it is never resolved and never applied.
 
 ```jsonc
 {
@@ -118,9 +120,13 @@ Two rules about what a baseline carries are worth stating outright, because both
 - **A dynamic block publishes its seam, never its text.** An instruction recomputed per request reads the run — a tenant, a user id, a retrieved document — so the baseline says only that the block exists and that it is not editable. That is also exactly what the editor needs.
 - **Settings are filtered to the canonical keys.** A framework's settings also carry provider-specific ones and things like extra headers and bodies, which is where authorization headers live. Those still apply to the run; they are just not part of this contract.
 
-`buildBaseline` produces the document and `control.publishBaseline` writes it. The write happens in the background, at most once per process per variable, and never throws. Pass `{ source: 'observed' }` when the earliest anything could be read was one request rather than the agent object, because the two mean different things to whoever reads them. If the variable does not exist it is created with the contract's stored JSON schema, which the Logfire backend then validates every written value against.
+`buildBaseline` produces the document and `control.reportBaseline` reports it, on one span named `agent_control_config_hint`, at most once per process per agent. Pass `{ source: 'observed' }` when the earliest anything could be read was one request rather than the agent object, because the two mean different things to whoever reads them.
 
-Set `publishBaseline: false` when the variables token is intentionally read-only, or when code must not write variable metadata. Updating an existing variable is read-modify-write — the platform API takes the whole definition and offers no conditional write — so a value saved in the Logfire UI during that one round trip can be overwritten. The provider is refreshed from the server first, the variable is re-read immediately before the write, and the write is skipped when the baseline is already current, which is the steady state for a deployed agent; a deployment that cannot tolerate that window should turn the publish off and create the variable in the UI.
+**The SDK never creates or updates a variable.** An agent reports what it says in code and Logfire turns that into a config — for an agent it has none for, or as an offer to refresh a stored baseline the code has moved on from — when someone asks it to. Which is the point: a managed config is something a person decided this agent should have, not something a deployment made for them. It is also why an agent reports whether or not a config resolved: one that reported only while unconfigured would go quiet the moment someone configured it, and its stored baseline would describe the code as it was that day. The span says which of the two it is on `agent_control.resolution_reason`. To create the variable from code deliberately, use `logfire vars push`.
+
+The hint is a span rather than a log, so no minimum-level setting can withhold it, and it carries the baseline as JSON alongside the agent's name, the framework, the schema and baseline digests, and the service, environment, and version that reported it. A baseline over 1 MiB is reduced by whole sections — tool definitions first, then the baseline is left off entirely — and never truncated, because a JSON document cut mid-string still looks like a string and no longer parses. `agent_control.baseline_reduction` says which happened, and `agent_control.baseline_sha256` always digests the whole baseline, so two reports of the same code agree however much of it a span could carry.
+
+`reportBaseline: 'structure'` reports every seam and no text at all — instruction ids and their `dynamic` flags, tool names, toolsets, parameter names, the model, the settings — which is what an editor needs to offer an override for each of them. It is the default for an `'observed'` baseline, because text snapshotted from a request is whoever's request it happened to be, where code-side text is the author's. `reportBaseline: 'off'` reports the agent and withholds its baseline entirely.
 
 ## The Contract
 
@@ -144,7 +150,7 @@ TypeScript adapters for **Mastra**, the **Vercel AI SDK**, and the **OpenAI Code
 
 Python users get the same contract from [`logfire`](https://logfire.pydantic.dev/docs/) and [`pydantic-ai-harness`](https://github.com/pydantic/pydantic-ai-harness). A config published from the Logfire UI drives every one of them, because the variable name, the baseline, and the parse are the same three rules in both languages.
 
-Writing an adapter for something else is five things and nothing else: construct an `AgentControl`, resolve once per run, call `applyInstructions` / `applyToolDefinitions` / `applySettings`, build a baseline with `buildBaseline`, and publish it. `control.reportUnmatched(message)` is how an adapter puts a section its framework cannot honor at all — a published `model` where models cannot be switched — through the same policy as everything else, rather than dropping it in silence; `reportUnapplied(keys)` does the same for the settings keys it has no knob for.
+Writing an adapter for something else is five things and nothing else: construct an `AgentControl`, resolve once per run, call `applyInstructions` / `applyToolDefinitions` / `applySettings`, build a baseline with `buildBaseline`, and report it. `control.reportUnmatched(message)` is how an adapter puts a section its framework cannot honor at all — a published `model` where models cannot be switched — through the same policy as everything else, rather than dropping it in silence; `reportUnapplied(keys)` does the same for the settings keys it has no knob for.
 
 See `examples/node/agent-control.ts` for a complete runnable example against a local variables config.
 

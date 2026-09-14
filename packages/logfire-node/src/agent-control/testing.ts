@@ -2,10 +2,10 @@
  * Test-only entry point: reset the process-wide state this package keeps.
  *
  * Two guards make Agent Control quiet in production and awkward in a test suite. Warnings are
- * emitted once per process per message, and a baseline is published once per process per variable.
- * Both are deliberate -- a config resolved on every run would otherwise bury its own signal, and a
- * failed publish would otherwise retry forever -- and both mean the second test to exercise a path
- * sees nothing happen.
+ * emitted once per process per message, and a baseline is reported once per process per destination.
+ * Both are deliberate -- a config resolved on every run would otherwise bury its own signal, and one
+ * hint span per request would be one per request forever -- and both mean the second test to
+ * exercise a path sees nothing happen.
  *
  * So these are exported, from their own subpath rather than the index. An adapter's suite needs them
  * in a `beforeEach`; an adapter's *runtime* has no business calling either, and a separate entry

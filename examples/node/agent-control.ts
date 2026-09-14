@@ -81,25 +81,32 @@ const codeSettings = { extra_headers: { 'x-tenant': 'acme' }, temperature: 0.1 }
 const control = new AgentControl('Checkout Assistant', { label: 'production' })
 console.log('display name:', control.name, '-> variable:', control.variableName)
 
-// Once per process: describe the agent for the Logfire editor to layer a value onto. It writes in
-// the background, at most once per variable, and never throws.
-control.publishBaseline(buildBaseline({ instructions: buildCodeBlocks(), model: codeModel, settings: codeSettings, tools: codeTools }))
-
 // Once per run: resolve, then do the whole run inside the resolution's telemetry context, so every
 // span carries the label the run was actually driven by.
-await control.run(async ({ config, label, reason, version }) => {
+await control.run(async (resolution) => {
+  const { config, label, reason, version } = resolution
   console.log('resolved:', { label, reason, version })
+
+  // Once per process: report the agent as written, on an `agent_control_config_hint` span. Nothing
+  // here writes a variable -- Logfire turns the report into a config when someone asks it to.
+  control.reportBaseline(
+    buildBaseline({ instructions: buildCodeBlocks(), model: codeModel, settings: codeSettings, tools: codeTools }),
+    resolution
+  )
   if (config === null) {
     console.log('nothing published; running on the code-defined agent')
     return
   }
 
-  const options = { onUnmatched: control.onUnmatched }
   // Rebuilt for this run, so the dynamic block carries this run's date rather than the process's.
   const codeBlocks = buildCodeBlocks()
-  const { blocks, unapplied: unappliedInstructions } = applyInstructions(codeBlocks, config, options)
-  const { tools, routes, unapplied: unappliedTools } = applyToolDefinitions(codeTools, config, options)
-  const settings = { ...codeSettings, ...applySettings(config, options) }
+  const instructions = applyInstructions(codeBlocks, config)
+  const { tools, routes, issues: toolIssues } = applyToolDefinitions(codeTools, config)
+  const applied = applySettings(config)
+  const settings = { ...codeSettings, ...applied.settings }
+  const { blocks } = instructions
+  // Every section's issues in one place, so the configured policy is applied to all of it at once.
+  control.report(...instructions.issues, ...toolIssues, ...applied.issues)
 
   console.log('instructions sent to the model:')
   for (const block of blocks) {
@@ -114,14 +121,16 @@ await control.run(async ({ config, label, reason, version }) => {
   console.log('a call to `lookup_weather` runs:', routes['lookup_weather'])
   console.log('model:', config.model ?? codeModel)
   console.log('settings:', settings)
-  console.log('published entries that reached nothing:', [...unappliedInstructions, ...unappliedTools].length)
+  console.log('published entries that reached nothing:', [...instructions.issues, ...toolIssues, ...applied.issues].length)
 
   await logfire.span('checkout assistant run', {}, {}, async () => {
     logfire.info('this span carries the resolved label on baggage')
   })
 })
 
+// Nothing above wrote a variable: the code baseline went out on an `agent_control_config_hint`
+// span, which Logfire turns into a config for this agent when someone asks it to.
 const stored = await getVariableProvider().getVariableConfig?.('agent__checkout_assistant')
-console.log('baseline published as the variable example:\n', stored?.example)
+console.log('variable example written by the SDK:', stored?.example ?? '<none, by design>')
 
 await logfire.shutdown()

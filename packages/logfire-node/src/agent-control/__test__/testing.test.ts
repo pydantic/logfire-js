@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vite-plus/test'
 
 import { AgentControl, buildBaseline, warnOnce } from '../index'
 import { resetAgentControl, resetProcessState, resetWarnings } from '../testing'
-import { captureWarnings, settle, storedConfigFor, useLocalVariables } from './helpers'
+import { captureWarnings, collectHints, useLocalVariables } from './helpers'
 
 const warnings = captureWarnings()
 
@@ -25,40 +25,38 @@ describe('the testing entry point', () => {
     expect(warnings.messages).toEqual(['said once', 'said once'])
   })
 
-  it('clears the publish guard, so a suite can assert a publish more than once', async () => {
+  it('clears the report guard, so a suite can assert a hint more than once', async () => {
     useLocalVariables()
     const baseline = buildBaseline({ model: 'openai:gpt-5.6-sol' })
-    new AgentControl('checkout').publishBaseline(baseline)
-    await settle()
-    expect(storedConfigFor('agent__checkout')).toBeDefined()
+    const report = async (): Promise<Record<string, unknown>[]> =>
+      collectHints(async () => {
+        const control = new AgentControl('checkout')
+        control.reportBaseline(baseline, await control.resolution())
+      })
 
-    // Without the reset the second suite to publish this variable would silently write nothing, and
-    // its assertion would fail for a reason that has nothing to do with what it was testing.
-    useLocalVariables()
-    new AgentControl('checkout').publishBaseline(baseline)
-    await settle()
-    expect(storedConfigFor('agent__checkout')).toBeUndefined()
+    expect(await report()).toHaveLength(1)
+    // Without the reset the second suite to report this agent would silently emit nothing, and its
+    // assertion would fail for a reason that has nothing to do with what it was testing.
+    expect(await report()).toHaveLength(0)
 
     resetProcessState()
-    new AgentControl('checkout').publishBaseline(baseline)
-    await settle()
-    expect(storedConfigFor('agent__checkout')).toBeDefined()
+    expect(await report()).toHaveLength(1)
   })
 
   it('clears both at once, which is what a `beforeEach` wants', async () => {
     useLocalVariables()
-    warnOnce('said once')
-    new AgentControl('checkout').publishBaseline(buildBaseline({ model: 'openai:gpt-5.6-sol' }))
-    await settle()
+    const baseline = buildBaseline({ model: 'openai:gpt-5.6-sol' })
+    const report = async (): Promise<Record<string, unknown>[]> =>
+      collectHints(async () => {
+        warnOnce('said once')
+        const control = new AgentControl('checkout')
+        control.reportBaseline(baseline, await control.resolution())
+      })
 
+    expect(await report()).toHaveLength(1)
     resetAgentControl()
-    useLocalVariables()
-    warnOnce('said once')
-    new AgentControl('checkout').publishBaseline(buildBaseline({ model: 'openai:gpt-5.6-sol' }))
-    await settle()
-
+    expect(await report()).toHaveLength(1)
     expect(warnings.messages).toEqual(['said once', 'said once'])
-    expect(storedConfigFor('agent__checkout')).toBeDefined()
   })
 
   it('is reachable at the published subpath, not just from source', async () => {
