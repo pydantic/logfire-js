@@ -368,6 +368,27 @@ describe('serializeAttributes', () => {
     expect(result['deep']).toContain('[Scrubbed due to max depth]')
   })
 
+  test('keeps a managed variable label whose key is built from a name the patterns match', () => {
+    // `logfire.variables.<name>` says which label of a managed variable served the run, on every
+    // span inside the resolution. The key carries the developer's own variable name, so a managed
+    // prompt called `prompt__session_summary` and an agent called `agent__auth_router` matched the
+    // patterns on their *key* and had the label replaced -- losing the version attribution the
+    // attribute exists for, and hiding nothing, since a label is a name the same person chose. The
+    // exemption is `SAFE_KEY_PREFIXES`, which is what an exact-match safe key cannot express.
+    const result = serializeAttributes({
+      'logfire.variables.prompt__session_summary': 'production',
+      'logfire.variables.prompt__session_summary.version': '7',
+      'logfire.variables.agent__auth_router': 'canary',
+      // Not under the prefix, so nothing here changes for an ordinary attribute.
+      session_id: 'abc123',
+    })
+
+    expect(result['logfire.variables.prompt__session_summary']).toBe('production')
+    expect(result['logfire.variables.prompt__session_summary.version']).toBe('7')
+    expect(result['logfire.variables.agent__auth_router']).toBe('canary')
+    expect(result['session_id']).toBe("[Scrubbed due to 'session']")
+  })
+
   test('uses scrubbed values for schema inference', () => {
     const result = serializeAttributes({
       payload: {

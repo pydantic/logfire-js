@@ -114,6 +114,24 @@ const SAFE_KEYS = new Set([
   'url.query',
 ])
 
+// Attribute keys under these prefixes are safe, for the same reason as `SAFE_KEYS` but where the key
+// is built at runtime and cannot be listed. This is the SDK exempting its own instrumentation's
+// namespace, not a general opt-out: nothing outside this module adds to it. Kept in sync with
+// `logfire._internal.scrubbing.BaseScrubber.SAFE_KEY_PREFIXES`.
+//
+// `logfire.variables.<name>` carries which label of a managed variable served the run, and `.version`
+// the version number, on every span inside the resolution. The name is the developer's variable name,
+// so a variable called `agent__auth_router` or `prompt__session_summary` matched on its *key* and had
+// its label redacted -- losing the version attribution that makes a managed variable auditable, on
+// every span of the run, while protecting nothing: what the value holds is a label the same developer
+// chose.
+const SAFE_KEY_PREFIXES = ['logfire.variables.']
+
+/** Whether an attribute key and everything under it is kept whatever the patterns match. */
+function isSafeKey(key: string): boolean {
+  return SAFE_KEYS.has(key) || SAFE_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))
+}
+
 const MAX_SCRUB_DEPTH = 100
 const MAX_DEPTH_REPLACEMENT = '[Scrubbed due to max depth]'
 const CYCLE_REPLACEMENT = '[Scrubbed due to cycle]'
@@ -213,7 +231,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
       try {
         const result = new Map<string, unknown>()
         for (const [k, v] of Object.entries(value)) {
-          if (SAFE_KEYS.has(k) || ['boolean', 'number', 'undefined'].includes(typeof v) || v === null) {
+          if (isSafeKey(k) || ['boolean', 'number', 'undefined'].includes(typeof v) || v === null) {
             // Safe key or a primitive value, no scrubbing of the key itself.
             // (In the Python SDK we still scrub primitive values to be extra careful)
             result.set(k, v)
