@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto'
+
 import { configureLogfireApi } from 'logfire'
 import { configureVariables, getVariableProvider } from 'logfire/vars'
 import type { SerializedResolvedVariable, VariableConfig } from 'logfire/vars'
 import { describe, expect, it } from 'vite-plus/test'
 
-import { AgentControl, buildBaseline, SCHEMA_SHA256, UnmatchedConfigError } from '../index'
+import { AgentControl, buildBaseline, canonicalJson, SCHEMA_SHA256, UnmatchedConfigError } from '../index'
 import type { AgentConfig, ApplyIssue, ReportBaselineOptions, ToolDef } from '../index'
 import { resetProcessState } from '../testing'
 import {
@@ -187,6 +189,51 @@ describe('AgentControl', () => {
         'agent_control.service_version': 'abc123',
         'agent_control.baseline': JSON.stringify(baseline, null, 2),
       })
+    })
+
+    it('is reported as written, with scrubbing at its default', async () => {
+      // Scrubbing is on unless a project turns it off, and it matches substrings: `auth`, `session`
+      // and `token` are ordinary words in a prompt, a tool description, an agent's name and a
+      // service's name. Every string here matches one -- the instruction says "authoritative", the
+      // tool description says "authorization", the agent is an `auth_router`, the service is a
+      // `checkout-session-api`, and the deployment is a preview environment named after its branch.
+      // The baseline is the document a config is created from, so a redaction inside it is a
+      // corrupted document rather than a hidden secret, and one that no longer matches the digest or
+      // the byte count. A redacted `variable_name` is worse: the hint names no variable at all. The
+      // exemption is `SAFE_KEYS` in `logfire-api`; this test is what holds the six keys there.
+      useLocalVariables()
+      useDeployment({
+        serviceName: 'checkout-session-api',
+        environment: 'pr-auth-refresh',
+        serviceVersion: '1.4.0+authz.2',
+      })
+      const instructions = 'Order tools are authoritative for status and refunds.'
+      const description = 'Refund an order the customer has authorization for.'
+      const matching = buildBaseline({
+        instructions: [{ id: 'agent', text: instructions, dynamic: false }],
+        tools: [
+          {
+            name: 'refund_order',
+            description,
+            parametersJsonSchema: { properties: { order_id: { description: 'The order to refund.' } } },
+            toolset: 'orders',
+          },
+        ],
+      })
+      const hints = await reported(new AgentControl('auth_router'), matching)
+
+      const carried = JSON.parse(hints[0]?.['agent_control.baseline'] as string) as AgentConfig
+      expect(carried).toEqual(matching)
+      expect(hints[0]?.['agent_control.variable_name']).toBe('agent__auth_router')
+      expect(hints[0]?.['agent_control.agent_name']).toBe('auth_router')
+      expect(hints[0]?.['agent_control.service_name']).toBe('checkout-session-api')
+      expect(hints[0]?.['agent_control.environment']).toBe('pr-auth-refresh')
+      expect(hints[0]?.['agent_control.service_version']).toBe('1.4.0+authz.2')
+      // The two promises a reduction of `'none'` makes to a consumer, checked against the document
+      // the span carries rather than the one this process built.
+      expect(hints[0]?.['agent_control.baseline_reduction']).toBe('none')
+      expect(hints[0]?.['agent_control.baseline_sha256']).toBe(createHash('sha256').update(canonicalJson(carried), 'utf8').digest('hex'))
+      expect(hints[0]?.['agent_control.baseline_bytes']).toBe(Buffer.byteLength(hints[0]?.['agent_control.baseline'] as string))
     })
 
     it('never creates or updates a variable', async () => {

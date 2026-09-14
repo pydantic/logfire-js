@@ -67,6 +67,21 @@ const DEFAULT_PATTERNS = [
 
 // Should be kept roughly in sync with `logfire._internal.scrubbing.BaseScrubber.SAFE_KEYS`
 const SAFE_KEYS = new Set([
+  // The Agent Control config hint, reported by `logfire/agent-control` and by every adapter built on
+  // it. `agent_control.baseline` is the agent's own source text -- the prompt and tool descriptions
+  // its author wrote, with request-derived values already kept out by the contract that builds it --
+  // and it is the document a config is created from, digested by `agent_control.baseline_sha256` and
+  // sized by `agent_control.baseline_bytes`. Redacting a word inside it corrupts that document and
+  // silently breaks both. The identity and deployment attributes go with it: the same service name,
+  // environment and version already arrive unscrubbed as OTel resource attributes, which are not
+  // scrubbed, so redacting the copy on this span protects nothing and costs the consumer the agent it
+  // names.
+  'agent_control.agent_name',
+  'agent_control.baseline',
+  'agent_control.environment',
+  'agent_control.service_name',
+  'agent_control.service_version',
+  'agent_control.variable_name',
   'code.filepath',
   'code.function',
   'code.lineno',
