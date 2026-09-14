@@ -1,0 +1,86 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.anthropic.com/v1/messages",
+      "body": {
+        "model": "claude-haiku-4-5",
+        "max_tokens": 512,
+        "temperature": 0.2,
+        "top_k": 20,
+        "stop_sequences": ["###NEVER###"],
+        "system": [
+          {
+            "type": "text",
+            "text": "Answer in one word."
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Capital of France?"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "name": "getWeather",
+            "description": "Get the weather for a city.",
+            "input_schema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "City name"
+                }
+              },
+              "required": ["city"],
+              "additionalProperties": false
+            }
+          }
+        ],
+        "tool_choice": {
+          "type": "auto",
+          "disable_parallel_tool_use": true
+        }
+      }
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "body": {
+        "model": "claude-haiku-4-5-20251001",
+        "id": "msg_011CetiwV3bL7UeMcfPSLTMC",
+        "type": "message",
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Paris."
+          }
+        ],
+        "container": null,
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "stop_details": null,
+        "usage": {
+          "input_tokens": 393,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 0
+          },
+          "output_tokens": 5,
+          "service_tier": "standard",
+          "inference_geo": "not_available"
+        }
+      }
+    }
+  }
+]

@@ -1,0 +1,330 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.openai.com/v1/responses",
+      "body": {
+        "model": "gpt-5.4-nano",
+        "input": [
+          {
+            "role": "developer",
+            "content": "Use your tools to answer."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "What is the weather in Paris?"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "lookup_current_weather",
+            "description": "Look up the current weather for a city.",
+            "parameters": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "The city to look up, for example 'Paris'."
+                }
+              },
+              "required": ["city"],
+              "additionalProperties": false
+            }
+          }
+        ],
+        "tool_choice": "auto"
+      }
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "body": {
+        "id": "resp_0a0c6d25c5e72d57006aa1e9e6d43087d1abf7dd570ee4a918",
+        "object": "response",
+        "created_at": 1788996070,
+        "status": "completed",
+        "background": false,
+        "billing": {
+          "payer": "developer"
+        },
+        "completed_at": 1788996071,
+        "error": null,
+        "frequency_penalty": 0,
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": null,
+        "max_tool_calls": null,
+        "model": "gpt-5.4-nano-2026-03-17",
+        "moderation": null,
+        "output": [
+          {
+            "id": "fc_0a0c6d25c5e72d57006aa1e9e733f487d1ad8246e53a04b9c4",
+            "type": "function_call",
+            "status": "completed",
+            "arguments": "{\"city\":\"Paris\"}",
+            "call_id": "call_53mWrv5D2k4ldBJe3FuZHNta",
+            "name": "lookup_current_weather"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "presence_penalty": 0,
+        "previous_response_id": null,
+        "prompt_cache_key": null,
+        "prompt_cache_retention": "24h",
+        "reasoning": {
+          "context": "current_turn",
+          "effort": "none",
+          "mode": "standard",
+          "summary": null
+        },
+        "safety_identifier": null,
+        "service_tier": "default",
+        "store": true,
+        "temperature": 1,
+        "text": {
+          "format": {
+            "type": "text"
+          },
+          "verbosity": "medium"
+        },
+        "tool_choice": "auto",
+        "tool_usage": {
+          "image_gen": {
+            "input_tokens": 0,
+            "input_tokens_details": {
+              "image_tokens": 0,
+              "text_tokens": 0
+            },
+            "output_tokens": 0,
+            "output_tokens_details": {
+              "image_tokens": 0,
+              "text_tokens": 0
+            },
+            "total_tokens": 0
+          },
+          "web_search": {
+            "num_requests": 0
+          }
+        },
+        "tools": [
+          {
+            "type": "function",
+            "description": "Look up the current weather for a city.",
+            "name": "lookup_current_weather",
+            "output_schema": null,
+            "parameters": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "The city to look up, for example 'Paris'."
+                }
+              },
+              "required": ["city"],
+              "additionalProperties": false
+            },
+            "strict": true
+          }
+        ],
+        "top_logprobs": 0,
+        "top_p": 0.98,
+        "truncation": "disabled",
+        "usage": {
+          "input_tokens": 75,
+          "input_tokens_details": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "output_tokens": 19,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 94
+        },
+        "user": null,
+        "metadata": {}
+      }
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.openai.com/v1/responses",
+      "body": {
+        "model": "gpt-5.4-nano",
+        "input": [
+          {
+            "role": "developer",
+            "content": "Use your tools to answer."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "What is the weather in Paris?"
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_53mWrv5D2k4ldBJe3FuZHNta",
+            "name": "lookup_current_weather",
+            "arguments": "{\"city\":\"Paris\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_53mWrv5D2k4ldBJe3FuZHNta",
+            "output": "{\"city\":\"Paris\",\"temperatureC\":21}"
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "lookup_current_weather",
+            "description": "Look up the current weather for a city.",
+            "parameters": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "The city to look up, for example 'Paris'."
+                }
+              },
+              "required": ["city"],
+              "additionalProperties": false
+            }
+          }
+        ],
+        "tool_choice": "auto"
+      }
+    },
+    "response": {
+      "status": 200,
+      "contentType": "application/json",
+      "body": {
+        "id": "resp_08db06938d20dc71006aa1e9e7a78c87d1a92a76eb388ce546",
+        "object": "response",
+        "created_at": 1788996071,
+        "status": "completed",
+        "background": false,
+        "billing": {
+          "payer": "developer"
+        },
+        "completed_at": 1788996072,
+        "error": null,
+        "frequency_penalty": 0,
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": null,
+        "max_tool_calls": null,
+        "model": "gpt-5.4-nano-2026-03-17",
+        "moderation": null,
+        "output": [
+          {
+            "id": "msg_08db06938d20dc71006aa1e9e800f087d1a1946fb6f74beb25",
+            "type": "message",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "annotations": [],
+                "logprobs": [],
+                "text": "The current weather in **Paris** is **21°C**."
+              }
+            ],
+            "phase": "final_answer",
+            "role": "assistant"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "presence_penalty": 0,
+        "previous_response_id": null,
+        "prompt_cache_key": null,
+        "prompt_cache_retention": "24h",
+        "reasoning": {
+          "context": "current_turn",
+          "effort": "none",
+          "mode": "standard",
+          "summary": null
+        },
+        "safety_identifier": null,
+        "service_tier": "default",
+        "store": true,
+        "temperature": 1,
+        "text": {
+          "format": {
+            "type": "text"
+          },
+          "verbosity": "medium"
+        },
+        "tool_choice": "auto",
+        "tool_usage": {
+          "image_gen": {
+            "input_tokens": 0,
+            "input_tokens_details": {
+              "image_tokens": 0,
+              "text_tokens": 0
+            },
+            "output_tokens": 0,
+            "output_tokens_details": {
+              "image_tokens": 0,
+              "text_tokens": 0
+            },
+            "total_tokens": 0
+          },
+          "web_search": {
+            "num_requests": 0
+          }
+        },
+        "tools": [
+          {
+            "type": "function",
+            "description": "Look up the current weather for a city.",
+            "name": "lookup_current_weather",
+            "output_schema": null,
+            "parameters": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "The city to look up, for example 'Paris'."
+                }
+              },
+              "required": ["city"],
+              "additionalProperties": false
+            },
+            "strict": true
+          }
+        ],
+        "top_logprobs": 0,
+        "top_p": 0.98,
+        "truncation": "disabled",
+        "usage": {
+          "input_tokens": 116,
+          "input_tokens_details": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "output_tokens": 17,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 133
+        },
+        "user": null,
+        "metadata": {}
+      }
+    }
+  }
+]

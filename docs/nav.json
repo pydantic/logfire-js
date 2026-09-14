@@ -47,6 +47,10 @@
             "slug": "frameworks/deno"
           },
           {
+            "label": "Mastra",
+            "slug": "frameworks/mastra"
+          },
+          {
             "label": "Vercel AI SDK",
             "slug": "frameworks/vercel-ai"
           }

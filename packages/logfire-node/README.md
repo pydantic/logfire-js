@@ -376,7 +376,9 @@ const answer = await control.run(async ({ config }) => {
 })
 ```
 
-The core is framework-neutral; a framework adapter builds on it. See
+The core is framework-neutral; a framework adapter builds on it. For Mastra, that adapter is
+[`@pydantic/logfire-agent-control-mastra`](https://github.com/pydantic/logfire-js/blob/main/packages/logfire-agent-control-mastra/README.md),
+which is one processor on an agent. See
 [the Agent Control guide](https://github.com/pydantic/logfire-js/blob/main/docs/agent-control.md)
 and `examples/node/agent-control.ts`.
 

@@ -14,6 +14,7 @@ This repository is the Pydantic Logfire JavaScript SDK monorepo. It provides Ope
 - `packages/otel-cf-workers` publishes `@pydantic/otel-cf-workers`, the lower-level Cloudflare Workers OpenTelemetry implementation used by the Logfire wrapper.
 - `packages/logfire-browser` publishes `@pydantic/logfire-browser`, which adapts Logfire to browser tracing.
 - `packages/logfire-session-replay` publishes `@pydantic/logfire-session-replay`, the optional standalone rrweb recorder used by the browser package's session replay integration.
+- `packages/logfire-agent-control-mastra` publishes `@pydantic/logfire-agent-control-mastra`, the Mastra adapter for Agent Control. It is the first package here that is neither a runtime nor a feature subpath: it depends on a third-party framework, so `@mastra/core` is a peer dependency and the package exists to keep that dependency off every other package.
 - `vite.shared.ts` holds the build helpers every package config imports: `packageDefines()` stamps `PACKAGE_VERSION` and `PACKAGE_TIMESTAMP` from the package's own `package.json`, and `copyCjsDeclarations()` emits the `.d.cts` files.
 - `vite.config.ts` and `tsconfig.base.json` at the repository root hold the shared format, lint, task, and TypeScript configuration.
 - `examples/` contains runnable examples for Express, Next.js, Deno, Cloudflare Workers, browser usage, and related integrations.

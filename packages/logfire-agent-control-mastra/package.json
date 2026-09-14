@@ -1,0 +1,71 @@
+{
+  "name": "@pydantic/logfire-agent-control-mastra",
+  "description": "Logfire Agent Control for Mastra: edit a Mastra agent's instructions, model, model settings, and tool definitions from the Logfire UI - https://pydantic.dev/logfire",
+  "author": {
+    "name": "The Pydantic Team",
+    "email": "engineering@pydantic.dev",
+    "url": "https://pydantic.dev"
+  },
+  "repository": {
+    "url": "git+https://github.com/pydantic/logfire-js.git",
+    "directory": "packages/logfire-agent-control-mastra"
+  },
+  "sideEffects": false,
+  "homepage": "https://pydantic.dev/logfire",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "agent",
+    "llm",
+    "logfire",
+    "mastra",
+    "observability",
+    "prompt-management"
+  ],
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "scripts": {
+    "dev": "vp pack --watch",
+    "build": "vp pack",
+    "lint": "vp lint",
+    "preview": "vp preview",
+    "typecheck": "tsc",
+    "prepack": "cp ../../LICENSE .",
+    "postpublish": "rm LICENSE",
+    "test": "vp test"
+  },
+  "peerDependencies": {
+    "@mastra/core": ">=1.65.0 <2",
+    "@pydantic/logfire-node": "workspace:^0.18.24"
+  },
+  "devDependencies": {
+    "@ai-sdk/provider": "^3.0.16",
+    "@mastra/core": "^1.65.0",
+    "@pydantic/logfire-node": "workspace:*",
+    "@types/node": "^22.5.1",
+    "ai": "^7.0.95",
+    "vitest": "catalog:",
+    "zod": "catalog:"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ]
+}
