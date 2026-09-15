@@ -145,7 +145,7 @@ configured cadence. After five minutes without activity, background events use
 the greater of `flushIntervalMs` and five minutes. After the replay reaches its
 minimum duration, reaching `maxBufferBytes` still flushes immediately.
 
-Replays must contain at least `minSessionDurationMs` of recorded events (5
+Replays must contain at least `minSessionDurationMs` of recorded events (10
 seconds by default) before they are uploaded. While waiting, events stay
 buffered. The initial `Meta` and `FullSnapshot` anchor is retained even when it
 exceeds `maxBufferBytes`; later events are kept only while the estimated buffer

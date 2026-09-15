@@ -37,7 +37,7 @@ export interface BrowserSessionReplayPackageConfig {
   blockSelector?: string
   flushIntervalMs?: number
   maxBufferBytes?: number
-  /** Minimum recording duration before a replay is uploaded. Defaults to 5 seconds. */
+  /** Minimum recording duration before a replay is uploaded. Defaults to 10 seconds. */
   minSessionDurationMs?: number
   /** Static replay identity and anonymous fallback for a live identity getter. */
   distinctId?: string
@@ -95,7 +95,7 @@ export interface BrowserSessionReplayOptions {
 
   flushIntervalMs?: number
   maxBufferBytes?: number
-  /** Minimum recording duration before a replay is uploaded. Defaults to 5 seconds. */
+  /** Minimum recording duration before a replay is uploaded. Defaults to 10 seconds. */
   minSessionDurationMs?: number
 
   /** Static replay identity and anonymous fallback for a live identity getter. */
