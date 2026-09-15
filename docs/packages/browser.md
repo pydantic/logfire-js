@@ -387,7 +387,7 @@ stopped, the facade reports `mode: 'off'` and `recording: false`. Its `stop()`
 method is idempotent and generation-scoped. Session identity remains available
 through `getBrowserSessionId()`, not the replay facade.
 
-Replays shorter than `minSessionDurationMs` are not uploaded (5 seconds by
+Replays shorter than `minSessionDurationMs` are not uploaded (10 seconds by
 default). An earlier flush remains buffered until the minimum is reached, and
 stopping earlier discards the replay. Set `minSessionDurationMs: 0` only when
 shorter replays must be delivered.

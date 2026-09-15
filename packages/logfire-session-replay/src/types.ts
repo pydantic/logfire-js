@@ -143,7 +143,7 @@ export interface SessionReplayConfig {
   flushIntervalMs?: number
   maxBufferBytes?: number
 
-  /** Minimum recording duration before a replay is uploaded. Defaults to 5 seconds. */
+  /** Minimum recording duration before a replay is uploaded. Defaults to 10 seconds. */
   minSessionDurationMs?: number
   sessionIdleTimeoutMs?: number
   maxSessionDurationMs?: number
@@ -202,7 +202,7 @@ export const DEFAULTS = {
   blockSelector: '',
   flushIntervalMs: 5_000,
   maxBufferBytes: 1_000_000,
-  minSessionDurationMs: 5_000,
+  minSessionDurationMs: 10_000,
   sessionIdleTimeoutMs: 1_800_000,
   maxSessionDurationMs: 14_400_000,
   distinctId: '',

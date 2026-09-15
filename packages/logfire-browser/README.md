@@ -465,7 +465,7 @@ after page freeze or termination is therefore not guaranteed. Functional
 resolver can finish too late for a lifecycle request. The generated frontend
 application headers are synchronous and work for these uploads.
 
-Replays shorter than `minSessionDurationMs` are not uploaded (5 seconds by
+Replays shorter than `minSessionDurationMs` are not uploaded (10 seconds by
 default). An earlier flush remains buffered until the minimum is reached, and
 stopping earlier discards the replay. Set `minSessionDurationMs: 0` only when
 shorter replays must be delivered.

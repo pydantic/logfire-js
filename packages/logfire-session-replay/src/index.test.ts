@@ -233,7 +233,7 @@ describe('startSessionReplay controller ownership', () => {
 })
 
 describe('startSessionReplay full mode', () => {
-  it('defaults to a five-second minimum session duration', async () => {
+  it('defaults to a ten-second minimum session duration', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(0)
     const { calls, fetchImpl } = recordingFetch()
@@ -243,12 +243,12 @@ describe('startSessionReplay full mode', () => {
     emit(fullSnapshot)
 
     await replay.flush()
-    await vi.advanceTimersByTimeAsync(4_999)
+    await vi.advanceTimersByTimeAsync(9_999)
     expect(calls).toHaveLength(0)
 
     await vi.advanceTimersByTimeAsync(1)
     expect(calls).toHaveLength(0)
-    const endOfMinimum = { ...click, timestamp: 5_001 }
+    const endOfMinimum = { ...click, timestamp: 10_001 }
     emit(endOfMinimum)
     await vi.waitFor(() => {
       expect(calls).toHaveLength(1)
