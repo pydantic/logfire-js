@@ -14,11 +14,14 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
     deps: {
       neverBundle: [/^node:/u],
     },
-    entry: 'src/index.ts',
+    entry: {
+      index: 'src/index.ts',
+      integration: 'src/integration.ts',
+    },
     format: ['esm', 'cjs'],
     hooks: {
       'build:done': () => {
-        copyCjsDeclarations(['index'])
+        copyCjsDeclarations(['index', 'integration'])
       },
     },
     minify: true,

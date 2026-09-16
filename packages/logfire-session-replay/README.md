@@ -2,10 +2,9 @@
 
 Browser session replay recorder for Logfire.
 
-This package is experimental while Logfire Platform replay ingest and playback
-are still behind a feature flag. Keep browser replay rollout behind your own
-application flag and expect minor API, ingest, and UI behavior changes before
-general availability.
+This package supports Logfire Early Access session replay. Keep browser replay
+rollout behind your own application flag and expect minor API, ingest, and UI
+behavior changes before Beta.
 
 This package records rrweb events, batches them into Logfire replay chunks, and
 uploads gzip-compressed JSON envelopes to a replay upload endpoint. It is
@@ -251,12 +250,13 @@ Most browser applications should enable replay through
 
 ```ts
 import * as logfire from '@pydantic/logfire-browser'
+import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
 
 logfire.configure({
   traceUrl: '/logfire-proxy/v1/traces',
   serviceName: 'browser-app',
   sessionReplay: {
-    load: () => import('@pydantic/logfire-session-replay'),
+    ...sessionReplayIntegration(),
     replayUrl: '/logfire-proxy/v1/replay',
   },
 })

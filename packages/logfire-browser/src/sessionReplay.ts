@@ -57,10 +57,8 @@ export interface BrowserSessionReplayModule {
 }
 
 /**
- * Experimental browser session replay options.
- *
- * Logfire Platform replay ingest and playback are still feature-flagged, so
- * keep browser replay rollout behind an application flag.
+ * Early Access browser session replay options. Keep browser replay rollout
+ * behind an application flag.
  */
 export interface BrowserSessionReplayOptions {
   /**

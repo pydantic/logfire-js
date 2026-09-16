@@ -23,20 +23,18 @@ logfire.configure({
 
 ## Browser
 
-Start with the `frontendApplicationConfig` generated under **Project settings > Frontend applications**. The frontend application owns `service.name`, `service.namespace`, and the optional environment, so browser code should add only other stable attributes:
+Start with the `frontendOptions` generated under **Frontend > Applications**. The frontend application owns `service.name`, `service.namespace`, and the optional environment, so browser code should add only other stable attributes:
 
 ```ts
 import * as logfire from '@pydantic/logfire-browser'
 
-const frontendApplicationConfig = {
-  traceUrl: '<generated-regional-trace-url>',
-  traceExporterHeaders: () => ({
-    Authorization: 'Bearer <frontend-application-token>',
-  }),
+const frontendOptions = {
+  baseUrl: '<generated-regional-base-url>',
+  token: '<frontend-application-token>',
 }
 
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   resourceAttributes: {
     'app.installation.id': '<stable-installation-id>',
   },
@@ -45,7 +43,7 @@ logfire.configure({
 
 ## Precedence
 
-First-class options such as `serviceName`, `serviceVersion`, and `environment` take precedence over conflicting resource attributes.
+With `configure()`, first-class options such as `serviceName`, `serviceVersion`, and `environment` take precedence over conflicting resource attributes. With browser `configureFrontend()`, `serviceVersion` is configurable; service name and environment belong to the frontend application.
 
 In Node.js, values from `OTEL_RESOURCE_ATTRIBUTES` are also read by the OpenTelemetry SDK and can override code-level values depending on SDK configuration.
 

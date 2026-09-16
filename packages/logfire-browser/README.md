@@ -19,7 +19,31 @@ If you're instrumenting Cloudflare, see the [Logfire CF workers package](https:/
 
 ## Basic usage
 
-Create a frontend application under **Project settings > Frontend applications** and paste its generated setup into your browser code. Its token can only write telemetry for that frontend application and cannot read project data. Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification, then use the [Browser package docs](https://pydantic.dev/docs/logfire/instrument/typescript/packages/browser/) for SDK options.
+Create a frontend application under **Frontend > Applications** and paste its generated setup into your browser code. Its token can only write telemetry for that frontend application and cannot read project data. Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification, then use the [Browser package docs](https://pydantic.dev/docs/logfire/instrument/typescript/packages/browser/) for SDK options.
+
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+const cleanup = logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+})
+```
+
+`configureFrontend()` enables auto-instrumentation and Web Vitals metrics by
+default. Set `autoInstrumentations: false` or `rum: { webVitals: false }` to
+disable them. Nested capture options preserve unrelated defaults. Replay is
+opt-in, and the returned handle stops the SDK when called. Use `configure()`
+for custom transports and proxies; its capture features remain opt-in.
+
+`configureFrontend()` removes query strings, fragments, and URL credentials from
+standard page/request URL attributes (`http.url`, `url.full`, `http.target`, and
+`http.referrer`) before downstream span processors export them. It also removes
+`url.query` and `url.fragment`, including on resource timing events. Set
+`captureUrlQueryAndFragment: true` only when full URL capture is intended; URLs
+can contain authentication tokens. RUM page URL attributes and replay URLs have
+separate capture options. The lower-level `configure()` keeps its existing URL
+behavior.
 
 Ready to run examples are available in the repository [in vanilla browser](https://github.com/pydantic/logfire-js/tree/main/examples/browser), [with RUM and replay](https://github.com/pydantic/logfire-js/tree/main/examples/browser-rum-replay), and [in Next.js variants](https://github.com/pydantic/logfire-js/tree/main/examples/nextjs-client-side-instrumentation).
 
@@ -69,28 +93,27 @@ should be attached to all telemetry from the configured provider:
 ```js
 import * as logfire from '@pydantic/logfire-browser'
 
-const frontendApplicationConfig = {
-  traceUrl: '<generated-regional-trace-url>',
-  traceExporterHeaders: () => ({
-    Authorization: 'Bearer <frontend-application-token>',
-  }),
+const frontendOptions = {
+  baseUrl: '<generated-regional-base-url>',
+  token: '<frontend-application-token>',
 }
 
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   resourceAttributes: {
     'app.installation.id': '<stable-installation-id>',
   },
 })
 ```
 
-`frontendApplicationConfig` is the generated `traceUrl` and restricted token
-configuration from **Project settings > Frontend applications**. That application
+`frontendOptions` contains the regional URL and restricted token
+shown under **Frontend > Applications**. That application
 owns the service name, namespace, and optional environment.
 
 Do not use resource attributes for per-request values or sensitive user data.
-First-class options such as `serviceName`, `serviceVersion`, and `environment`
-take precedence over conflicting `resourceAttributes` keys.
+`configureFrontend()` accepts `serviceVersion`, which takes precedence over
+the corresponding `resourceAttributes` key. Service name and environment belong
+to the frontend application.
 
 ## RUM session identity
 
@@ -369,33 +392,27 @@ span shapes.
 
 ## Session replay
 
-Session replay is experimental while Logfire Platform replay ingest and playback
-are still behind a feature flag. Keep replay behind your own application flag
-and expect minor API, ingest, and UI behavior changes before general
-availability.
+Session replay is available to Logfire Early Access organizations. Keep replay
+behind your own application flag and expect minor API, ingest, and UI behavior
+changes before Beta.
 
-Install the optional replay package and configure `sessionReplay` when you want
-rrweb session recording:
+Install the optional replay package when you want rrweb session recording:
 
 ```bash
 npm install @pydantic/logfire-session-replay
 ```
 
+Pass the replay integration to `configureFrontend()`. The integration keeps
+the recorder out of the initial application bundle:
+
 ```js
 import * as logfire from '@pydantic/logfire-browser'
+import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
 
-const cleanup = logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'browser-app',
-  sessionReplay: {
-    load: () => import('@pydantic/logfire-session-replay'),
-    replayUrl: '/logfire-proxy/v1/replay',
-    headers: async () => ({
-      'X-CSRF': await getCsrfToken(),
-    }),
-    maskAllText: true,
-    maskAllInputs: true,
-  },
+const cleanup = logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  sessionReplay: sessionReplayIntegration(),
 })
 
 // The property exists synchronously whenever sessionReplay is configured.
@@ -419,7 +436,7 @@ method is idempotent and generation-scoped. Session identity remains available
 through `getBrowserSessionId()`, not the replay facade.
 
 Browser-session inactivity currently means span inactivity: replay startup
-initializes and touches the session once before loading the optional peer, but
+initializes and touches the session once before loading the recorder, but
 subsequent replay events only peek at the session id and do not refresh the
 timeout. Span starts are the ongoing automatic activity;
 `getBrowserSessionId()` also explicitly touches the session.
@@ -429,26 +446,17 @@ When `sessionReplay.getDistinctId` is not configured, replay uses the current
 `getDistinctId` remains authoritative. A static `sessionReplay.distinctId`
 remains the fallback while the selected live getter returns `undefined`.
 
-Use the same restricted frontend application token for traces, metrics, and
-session replay. Derive the regional replay endpoint from the generated trace
-URL:
+`configureFrontend()` reuses the restricted frontend application token
+and regional URL for traces, metrics, and session replay:
 
 ```js
-const frontendApplicationConfig = {
-  // Copy these values from Project settings > Frontend applications.
-  traceUrl: 'https://logfire-us.pydantic.dev/v1/traces',
-  traceExporterHeaders: () => ({
-    Authorization: 'Bearer <frontend-application-token>',
-  }),
-}
+import * as logfire from '@pydantic/logfire-browser'
+import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
 
-logfire.configure({
-  ...frontendApplicationConfig,
-  sessionReplay: {
-    load: () => import('@pydantic/logfire-session-replay'),
-    replayUrl: new URL('/v1/replay', frontendApplicationConfig.traceUrl).toString(),
-    headers: frontendApplicationConfig.traceExporterHeaders,
-  },
+logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  sessionReplay: sessionReplayIntegration(),
 })
 ```
 

@@ -44,9 +44,14 @@ OTEL_SERVICE_VERSION=1.0.0
 Precedence is `configure()` options, then `LOGFIRE_*` environment variables,
 then `OTEL_*` environment variables.
 
+For browser frontend applications, service name, namespace, and environment are
+owned by the frontend application. Use `configureFrontend()` with its regional
+URL and restricted token, and supply `serviceVersion` or additional resource
+attributes when needed.
+
 ## Tokens
 
-Node.js and Cloudflare read `LOGFIRE_TOKEN` by default. Browser applications instead use the `traceUrl`, `traceExporterHeaders`, and restricted token generated for a frontend application. Never put a normal Logfire write token in browser code. See the [Browser package](packages/browser.md) for setup.
+Node.js and Cloudflare read `LOGFIRE_TOKEN` by default. Browser applications instead call `configureFrontend({ baseUrl, token })` with the regional URL and restricted token generated for a frontend application. This enables auto-instrumentation and Web Vitals metrics by default. Never put a normal Logfire write token in browser code. See the [Browser package](packages/browser.md) for setup.
 
 For local Node.js development, you can also let the CLI write project credentials:
 

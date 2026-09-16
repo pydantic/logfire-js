@@ -121,6 +121,7 @@ vp run logfire#typecheck
 - `packages/logfire-api` is the base API package and should not depend on runtime-specific packages.
 - Cloudflare Workers code should stay compatible with Worker runtime constraints.
 - Browser code should avoid Node-only APIs.
+- Prefer browser `configureFrontend({ baseUrl, token, ...options })` for direct frontend application setup; it enables auto-instrumentation and Web Vitals metrics by default. Keep `configure()` for custom transports and proxies. See `docs/packages/browser.md` for overrides and optional replay.
 
 ## Examples
 

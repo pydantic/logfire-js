@@ -93,10 +93,8 @@ export interface ChunkEnvelope {
 }
 
 /**
- * Experimental session replay recorder configuration.
- *
- * Logfire Platform replay ingest and playback are still feature-flagged, so
- * keep browser replay rollout behind an application flag.
+ * Early Access session replay recorder configuration. Keep browser replay
+ * rollout behind an application flag.
  */
 export interface SessionReplayConfig {
   /**

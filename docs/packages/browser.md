@@ -7,7 +7,7 @@ description: Configure @pydantic/logfire-browser for browser tracing, RUM, metri
 
 `@pydantic/logfire-browser` configures OpenTelemetry browser tracing and re-exports the manual `logfire` API for client-side spans and logs.
 
-Create a frontend application under **Project settings > Frontend applications**, then paste its generated setup into your browser code. Its token can only write telemetry for that frontend application and cannot read project data.
+Create a frontend application under **Frontend > Applications**, then paste its generated setup into your browser code. Its token can only write telemetry for that frontend application and cannot read project data.
 
 Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification. Never put a normal Logfire write token in browser code.
 
@@ -22,23 +22,40 @@ npm install @pydantic/logfire-browser
 ```ts
 import * as logfire from '@pydantic/logfire-browser'
 
-const frontendApplicationConfig = {
-  // Copy these region-specific values from the frontend application page.
-  traceUrl: 'https://logfire-us.pydantic.dev/v1/traces',
-  traceExporterHeaders: () => ({
-    Authorization: 'Bearer <frontend-application-token>',
-  }),
+const frontendOptions = {
+  // Copy these values from the frontend application page.
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
 }
 
-logfire.configure({
-  ...frontendApplicationConfig,
-  autoInstrumentations: true,
-})
+logfire.configureFrontend(frontendOptions)
 ```
 
-Logfire associates the token with the frontend application's service name, so it cannot report data for another application. Keep the generated `traceUrl` and `traceExporterHeaders` when adding the options shown in the rest of this page.
+Logfire associates the token with the frontend application's service name, so it cannot report data for another application. `configureFrontend()` derives every ingest endpoint and authentication header from the application's regional URL and restricted token. It enables auto-instrumentation and Web Vitals metrics by default and returns the same callable cleanup handle as `configure()`. Replay remains opt-in.
 
-`autoInstrumentations` is opt-in and lazily loads OpenTelemetry browser auto-instrumentations after the Logfire browser provider is ready. For advanced integrations, `instrumentations` also accepts factories, so custom instrumentation construction can be deferred until `configure()` has registered the provider.
+`autoInstrumentations` is enabled by default with `configureFrontend()` and lazily loads OpenTelemetry browser auto-instrumentations after the Logfire browser provider is ready. For advanced integrations, `instrumentations` also accepts factories, so custom instrumentation construction can be deferred until `configure()` has registered the provider.
+
+Set `autoInstrumentations: false` to disable automatic instrumentation, or
+`rum: { webVitals: false }` to disable Web Vitals capture. To keep Web Vitals
+spans without metrics, use `rum: { webVitals: { metrics: false } }`. Nested
+options preserve unrelated defaults: for example, setting `rum.session` or
+`rum.webVitals.reportAllChanges` keeps Web Vitals metrics enabled. Disabling
+`rum.session` also requires disabling Web Vitals and any other session-dependent
+features, such as replay.
+
+Use the lower-level `configure()` for custom endpoints, authentication, or a
+telemetry proxy. It retains its opt-in instrumentation and RUM behavior.
+`configureFrontend()` accepts capture options, resource attributes, and exporter
+tuning, while the frontend application owns transport and service identity.
+
+`configureFrontend()` removes query strings, fragments, and URL credentials from
+standard page/request URL attributes (`http.url`, `url.full`, `http.target`, and
+`http.referrer`) before downstream span processors export them. It also removes
+`url.query` and `url.fragment`, including on resource timing events. Set
+`captureUrlQueryAndFragment: true` only when full URL capture is intended; URLs
+can contain authentication tokens. RUM page URL attributes and replay URLs have
+separate capture options. The lower-level `configure()` keeps its existing URL
+behavior.
 
 ### Resource timing detail
 
@@ -47,9 +64,8 @@ per-asset `resourceFetch` spans while omitting their DNS, connection, TLS,
 request, response, and DOM timing events:
 
 ```ts
-logfire.configure({
-  ...frontendApplicationConfig,
-  autoInstrumentations: true,
+logfire.configureFrontend({
+  ...frontendOptions,
   resourceTiming: { detail: 'summary' },
 })
 ```
@@ -71,25 +87,24 @@ if you also want to omit paint events.
 Use `diagLogLevel` while troubleshooting local browser instrumentation:
 
 ```ts
-logfire.configure({
-  ...frontendApplicationConfig,
-  autoInstrumentations: true,
+logfire.configureFrontend({
+  ...frontendOptions,
   diagLogLevel: logfire.DiagLogLevel.ALL,
 })
 ```
 
 Only enable verbose diagnostic logging in development.
 
-`@pydantic/logfire-browser` is published as an ESM package for modern browsers and frameworks. If your app uses SSR or SSG, run `configure()` only in browser runtime code.
+`@pydantic/logfire-browser` is published as an ESM package for modern browsers and frameworks. If your app uses SSR or SSG, run `configureFrontend()` or `configure()` only in browser runtime code.
 
 ## RUM Session Identity
 
-Enable `rum.session` to attach an SDK-owned browser session id to every span
-created by the configured browser provider:
+`configureFrontend()` enables browser session identity through its default Web Vitals
+capture. Customize `rum.session` to control the SDK-owned session id attached to spans:
 
 ```ts
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   rum: { session: true },
 })
 ```
@@ -104,8 +119,8 @@ Use `getRouteName` for the application's normalized route template and
 for a browser session. Use `getUser` for the application's current user:
 
 ```ts
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   rum: {
     session: {
       getRouteName: () => router.currentRoute.value.matched.at(-1)?.path,
@@ -154,8 +169,8 @@ target. Provide a callback to customize page attributes, explicitly restore the
 raw page URL, or suppress them:
 
 ```ts
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   rum: {
     session: {
       urlAttributes: (url) => ({ full: url.href, path: url.pathname }),
@@ -163,8 +178,8 @@ logfire.configure({
   },
 })
 
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   rum: {
     session: {
       urlAttributes: false,
@@ -178,11 +193,11 @@ browser integration needs the SDK-owned session id before the first span.
 
 ## RUM Web Vitals
 
-Enable `rum.webVitals` to record Core Web Vitals from real browser sessions:
+`configureFrontend()` records Core Web Vitals from real browser sessions by default:
 
 ```ts
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   rum: { webVitals: true },
 })
 ```
@@ -208,8 +223,8 @@ session and URL attributes. To sanitize URLs while reporting Web Vitals, pass
 session options alongside Web Vitals:
 
 ```ts
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   rum: {
     session: {
       urlAttributes: (url) => ({
@@ -231,26 +246,24 @@ and metric destination but ignore changed observer options with a diagnostic
 warning. If the initial lazy load or observer startup fails, a later
 `configure()` call retries it.
 
-To also export Web Vitals as OpenTelemetry histogram metrics, configure the
-regional metrics endpoint with the same headers:
+`configureFrontend()` enables Web Vitals histogram metrics by default. To keep
+Web Vitals spans while disabling histogram emission:
 
 ```ts
-logfire.configure({
-  ...frontendApplicationConfig,
-  metrics: {
-    metricUrl: new URL('/v1/metrics', frontendApplicationConfig.traceUrl).toString(),
-    metricExporterHeaders: frontendApplicationConfig.traceExporterHeaders,
-  },
+logfire.configureFrontend({
+  ...frontendOptions,
   rum: {
     webVitals: {
-      metrics: true,
+      metrics: false,
     },
   },
 })
 ```
 
-Metric export is disabled unless top-level `metrics.metricUrl` is configured,
-and `rum.webVitals.metrics` requires that transport. The SDK uses a local
+`configureFrontend()` derives the metrics endpoint from `baseUrl` automatically.
+With the lower-level `configure()`, metric export is disabled unless top-level
+`metrics.metricUrl` is configured, and `rum.webVitals.metrics` requires that
+transport. The SDK uses a local
 OpenTelemetry `MeterProvider`; it does not replace the application's global
 meter provider. If that metrics runtime fails to start, the SDK emits an
 explicit diagnostic and continues Web Vitals span reporting without a metric
@@ -284,8 +297,8 @@ Enable `rum.longAnimationFrames` to detect and diagnose severe main-thread
 congestion in supported Chromium browsers:
 
 ```ts
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   rum: {
     longAnimationFrames: true,
   },
@@ -318,8 +331,8 @@ The default ranking and summary window is 60 seconds. You can tune collection
 without changing the SDK-owned event and script caps:
 
 ```ts
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   rum: {
     longAnimationFrames: {
       blockingDurationThresholdMs: 150,
@@ -343,29 +356,27 @@ span shapes.
 
 ## Session Replay
 
-Session replay is experimental in the JavaScript SDK while Logfire Platform
-replay ingest and playback are still behind a feature flag. Keep replay behind
-your own application flag and expect minor API, ingest, and UI behavior changes
-before general availability.
+Session replay is available to Logfire Early Access organizations. Keep replay
+behind your own application flag and expect minor API, ingest, and UI behavior
+changes before Beta.
 
-Install the optional replay package when you want rrweb session recording:
+Install the optional replay package:
 
 ```bash
 npm install @pydantic/logfire-session-replay
 ```
 
-Use the same endpoint host and headers for session replay:
+Pass the replay integration to `configureFrontend()`. The integration
+keeps the recorder out of the initial application bundle:
 
 ```ts
-const cleanup = logfire.configure({
-  ...frontendApplicationConfig,
-  sessionReplay: {
-    load: () => import('@pydantic/logfire-session-replay'),
-    replayUrl: new URL('/v1/replay', frontendApplicationConfig.traceUrl).toString(),
-    headers: frontendApplicationConfig.traceExporterHeaders,
-    maskAllText: true,
-    maskAllInputs: true,
-  },
+import * as logfire from '@pydantic/logfire-browser'
+import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
+
+const cleanup = logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  sessionReplay: sessionReplayIntegration(),
 })
 
 // The property exists synchronously whenever sessionReplay is configured.
@@ -393,7 +404,7 @@ stopping earlier discards the replay. Set `minSessionDurationMs: 0` only when
 shorter replays must be delivered.
 
 Browser-session inactivity currently means span inactivity: replay startup
-initializes and touches the session once before loading the optional peer, but
+initializes and touches the session once before loading the recorder, but
 subsequent replay events only peek at the session id and do not refresh the
 timeout. Span starts are the ongoing automatic activity;
 `getBrowserSessionId()` also explicitly touches the session.
@@ -423,11 +434,14 @@ rate limits. Keep its replay headers synchronous so lifecycle uploads do not
 wait on asynchronous work:
 
 ```ts
+import * as logfire from '@pydantic/logfire-browser'
+import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
+
 logfire.configure({
   traceUrl: '/logfire-proxy/v1/traces',
   serviceName: 'web-app',
   sessionReplay: {
-    load: () => import('@pydantic/logfire-session-replay'),
+    ...sessionReplayIntegration(),
     replayUrl: '/logfire-proxy/v1/replay',
     headers: () => ({
       'X-CSRF': getCsrfToken(),
@@ -462,8 +476,8 @@ Use `spanProcessors` to register additional OpenTelemetry span processors with
 the browser tracer provider:
 
 ```ts
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   spanProcessors: [customProcessor],
 })
 ```
@@ -495,8 +509,8 @@ Use `minLevel` to suppress low-severity manual Logfire telemetry before spans
 are created:
 
 ```ts
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   minLevel: 'warning',
 })
 ```
@@ -514,8 +528,8 @@ Use `baggage.spanAttributes` to copy selected active OpenTelemetry baggage
 values onto Logfire manual spans and logs:
 
 ```ts
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   baggage: {
     spanAttributes: ['tenant', 'region'],
   },

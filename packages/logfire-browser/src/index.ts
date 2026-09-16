@@ -53,6 +53,7 @@ import {
 } from 'logfire'
 
 import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
+import { BrowserUrlSpanProcessor } from './BrowserUrlSpanProcessor'
 import { clearConfiguredBrowserSession, configureBrowserSession, getBrowserSessionId } from './browserSession'
 import type { RUMOptions } from './browserSession'
 import type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
@@ -200,11 +201,8 @@ export interface LogfireConfigOptions {
    */
   resourceTiming?: BrowserResourceTimingOptions
   /**
-   * Experimental browser session replay options. Replay is disabled unless this
-   * is configured.
-   *
-   * Logfire Platform replay ingest and playback are still feature-flagged, so
-   * keep browser replay rollout behind an application flag.
+   * Early Access browser session replay options. Replay is disabled unless this
+   * is configured. Keep browser replay rollout behind an application flag.
    */
   sessionReplay?: false | BrowserSessionReplayOptions
   /**
@@ -244,6 +242,109 @@ export interface LogfireConfigOptions {
    * restricted frontend application token or an application-owned proxy.
    */
   traceUrl: string
+}
+
+export type FrontendSessionReplayOptions = Omit<BrowserSessionReplayOptions, 'headers' | 'replayUrl' | 'token'>
+
+export interface FrontendConfigOptions extends Omit<
+  LogfireConfigOptions,
+  'traceUrl' | 'traceExporterHeaders' | 'traceExporterConfig' | 'metrics' | 'sessionReplay' | 'serviceName' | 'environment'
+> {
+  /** Logfire deployment origin, such as `https://logfire-us.pydantic.dev`. */
+  baseUrl: string
+  /** Restricted public token created for this frontend application. */
+  token: string
+  /** Auto-instrumentation is enabled by default. Pass false to disable it. */
+  autoInstrumentations?: boolean | AutoInstrumentationsConfig
+  /** Web Vitals and their metrics are enabled by default. Nested options preserve these defaults. */
+  rum?: RUMOptions
+  /** Metric reader and exporter tuning. The frontend application owns the transport. */
+  metrics?: Omit<BrowserMetricsOptions, 'metricUrl' | 'metricExporterHeaders'>
+  /** Additional trace exporter options. The frontend application owns the transport. */
+  traceExporterConfig?: Omit<TraceExporterConfig, 'url' | 'headers'>
+  /**
+   * Include query strings and fragments in standard URL attributes emitted by instrumentations.
+   * Defaults to false. Enabling this can capture sensitive tokens in page and request URLs.
+   * RUM page attributes and replay URLs have their own capture options.
+   */
+  captureUrlQueryAndFragment?: boolean
+  /** Optional session replay integration. Disabled by default. */
+  sessionReplay?: false | FrontendSessionReplayOptions
+}
+
+/**
+ * Configure a Logfire frontend application with auto-instrumentation and Web Vitals metrics enabled.
+ *
+ * The frontend application owns its service identity. This method derives the trace,
+ * metric, and replay transports from one deployment URL and reuses one restricted
+ * public token across them. Session replay remains lazy-loaded when enabled.
+ */
+export function configureFrontend(options: FrontendConfigOptions): BrowserConfigureHandle {
+  if (options.token.length === 0) {
+    throw new Error('logfire-browser: frontend application token must not be empty')
+  }
+
+  let baseUrl: URL
+  try {
+    baseUrl = new URL(options.baseUrl)
+  } catch (error) {
+    throw new Error('logfire-browser: frontend application baseUrl must be an HTTP(S) origin', { cause: error })
+  }
+  if (
+    (baseUrl.protocol !== 'https:' && baseUrl.protocol !== 'http:') ||
+    baseUrl.username !== '' ||
+    baseUrl.password !== '' ||
+    baseUrl.pathname !== '/' ||
+    baseUrl.search !== '' ||
+    baseUrl.hash !== ''
+  ) {
+    throw new Error('logfire-browser: frontend application baseUrl must be an HTTP(S) origin')
+  }
+
+  const headers = () => ({ Authorization: `Bearer ${options.token}` })
+  const endpoint = (path: string) => new URL(path, baseUrl).toString()
+  const {
+    baseUrl: _baseUrl,
+    token: _token,
+    serviceName: _serviceName,
+    environment: _environment,
+    sessionReplay,
+    captureUrlQueryAndFragment,
+    ...captureOptions
+  } = options as FrontendConfigOptions & Pick<LogfireConfigOptions, 'serviceName' | 'environment'>
+  const webVitals = options.rum?.webVitals
+
+  return configure({
+    ...captureOptions,
+    autoInstrumentations: options.autoInstrumentations ?? true,
+    ...(captureUrlQueryAndFragment === true ? {} : { spanProcessors: [new BrowserUrlSpanProcessor(), ...(options.spanProcessors ?? [])] }),
+    rum: {
+      ...options.rum,
+      webVitals:
+        webVitals === false
+          ? false
+          : {
+              ...(typeof webVitals === 'object' ? webVitals : {}),
+              metrics: typeof webVitals === 'object' ? (webVitals.metrics ?? true) : true,
+            },
+    },
+    metrics: {
+      ...options.metrics,
+      metricExporterHeaders: headers,
+      metricUrl: endpoint('/v1/metrics'),
+    },
+    ...(sessionReplay === undefined || sessionReplay === false
+      ? {}
+      : {
+          sessionReplay: {
+            ...sessionReplay,
+            headers,
+            replayUrl: endpoint('/v1/replay'),
+          },
+        }),
+    traceExporterHeaders: headers,
+    traceUrl: endpoint('/v1/traces'),
+  })
 }
 
 function defaultTraceExporterHeaders() {
@@ -861,6 +962,7 @@ const defaultExport: {
   NoopAttributeScrubber: typeof NoopAttributeScrubber
   ULIDGenerator: typeof ULIDGenerator
   configure: typeof configure
+  configureFrontend: typeof configureFrontend
   configureLogfireApi: typeof configureLogfireApi
   debug: typeof debug
   error: typeof error
@@ -885,6 +987,7 @@ const defaultExport: {
 } = {
   configure,
   configureLogfireApi,
+  configureFrontend,
   debug,
   DiagLogLevel,
   error,
