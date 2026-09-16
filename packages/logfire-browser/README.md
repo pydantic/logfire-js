@@ -21,6 +21,21 @@ If you're instrumenting Cloudflare, see the [Logfire CF workers package](https:/
 
 Create a frontend application under **Frontend > Applications** and paste its generated setup into your browser code. Its token can only write telemetry for that frontend application and cannot read project data. Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification, then use the [Browser package docs](https://pydantic.dev/docs/logfire/instrument/typescript/packages/browser/) for SDK options.
 
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+const cleanup = logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+})
+```
+
+`configureFrontend()` enables auto-instrumentation and Web Vitals metrics by
+default. Set `autoInstrumentations: false` or `rum: { webVitals: false }` to
+disable them. Nested capture options preserve unrelated defaults. Replay is
+opt-in, and the returned handle stops the SDK when called. Use `configure()`
+for custom transports and proxies; its capture features remain opt-in.
+
 Ready to run examples are available in the repository [in vanilla browser](https://github.com/pydantic/logfire-js/tree/main/examples/browser), [with RUM and replay](https://github.com/pydantic/logfire-js/tree/main/examples/browser-rum-replay), and [in Next.js variants](https://github.com/pydantic/logfire-js/tree/main/examples/nextjs-client-side-instrumentation).
 
 Build the workspace packages before running the Vite examples. The standalone
@@ -69,20 +84,20 @@ should be attached to all telemetry from the configured provider:
 ```js
 import * as logfire from '@pydantic/logfire-browser'
 
-const frontendApplicationConfig = logfire.createFrontendApplicationConfig({
+const frontendOptions = {
   baseUrl: '<generated-regional-base-url>',
   token: '<frontend-application-token>',
-})
+}
 
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   resourceAttributes: {
     'app.installation.id': '<stable-installation-id>',
   },
 })
 ```
 
-`frontendApplicationConfig` is generated from the regional URL and restricted token
+`frontendOptions` contains the regional URL and restricted token
 shown under **Frontend > Applications**. That application
 owns the service name, namespace, and optional environment.
 
@@ -377,21 +392,17 @@ Install the optional replay package when you want rrweb session recording:
 npm install @pydantic/logfire-session-replay
 ```
 
-Enable replay on the frontend application configuration. The integration keeps
+Pass the replay integration to `configureFrontend()`. The integration keeps
 the recorder out of the initial application bundle:
 
 ```js
 import * as logfire from '@pydantic/logfire-browser'
 import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
 
-const cleanup = logfire.configure({
-  ...logfire.createFrontendApplicationConfig({
-    baseUrl: 'https://logfire-us.pydantic.dev',
-    token: '<frontend-application-token>',
-    sessionReplay: sessionReplayIntegration(),
-  }),
-  autoInstrumentations: true,
-  rum: { webVitals: { metrics: true } },
+const cleanup = logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  sessionReplay: sessionReplayIntegration(),
 })
 
 // The property exists synchronously whenever sessionReplay is configured.
@@ -425,21 +436,17 @@ When `sessionReplay.getDistinctId` is not configured, replay uses the current
 `getDistinctId` remains authoritative. A static `sessionReplay.distinctId`
 remains the fallback while the selected live getter returns `undefined`.
 
-The generated configuration reuses the restricted frontend application token
+`configureFrontend()` reuses the restricted frontend application token
 and regional URL for traces, metrics, and session replay:
 
 ```js
 import * as logfire from '@pydantic/logfire-browser'
 import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
 
-logfire.configure({
-  ...logfire.createFrontendApplicationConfig({
-    baseUrl: 'https://logfire-us.pydantic.dev',
-    token: '<frontend-application-token>',
-    sessionReplay: sessionReplayIntegration(),
-  }),
-  autoInstrumentations: true,
-  rum: { webVitals: { metrics: true } },
+logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  sessionReplay: sessionReplayIntegration(),
 })
 ```
 

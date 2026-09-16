@@ -69,13 +69,9 @@ before the application becomes interactive.
 ```ts title="instrumentation-client.ts"
 import * as logfire from '@pydantic/logfire-browser'
 
-logfire.configure({
-  ...logfire.createFrontendApplicationConfig({
-    baseUrl: 'https://logfire-us.pydantic.dev',
-    token: '<frontend-application-token>',
-  }),
-  autoInstrumentations: true,
-  rum: { webVitals: { metrics: true } },
+logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
 })
 ```
 

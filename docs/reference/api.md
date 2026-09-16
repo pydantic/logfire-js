@@ -147,12 +147,18 @@ level are treated as `info` for console filtering.
 
 Browser runtime setup:
 
-- `configure(options)` returns an async shutdown function
+- `configureFrontend({ baseUrl, token, ...options })` configures a frontend application with auto-instrumentation and Web Vitals metrics enabled by default.
+- `configure(options)` provides lower-level setup for custom transports and proxies, with instrumentation and RUM capture opt-in.
+- Both methods return a callable async shutdown handle, with `sessionReplay` controls when replay is configured.
 - `DiagLogLevel`
 
 The package also re-exports the public API from `logfire`.
-Browser `configure()` accepts `baggage.spanAttributes`, `minLevel`, and
-`jsonSchema` for the shared manual API.
+Both configuration methods accept `baggage.spanAttributes`, `minLevel`, and
+`jsonSchema` for the shared manual API. `configureFrontend()` derives transport
+URLs and authentication from the regional URL and restricted frontend token;
+replay remains opt-in through `sessionReplayIntegration()` from
+`@pydantic/logfire-session-replay/integration`. See the [Browser package](../packages/browser.md)
+for defaults, overrides, and replay setup.
 
 ## `@pydantic/logfire-cf-workers`
 

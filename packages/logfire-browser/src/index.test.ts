@@ -6,6 +6,7 @@ import type { SpanProcessor } from '@opentelemetry/sdk-trace-web'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
 const mocks = vi.hoisted(() => {
+  const traceExporterOptions: unknown[] = []
   const cleanupStepCalls: string[] = []
   const failures = new Map<string, unknown>()
   const browserMetricsRecorderCreateCalls: unknown[] = []
@@ -166,6 +167,7 @@ const mocks = vi.hoisted(() => {
     autoInstrumentationConfigs,
     autoInstrumentations,
     browserMetricsStartCalls,
+    traceExporterOptions,
     cleanupStepCalls,
     createBrowserMetricsRuntime,
     createWebVitalsHandle,
@@ -214,6 +216,7 @@ const mocks = vi.hoisted(() => {
       return registrationFailures.shift()
     },
     reset() {
+      traceExporterOptions.length = 0
       autoInstrumentationConfigs.length = 0
       autoInstrumentations.length = 0
       registerInstrumentationCalls.length = 0
@@ -286,6 +289,7 @@ vi.mock('@opentelemetry/exporter-trace-otlp-http', () => ({
 
     constructor(options: unknown) {
       this.options = options
+      mocks.traceExporterOptions.push(options)
     }
   },
 }))
@@ -389,7 +393,16 @@ import { configureLogfireApi, Level, logfireApiConfig, PendingSpanProcessor, Tai
 
 import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
 import { clearConfiguredBrowserSessionForTests } from './browserSession'
-import logfireBrowser, { configure, getBrowserSessionId, instrument, startPendingSpan, startSpan, withSettings, withTags } from './index'
+import logfireBrowser, {
+  configure,
+  configureFrontend,
+  getBrowserSessionId,
+  instrument,
+  startPendingSpan,
+  startSpan,
+  withSettings,
+  withTags,
+} from './index'
 import type { BrowserConfigureHandle } from './index'
 import { ACTIVE_CONFIGURATION_ERROR, FAILED_CLEANUP_ERROR, resetProviderLifecycleForTests } from './providerLifecycle'
 import type { BrowserSessionReplayRuntime } from './sessionReplay'
@@ -474,6 +487,147 @@ async function expectCleanupFailureIsMemoized(failingStep: CleanupStep) {
 
   cleanup = undefined
 }
+
+describe('browser configureFrontend', () => {
+  beforeEach(() => {
+    mocks.reset()
+    cleanup = undefined
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: {
+        language: 'en-US',
+        userAgent: 'test-browser',
+        userAgentData: undefined,
+      },
+    })
+  })
+
+  afterEach(async () => {
+    await cleanup?.()
+    clearConfiguredBrowserSessionForTests()
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
+    Object.defineProperty(globalThis, 'navigator', {
+      configurable: true,
+      value: originalNavigator,
+    })
+    vi.restoreAllMocks()
+  })
+
+  const frontend = { baseUrl: 'https://logfire-eu.pydantic.dev', token: 'frontend-token' }
+
+  it('starts the frontend signals by default and returns their cleanup handle', async () => {
+    cleanup = configureFrontend(frontend)
+    expect(logfireBrowser).toHaveProperty('configureFrontend', configureFrontend)
+    expect(cleanup.sessionReplay).toBeUndefined()
+    await waitForConfigureMicrotasks()
+    expect(mocks.autoInstrumentationConfigs).toHaveLength(1)
+    expect(mocks.webVitalsStartCalls).toHaveLength(1)
+    expect(mocks.browserMetricsRecorderCreateCalls).toEqual([{}])
+    const metrics = mocks.browserMetricsStartCalls[0]?.options as {
+      metricUrl: string
+      metricExporterHeaders: () => Record<string, string>
+    }
+    expect(metrics).toEqual({
+      metricUrl: 'https://logfire-eu.pydantic.dev/v1/metrics',
+      metricExporterHeaders: expect.any(Function) as unknown,
+    })
+    expect(metrics.metricExporterHeaders()).toEqual({ Authorization: 'Bearer frontend-token' })
+    const traceOptions = mocks.traceExporterOptions[0] as { url: string; headers: () => Promise<Record<string, string>> }
+    expect(traceOptions.url).toBe('https://logfire-eu.pydantic.dev/v1/traces')
+    expect(await traceOptions.headers()).toEqual({ Authorization: 'Bearer frontend-token' })
+    const provider = getLatestWebTracerProvider()
+    await cleanup()
+    expect(provider.shutdownCalls).toBe(1)
+    expect(mocks.webVitalsShutdownCalls).toBe(1)
+    expect(mocks.browserMetricsShutdownCalls).toBe(1)
+  })
+
+  it('preserves session and observer options without losing metrics defaults', async () => {
+    cleanup = configureFrontend({
+      ...frontend,
+      rum: { session: { getUser: () => ({ id: 'frontend-user' }) }, webVitals: { reportAllChanges: true } },
+      metrics: { metricReaderConfig: { exportIntervalMillis: 5000 } },
+      resourceAttributes: { 'app.build': '123' },
+    })
+    await waitForConfigureMicrotasks()
+    expect(getBrowserSessionId()).toBeTypeOf('string')
+    expect(getLatestResourceAttributes()['app.build']).toBe('123')
+    expect(mocks.webVitalsStartCalls).toEqual([
+      {
+        reportAllChanges: true,
+        metrics: true,
+        metricRecorder: mocks.browserMetricsRecorders[0],
+        tracer: expect.any(Object) as unknown,
+      },
+    ])
+    expect(mocks.browserMetricsRecorderCreateCalls).toEqual([{}])
+    expect(mocks.browserMetricsStartCalls[0]?.options).toEqual({
+      metricUrl: 'https://logfire-eu.pydantic.dev/v1/metrics',
+      metricExporterHeaders: expect.any(Function) as unknown,
+      metricReaderConfig: { exportIntervalMillis: 5000 },
+    })
+  })
+
+  it('can disable instrumentation and Web Vitals entirely', async () => {
+    cleanup = configureFrontend({
+      ...frontend,
+      autoInstrumentations: false,
+      rum: { webVitals: false, session: false },
+      sessionReplay: false,
+    })
+    await waitForConfigureMicrotasks()
+    expect(mocks.autoInstrumentationConfigs).toEqual([])
+    expect(mocks.webVitalsStartCalls).toEqual([])
+    expect(mocks.browserMetricsRecorderCreateCalls).toEqual([])
+    expect(cleanup.sessionReplay).toBeUndefined()
+  })
+
+  it('can keep Web Vitals spans while disabling their metrics', async () => {
+    cleanup = configureFrontend({ ...frontend, rum: { webVitals: { metrics: false } } })
+    await waitForConfigureMicrotasks()
+    expect(mocks.webVitalsStartCalls).toHaveLength(1)
+    expect(mocks.browserMetricsRecorderCreateCalls).toEqual([])
+  })
+
+  it.each([{ webVitals: true }, { session: true }])('preserves metrics defaults for rum: %j', async (rum) => {
+    cleanup = configureFrontend({ ...frontend, rum })
+    await waitForConfigureMicrotasks()
+    expect(mocks.browserMetricsRecorderCreateCalls).toEqual([{}])
+  })
+
+  it('derives the replay transport, preserves capture options, and exposes replay controls', async () => {
+    const flush = vi.fn<() => Promise<void>>(async () => Promise.resolve())
+    const stop = vi.fn<() => Promise<void>>(async () => Promise.resolve())
+    const startSessionReplay = vi.fn<(options: unknown) => BrowserSessionReplayRuntime>(() => ({
+      mode: 'full' as const,
+      recording: true,
+      flush,
+      stop,
+      getSessionId: () => 'session',
+    }))
+    const load = vi.fn<() => Promise<{ startSessionReplay: typeof startSessionReplay }>>(async () =>
+      Promise.resolve({ startSessionReplay })
+    )
+    cleanup = configureFrontend({ ...frontend, sessionReplay: { load, maskAllText: false, sessionSampleRate: 0.25 } })
+    expect(cleanup.sessionReplay).toBeDefined()
+    await waitForConfigureMicrotasks()
+    expect(load).toHaveBeenCalledTimes(1)
+    const replay = startSessionReplay.mock.calls[0]?.[0] as {
+      replayUrl: string
+      headers: () => Record<string, string>
+      maskAllText: boolean
+      sessionSampleRate: number
+    }
+    expect(replay.replayUrl).toBe('https://logfire-eu.pydantic.dev/v1/replay')
+    expect(replay.headers()).toEqual({ Authorization: 'Bearer frontend-token' })
+    expect(replay.maskAllText).toBe(false)
+    expect(replay.sessionSampleRate).toBe(0.25)
+    await cleanup.sessionReplay?.flush()
+    expect(flush).toHaveBeenCalledTimes(1)
+    await cleanup()
+    expect(stop).toHaveBeenCalledTimes(1)
+  })
+})
 
 describe('browser configure resource attributes', () => {
   beforeEach(() => {

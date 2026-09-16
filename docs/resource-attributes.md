@@ -23,18 +23,18 @@ logfire.configure({
 
 ## Browser
 
-Start with the `frontendApplicationConfig` generated under **Frontend > Applications**. The frontend application owns `service.name`, `service.namespace`, and the optional environment, so browser code should add only other stable attributes:
+Start with the `frontendOptions` generated under **Frontend > Applications**. The frontend application owns `service.name`, `service.namespace`, and the optional environment, so browser code should add only other stable attributes:
 
 ```ts
 import * as logfire from '@pydantic/logfire-browser'
 
-const frontendApplicationConfig = logfire.createFrontendApplicationConfig({
+const frontendOptions = {
   baseUrl: '<generated-regional-base-url>',
   token: '<frontend-application-token>',
-})
+}
 
-logfire.configure({
-  ...frontendApplicationConfig,
+logfire.configureFrontend({
+  ...frontendOptions,
   resourceAttributes: {
     'app.installation.id': '<stable-installation-id>',
   },

@@ -10,12 +10,12 @@ describe('sessionReplayIntegration', () => {
       sessionSampleRate: 0.25,
     })
 
-    expect(integration).toMatchObject({
+    expect(integration).toEqual({
+      load: expect.any(Function) as unknown,
       captureConsole: true,
       maskAllText: false,
       sessionSampleRate: 0.25,
     })
-    expect(integration.load).toBeTypeOf('function')
 
     const recorder = await integration.load()
     expect(recorder.startSessionReplay).toBeTypeOf('function')

@@ -243,25 +243,36 @@ export interface LogfireConfigOptions {
   traceUrl: string
 }
 
-export type FrontendApplicationSessionReplayOptions = Omit<BrowserSessionReplayOptions, 'headers' | 'replayUrl' | 'token'>
+export type FrontendSessionReplayOptions = Omit<BrowserSessionReplayOptions, 'headers' | 'replayUrl' | 'token'>
 
-export interface FrontendApplicationConfigOptions {
+export interface FrontendConfigOptions extends Omit<
+  LogfireConfigOptions,
+  'traceUrl' | 'traceExporterHeaders' | 'traceExporterConfig' | 'metrics' | 'sessionReplay' | 'serviceName' | 'environment'
+> {
   /** Logfire deployment origin, such as `https://logfire-us.pydantic.dev`. */
   baseUrl: string
   /** Restricted public token created for this frontend application. */
   token: string
-  /** Optional session replay integration. */
-  sessionReplay?: FrontendApplicationSessionReplayOptions
+  /** Auto-instrumentation is enabled by default. Pass false to disable it. */
+  autoInstrumentations?: boolean | AutoInstrumentationsConfig
+  /** Web Vitals and their metrics are enabled by default. Nested options preserve these defaults. */
+  rum?: RUMOptions
+  /** Metric reader and exporter tuning. The frontend application owns the transport. */
+  metrics?: Omit<BrowserMetricsOptions, 'metricUrl' | 'metricExporterHeaders'>
+  /** Additional trace exporter options. The frontend application owns the transport. */
+  traceExporterConfig?: Omit<TraceExporterConfig, 'url' | 'headers'>
+  /** Optional session replay integration. Disabled by default. */
+  sessionReplay?: false | FrontendSessionReplayOptions
 }
 
 /**
- * Build the complete browser configuration for a Logfire frontend application.
+ * Configure a Logfire frontend application with auto-instrumentation and Web Vitals metrics enabled.
  *
- * The frontend application owns its service identity. This helper derives the trace,
+ * The frontend application owns its service identity. This method derives the trace,
  * metric, and replay transports from one deployment URL and reuses one restricted
  * public token across them. Session replay remains lazy-loaded when enabled.
  */
-export function createFrontendApplicationConfig(options: FrontendApplicationConfigOptions): LogfireConfigOptions {
+export function configureFrontend(options: FrontendConfigOptions): BrowserConfigureHandle {
   if (options.token.length === 0) {
     throw new Error('logfire-browser: frontend application token must not be empty')
   }
@@ -285,14 +296,28 @@ export function createFrontendApplicationConfig(options: FrontendApplicationConf
 
   const headers = () => ({ Authorization: `Bearer ${options.token}` })
   const endpoint = (path: string) => new URL(path, baseUrl).toString()
-  const sessionReplay = options.sessionReplay
+  const { baseUrl: _baseUrl, token: _token, sessionReplay, ...captureOptions } = options
+  const webVitals = options.rum?.webVitals
 
-  return {
+  return configure({
+    ...captureOptions,
+    autoInstrumentations: options.autoInstrumentations ?? true,
+    rum: {
+      ...options.rum,
+      webVitals:
+        webVitals === false
+          ? false
+          : {
+              ...(typeof webVitals === 'object' ? webVitals : {}),
+              metrics: typeof webVitals === 'object' ? (webVitals.metrics ?? true) : true,
+            },
+    },
     metrics: {
+      ...options.metrics,
       metricExporterHeaders: headers,
       metricUrl: endpoint('/v1/metrics'),
     },
-    ...(sessionReplay === undefined
+    ...(sessionReplay === undefined || sessionReplay === false
       ? {}
       : {
           sessionReplay: {
@@ -303,7 +328,7 @@ export function createFrontendApplicationConfig(options: FrontendApplicationConf
         }),
     traceExporterHeaders: headers,
     traceUrl: endpoint('/v1/traces'),
-  }
+  })
 }
 
 function defaultTraceExporterHeaders() {
@@ -921,7 +946,7 @@ const defaultExport: {
   NoopAttributeScrubber: typeof NoopAttributeScrubber
   ULIDGenerator: typeof ULIDGenerator
   configure: typeof configure
-  createFrontendApplicationConfig: typeof createFrontendApplicationConfig
+  configureFrontend: typeof configureFrontend
   configureLogfireApi: typeof configureLogfireApi
   debug: typeof debug
   error: typeof error
@@ -946,7 +971,7 @@ const defaultExport: {
 } = {
   configure,
   configureLogfireApi,
-  createFrontendApplicationConfig,
+  configureFrontend,
   debug,
   DiagLogLevel,
   error,
