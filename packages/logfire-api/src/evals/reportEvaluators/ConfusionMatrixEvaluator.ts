@@ -1,5 +1,6 @@
 import type { ReportCase } from '../reporting'
 
+import { attributeJsonReplacer } from '../../serializeAttributes'
 import { registerReportEvaluator } from '../registry'
 import { ReportEvaluator } from '../ReportEvaluator'
 import type { ConfusionMatrixAnalysis, ReportEvaluatorContext } from '../ReportEvaluator'
@@ -157,12 +158,24 @@ function extractLabel(c: ReportCase, opts: ExtractOpts): null | string {
   }
 }
 
+/**
+ * A matrix axis label for a case's own output or metadata. The bare `JSON.stringify` this used to
+ * end on is not total: it throws on a BigInt at any depth, which lost the whole analysis to a
+ * report-evaluator failure. A top-level BigInt joins the other primitives, because a label wants
+ * `9007199254740993` and not a quoted string, and the rest goes through the replacer the attribute
+ * seam already applies.
+ */
 function safeStringify(v: unknown): string {
   if (typeof v === 'string') {
     return v
   }
-  if (typeof v === 'number' || typeof v === 'boolean') {
+  if (typeof v === 'bigint' || typeof v === 'boolean' || typeof v === 'number') {
     return String(v)
   }
-  return JSON.stringify(v)
+  try {
+    const serialized: unknown = JSON.stringify(v, attributeJsonReplacer)
+    return typeof serialized === 'string' ? serialized : String(v)
+  } catch {
+    return String(v)
+  }
 }
