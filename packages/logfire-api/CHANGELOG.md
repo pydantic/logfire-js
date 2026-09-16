@@ -1,5 +1,25 @@
 # @pydantic/logfire-api
 
+## 0.22.9
+
+### Patch Changes
+
+- 040bc80: Keep the confusion matrix when a case output holds a `BigInt`.
+  
+  `ConfusionMatrixEvaluator` built its axis labels with a bare `JSON.stringify`, which throws on a
+  `BigInt` at any depth. `runEvaluators` catches that, so a task returning a large integer id or
+  token count lost the entire analysis to a report-evaluator failure. A top-level `BigInt` now joins
+  the other primitives, and everything else goes through `attributeJsonReplacer`, the replacer the
+  attribute seam already applies.
+- 4bd7930: Skip a case whose label key is absent instead of scoring it as a negative.
+  
+  The threshold-sweeping report evaluators (PrecisionRecall, ROCAUC, KS) looked up the user's score
+  and positive keys with a bare index read, which finds the inherited member for a key naming an
+  `Object.prototype` member. The `labels` branch is the one that does not also type-check the value,
+  so an absent label resolved to the inherited function and `Boolean(undefined)` recorded the case as
+  ground-truth negative rather than skipping it, computing the metric over fabricated ground truth.
+  All four lookups now read own properties.
+
 ## 0.22.8
 
 ### Patch Changes
