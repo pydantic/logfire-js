@@ -1,0 +1,127 @@
+{
+  "interactions": [
+    {
+      "method": "POST",
+      "url": "https://api.openai.com/v1/responses",
+      "request": {
+        "model": "gpt-5.4-nano",
+        "input": [
+          {
+            "role": "developer",
+            "content": "You are a helpful assistant."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "What is the capital of France?"
+              }
+            ]
+          }
+        ],
+        "max_output_tokens": 256,
+        "parallel_tool_calls": false,
+        "reasoning": {
+          "effort": "low",
+          "summary": "detailed"
+        }
+      },
+      "status": 200,
+      "response": {
+        "id": "resp_0258277c9addc87b006aa1ef10449887d19f5f697bbb7f6c47",
+        "object": "response",
+        "created_at": 1788997392,
+        "status": "completed",
+        "background": false,
+        "billing": {
+          "payer": "developer"
+        },
+        "completed_at": 1788997392,
+        "error": null,
+        "frequency_penalty": 0,
+        "incomplete_details": null,
+        "instructions": null,
+        "max_output_tokens": 256,
+        "max_tool_calls": null,
+        "model": "gpt-5.4-nano-2026-03-17",
+        "moderation": null,
+        "output": [
+          {
+            "id": "msg_0258277c9addc87b006aa1ef10b6cc87d19bb67c275a83e9c3",
+            "type": "message",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "annotations": [],
+                "logprobs": [],
+                "text": "The capital of France is **Paris**."
+              }
+            ],
+            "phase": "final_answer",
+            "role": "assistant"
+          }
+        ],
+        "parallel_tool_calls": false,
+        "presence_penalty": 0,
+        "previous_response_id": null,
+        "prompt_cache_key": null,
+        "prompt_cache_retention": "24h",
+        "reasoning": {
+          "context": "current_turn",
+          "effort": "low",
+          "mode": "standard",
+          "summary": "detailed"
+        },
+        "safety_identifier": null,
+        "service_tier": "default",
+        "store": true,
+        "temperature": 1,
+        "text": {
+          "format": {
+            "type": "text"
+          },
+          "verbosity": "medium"
+        },
+        "tool_choice": "auto",
+        "tool_usage": {
+          "image_gen": {
+            "input_tokens": 0,
+            "input_tokens_details": {
+              "image_tokens": 0,
+              "text_tokens": 0
+            },
+            "output_tokens": 0,
+            "output_tokens_details": {
+              "image_tokens": 0,
+              "text_tokens": 0
+            },
+            "total_tokens": 0
+          },
+          "web_search": {
+            "num_requests": 0
+          }
+        },
+        "tools": [],
+        "top_logprobs": 0,
+        "top_p": 0.98,
+        "truncation": "disabled",
+        "usage": {
+          "input_tokens": 23,
+          "input_tokens_details": {
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "output_tokens": 13,
+          "output_tokens_details": {
+            "reasoning_tokens": 0
+          },
+          "total_tokens": 36
+        },
+        "user": null,
+        "metadata": {}
+      }
+    }
+  ]
+}

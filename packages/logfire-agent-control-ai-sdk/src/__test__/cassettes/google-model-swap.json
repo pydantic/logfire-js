@@ -1,0 +1,60 @@
+{
+  "interactions": [
+    {
+      "method": "POST",
+      "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+      "request": {
+        "generationConfig": {},
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "What is the capital of France? Answer in one word."
+              }
+            ]
+          }
+        ],
+        "systemInstruction": {
+          "parts": [
+            {
+              "text": "You are a helpful assistant."
+            }
+          ]
+        }
+      },
+      "status": 200,
+      "response": {
+        "candidates": [
+          {
+            "content": {
+              "parts": [
+                {
+                  "text": "Paris",
+                  "thoughtSignature": "El4KXAERTTIPiV5mp4/wQaf676UGhDL5MPyx//Ue+N7XfkCMLawGfcm86kXcDzLY5aQjT2skGndIOMkUZSAPfxQYFoYlGj+ESclY5ynnEBWu1Eg0eC2dhyg8J71M/ZYb"
+                }
+              ],
+              "role": "model"
+            },
+            "finishReason": "STOP",
+            "index": 0
+          }
+        ],
+        "usageMetadata": {
+          "promptTokenCount": 19,
+          "candidatesTokenCount": 1,
+          "totalTokenCount": 20,
+          "promptTokensDetails": [
+            {
+              "modality": "TEXT",
+              "tokenCount": 19
+            }
+          ],
+          "serviceTier": "standard"
+        },
+        "modelVersion": "gemini-3.5-flash-lite",
+        "responseId": "Eu-harOVL9CGz7IPp-vl-Q8"
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+---
+'@pydantic/logfire-agent-control-ai-sdk': minor
+---
+
+Add `@pydantic/logfire-agent-control-ai-sdk`, the Vercel AI SDK adapter for Logfire Agent Control: change an agent's instructions, model, model settings, and the names and descriptions its tools are advertised under from the Logfire UI, without a deploy. `agentControl({ settings })` wraps a `ToolLoopAgent`'s settings and `agentControl({ model })` wraps a bare model, both installing one `LanguageModelMiddleware` that applies the managed config to every model request — so a rollout can move between two steps of one tool loop. A renamed tool is advertised under its managed name and routed back to the code implementation, with the call, the result, and the replayed history all re-named so the model is never shown a tool the request does not offer, and application code always sees its own name. Precedence is code < published < what a run passed explicitly. If Logfire is unreachable, if nothing has been published, or if a published value cannot be understood, the agent runs on its code.
