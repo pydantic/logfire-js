@@ -200,11 +200,8 @@ export interface LogfireConfigOptions {
    */
   resourceTiming?: BrowserResourceTimingOptions
   /**
-   * Experimental browser session replay options. Replay is disabled unless this
-   * is configured.
-   *
-   * Logfire Platform replay ingest and playback are still feature-flagged, so
-   * keep browser replay rollout behind an application flag.
+   * Early Access browser session replay options. Replay is disabled unless this
+   * is configured. Keep browser replay rollout behind an application flag.
    */
   sessionReplay?: false | BrowserSessionReplayOptions
   /**
@@ -244,6 +241,69 @@ export interface LogfireConfigOptions {
    * restricted frontend application token or an application-owned proxy.
    */
   traceUrl: string
+}
+
+export type FrontendApplicationSessionReplayOptions = Omit<BrowserSessionReplayOptions, 'headers' | 'replayUrl' | 'token'>
+
+export interface FrontendApplicationConfigOptions {
+  /** Logfire deployment origin, such as `https://logfire-us.pydantic.dev`. */
+  baseUrl: string
+  /** Restricted public token created for this frontend application. */
+  token: string
+  /** Optional session replay integration. */
+  sessionReplay?: FrontendApplicationSessionReplayOptions
+}
+
+/**
+ * Build the complete browser configuration for a Logfire frontend application.
+ *
+ * The frontend application owns its service identity. This helper derives the trace,
+ * metric, and replay transports from one deployment URL and reuses one restricted
+ * public token across them. Session replay remains lazy-loaded when enabled.
+ */
+export function createFrontendApplicationConfig(options: FrontendApplicationConfigOptions): LogfireConfigOptions {
+  if (options.token.length === 0) {
+    throw new Error('logfire-browser: frontend application token must not be empty')
+  }
+
+  let baseUrl: URL
+  try {
+    baseUrl = new URL(options.baseUrl)
+  } catch (error) {
+    throw new Error('logfire-browser: frontend application baseUrl must be an HTTP(S) origin', { cause: error })
+  }
+  if (
+    (baseUrl.protocol !== 'https:' && baseUrl.protocol !== 'http:') ||
+    baseUrl.username !== '' ||
+    baseUrl.password !== '' ||
+    baseUrl.pathname !== '/' ||
+    baseUrl.search !== '' ||
+    baseUrl.hash !== ''
+  ) {
+    throw new Error('logfire-browser: frontend application baseUrl must be an HTTP(S) origin')
+  }
+
+  const headers = () => ({ Authorization: `Bearer ${options.token}` })
+  const endpoint = (path: string) => new URL(path, baseUrl).toString()
+  const sessionReplay = options.sessionReplay
+
+  return {
+    metrics: {
+      metricExporterHeaders: headers,
+      metricUrl: endpoint('/v1/metrics'),
+    },
+    ...(sessionReplay === undefined
+      ? {}
+      : {
+          sessionReplay: {
+            ...sessionReplay,
+            headers,
+            replayUrl: endpoint('/v1/replay'),
+          },
+        }),
+    traceExporterHeaders: headers,
+    traceUrl: endpoint('/v1/traces'),
+  }
 }
 
 function defaultTraceExporterHeaders() {
@@ -861,6 +921,7 @@ const defaultExport: {
   NoopAttributeScrubber: typeof NoopAttributeScrubber
   ULIDGenerator: typeof ULIDGenerator
   configure: typeof configure
+  createFrontendApplicationConfig: typeof createFrontendApplicationConfig
   configureLogfireApi: typeof configureLogfireApi
   debug: typeof debug
   error: typeof error
@@ -885,6 +946,7 @@ const defaultExport: {
 } = {
   configure,
   configureLogfireApi,
+  createFrontendApplicationConfig,
   debug,
   DiagLogLevel,
   error,

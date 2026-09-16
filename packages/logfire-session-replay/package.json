@@ -39,6 +39,16 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./integration": {
+      "import": {
+        "types": "./dist/integration.d.ts",
+        "default": "./dist/integration.js"
+      },
+      "require": {
+        "types": "./dist/integration.d.cts",
+        "default": "./dist/integration.cjs"
+      }
     }
   },
   "scripts": {

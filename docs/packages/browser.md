@@ -7,7 +7,7 @@ description: Configure @pydantic/logfire-browser for browser tracing, RUM, metri
 
 `@pydantic/logfire-browser` configures OpenTelemetry browser tracing and re-exports the manual `logfire` API for client-side spans and logs.
 
-Create a frontend application under **Project settings > Frontend applications**, then paste its generated setup into your browser code. Its token can only write telemetry for that frontend application and cannot read project data.
+Create a frontend application under **Frontend > Applications**, then paste its generated setup into your browser code. Its token can only write telemetry for that frontend application and cannot read project data.
 
 Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification. Never put a normal Logfire write token in browser code.
 
@@ -22,21 +22,20 @@ npm install @pydantic/logfire-browser
 ```ts
 import * as logfire from '@pydantic/logfire-browser'
 
-const frontendApplicationConfig = {
-  // Copy these region-specific values from the frontend application page.
-  traceUrl: 'https://logfire-us.pydantic.dev/v1/traces',
-  traceExporterHeaders: () => ({
-    Authorization: 'Bearer <frontend-application-token>',
-  }),
-}
+const frontendApplicationConfig = logfire.createFrontendApplicationConfig({
+  // Copy these values from the frontend application page.
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+})
 
 logfire.configure({
   ...frontendApplicationConfig,
   autoInstrumentations: true,
+  rum: { webVitals: { metrics: true } },
 })
 ```
 
-Logfire associates the token with the frontend application's service name, so it cannot report data for another application. Keep the generated `traceUrl` and `traceExporterHeaders` when adding the options shown in the rest of this page.
+Logfire associates the token with the frontend application's service name, so it cannot report data for another application. The generated configuration derives every ingest endpoint and authentication header from the application's regional URL and restricted token. `autoInstrumentations` and `rum.webVitals.metrics` enable the signals shown on the Frontend page.
 
 `autoInstrumentations` is opt-in and lazily loads OpenTelemetry browser auto-instrumentations after the Logfire browser provider is ready. For advanced integrations, `instrumentations` also accepts factories, so custom instrumentation construction can be deferred until `configure()` has registered the provider.
 
@@ -231,16 +230,12 @@ and metric destination but ignore changed observer options with a diagnostic
 warning. If the initial lazy load or observer startup fails, a later
 `configure()` call retries it.
 
-To also export Web Vitals as OpenTelemetry histogram metrics, configure the
-regional metrics endpoint with the same headers:
+The frontend application configuration already includes the regional metrics
+transport. Enable histogram emission in the Web Vitals options:
 
 ```ts
 logfire.configure({
   ...frontendApplicationConfig,
-  metrics: {
-    metricUrl: new URL('/v1/metrics', frontendApplicationConfig.traceUrl).toString(),
-    metricExporterHeaders: frontendApplicationConfig.traceExporterHeaders,
-  },
   rum: {
     webVitals: {
       metrics: true,
@@ -343,29 +338,31 @@ span shapes.
 
 ## Session Replay
 
-Session replay is experimental in the JavaScript SDK while Logfire Platform
-replay ingest and playback are still behind a feature flag. Keep replay behind
-your own application flag and expect minor API, ingest, and UI behavior changes
-before general availability.
+Session replay is available to Logfire Early Access organizations. Keep replay
+behind your own application flag and expect minor API, ingest, and UI behavior
+changes before Beta.
 
-Install the optional replay package when you want rrweb session recording:
+Install the optional replay package:
 
 ```bash
 npm install @pydantic/logfire-session-replay
 ```
 
-Use the same endpoint host and headers for session replay:
+Enable replay on the same frontend application configuration. The integration
+keeps the recorder out of the initial application bundle:
 
 ```ts
+import * as logfire from '@pydantic/logfire-browser'
+import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
+
 const cleanup = logfire.configure({
-  ...frontendApplicationConfig,
-  sessionReplay: {
-    load: () => import('@pydantic/logfire-session-replay'),
-    replayUrl: new URL('/v1/replay', frontendApplicationConfig.traceUrl).toString(),
-    headers: frontendApplicationConfig.traceExporterHeaders,
-    maskAllText: true,
-    maskAllInputs: true,
-  },
+  ...logfire.createFrontendApplicationConfig({
+    baseUrl: 'https://logfire-us.pydantic.dev',
+    token: '<frontend-application-token>',
+    sessionReplay: sessionReplayIntegration(),
+  }),
+  autoInstrumentations: true,
+  rum: { webVitals: { metrics: true } },
 })
 
 // The property exists synchronously whenever sessionReplay is configured.
@@ -393,7 +390,7 @@ stopping earlier discards the replay. Set `minSessionDurationMs: 0` only when
 shorter replays must be delivered.
 
 Browser-session inactivity currently means span inactivity: replay startup
-initializes and touches the session once before loading the optional peer, but
+initializes and touches the session once before loading the recorder, but
 subsequent replay events only peek at the session id and do not refresh the
 timeout. Span starts are the ongoing automatic activity;
 `getBrowserSessionId()` also explicitly touches the session.
@@ -423,11 +420,14 @@ rate limits. Keep its replay headers synchronous so lifecycle uploads do not
 wait on asynchronous work:
 
 ```ts
+import * as logfire from '@pydantic/logfire-browser'
+import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
+
 logfire.configure({
   traceUrl: '/logfire-proxy/v1/traces',
   serviceName: 'web-app',
   sessionReplay: {
-    load: () => import('@pydantic/logfire-session-replay'),
+    ...sessionReplayIntegration(),
     replayUrl: '/logfire-proxy/v1/replay',
     headers: () => ({
       'X-CSRF': getCsrfToken(),

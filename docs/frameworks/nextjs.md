@@ -56,25 +56,26 @@ Vercel production deployments can cache build and runtime configuration. If span
 Install the browser package:
 
 ```bash
-npm install @pydantic/logfire-browser @opentelemetry/auto-instrumentations-web
+npm install @pydantic/logfire-browser
 ```
 
-Create a frontend application under **Project settings > Frontend applications**, then copy its generated browser setup. The token can only write telemetry for that frontend application and cannot read project data. Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification.
+Create a frontend application under **Frontend > Applications**, then copy its generated browser setup. The token can only write telemetry for that frontend application and cannot read project data. Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification.
 
 For Next.js 15.3 and later, configure the browser package in
-`instrumentation-client.ts` using the generated `traceUrl` and
-`traceExporterHeaders` values. Next.js loads this file once in the browser
+`instrumentation-client.ts` using the generated regional URL and restricted
+token. Next.js loads this file once in the browser
 before the application becomes interactive.
 
 ```ts title="instrumentation-client.ts"
 import * as logfire from '@pydantic/logfire-browser'
 
 logfire.configure({
-  traceUrl: 'https://logfire-us.pydantic.dev/v1/traces',
-  traceExporterHeaders: () => ({
-    Authorization: 'Bearer <frontend-application-token>',
+  ...logfire.createFrontendApplicationConfig({
+    baseUrl: 'https://logfire-us.pydantic.dev',
+    token: '<frontend-application-token>',
   }),
   autoInstrumentations: true,
+  rum: { webVitals: { metrics: true } },
 })
 ```
 
