@@ -570,6 +570,15 @@ describe('browser configureFrontend', () => {
     })
   })
 
+  it('ignores application-owned identity options supplied by untyped callers', () => {
+    const options = { ...frontend, serviceName: 'different-app', environment: 'different-environment', serviceVersion: '2.0.0' }
+    cleanup = configureFrontend(options)
+    const attributes = getLatestResourceAttributes()
+    expect(attributes['service.name']).toBe('logfire-browser')
+    expect(attributes['deployment.environment.name']).toBeUndefined()
+    expect(attributes['service.version']).toBe('2.0.0')
+  })
+
   it('can disable instrumentation and Web Vitals entirely', async () => {
     cleanup = configureFrontend({
       ...frontend,

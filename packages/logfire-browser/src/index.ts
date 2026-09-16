@@ -303,7 +303,15 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
 
   const headers = () => ({ Authorization: `Bearer ${options.token}` })
   const endpoint = (path: string) => new URL(path, baseUrl).toString()
-  const { baseUrl: _baseUrl, token: _token, sessionReplay, captureUrlQueryAndFragment, ...captureOptions } = options
+  const {
+    baseUrl: _baseUrl,
+    token: _token,
+    serviceName: _serviceName,
+    environment: _environment,
+    sessionReplay,
+    captureUrlQueryAndFragment,
+    ...captureOptions
+  } = options as FrontendConfigOptions & Pick<LogfireConfigOptions, 'serviceName' | 'environment'>
   const webVitals = options.rum?.webVitals
 
   return configure({
