@@ -1,5 +1,15 @@
 # @pydantic/logfire-browser
 
+## 0.21.0
+
+### Minor Changes
+
+- 72ee7e1: Add `configureFrontend()` to configure browser tracing, Web Vitals metrics, and optional session replay with one restricted token and regional URL. Auto-instrumentation and Web Vitals metrics are enabled by default, with capture options remaining customizable. Standard instrumentation URL attributes omit query strings, fragments, and URL credentials by default; full URLs require an explicit opt-in. The optional replay package now provides `sessionReplayIntegration()` to lazy-load the recorder without requiring applications to write their own dynamic import.
+
+### Patch Changes
+
+- 3d50cfd: Increase the default minimum session replay duration from five to ten seconds.
+
 ## 0.20.1
 
 ### Patch Changes
