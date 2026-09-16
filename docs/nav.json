@@ -49,6 +49,10 @@
           {
             "label": "Vercel AI SDK",
             "slug": "frameworks/vercel-ai"
+          },
+          {
+            "label": "OpenAI Codex SDK",
+            "slug": "frameworks/codex-sdk"
           }
         ]
       },
