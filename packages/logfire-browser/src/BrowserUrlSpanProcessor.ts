@@ -3,11 +3,24 @@ import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace
 
 function sanitizeUrl(value: string): string {
   try {
-    const url = new URL(value)
-    return url.protocol === 'http:' || url.protocol === 'https:' ? `${url.origin}${url.pathname}` : '[REDACTED]'
+    // A fixed base lets URL parse relative targets and protocol-relative URLs without
+    // depending on the current page. Rebuilding from origin/pathname omits credentials.
+    const base = 'https://logfire.invalid'
+    let url: URL
+    let absolute = true
+    try {
+      url = new URL(value)
+    } catch {
+      absolute = false
+      url = new URL(value, base)
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return '[REDACTED]'
+    }
+    const origin = absolute || url.origin !== base ? url.origin : ''
+    return `${origin}${url.pathname}`
   } catch {
-    // Relative request targets need no origin; strip their query and fragment too.
-    return value.split(/[?#]/u, 1)[0] ?? ''
+    return '[REDACTED]'
   }
 }
 

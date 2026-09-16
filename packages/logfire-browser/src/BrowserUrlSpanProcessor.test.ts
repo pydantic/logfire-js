@@ -29,6 +29,18 @@ describe('BrowserUrlSpanProcessor', () => {
     })
   })
 
+  it.each([
+    ['//user:password@example.com/reset?token=secret', 'https://example.com/reset'],
+    ['https://user:password@/reset?token=secret', '[REDACTED]'],
+    ['/reset?token=secret#fragment', '/reset'],
+    ['reset?token=secret', '/reset'],
+    ['https://logfire.invalid/reset?secret', 'https://logfire.invalid/reset'],
+  ])('sanitizes URL %s', (input, expected) => {
+    const span = { attributes: { 'http.url': input }, events: [] } as unknown as ReadableSpan
+    new BrowserUrlSpanProcessor().onEnd(span)
+    expect(span.attributes).toEqual({ 'http.url': expected })
+  })
+
   it('sanitizes resource timing event URLs and referrers', () => {
     const attributes = { 'http.url': 'https://example.com/asset?token=secret', 'http.referrer': 'https://example.com/?secret#fragment' }
     const span = { attributes: {}, events: [{ attributes }, {}] } as unknown as ReadableSpan
