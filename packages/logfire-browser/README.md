@@ -36,6 +36,15 @@ disable them. Nested capture options preserve unrelated defaults. Replay is
 opt-in, and the returned handle stops the SDK when called. Use `configure()`
 for custom transports and proxies; its capture features remain opt-in.
 
+`configureFrontend()` removes query strings, fragments, and URL credentials from
+standard page/request URL attributes (`http.url`, `url.full`, `http.target`, and
+`http.referrer`) before downstream span processors export them. It also removes
+`url.query` and `url.fragment`, including on resource timing events. Set
+`captureUrlQueryAndFragment: true` only when full URL capture is intended; URLs
+can contain authentication tokens. RUM page URL attributes and replay URLs have
+separate capture options. The lower-level `configure()` keeps its existing URL
+behavior.
+
 Ready to run examples are available in the repository [in vanilla browser](https://github.com/pydantic/logfire-js/tree/main/examples/browser), [with RUM and replay](https://github.com/pydantic/logfire-js/tree/main/examples/browser-rum-replay), and [in Next.js variants](https://github.com/pydantic/logfire-js/tree/main/examples/nextjs-client-side-instrumentation).
 
 Build the workspace packages before running the Vite examples. The standalone

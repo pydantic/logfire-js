@@ -48,6 +48,15 @@ telemetry proxy. It retains its opt-in instrumentation and RUM behavior.
 `configureFrontend()` accepts capture options, resource attributes, and exporter
 tuning, while the frontend application owns transport and service identity.
 
+`configureFrontend()` removes query strings, fragments, and URL credentials from
+standard page/request URL attributes (`http.url`, `url.full`, `http.target`, and
+`http.referrer`) before downstream span processors export them. It also removes
+`url.query` and `url.fragment`, including on resource timing events. Set
+`captureUrlQueryAndFragment: true` only when full URL capture is intended; URLs
+can contain authentication tokens. RUM page URL attributes and replay URLs have
+separate capture options. The lower-level `configure()` keeps its existing URL
+behavior.
+
 ### Resource timing detail
 
 Use compact resource timing to keep the `documentLoad`, `documentFetch`, and

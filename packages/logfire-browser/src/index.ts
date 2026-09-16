@@ -53,6 +53,7 @@ import {
 } from 'logfire'
 
 import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
+import { BrowserUrlSpanProcessor } from './BrowserUrlSpanProcessor'
 import { clearConfiguredBrowserSession, configureBrowserSession, getBrowserSessionId } from './browserSession'
 import type { RUMOptions } from './browserSession'
 import type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
@@ -261,6 +262,12 @@ export interface FrontendConfigOptions extends Omit<
   metrics?: Omit<BrowserMetricsOptions, 'metricUrl' | 'metricExporterHeaders'>
   /** Additional trace exporter options. The frontend application owns the transport. */
   traceExporterConfig?: Omit<TraceExporterConfig, 'url' | 'headers'>
+  /**
+   * Include query strings and fragments in standard URL attributes emitted by instrumentations.
+   * Defaults to false. Enabling this can capture sensitive tokens in page and request URLs.
+   * RUM page attributes and replay URLs have their own capture options.
+   */
+  captureUrlQueryAndFragment?: boolean
   /** Optional session replay integration. Disabled by default. */
   sessionReplay?: false | FrontendSessionReplayOptions
 }
@@ -296,12 +303,13 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
 
   const headers = () => ({ Authorization: `Bearer ${options.token}` })
   const endpoint = (path: string) => new URL(path, baseUrl).toString()
-  const { baseUrl: _baseUrl, token: _token, sessionReplay, ...captureOptions } = options
+  const { baseUrl: _baseUrl, token: _token, sessionReplay, captureUrlQueryAndFragment, ...captureOptions } = options
   const webVitals = options.rum?.webVitals
 
   return configure({
     ...captureOptions,
     autoInstrumentations: options.autoInstrumentations ?? true,
+    ...(captureUrlQueryAndFragment === true ? {} : { spanProcessors: [new BrowserUrlSpanProcessor(), ...(options.spanProcessors ?? [])] }),
     rum: {
       ...options.rum,
       webVitals:

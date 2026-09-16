@@ -392,6 +392,7 @@ vi.mock('./browserMetrics', () => ({
 import { configureLogfireApi, Level, logfireApiConfig, PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
 
 import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
+import { BrowserUrlSpanProcessor } from './BrowserUrlSpanProcessor'
 import { clearConfiguredBrowserSessionForTests } from './browserSession'
 import logfireBrowser, {
   configure,
@@ -519,6 +520,7 @@ describe('browser configureFrontend', () => {
     cleanup = configureFrontend(frontend)
     expect(logfireBrowser).toHaveProperty('configureFrontend', configureFrontend)
     expect(cleanup.sessionReplay).toBeUndefined()
+    expect(getLatestSpanProcessors()[1]).toBeInstanceOf(BrowserUrlSpanProcessor)
     await waitForConfigureMicrotasks()
     expect(mocks.autoInstrumentationConfigs).toHaveLength(1)
     expect(mocks.webVitalsStartCalls).toHaveLength(1)
@@ -580,6 +582,19 @@ describe('browser configureFrontend', () => {
     expect(mocks.webVitalsStartCalls).toEqual([])
     expect(mocks.browserMetricsRecorderCreateCalls).toEqual([])
     expect(cleanup.sessionReplay).toBeUndefined()
+  })
+
+  it.each([false, true])('controls URL detail before custom exporters (captureUrlQueryAndFragment: %s)', (captureUrlQueryAndFragment) => {
+    const customProcessor = {
+      onStart: noopSpanProcessorCallback,
+      onEnd: noopSpanProcessorCallback,
+      forceFlush: async () => Promise.resolve(),
+      shutdown: async () => Promise.resolve(),
+    }
+    cleanup = configureFrontend({ ...frontend, captureUrlQueryAndFragment, spanProcessors: [customProcessor] })
+    const processors = getLatestSpanProcessors()
+    expect(processors.some((processor) => processor instanceof BrowserUrlSpanProcessor)).toBe(!captureUrlQueryAndFragment)
+    expect(processors.indexOf(customProcessor)).toBe(captureUrlQueryAndFragment ? 1 : 2)
   })
 
   it('can keep Web Vitals spans while disabling their metrics', async () => {
