@@ -43,7 +43,7 @@ logfire.configureFrontend({
 
 ## Precedence
 
-First-class options such as `serviceName`, `serviceVersion`, and `environment` take precedence over conflicting resource attributes.
+With `configure()`, first-class options such as `serviceName`, `serviceVersion`, and `environment` take precedence over conflicting resource attributes. With browser `configureFrontend()`, `serviceVersion` is configurable; service name and environment belong to the frontend application.
 
 In Node.js, values from `OTEL_RESOURCE_ATTRIBUTES` are also read by the OpenTelemetry SDK and can override code-level values depending on SDK configuration.
 

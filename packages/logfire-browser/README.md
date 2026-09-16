@@ -102,8 +102,9 @@ shown under **Frontend > Applications**. That application
 owns the service name, namespace, and optional environment.
 
 Do not use resource attributes for per-request values or sensitive user data.
-First-class options such as `serviceName`, `serviceVersion`, and `environment`
-take precedence over conflicting `resourceAttributes` keys.
+`configureFrontend()` accepts `serviceVersion`, which takes precedence over
+the corresponding `resourceAttributes` key. Service name and environment belong
+to the frontend application.
 
 ## RUM session identity
 

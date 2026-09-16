@@ -251,8 +251,10 @@ logfire.configureFrontend({
 })
 ```
 
-Metric export is disabled unless top-level `metrics.metricUrl` is configured,
-and `rum.webVitals.metrics` requires that transport. The SDK uses a local
+`configureFrontend()` derives the metrics endpoint from `baseUrl` automatically.
+With the lower-level `configure()`, metric export is disabled unless top-level
+`metrics.metricUrl` is configured, and `rum.webVitals.metrics` requires that
+transport. The SDK uses a local
 OpenTelemetry `MeterProvider`; it does not replace the application's global
 meter provider. If that metrics runtime fails to start, the SDK emits an
 explicit diagnostic and continues Web Vitals span reporting without a metric
