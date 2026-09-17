@@ -548,8 +548,22 @@ baggage.
 
 ## Optional Backend Proxy
 
-Use a backend proxy when you need to authenticate browser requests, restrict
-origins, or apply application-specific rate limits. A browser proxy should:
+The restricted frontend application token is designed to be public, so a proxy
+is not required to keep it secret. A proxy is useful for a first-party ingest
+domain, application authentication, origin restrictions, or rate limits.
+
+### First-party ingest domain
+
+To reduce false-positive blocking by content blockers, route frontend
+observability and session replay uploads through a neutral subdomain you
+control. Follow the [frontend custom domain guide](../frontend-custom-domain.md)
+for the SDK configuration, path mappings, Cloudflare Worker example, security
+requirements, CORS, CSP, and verification steps.
+
+### Authenticated application proxy
+
+Use an authenticated backend proxy when you need to verify application sessions
+or keep a normal project write token on the server. A browser proxy should:
 
 - authenticate browser requests and restrict their origins
 - add `Authorization: <write-token>` server-side

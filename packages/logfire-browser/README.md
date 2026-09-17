@@ -460,8 +460,14 @@ logfire.configureFrontend({
 })
 ```
 
-Use a backend proxy only when you need to authenticate browser requests,
-restrict origins, or apply application-specific rate limits.
+For a first-party ingest domain, put a path-preserving reverse proxy on a
+neutral subdomain you control and use that origin as `baseUrl`. A DNS CNAME
+alone is not sufficient: the proxy must terminate TLS and forward `/v1/traces`,
+`/v1/metrics`, and `/v1/replay/{session_id}?seq={sequence_number}` to the same
+paths on the generated regional Logfire origin. See the
+[frontend custom domain guide](https://pydantic.dev/docs/logfire/instrument/typescript/frontend-custom-domain/)
+for a Cloudflare Worker example, security requirements, CORS, CSP, and custom
+path configuration.
 
 After a replay reaches the minimum duration, hiding the document or receiving
 `pagehide` makes a bounded best-effort start of the earliest compressed chunks.

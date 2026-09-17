@@ -77,6 +77,10 @@ logfire.configureFrontend({
 
 ### Optional Proxy
 
-The restricted frontend application token does not need a proxy to keep it secret. Preserve an existing telemetry proxy, or add one only when the application needs its own authentication, origin restrictions, or rate limits. Follow the [browser package's optional proxy guidance](../packages/browser.md#optional-backend-proxy) rather than treating a Next.js rewrite as part of normal setup.
+The restricted frontend application token does not need a proxy to keep it
+secret. A proxy can provide a first-party ingest domain to reduce false-positive
+blocking; follow the [frontend custom domain guide](../frontend-custom-domain.md)
+for that setup. For application authentication, origin restrictions, or rate
+limits, follow the [browser package's authenticated proxy guidance](../packages/browser.md#authenticated-application-proxy). A Next.js rewrite is not part of normal setup.
 
 See `examples/nextjs` and `examples/nextjs-client-side-instrumentation` for working projects.
