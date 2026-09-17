@@ -396,6 +396,10 @@ Session replay is available to Logfire Early Access organizations. Keep replay
 behind your own application flag and expect minor API, ingest, and UI behavior
 changes before Beta.
 
+> **Early Access pricing:** Session replay is free during Early Access. Pricing
+> has not been announced and will be published before General Availability
+> (GA). Session replay will become a paid feature in a later release.
+
 Install the optional replay package when you want rrweb session recording:
 
 ```bash

@@ -6,6 +6,10 @@ This package supports Logfire Early Access session replay. Keep browser replay
 rollout behind your own application flag and expect minor API, ingest, and UI
 behavior changes before Beta.
 
+> **Early Access pricing:** Session replay is free during Early Access. Pricing
+> has not been announced and will be published before General Availability
+> (GA). Session replay will become a paid feature in a later release.
+
 This package records rrweb events, batches them into Logfire replay chunks, and
 uploads gzip-compressed JSON envelopes to a replay upload endpoint. It is
 standalone on purpose: `@rrweb/record` and `fflate` are not dependencies of the core
