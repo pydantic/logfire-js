@@ -57,6 +57,10 @@
         "slug": "configuration"
       },
       {
+        "label": "Frontend Custom Domain",
+        "slug": "frontend-custom-domain"
+      },
+      {
         "label": "Resource Attributes",
         "slug": "resource-attributes"
       },
