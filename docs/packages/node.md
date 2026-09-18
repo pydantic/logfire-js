@@ -246,3 +246,5 @@ unhandled-rejection behavior.
 - [Sampling](../sampling.md)
 - [Scrubbing](../scrubbing.md)
 - [Resource Attributes](../resource-attributes.md)
+- [Managed Variables](../managed-variables.md)
+- [Agent Control](../agent-control.md)

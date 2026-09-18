@@ -81,6 +81,10 @@
         "slug": "managed-variables"
       },
       {
+        "label": "Agent Control",
+        "slug": "agent-control"
+      },
+      {
         "label": "Reference",
         "items": [
           {
