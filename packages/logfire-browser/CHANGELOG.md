@@ -1,5 +1,11 @@
 # @pydantic/logfire-browser
 
+## 0.23.0
+
+### Minor Changes
+
+- 0682c94: Allow `configureFrontend` to send session replay to a separate frontend application while traces and metrics stay on the primary destination.
+
 ## 0.22.0
 
 ### Minor Changes
