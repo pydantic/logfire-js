@@ -239,7 +239,8 @@ enabled. It records LCP, INP, CLS, FCP, and TTFB as short spans named
 
 Each span includes base attributes such as `web_vital.name`,
 `web_vital.value`, `web_vital.delta`, `web_vital.id`, `web_vital.rating`, and
-`web_vital.navigation_type`. Attribution fields include values such as
+`web_vital.navigation_type`. It also includes available navigation identity,
+interaction, and start-time fields as `web_vital.navigation_*`. Attribution fields include values such as
 `web_vital.lcp.target`, `web_vital.inp.target`, and
 `web_vital.cls.largest_shift_target`.
 When INP attribution identifies a culprit Long Animation Frame script, the INP
@@ -270,8 +271,8 @@ logfire.configure({
 ```
 
 Web Vitals observers live for the page lifetime. The first successful startup
-fixes `reportAllChanges`, `generateTarget`, and
-`includeProcessedEventEntries`; later `configure()` calls can update the tracer
+fixes `reportAllChanges`, `generateTarget`,
+`includeProcessedEventEntries`, and `reportSoftNavs`; later `configure()` calls can update the tracer
 and metric destination but ignore changed observer options with a diagnostic
 warning. If the initial lazy load or observer startup fails, a later
 `configure()` call retries it.
@@ -308,7 +309,8 @@ Web Vitals metrics are histograms named
 uses unit `1`.
 
 Metric data point attributes are intentionally low-cardinality:
-`web_vital.name` and `web_vital.rating` by default. They do not include
+`web_vital.name` and `web_vital.rating` by default. When soft-navigation
+reporting is enabled, they also include `web_vital.navigation_type`. They do not include
 `session.id`, `logfire.page.url.full`, `logfire.page.url.path`,
 `logfire.page.route`, `logfire.session.*`, Web Vital
 ids/deltas, DOM selectors, attribution fields, or raw PerformanceEntry data. Use
@@ -316,11 +318,40 @@ spans for raw-sample drilldown, session/replay correlation, exact page context,
 and attribution selectors. When metrics are configured, Logfire Platform should
 treat these histograms as the aggregate Web Vitals surface.
 
-For modern single-page apps, these are standard document-level Web Vitals, not
-route-level soft-navigation metrics. Span page URL attributes describe the
-browser URL when the callback fires; route-specific Core Web Vitals need
-separate route or soft-navigation instrumentation. To add a route dimension to metrics, pass a
-low-cardinality template such as `/products/:id` through
+By default, Web Vitals use the standard document-level measurement method.
+Web Vital span URL attributes describe the navigation that produced the
+measurement, even when its callback runs after the browser URL changes. When
+the browser supplies that historical URL, the span omits
+`logfire.page.route`, because the current route callback cannot reconstruct the
+historical route template. If the browser does not supply a valid navigation
+URL for a document report, the span falls back to the current sanitized URL
+and route.
+
+Chromium 151 and newer can also report metrics separately for browser-detected
+soft navigations in single-page applications:
+
+```js
+logfire.configure({
+  traceUrl: '/client-traces',
+  rum: {
+    webVitals: {
+      reportSoftNavs: true,
+    },
+  },
+})
+```
+
+This option remains document-level in Firefox, Safari, and older Chromium. A
+soft navigation requires a user interaction, URL change, and resulting paint,
+so browser detection can differ from application router events. Enabling it
+also finalizes the initial navigation when the first soft navigation occurs.
+Soft-navigation LCP considers newly painted content, which can differ from a
+cold load of the same URL, and soft-navigation TTFB is reported as `0` rather
+than as request latency.
+
+Soft-navigation spans use the metric's sanitized navigation URL and also omit
+`logfire.page.route`. To add a low-cardinality route dimension to metrics,
+derive it from the metric's `navigationURL` in
 `rum.webVitals.metrics.attributes`.
 
 ## RUM Long Animation Frames

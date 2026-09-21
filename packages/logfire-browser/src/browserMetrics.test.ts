@@ -280,33 +280,38 @@ describe('browser metrics runtime', () => {
           'user.plan': 'enterprise',
           'web_vital.id': 'custom-id',
           'web_vital.lcp.target': '#hero img',
+          'web_vital.navigation_id': 42,
+          'web_vital.navigation_interaction_id': 84,
+          'web_vital.navigation_start_time': 1234,
+          'web_vital.navigation_type': 'navigate',
+          'web_vital.navigation_url': 'https://example.com/products/123?token=secret',
           'web_vital.value': 999,
-        }) as never,
-      defaultAttributes: () =>
-        ({
-          'browser.session.id': 'browser-session-1',
-          'http.url': 'https://example.com/products/123?token=secret',
-          'logfire.page.route': '/products/:id',
-          'logfire.page.url.full': 'https://example.com/products/123?token=secret',
-          'logfire.page.url.path': '/products/123',
-          'logfire.session.account_tier': 'pro',
-          'session.id': 'session-1',
-          'url.full': 'https://example.com/products/123?token=secret',
-          'url.path': '/products/:id',
-          'user.email': 'alice@example.com',
-          'user.id': 'user-1',
-          'user.name': 'Alice',
-          'web_vital.delta': 12,
-          ignored: { nested: true },
         }) as never,
     })
 
-    recorder.record(createMetric('LCP', 2400, 'needs-improvement'))
+    recorder.record(createMetric('LCP', 2400, 'needs-improvement'), {
+      'browser.session.id': 'browser-session-1',
+      'http.url': 'https://example.com/products/123?token=secret',
+      'logfire.page.route': '/products/:id',
+      'logfire.page.url.full': 'https://example.com/products/123?token=secret',
+      'logfire.page.url.path': '/products/123',
+      'logfire.session.account_tier': 'pro',
+      'session.id': 'session-1',
+      'url.full': 'https://example.com/products/123?token=secret',
+      'url.path': '/products/:id',
+      'user.email': 'alice@example.com',
+      'user.id': 'user-1',
+      'user.name': 'Alice',
+      'web_vital.delta': 12,
+      'web_vital.navigation_type': 'soft-navigation',
+      ignored: { nested: true },
+    } as never)
 
     expect(getHistogram(expectedInstruments.LCP.name).records[0]?.attributes).toEqual({
       'app.route': '/products/:id',
       'url.path': '/products/:id',
       'web_vital.name': 'LCP',
+      'web_vital.navigation_type': 'soft-navigation',
       'web_vital.rating': 'needs-improvement',
     })
   })

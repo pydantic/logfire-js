@@ -833,6 +833,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
       : webVitalsMetricOptions === undefined
         ? startBrowserWebVitals({
             ...webVitalsOptions,
+            ...(browserSessionManager === undefined ? {} : { sessionManager: browserSessionManager }),
             tracer: tracerProvider.getTracer('logfire-web-vitals'),
           }).catch((error: unknown) => {
             diag.error('logfire-browser: failed to start Web Vitals reporting', error)
@@ -844,6 +845,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
               diag.warn('logfire-browser: browser metrics did not start; continuing Web Vitals with span reporting only')
               return startBrowserWebVitals({
                 ...webVitalsOptions,
+                ...(browserSessionManager === undefined ? {} : { sessionManager: browserSessionManager }),
                 tracer: tracerProvider.getTracer('logfire-web-vitals'),
               })
             }
@@ -851,6 +853,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
             return startBrowserWebVitals({
               ...webVitalsOptions,
               metricRecorder: browserMetrics.createWebVitalsMetricRecorder(webVitalsMetricOptions),
+              ...(browserSessionManager === undefined ? {} : { sessionManager: browserSessionManager }),
               tracer: tracerProvider.getTracer('logfire-web-vitals'),
             })
           })().catch((error: unknown) => {

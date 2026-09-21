@@ -117,6 +117,38 @@ describe('BrowserSessionSpanProcessor', () => {
     expect(span.attributes).not.toHaveProperty('browser.session.id')
   })
 
+  it('leaves Web Vital page context to the navigation-aware reporter', () => {
+    setLocation({ href: 'https://example.com/settings' })
+    const span = new TestSpan('web_vital.lcp', 'logfire-web-vitals')
+
+    startSpan(
+      createProcessor({
+        getRouteName: () => '/settings',
+        getSessionAttributes: () => ({ account_tier: 'pro' }),
+        getUser: () => ({ id: 'user-1' }),
+      }),
+      span
+    )
+
+    expect(span.attributes).toEqual({
+      'logfire.session.account_tier': 'pro',
+      'session.id': 'session-1',
+      'user.id': 'user-1',
+    })
+  })
+
+  it('keeps page context for non-Web-Vital spans from the Web Vitals tracer', () => {
+    setLocation({ href: 'https://example.com/settings' })
+    const span = new TestSpan('custom-span', 'logfire-web-vitals')
+
+    startSpan(createProcessor({ getRouteName: () => '/settings' }), span)
+
+    expect(span.attributes).toMatchObject({
+      'logfire.page.route': '/settings',
+      'logfire.page.url.path': '/settings',
+    })
+  })
+
   it('does not treat periodic main-thread summaries as session activity', () => {
     let now = 0
     let sessionNumber = 0

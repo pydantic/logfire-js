@@ -559,6 +559,7 @@ describe('browser configureFrontend', () => {
         reportAllChanges: true,
         metrics: true,
         metricRecorder: mocks.browserMetricsRecorders[0],
+        sessionManager: expect.any(Object) as unknown,
         tracer: expect.any(Object) as unknown,
       },
     ])
@@ -1525,6 +1526,7 @@ describe('browser Web Vitals config', () => {
           generateTarget,
           includeProcessedEventEntries: true,
           reportAllChanges: true,
+          reportSoftNavs: true,
         },
       },
       traceUrl: 'http://localhost:8989/client-traces',
@@ -1535,17 +1537,23 @@ describe('browser Web Vitals config', () => {
       generateTarget: () => string
       includeProcessedEventEntries: boolean
       reportAllChanges: boolean
+      reportSoftNavs: boolean
+      sessionManager: unknown
       tracer: { name: string }
     }
     expect({
       generateTarget: call.generateTarget,
+      hasSessionManager: call.sessionManager !== undefined,
       includeProcessedEventEntries: call.includeProcessedEventEntries,
       reportAllChanges: call.reportAllChanges,
+      reportSoftNavs: call.reportSoftNavs,
       tracerName: call.tracer.name,
     }).toEqual({
       generateTarget,
+      hasSessionManager: true,
       includeProcessedEventEntries: true,
       reportAllChanges: true,
+      reportSoftNavs: true,
       tracerName: 'logfire-web-vitals',
     })
   })
@@ -2117,12 +2125,30 @@ describe('browser metrics config', () => {
     await waitForConfigureMicrotasks()
 
     expect(mocks.browserMetricsRecorderCreateCalls).toHaveLength(1)
-    expect((mocks.browserMetricsRecorderCreateCalls[0] as { attributes?: unknown }).attributes).toBe(webVitalAttributes)
-    expect((mocks.browserMetricsRecorderCreateCalls[0] as { defaultAttributes?: unknown }).defaultAttributes).toBeUndefined()
+    expect(mocks.browserMetricsRecorderCreateCalls[0]).toEqual({ attributes: webVitalAttributes })
     expect(mocks.webVitalsStartCalls).toHaveLength(1)
-    expect((mocks.webVitalsStartCalls[0] as { metricRecorder?: unknown }).metricRecorder).toBe(mocks.browserMetricsRecorders[0])
+    const startCall = mocks.webVitalsStartCalls[0] as { metricRecorder?: unknown; sessionManager?: unknown }
+    expect(startCall.metricRecorder).toBe(mocks.browserMetricsRecorders[0])
+    expect(startCall.sessionManager).toBeDefined()
     const spanProcessors = getLatestSpanProcessors()
     expect(spanProcessors[0]).toBeInstanceOf(BrowserSessionSpanProcessor)
+  })
+
+  it('passes soft-navigation configuration with the metric recorder', async () => {
+    cleanup = configure({
+      metrics: { metricUrl: 'http://localhost:8989/client-metrics' },
+      rum: { webVitals: { metrics: true, reportSoftNavs: true } },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    await waitForConfigureMicrotasks()
+
+    expect(mocks.browserMetricsRecorderCreateCalls).toHaveLength(1)
+    expect(mocks.browserMetricsRecorderCreateCalls[0]).toEqual({})
+    expect(mocks.webVitalsStartCalls[0]).toMatchObject({
+      metricRecorder: mocks.browserMetricsRecorders[0],
+      reportSoftNavs: true,
+    })
+    expect((mocks.webVitalsStartCalls[0] as { sessionManager?: unknown }).sessionManager).toBeDefined()
   })
 
   it('degrades failed browser metrics startup to Web Vitals spans only', async () => {
@@ -2138,6 +2164,7 @@ describe('browser metrics config', () => {
 
     expect(mocks.webVitalsStartCalls).toHaveLength(1)
     expect(mocks.webVitalsStartCalls[0]).not.toHaveProperty('metricRecorder')
+    expect((mocks.webVitalsStartCalls[0] as { sessionManager?: unknown }).sessionManager).toBeDefined()
     expect(diagWarn).toHaveBeenCalledWith('logfire-browser: browser metrics did not start; continuing Web Vitals with span reporting only')
   })
 
