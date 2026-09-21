@@ -42,16 +42,12 @@ export interface BrowserWebVitalsMetricOptions {
 }
 
 export interface BrowserWebVitalsMetricRecorder {
-  record: (metric: MetricWithAttribution) => void
+  record: (metric: MetricWithAttribution, requiredAttributes?: Attributes) => void
   shutdown: () => void
 }
 
-export interface BrowserWebVitalsMetricRecorderOptions extends BrowserWebVitalsMetricOptions {
-  defaultAttributes?: (metric: MetricWithAttribution) => Attributes
-}
-
 export interface BrowserMetricsRuntime {
-  createWebVitalsMetricRecorder: (options?: BrowserWebVitalsMetricRecorderOptions) => BrowserWebVitalsMetricRecorder
+  createWebVitalsMetricRecorder: (options?: BrowserWebVitalsMetricOptions) => BrowserWebVitalsMetricRecorder
   forceFlush: () => Promise<void>
   shutdown: () => Promise<void>
 }
@@ -109,6 +105,10 @@ const DISALLOWED_WEB_VITAL_METRIC_ATTRIBUTES = new Set([
   'url.full',
   'web_vital.delta',
   'web_vital.id',
+  'web_vital.navigation_id',
+  'web_vital.navigation_interaction_id',
+  'web_vital.navigation_start_time',
+  'web_vital.navigation_url',
   'web_vital.value',
 ])
 
@@ -199,22 +199,22 @@ function createWebVitalMetricHistograms(meterProvider: MeterProvider): Record<We
 
 function createWebVitalsMetricRecorder(
   histograms: Record<WebVitalName, Histogram>,
-  options: BrowserWebVitalsMetricRecorderOptions = {}
+  options: BrowserWebVitalsMetricOptions = {}
 ): BrowserWebVitalsMetricRecorder {
   let active = true
 
   return {
-    record(metric) {
+    record(metric, requiredAttributes) {
       if (!active || !isWebVitalName(metric.name)) {
         return
       }
 
       try {
         const attributes = createDefaultWebVitalMetricAttributes(metric)
-        copyPrimitiveAttributes(attributes, options.defaultAttributes?.(metric))
         if (options.attributes !== false) {
           copyPrimitiveAttributes(attributes, options.attributes?.(metric))
         }
+        copyPrimitiveAttributes(attributes, requiredAttributes)
         histograms[metric.name].record(metric.value, attributes)
       } catch (error) {
         diag.error('logfire-browser: failed to record Web Vital metric', error)

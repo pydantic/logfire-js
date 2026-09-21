@@ -12,11 +12,15 @@ import type {
 } from 'web-vitals/attribution'
 
 import type { BrowserWebVitalsMetricOptions, BrowserWebVitalsMetricRecorder } from './browserMetrics'
+import type { BrowserSessionManager } from './browserSession'
 import { normalizeScriptEntry } from './scriptAttributes'
 
 import { setOwn } from './ownRecord'
 
 const LOGFIRE_SPAN_TYPE_KEY = 'logfire.span_type'
+const ATTR_LOGFIRE_PAGE_ROUTE = 'logfire.page.route'
+const ATTR_LOGFIRE_PAGE_URL_FULL = 'logfire.page.url.full'
+const ATTR_LOGFIRE_PAGE_URL_PATH = 'logfire.page.url.path'
 
 export interface BrowserWebVitalsOptions {
   /**
@@ -24,6 +28,11 @@ export interface BrowserWebVitalsOptions {
    * Defaults to false.
    */
   reportAllChanges?: boolean
+  /**
+   * Report Web Vitals separately for supported browser-detected soft
+   * navigations. Defaults to false. Currently supported in Chromium 151+.
+   */
+  reportSoftNavs?: boolean
   /**
    * Customize how DOM targets are stringified by `web-vitals/attribution`.
    */
@@ -55,6 +64,7 @@ interface WebVitalsAttributionModule {
 
 interface BrowserWebVitalsStartOptions extends BrowserWebVitalsOptions {
   metricRecorder?: BrowserWebVitalsMetricRecorder
+  sessionManager?: BrowserSessionManager
   tracer: Tracer
 }
 
@@ -62,6 +72,7 @@ let startupPromise: Promise<void> | undefined
 let currentMetricRecorder: BrowserWebVitalsMetricRecorder | undefined
 let currentTracer: Tracer | undefined
 let currentOwner: { active: boolean } | undefined
+let currentSessionManager: BrowserSessionManager | undefined
 let registeredObserverOptions: ObserverOptions | undefined
 let observerOptionsDuringStartup: ObserverOptions | undefined
 const registeredWebVitals = new Set<WebVitalName>()
@@ -72,16 +83,19 @@ interface ObserverOptions {
   generateTarget: BrowserWebVitalsOptions['generateTarget']
   includeProcessedEventEntries: boolean
   reportAllChanges: boolean | undefined
+  reportSoftNavs: boolean | undefined
 }
 
 interface ReportOptionSource {
   generateTarget?: BrowserWebVitalsOptions['generateTarget']
   includeProcessedEventEntries?: boolean | undefined
   reportAllChanges?: boolean | undefined
+  reportSoftNavs?: boolean | undefined
 }
 
 function createHandle(
   metricRecorder: BrowserWebVitalsMetricRecorder | undefined,
+  sessionManager: BrowserSessionManager | undefined,
   tracer: Tracer,
   owner: { active: boolean }
 ): BrowserWebVitalsHandle {
@@ -99,6 +113,9 @@ function createHandle(
       }
       if (currentTracer === tracer) {
         currentTracer = undefined
+      }
+      if (currentSessionManager === sessionManager) {
+        currentSessionManager = undefined
       }
       if (currentOwner === owner) {
         currentOwner = undefined
@@ -124,6 +141,9 @@ function createBaseReportOptions(options: ReportOptionSource = {}): AttributionR
   if (options.reportAllChanges !== undefined) {
     reportOptions.reportAllChanges = options.reportAllChanges
   }
+  if (options.reportSoftNavs !== undefined) {
+    reportOptions.reportSoftNavs = options.reportSoftNavs
+  }
   if (options.generateTarget !== undefined) {
     reportOptions.generateTarget = options.generateTarget
   }
@@ -145,6 +165,9 @@ function createBaseAttributes(metric: MetricWithAttribution): Attributes {
   setPrimitiveAttribute(attributes, 'web_vital.id', metric.id)
   setPrimitiveAttribute(attributes, 'web_vital.rating', metric.rating)
   setPrimitiveAttribute(attributes, 'web_vital.navigation_type', metric.navigationType)
+  setPrimitiveAttribute(attributes, 'web_vital.navigation_id', metric.navigationId)
+  setPrimitiveAttribute(attributes, 'web_vital.navigation_interaction_id', metric.navigationInteractionId)
+  setPrimitiveAttribute(attributes, 'web_vital.navigation_start_time', metric.navigationStartTime)
   return attributes
 }
 
@@ -212,7 +235,57 @@ function createMetricAttributes(metric: MetricWithAttribution): Attributes {
   return attributes
 }
 
-function reportWebVitalSpan(metric: MetricWithAttribution, tracer: Tracer | undefined): void {
+function getCurrentUrl(): URL | undefined {
+  const maybeGlobal = globalThis as {
+    location?: { href?: string }
+    window?: { location?: { href?: string } }
+  }
+
+  try {
+    const href = (maybeGlobal.location ?? maybeGlobal.window?.location)?.href
+    return href === undefined || href === '' ? undefined : new URL(href)
+  } catch {
+    return undefined
+  }
+}
+
+function createPageContextAttributes(metric: MetricWithAttribution, sessionManager: BrowserSessionManager | undefined): Attributes {
+  const attributes: Attributes = {}
+  if (sessionManager === undefined) {
+    return attributes
+  }
+
+  const isSoftNavigation = metric.navigationType === 'soft-navigation'
+  let navigationUrl: URL | undefined
+  if (metric.navigationURL !== undefined) {
+    try {
+      navigationUrl = new URL(metric.navigationURL)
+    } catch {
+      navigationUrl = undefined
+    }
+  }
+  const url = navigationUrl ?? (isSoftNavigation ? undefined : getCurrentUrl())
+  if (url !== undefined) {
+    try {
+      const urlAttributes = sessionManager.getUrlAttributes(url)
+      setPrimitiveAttribute(attributes, ATTR_LOGFIRE_PAGE_URL_FULL, urlAttributes?.full)
+      setPrimitiveAttribute(attributes, ATTR_LOGFIRE_PAGE_URL_PATH, urlAttributes?.path)
+    } catch {
+      // A consumer URL callback must not suppress the Web Vital report.
+    }
+  }
+
+  if (!isSoftNavigation && navigationUrl === undefined) {
+    setPrimitiveAttribute(attributes, ATTR_LOGFIRE_PAGE_ROUTE, sessionManager.getRouteName())
+  }
+  return attributes
+}
+
+function reportWebVitalSpan(
+  metric: MetricWithAttribution,
+  sessionManager: BrowserSessionManager | undefined,
+  tracer: Tracer | undefined
+): void {
   if (tracer === undefined) {
     diag.error('logfire-browser: failed to report Web Vital', new Error('missing Web Vitals tracer'))
     return
@@ -222,6 +295,7 @@ function reportWebVitalSpan(metric: MetricWithAttribution, tracer: Tracer | unde
     const span = tracer.startSpan(`web_vital.${metric.name.toLowerCase()}`)
     try {
       span.setAttributes(createMetricAttributes(metric))
+      span.setAttributes(createPageContextAttributes(metric, sessionManager))
     } finally {
       span.end()
     }
@@ -236,7 +310,11 @@ function reportWebVitalMetric(metric: MetricWithAttribution, metricRecorder: Bro
   }
 
   try {
-    metricRecorder.record(metric)
+    if (registeredObserverOptions?.reportSoftNavs === true) {
+      metricRecorder.record(metric, { 'web_vital.navigation_type': metric.navigationType })
+    } else {
+      metricRecorder.record(metric)
+    }
   } catch (error) {
     diag.error('logfire-browser: failed to report Web Vital metric', error)
   }
@@ -245,9 +323,10 @@ function reportWebVitalMetric(metric: MetricWithAttribution, metricRecorder: Bro
 function reportWebVital(
   metric: MetricWithAttribution,
   metricRecorder: BrowserWebVitalsMetricRecorder | undefined,
+  sessionManager: BrowserSessionManager | undefined,
   tracer: Tracer | undefined
 ): void {
-  reportWebVitalSpan(metric, tracer)
+  reportWebVitalSpan(metric, sessionManager, tracer)
   reportWebVitalMetric(metric, metricRecorder)
 }
 
@@ -258,7 +337,7 @@ function registerWebVitals(webVitals: WebVitalsAttributionModule, requestedOptio
     if (registeredObserverOptions === undefined || currentOwner?.active !== true) {
       return
     }
-    reportWebVital(metric, currentMetricRecorder, currentTracer)
+    reportWebVital(metric, currentMetricRecorder, currentSessionManager, currentTracer)
   }
   const registrations = [
     ['LCP', webVitals.onLCP, reportOptions],
@@ -283,6 +362,7 @@ export async function startBrowserWebVitals(options: BrowserWebVitalsStartOption
     currentMetricRecorder = options.metricRecorder
   }
   currentTracer = options.tracer
+  currentSessionManager = options.sessionManager
   currentOwner = owner
 
   const observerOptions = normalizeObserverOptions(options)
@@ -314,6 +394,9 @@ export async function startBrowserWebVitals(options: BrowserWebVitalsStartOption
     if (currentTracer === options.tracer) {
       currentTracer = undefined
     }
+    if (currentSessionManager === options.sessionManager) {
+      currentSessionManager = undefined
+    }
     if (currentOwner === owner) {
       currentOwner = undefined
     }
@@ -322,7 +405,7 @@ export async function startBrowserWebVitals(options: BrowserWebVitalsStartOption
   if (registeredObserverOptions !== undefined && !sameObserverOptions(registeredObserverOptions, observerOptions)) {
     diag.warn('logfire-browser: Web Vitals observer options are fixed by the first successful startup; ignoring changed options')
   }
-  return createHandle(options.metricRecorder, options.tracer, owner)
+  return createHandle(options.metricRecorder, options.sessionManager, options.tracer, owner)
 }
 
 export function resetBrowserWebVitalsForTests(): void {
@@ -330,6 +413,7 @@ export function resetBrowserWebVitalsForTests(): void {
   currentMetricRecorder = undefined
   currentTracer = undefined
   currentOwner = undefined
+  currentSessionManager = undefined
   registeredObserverOptions = undefined
   observerOptionsDuringStartup = undefined
   registeredWebVitals.clear()
@@ -340,6 +424,7 @@ function normalizeObserverOptions(options: BrowserWebVitalsOptions): ObserverOpt
     generateTarget: options.generateTarget,
     includeProcessedEventEntries: options.includeProcessedEventEntries ?? false,
     reportAllChanges: options.reportAllChanges,
+    reportSoftNavs: options.reportSoftNavs,
   }
 }
 
@@ -347,6 +432,7 @@ function sameObserverOptions(left: ObserverOptions, right: ObserverOptions): boo
   return (
     left.generateTarget === right.generateTarget &&
     left.includeProcessedEventEntries === right.includeProcessedEventEntries &&
-    (left.reportAllChanges ?? false) === (right.reportAllChanges ?? false)
+    (left.reportAllChanges ?? false) === (right.reportAllChanges ?? false) &&
+    (left.reportSoftNavs ?? false) === (right.reportSoftNavs ?? false)
   )
 }

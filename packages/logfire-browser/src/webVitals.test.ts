@@ -130,6 +130,7 @@ vi.mock('web-vitals/attribution', () => ({
   },
 }))
 
+import { BrowserSessionManager } from './browserSession'
 import { resetBrowserWebVitalsForTests, startBrowserWebVitals } from './webVitals'
 
 const webVitalNames: WebVitalName[] = ['LCP', 'INP', 'CLS', 'FCP', 'TTFB']
@@ -153,15 +154,25 @@ function createMetric(name: WebVitalName, attribution: Record<string, unknown>):
     entries: [{ name: 'entry-object' }],
     id: `${name.toLowerCase()}-1`,
     name,
+    navigationId: 1,
     navigationType: 'navigate',
     rating: 'good',
     value: 123,
   }
 }
 
+const originalLocationDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'location')
+
+function setLocation(href: string): void {
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: { href },
+  })
+}
+
 function createMetricRecorder() {
   return {
-    record: vi.fn<(metric: unknown) => void>(),
+    record: vi.fn<(metric: unknown, requiredAttributes?: Record<string, unknown>) => void>(),
     shutdown: vi.fn<() => void>(),
   }
 }
@@ -190,6 +201,11 @@ describe('browser Web Vitals reporting', () => {
 
   afterEach(() => {
     resetBrowserWebVitalsForTests()
+    if (originalLocationDescriptor === undefined) {
+      Reflect.deleteProperty(globalThis, 'location')
+    } else {
+      Object.defineProperty(globalThis, 'location', originalLocationDescriptor)
+    }
   })
 
   it('registers all Web Vitals callbacks with shared options', async () => {
@@ -199,6 +215,7 @@ describe('browser Web Vitals reporting', () => {
       generateTarget,
       includeProcessedEventEntries: true,
       reportAllChanges: true,
+      reportSoftNavs: true,
     })
 
     for (const name of webVitalNames) {
@@ -207,11 +224,13 @@ describe('browser Web Vitals reporting', () => {
     expect(getRegistration('LCP').options).toEqual({
       generateTarget,
       reportAllChanges: true,
+      reportSoftNavs: true,
     })
     expect(getRegistration('INP').options).toEqual({
       generateTarget,
       includeProcessedEventEntries: true,
       reportAllChanges: true,
+      reportSoftNavs: true,
     })
   })
 
@@ -221,16 +240,17 @@ describe('browser Web Vitals reporting', () => {
     expect(getRegistration('INP').options).toEqual({
       includeProcessedEventEntries: false,
     })
+    expect(getRegistration('LCP').options).toEqual({})
   })
 
   it('does not register duplicate observers in one page lifecycle', async () => {
-    await startWebVitals({ reportAllChanges: true })
-    await startWebVitals({ reportAllChanges: false })
+    await startWebVitals({ reportAllChanges: true, reportSoftNavs: true })
+    await startWebVitals({ reportAllChanges: false, reportSoftNavs: false })
 
     for (const name of webVitalNames) {
       expect(mocks.registrations[name]).toHaveLength(1)
     }
-    expect(getRegistration('LCP').options).toEqual({ reportAllChanges: true })
+    expect(getRegistration('LCP').options).toEqual({ reportAllChanges: true, reportSoftNavs: true })
     expect(mocks.diagWarnings).toEqual([
       ['logfire-browser: Web Vitals observer options are fixed by the first successful startup; ignoring changed options'],
     ])
@@ -325,6 +345,25 @@ describe('browser Web Vitals reporting', () => {
     expect(mocks.tracerNames).toEqual(['second-tracer'])
   })
 
+  it('labels metrics from the effective soft-navigation observer after a changed startup request', async () => {
+    const firstMetricRecorder = createMetricRecorder()
+    const secondMetricRecorder = createMetricRecorder()
+    const metric = {
+      ...createMetric('TTFB', { waitingDuration: 0 }),
+      navigationType: 'soft-navigation',
+      value: 0,
+    }
+
+    await startWebVitals({ metricRecorder: firstMetricRecorder, reportSoftNavs: true })
+    await startWebVitals({ metricRecorder: secondMetricRecorder, reportSoftNavs: false })
+    report('TTFB', metric)
+
+    expect(firstMetricRecorder.record).not.toHaveBeenCalled()
+    expect(secondMetricRecorder.record).toHaveBeenCalledWith(metric, {
+      'web_vital.navigation_type': 'soft-navigation',
+    })
+  })
+
   it('attaches a metric recorder after Web Vitals already started without metrics', async () => {
     const metricRecorder = createMetricRecorder()
     const beforeRecorder = createMetric('FCP', { firstByteToFCP: 85, loadState: 'dom-interactive', timeToFirstByte: 42 })
@@ -387,11 +426,129 @@ describe('browser Web Vitals reporting', () => {
       'web_vital.delta': 12,
       'web_vital.id': 'fcp-1',
       'web_vital.name': 'FCP',
+      'web_vital.navigation_id': 1,
       'web_vital.navigation_type': 'navigate',
       'web_vital.rating': 'good',
       'web_vital.value': 123,
     })
   })
+
+  it('uses navigation-time URL context and omits a soft-navigation route', async () => {
+    setLocation('https://example.com/settings')
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => '/settings',
+      storage: null,
+    })
+    await startWebVitals({ sessionManager })
+
+    report('FCP', {
+      ...createMetric('FCP', { firstByteToFCP: 85, loadState: 'complete', timeToFirstByte: 42 }),
+      navigationId: 42,
+      navigationInteractionId: 84,
+      navigationStartTime: 1234,
+      navigationType: 'soft-navigation',
+      navigationURL: 'https://example.com/products/123?token=secret#details',
+    })
+
+    expect(mocks.spans[0]?.attributes).toMatchObject({
+      'logfire.page.url.full': 'https://example.com/products/123',
+      'logfire.page.url.path': '/products/123',
+      'web_vital.navigation_id': 42,
+      'web_vital.navigation_interaction_id': 84,
+      'web_vital.navigation_start_time': 1234,
+      'web_vital.navigation_type': 'soft-navigation',
+    })
+    expect(mocks.spans[0]?.attributes).not.toHaveProperty('logfire.page.route')
+  })
+
+  it('does not combine a document navigation URL with a callback-time route', async () => {
+    setLocation('https://example.com/settings')
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => '/settings',
+      storage: null,
+    })
+    await startWebVitals({ sessionManager })
+
+    report('FCP', {
+      ...createMetric('FCP', { firstByteToFCP: 85, loadState: 'complete', timeToFirstByte: 42 }),
+      navigationURL: 'https://example.com/home?token=secret#details',
+    })
+
+    expect(mocks.spans[0]?.attributes).toMatchObject({
+      'logfire.page.url.full': 'https://example.com/home',
+      'logfire.page.url.path': '/home',
+    })
+    expect(mocks.spans[0]?.attributes).not.toHaveProperty('logfire.page.route')
+  })
+
+  it('omits document page context when a historical navigation URL cannot be sanitized', async () => {
+    setLocation('https://example.com/settings')
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => '/settings',
+      storage: null,
+      urlAttributes: () => {
+        throw new Error('URL resolver failed')
+      },
+    })
+    await startWebVitals({ sessionManager })
+
+    report('FCP', {
+      ...createMetric('FCP', { firstByteToFCP: 85, loadState: 'complete', timeToFirstByte: 42 }),
+      navigationURL: 'https://example.com/home',
+    })
+
+    const pageAttributes = Object.fromEntries(
+      Object.entries(mocks.spans[0]?.attributes ?? {}).filter(([key]) => key.startsWith('logfire.page.'))
+    )
+    expect(pageAttributes).toEqual({})
+  })
+
+  it.each([
+    {
+      expected: {
+        'logfire.page.route': '/settings',
+        'logfire.page.url.full': 'https://example.com/settings',
+        'logfire.page.url.path': '/settings',
+      },
+      navigationType: 'navigate',
+      resolverThrows: false,
+    },
+    {
+      expected: { 'logfire.page.route': '/settings' },
+      navigationType: 'navigate',
+      resolverThrows: true,
+    },
+    { expected: {}, navigationType: 'soft-navigation', resolverThrows: false },
+    { expected: {}, navigationType: 'soft-navigation', resolverThrows: true },
+  ] as const)(
+    'contains page context for $navigationType with throwing resolver $resolverThrows',
+    async ({ expected, navigationType, resolverThrows }) => {
+      setLocation('https://example.com/settings')
+      const sessionManager = new BrowserSessionManager({
+        getRouteName: () => '/settings',
+        storage: null,
+        ...(resolverThrows
+          ? {
+              urlAttributes: () => {
+                throw new Error('URL resolver failed')
+              },
+            }
+          : {}),
+      })
+      await startWebVitals({ sessionManager })
+
+      report('FCP', {
+        ...createMetric('FCP', { firstByteToFCP: 85, loadState: 'complete', timeToFirstByte: 42 }),
+        navigationType,
+        navigationURL: 'not a URL',
+      })
+
+      const pageAttributes = Object.fromEntries(
+        Object.entries(mocks.spans[0]?.attributes ?? {}).filter(([key]) => key.startsWith('logfire.page.'))
+      )
+      expect(pageAttributes).toEqual(expected)
+    }
+  )
 
   it('maps LCP attribution from target and emits the compatibility element alias', async () => {
     await startWebVitals()

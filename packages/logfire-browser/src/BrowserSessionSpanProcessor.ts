@@ -15,6 +15,7 @@ const ATTR_USER_ID = 'user.id'
 const ATTR_USER_NAME = 'user.name'
 const LONG_ANIMATION_FRAME_TRACER_NAME = 'logfire-long-animation-frames'
 const MAIN_THREAD_WINDOW_SPAN_NAME = 'browser.main_thread_window'
+const WEB_VITALS_TRACER_NAME = 'logfire-web-vitals'
 
 function getCurrentUrl(): URL | undefined {
   const maybeGlobal = globalThis as {
@@ -80,6 +81,12 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
       if (user.email !== undefined) {
         span.setAttribute(ATTR_USER_EMAIL, user.email)
       }
+    }
+
+    // Web Vital callbacks can run after a later navigation. Their reporter
+    // applies the metric's navigation URL instead of callback-time page state.
+    if (span.instrumentationScope.name === WEB_VITALS_TRACER_NAME && span.name.startsWith('web_vital.')) {
+      return
     }
 
     const routeName = this.sessionManager.getRouteName()
