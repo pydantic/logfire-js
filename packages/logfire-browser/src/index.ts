@@ -324,7 +324,7 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
   let replay: BrowserSessionReplayOptions | undefined
   if (sessionReplay !== undefined && sessionReplay !== false) {
     const { destination, ...replayOptions } = sessionReplay
-    if (destination?.token === '') {
+    if (destination !== undefined && (typeof destination.token !== 'string' || destination.token.length === 0)) {
       throw new Error('logfire-browser: session replay frontend application token must not be empty')
     }
     const replayOrigin = destination ? frontendOrigin(destination.baseUrl, 'session replay frontend application baseUrl') : baseUrl

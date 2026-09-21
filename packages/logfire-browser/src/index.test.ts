@@ -707,6 +707,27 @@ describe('browser configureFrontend', () => {
     ).toThrow('logfire-browser: session replay frontend application baseUrl must be an HTTP(S) origin')
     expect(mocks.traceExporterOptions).toEqual([])
   })
+
+  it.each(['', undefined, 1])('rejects an invalid replay destination token before starting browser instrumentation', (token) => {
+    const load = vi.fn<() => Promise<never>>(async () => {
+      await Promise.resolve()
+      throw new Error('must not load')
+    })
+    expect(() =>
+      configureFrontend({
+        ...frontend,
+        sessionReplay: {
+          load,
+          destination: {
+            baseUrl: 'https://logfire-staging.example',
+            token: token as unknown as string,
+          },
+        },
+      })
+    ).toThrow('logfire-browser: session replay frontend application token must not be empty')
+    expect(load).not.toHaveBeenCalled()
+    expect(mocks.traceExporterOptions).toEqual([])
+  })
 })
 
 describe('browser configure resource attributes', () => {
