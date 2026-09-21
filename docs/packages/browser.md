@@ -31,7 +31,7 @@ const frontendOptions = {
 logfire.configureFrontend(frontendOptions)
 ```
 
-Logfire associates the token with the frontend application's service name, so it cannot report data for another application. `configureFrontend()` derives every ingest endpoint and authentication header from the application's regional URL and restricted token. It enables auto-instrumentation and Web Vitals metrics by default and returns the same callable cleanup handle as `configure()`. Replay remains opt-in.
+Logfire associates the token with the frontend application's service name, so it cannot report data for another application. `configureFrontend()` derives ingest endpoints and authentication headers from the application's regional URL and restricted token. It enables auto-instrumentation and Web Vitals metrics by default and returns the same callable cleanup handle as `configure()`. Replay remains opt-in and uses the same destination unless configured otherwise.
 
 `autoInstrumentations` is enabled by default with `configureFrontend()` and lazily loads OpenTelemetry browser auto-instrumentations after the Logfire browser provider is ready. For advanced integrations, `instrumentations` also accepts factories, so custom instrumentation construction can be deferred until `configure()` has registered the provider.
 
@@ -419,6 +419,28 @@ await cleanup.sessionReplay?.flush()
 await cleanup.sessionReplay?.stop() // replay only; tracing remains active
 await cleanup() // full SDK cleanup
 ```
+
+To store replays in a different Logfire deployment, pass a second restricted
+frontend application destination. Traces and metrics still use the top-level
+`baseUrl` and `token`; the browser sends each signal to one destination.
+
+```ts
+logfire.configureFrontend({
+  baseUrl: 'https://rum.example.com',
+  token: '<rum-frontend-application-token>',
+  sessionReplay: {
+    ...sessionReplayIntegration(),
+    destination: {
+      baseUrl: 'https://replay.example.com',
+      token: '<replay-frontend-application-token>',
+    },
+  },
+})
+```
+
+Both tokens must be restricted frontend application tokens, since the browser
+can read them. The two deployments need the same application identity and
+access to matching RUM session data to navigate from traces to replay.
 
 `sessionReplay` implies default RUM session behavior. Replay chunks and browser
 spans share `session.id`. Spans started after replay has

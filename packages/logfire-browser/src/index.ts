@@ -244,7 +244,10 @@ export interface LogfireConfigOptions {
   traceUrl: string
 }
 
-export type FrontendSessionReplayOptions = Omit<BrowserSessionReplayOptions, 'headers' | 'replayUrl' | 'token'>
+export type FrontendSessionReplayOptions = Omit<BrowserSessionReplayOptions, 'headers' | 'replayUrl' | 'token'> & {
+  /** Optional restricted frontend application for replay uploads in another Logfire deployment. */
+  destination?: { baseUrl: string; token: string }
+}
 
 export interface FrontendConfigOptions extends Omit<
   LogfireConfigOptions,
@@ -275,32 +278,37 @@ export interface FrontendConfigOptions extends Omit<
 /**
  * Configure a Logfire frontend application with auto-instrumentation and Web Vitals metrics enabled.
  *
- * The frontend application owns its service identity. This method derives the trace,
- * metric, and replay transports from one deployment URL and reuses one restricted
- * public token across them. Session replay remains lazy-loaded when enabled.
+ * The frontend application owns its service identity. Traces and metrics use its
+ * deployment URL and restricted public token. Replay uses the same destination
+ * unless sessionReplay.destination selects another frontend application.
+ * Session replay remains lazy-loaded when enabled.
  */
 export function configureFrontend(options: FrontendConfigOptions): BrowserConfigureHandle {
   if (options.token.length === 0) {
     throw new Error('logfire-browser: frontend application token must not be empty')
   }
 
-  let baseUrl: URL
-  try {
-    baseUrl = new URL(options.baseUrl)
-  } catch (error) {
-    throw new Error('logfire-browser: frontend application baseUrl must be an HTTP(S) origin', { cause: error })
-  }
-  if (
-    (baseUrl.protocol !== 'https:' && baseUrl.protocol !== 'http:') ||
-    baseUrl.username !== '' ||
-    baseUrl.password !== '' ||
-    baseUrl.pathname !== '/' ||
-    baseUrl.search !== '' ||
-    baseUrl.hash !== ''
-  ) {
-    throw new Error('logfire-browser: frontend application baseUrl must be an HTTP(S) origin')
+  const frontendOrigin = (url: string, label: string): URL => {
+    let origin: URL
+    try {
+      origin = new URL(url)
+    } catch (error) {
+      throw new Error(`logfire-browser: ${label} must be an HTTP(S) origin`, { cause: error })
+    }
+    if (
+      (origin.protocol !== 'https:' && origin.protocol !== 'http:') ||
+      origin.username !== '' ||
+      origin.password !== '' ||
+      origin.pathname !== '/' ||
+      origin.search !== '' ||
+      origin.hash !== ''
+    ) {
+      throw new Error(`logfire-browser: ${label} must be an HTTP(S) origin`)
+    }
+    return origin
   }
 
+  const baseUrl = frontendOrigin(options.baseUrl, 'frontend application baseUrl')
   const headers = () => ({ Authorization: `Bearer ${options.token}` })
   const endpoint = (path: string) => new URL(path, baseUrl).toString()
   const {
@@ -313,6 +321,19 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
     ...captureOptions
   } = options as FrontendConfigOptions & Pick<LogfireConfigOptions, 'serviceName' | 'environment'>
   const webVitals = options.rum?.webVitals
+  let replay: BrowserSessionReplayOptions | undefined
+  if (sessionReplay !== undefined && sessionReplay !== false) {
+    const { destination, ...replayOptions } = sessionReplay
+    if (destination !== undefined && (typeof destination.token !== 'string' || destination.token.length === 0)) {
+      throw new Error('logfire-browser: session replay frontend application token must not be empty')
+    }
+    const replayOrigin = destination ? frontendOrigin(destination.baseUrl, 'session replay frontend application baseUrl') : baseUrl
+    replay = {
+      ...replayOptions,
+      headers: destination ? () => ({ Authorization: `Bearer ${destination.token}` }) : headers,
+      replayUrl: new URL('/v1/replay', replayOrigin).toString(),
+    }
+  }
 
   return configure({
     ...captureOptions,
@@ -333,15 +354,7 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
       metricExporterHeaders: headers,
       metricUrl: endpoint('/v1/metrics'),
     },
-    ...(sessionReplay === undefined || sessionReplay === false
-      ? {}
-      : {
-          sessionReplay: {
-            ...sessionReplay,
-            headers,
-            replayUrl: endpoint('/v1/replay'),
-          },
-        }),
+    ...(replay === undefined ? {} : { sessionReplay: replay }),
     traceExporterHeaders: headers,
     traceUrl: endpoint('/v1/traces'),
   })

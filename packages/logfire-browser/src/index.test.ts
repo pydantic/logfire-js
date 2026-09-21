@@ -652,6 +652,82 @@ describe('browser configureFrontend', () => {
     await cleanup()
     expect(stop).toHaveBeenCalledTimes(1)
   })
+
+  it('sends replay to a separate frontend application without changing trace or metric exports', async () => {
+    const startSessionReplay = vi.fn<(options: unknown) => BrowserSessionReplayRuntime>(() => ({
+      mode: 'full' as const,
+      recording: true,
+      flush: async () => Promise.resolve(),
+      stop: async () => Promise.resolve(),
+      getSessionId: () => 'session',
+    }))
+    cleanup = configureFrontend({
+      ...frontend,
+      sessionReplay: {
+        load: async () => {
+          await Promise.resolve()
+          return { startSessionReplay }
+        },
+        destination: { baseUrl: 'https://logfire-staging.example', token: 'staging-replay-token' },
+      },
+    })
+    await waitForConfigureMicrotasks()
+
+    const replay = startSessionReplay.mock.calls[0]?.[0] as {
+      replayUrl: string
+      headers: () => Record<string, string>
+      destination?: unknown
+    }
+    expect(replay.replayUrl).toBe('https://logfire-staging.example/v1/replay')
+    expect(replay.headers()).toEqual({ Authorization: 'Bearer staging-replay-token' })
+    expect(replay.destination).toBeUndefined()
+    const traceOptions = mocks.traceExporterOptions[0] as { url: string; headers: () => Promise<Record<string, string>> }
+    expect(traceOptions.url).toBe('https://logfire-eu.pydantic.dev/v1/traces')
+    expect(await traceOptions.headers()).toEqual({ Authorization: 'Bearer frontend-token' })
+    const metrics = mocks.browserMetricsStartCalls[0]?.options as {
+      metricUrl: string
+      metricExporterHeaders: () => Record<string, string>
+    }
+    expect(metrics.metricUrl).toBe('https://logfire-eu.pydantic.dev/v1/metrics')
+    expect(metrics.metricExporterHeaders()).toEqual({ Authorization: 'Bearer frontend-token' })
+  })
+
+  it('rejects an invalid replay destination before starting browser instrumentation', () => {
+    expect(() =>
+      configureFrontend({
+        ...frontend,
+        sessionReplay: {
+          load: async () => {
+            await Promise.resolve()
+            throw new Error('must not load')
+          },
+          destination: { baseUrl: 'https://logfire-staging.example/query', token: 'staging-replay-token' },
+        },
+      })
+    ).toThrow('logfire-browser: session replay frontend application baseUrl must be an HTTP(S) origin')
+    expect(mocks.traceExporterOptions).toEqual([])
+  })
+
+  it.each(['', undefined, 1])('rejects an invalid replay destination token before starting browser instrumentation', (token) => {
+    const load = vi.fn<() => Promise<never>>(async () => {
+      await Promise.resolve()
+      throw new Error('must not load')
+    })
+    expect(() =>
+      configureFrontend({
+        ...frontend,
+        sessionReplay: {
+          load,
+          destination: {
+            baseUrl: 'https://logfire-staging.example',
+            token: token as unknown as string,
+          },
+        },
+      })
+    ).toThrow('logfire-browser: session replay frontend application token must not be empty')
+    expect(load).not.toHaveBeenCalled()
+    expect(mocks.traceExporterOptions).toEqual([])
+  })
 })
 
 describe('browser configure resource attributes', () => {
