@@ -47,7 +47,7 @@ available only through code configuration.
 When `LOGFIRE_TOKEN` is unset and no code token is passed, Node.js also checks
 for `.logfire/logfire_credentials.json` in the current working directory.
 `LOGFIRE_CREDENTIALS_DIR` changes that directory. These local credentials are
-written by `npx logfire projects use/new` and are not read by browser code.
+written by `npx logfire init` and are not read by browser code.
 
 ## Cloudflare Workers
 
