@@ -7,6 +7,7 @@ import type { ReadableSpan, Sampler, SpanExporter } from '@opentelemetry/sdk-tra
 import { AlwaysOnSampler, RandomIdGenerator } from '@opentelemetry/sdk-trace-base'
 
 import { OTLPExporter } from './exporter.js'
+import { createResource } from './resource.js'
 import { multiTailSampler, isHeadSampled, isRootErrorSpan, createSampler } from './sampling.js'
 import { BatchTraceSpanProcessor } from './spanprocessor.js'
 
@@ -20,6 +21,14 @@ export function setConfig(config: ResolvedTraceConfig, ctx: Context = context.ac
 
 export function getActiveConfig(): ResolvedTraceConfig | undefined {
   return context.active().getValue(configSymbol) as ResolvedTraceConfig | undefined
+}
+
+/**
+ * Prefers the config carried by `ctx`, so a context captured in one request keeps that request's
+ * config, and falls back to the active one for contexts built without it (e.g. from ROOT_CONTEXT).
+ */
+export function getConfig(ctx: Context): ResolvedTraceConfig | undefined {
+  return (ctx.getValue(configSymbol) as ResolvedTraceConfig | undefined) ?? getActiveConfig()
 }
 
 function isSpanExporter(exporterConfig: ExporterConfig): exporterConfig is SpanExporter {
@@ -62,6 +71,7 @@ export function parseConfig(supplied: TraceConfig): ResolvedTraceConfig {
       },
       service: supplied.service,
       spanProcessors,
+      resource: createResource(supplied.service, supplied.environment),
       propagator: supplied.propagator ?? new W3CTraceContextPropagator(),
       instrumentation: {
         instrumentGlobalCache: supplied.instrumentation?.instrumentGlobalCache ?? true,

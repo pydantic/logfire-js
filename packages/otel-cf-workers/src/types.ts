@@ -4,6 +4,7 @@ import type { OTLPExporterConfig } from './exporter.js'
 import type { FetchHandlerConfig, FetcherConfig } from './instrumentation/fetch.js'
 import type { TailSampleFn } from './sampling.js'
 import type { InstrumentationScope } from '@opentelemetry/core'
+import type { Resource } from '@opentelemetry/resources'
 
 export type PostProcessorFn = (spans: ReadableSpan[]) => ReadableSpan[]
 
@@ -83,6 +84,7 @@ export interface ResolvedTraceConfig extends TraceConfigBase {
   postProcessor: PostProcessorFn
   sampling: Required<SamplingConfig<Sampler>>
   spanProcessors: SpanProcessor[]
+  resource: Resource
   propagator: TextMapPropagator
   instrumentation: InstrumentationOptions
   scope: InstrumentationScope

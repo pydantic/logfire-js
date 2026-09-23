@@ -86,7 +86,7 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
     const baseUrl = resolveBaseUrl(env as LogfireEnv, config.baseUrl, token)
     const resolvedEnvironment = config.environment ?? envDeploymentEnvironment
 
-    const additionalSpanProcessors = config.additionalSpanProcessors ?? []
+    const additionalSpanProcessors = [...(config.additionalSpanProcessors ?? [])]
 
     if (config.console === true) {
       additionalSpanProcessors.push(new SimpleSpanProcessor(new LogfireCloudflareConsoleSpanExporter()))
