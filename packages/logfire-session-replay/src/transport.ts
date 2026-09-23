@@ -584,9 +584,14 @@ export class ReplayTransport {
     if (upload.body !== undefined || upload.events === undefined) {
       return undefined
     }
+    const events = upload.events
     try {
-      const input = strToU8(JSON.stringify(this.createEnvelope(upload.events, upload.seq, upload.identity)))
+      const input = strToU8(JSON.stringify(this.createEnvelope(events, upload.seq, upload.identity)))
       const body = this.shuttingDown ? this.compression.gzipSync(input) : await this.compressOrdinary(input)
+      // A loss handled during compression can trim the events; the body must match them.
+      if (upload.events !== events) {
+        return await this.compressQueued(upload)
+      }
       if (!upload.settled) {
         this.retainedBytes += body.byteLength - upload.retainedBytes
         upload.retainedBytes = body.byteLength
@@ -677,15 +682,16 @@ export class ReplayTransport {
         if (upload.seq < seq) {
           continue
         }
-        // An in-flight request cannot be recalled; a snapshot inside it still re-anchors what follows.
-        if (upload === this.activeUpload) {
+        // A compressed body may already be on the wire and cannot be recalled;
+        // a snapshot inside it still re-anchors what follows.
+        if (upload.events === undefined) {
           if (upload.hasFullSnapshot) {
             anchored = true
             break
           }
           continue
         }
-        if (upload.hasFullSnapshot && upload.events !== undefined) {
+        if (upload.hasFullSnapshot) {
           // Events recorded before the snapshot still depend on the lost chunk.
           const events = eventsFromAnchor(upload.events)
           const eventBytes = sumEventBytes(events)

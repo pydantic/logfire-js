@@ -2008,6 +2008,45 @@ describe('ReplayTransport upload recovery', () => {
     }
   })
 
+  it('trims an upload whose compression is still running when an earlier lifecycle chunk is lost', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch(async (seq) => {
+        if (seq === 0) {
+          await new Promise((resolve) => {
+            setTimeout(resolve, 10)
+          })
+          throw new TypeError('Failed to fetch')
+        }
+        return accepted()
+      })
+      const compression = {
+        gzip: ((input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
+          setTimeout(() => {
+            callback(null, gzipSync(input))
+          }, 100)
+        }) as typeof gzip,
+        gzipSync,
+      }
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl, {}, compression)
+      transport.add(fullSnapshot)
+      const lifecycle = transport.flush({ keepalive: true })
+      transport.add({ ...mutation, timestamp: 39 })
+      transport.add({ ...meta, timestamp: 40 })
+      transport.add({ ...fullSnapshot, timestamp: 41 })
+      transport.add({ ...click, timestamp: 42 })
+      const ordinary = transport.flush()
+      await vi.advanceTimersByTimeAsync(1_000)
+      await Promise.all([lifecycle, ordinary])
+
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ droppedSeqs: [], reason: 'unconfirmed', seq: 0 }))
+      expect(takeFullSnapshot).not.toHaveBeenCalled()
+      expect(calls.filter((call) => call.seq === 1).map((call) => timestamps(call.body))).toEqual([[40, 41, 42]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not start another attempt when a delayed backoff outlasts the retry budget', async () => {
     vi.useFakeTimers()
     try {
