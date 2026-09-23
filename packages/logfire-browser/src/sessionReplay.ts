@@ -1,6 +1,6 @@
 import { diag } from '@opentelemetry/api'
 
-import type { BrowserSessionManager } from './browserSession'
+import type { BrowserSessionManager, BrowserUser } from './browserSession'
 import type { BrowserMetricsOptions } from './browserMetrics'
 import { assertBrowserReplayUrl, createTelemetryUrlPatterns } from './telemetryUrls'
 
@@ -43,6 +43,8 @@ export interface BrowserSessionReplayPackageConfig {
   distinctId?: string
   /** Explicit live replay identity. This takes precedence over rum.session.getUser. */
   getDistinctId?: () => string | undefined
+  /** Current user snapshotted into each replay chunk. The browser SDK passes rum.session.getUser. */
+  getUser?: () => BrowserUser | undefined
   captureConsole?: boolean
   captureNetwork?: boolean
   captureNavigation?: boolean
@@ -239,9 +241,8 @@ function createReplayConfig(
   }
   if (options.getDistinctId !== undefined) {
     config.getDistinctId = options.getDistinctId
-  } else {
-    config.getDistinctId = () => browserSessionManager.getUser()?.id
   }
+  config.getUser = () => browserSessionManager.getUser()
   if (options.captureConsole !== undefined) {
     config.captureConsole = options.captureConsole
   }

@@ -109,6 +109,7 @@ The decompressed body shape is:
     hasFullSnapshot,
     urls,
     distinctId,
+    user,
     sessionAttributes,
   },
   events,
@@ -122,6 +123,15 @@ Invalid entries are omitted, and callback failures are reported through
 `onError` without stopping replay. The optional `meta.sessionAttributes` field
 is omitted when the snapshot is empty. Keep these dimensions low-cardinality
 and free of personal or sensitive data.
+
+`getUser` is called once for every chunk. The optional `meta.user` field keeps
+only a non-empty `id`, `name`, and `email` from its result; name and email are
+optional personal data, so return them only when replay viewers need them.
+`meta.user` is omitted when the callback is absent, returns no user, or throws;
+failures are reported through `onError`. Without `getDistinctId`, the same
+snapshot's `id` is also sent as `meta.distinctId`. With `getDistinctId`, the
+two values are reported independently. Receivers that do not recognize
+`meta.user` can ignore it; the envelope version is unchanged.
 
 ## Direct Token Escape Hatch
 

@@ -45,6 +45,7 @@ function makeConfig(fetchImpl: typeof fetch): ResolvedSessionReplayConfig {
     maxSessionDurationMs: 10_000,
     distinctId: 'user-1',
     getDistinctId: undefined,
+    getUser: undefined,
     captureConsole: true,
     captureNetwork: true,
     captureNavigation: true,
@@ -294,6 +295,127 @@ describe('ReplayTransport full mode', () => {
     transport.add(fullSnapshot)
     await transport.flush()
     expect(decodeBody(calls[0]!.init.body).meta.distinctId).toBe('signed-in-user')
+  })
+
+  describe('user context', () => {
+    async function flushChunks(config: Partial<ResolvedSessionReplayConfig>, chunks: number, between?: (index: number) => void) {
+      const { calls, fetchImpl } = recordingFetch()
+      const transport = new ReplayTransport({ ...makeConfig(fetchImpl), ...config }, 'sess-user', 'full', null, immediateCompression())
+      for (let index = 0; index < chunks; index++) {
+        between?.(index)
+        transport.add(index === 0 ? fullSnapshot : click)
+        // eslint-disable-next-line no-await-in-loop -- each flush must produce its own chunk before the user changes.
+        await transport.flush()
+      }
+      return calls.map((call) => decodeBody(call.init.body).meta)
+    }
+
+    it('reports an id-only user and derives distinctId from the same snapshot', async () => {
+      const [meta] = await flushChunks({ getUser: () => ({ id: 'user-a' }) }, 1)
+      expect(meta?.user).toEqual({ id: 'user-a' })
+      expect(meta?.distinctId).toBe('user-a')
+    })
+
+    it('reports a full user and drops fields outside id, name and email', async () => {
+      const getUser = () => ({ id: 'user-a', name: 'Ada', email: 'ada@example.com', role: 'admin', token: 'secret' })
+      const [meta] = await flushChunks({ getUser }, 1)
+      expect(meta?.user).toEqual({ id: 'user-a', name: 'Ada', email: 'ada@example.com' })
+    })
+
+    it('omits user on anonymous chunks and keeps the static distinctId', async () => {
+      const [meta] = await flushChunks({ getUser: () => undefined }, 1)
+      expect(meta).not.toHaveProperty('user')
+      expect(meta?.distinctId).toBe('user-1')
+    })
+
+    it('follows login, a user switch, and logout across chunks', async () => {
+      const users = [undefined, { id: 'user-a', name: 'Ada' }, { id: 'user-b', email: 'bo@example.com' }, undefined]
+      let current: (typeof users)[number]
+      const metas = await flushChunks({ distinctId: '', getUser: () => current }, users.length, (index) => {
+        current = users[index]
+      })
+      expect(metas.map((meta) => meta.user)).toEqual([
+        undefined,
+        { id: 'user-a', name: 'Ada' },
+        { id: 'user-b', email: 'bo@example.com' },
+        undefined,
+      ])
+      expect(metas.map((meta) => meta.distinctId)).toEqual([undefined, 'user-a', 'user-b', undefined])
+    })
+
+    it('snapshots the user once per chunk', async () => {
+      const users = [{ id: 'user-a' }, { id: 'user-b' }]
+      let calls = 0
+      const [meta] = await flushChunks({ getUser: () => users[calls++] }, 1)
+      expect(calls).toBe(1)
+      expect(meta?.user).toEqual({ id: 'user-a' })
+      expect(meta?.distinctId).toBe('user-a')
+    })
+
+    it('keeps an explicit getDistinctId separate from user.id', async () => {
+      const [meta] = await flushChunks({ getDistinctId: () => 'replay-identity', getUser: () => ({ id: 'user-a' }) }, 1)
+      expect(meta?.distinctId).toBe('replay-identity')
+      expect(meta?.user).toEqual({ id: 'user-a' })
+    })
+
+    it('omits user and reports the error when the callback fails', async () => {
+      const failure = new Error('user lookup failed')
+      const onError = vi.fn()
+      const [meta] = await flushChunks(
+        {
+          getUser: () => {
+            throw failure
+          },
+          onError,
+        },
+        1
+      )
+      expect(meta).not.toHaveProperty('user')
+      expect(meta?.distinctId).toBe('user-1')
+      expect(onError).toHaveBeenCalledWith(failure)
+    })
+
+    it('keeps the user of the recorded events when an earlier upload delays delivery', async () => {
+      let releaseFirst: ((response: Response) => void) | undefined
+      const bodies: BodyInit[] = []
+      const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        bodies.push(init?.body as BodyInit)
+        if (bodies.length === 1) {
+          return new Promise<Response>((resolve) => {
+            releaseFirst = resolve
+          })
+        }
+        return { ok: true, status: 202 } as Response
+      }) as unknown as typeof fetch
+      let user: { id: string } | undefined = { id: 'user-a' }
+      const transport = new ReplayTransport(
+        { ...makeConfig(fetchImpl), getUser: () => user },
+        'sess-queued',
+        'full',
+        null,
+        immediateCompression()
+      )
+
+      transport.add(fullSnapshot)
+      const firstFlush = transport.flush()
+      await vi.waitFor(() => {
+        expect(bodies).toHaveLength(1)
+      })
+      transport.add(click)
+      const secondFlush = transport.flush()
+      user = { id: 'user-b' }
+      releaseFirst?.({ ok: true, status: 202 } as Response)
+      await Promise.all([firstFlush, secondFlush])
+
+      expect(bodies.map((body) => decodeBody(body).meta.user)).toEqual([{ id: 'user-a' }, { id: 'user-a' }])
+      expect(bodies.map((body) => decodeBody(body).meta.distinctId)).toEqual(['user-a', 'user-a'])
+    })
+
+    it('leaves metadata unchanged without getUser', async () => {
+      const [meta] = await flushChunks({}, 1)
+      expect(meta).not.toHaveProperty('user')
+      expect(meta?.distinctId).toBe('user-1')
+    })
   })
 
   it('auto-flushes when the buffer crosses maxBufferBytes', async () => {

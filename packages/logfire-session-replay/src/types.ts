@@ -72,6 +72,13 @@ export interface NavigationPayload {
   kind: 'push' | 'replace' | 'pop'
 }
 
+/** User identity reported by the application. Name and email are optional personal data. */
+export interface ReplayUser {
+  id: string
+  name?: string
+  email?: string
+}
+
 export interface ChunkMeta {
   seq: number
   firstTimestamp: number
@@ -83,6 +90,7 @@ export interface ChunkMeta {
   hasFullSnapshot: boolean
   urls: string[]
   distinctId?: string
+  user?: ReplayUser
   sessionAttributes?: SessionAttributes
 }
 
@@ -148,6 +156,13 @@ export interface SessionReplayConfig {
 
   distinctId?: string
   getDistinctId?: () => string | undefined
+  /**
+   * Returns the current user, snapshotted for every chunk as `meta.user`. Only
+   * a non-empty `id`, `name` and `email` are kept; name and email are optional
+   * personal data. Without `getDistinctId`, the same snapshot's `id` becomes
+   * `meta.distinctId`.
+   */
+  getUser?: () => ReplayUser | undefined
 
   captureConsole?: boolean
   captureNetwork?: boolean
@@ -180,6 +195,7 @@ export interface ResolvedSessionReplayConfig {
   maxSessionDurationMs: number
   distinctId: string
   getDistinctId: (() => string | undefined) | undefined
+  getUser: (() => ReplayUser | undefined) | undefined
   captureConsole: boolean
   captureNetwork: boolean
   captureNavigation: boolean
