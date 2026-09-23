@@ -1307,17 +1307,28 @@ describe('sdk lifecycle helpers', () => {
   })
 
   describe('distributed tracing', () => {
-    const incomingTraceparent = '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'
+    const incomingHeaders = {
+      baggage: 'tenant=acme',
+      traceparent: '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01',
+    }
     const localSpanContext = {
       spanId: '2222222222222222',
       traceFlags: TraceFlags.SAMPLED,
       traceId: '11111111111111111111111111111111',
     }
+    const outgoingContext = propagation.setBaggage(
+      trace.setSpanContext(ROOT_CONTEXT, localSpanContext),
+      propagation.createBaggage({ tenant: { value: 'acme' } })
+    )
+    const expectedOutgoingHeaders = {
+      baggage: 'tenant=acme',
+      traceparent: '00-11111111111111111111111111111111-2222222222222222-01',
+    }
 
-    it('extracts incoming trace context when enabled', () => {
+    it('extracts incoming trace context and baggage when enabled', () => {
       start()
 
-      const extracted = getLatestTextMapPropagator().extract(ROOT_CONTEXT, { traceparent: incomingTraceparent }, defaultTextMapGetter)
+      const extracted = getLatestTextMapPropagator().extract(ROOT_CONTEXT, incomingHeaders, defaultTextMapGetter)
 
       expect(trace.getSpanContext(extracted)).toEqual({
         isRemote: true,
@@ -1325,25 +1336,49 @@ describe('sdk lifecycle helpers', () => {
         traceFlags: TraceFlags.SAMPLED,
         traceId: '0af7651916cd43dd8448eb211c80319c',
       })
+      expect(propagation.getBaggage(extracted)?.getEntry('tenant')?.value).toBe('acme')
     })
 
-    it('ignores incoming trace context when disabled', () => {
+    it('injects trace context and baggage when enabled', () => {
+      start()
+      const carrier: Record<string, string> = {}
+
+      getLatestTextMapPropagator().inject(outgoingContext, carrier, defaultTextMapSetter)
+
+      expect(carrier).toEqual(expectedOutgoingHeaders)
+    })
+
+    it('ignores incoming trace context but keeps baggage when disabled', () => {
       logfireConfig.distributedTracing = false
       start()
 
-      const extracted = getLatestTextMapPropagator().extract(ROOT_CONTEXT, { traceparent: incomingTraceparent }, defaultTextMapGetter)
+      const extracted = getLatestTextMapPropagator().extract(ROOT_CONTEXT, incomingHeaders, defaultTextMapGetter)
 
-      expect(extracted).toBe(ROOT_CONTEXT)
+      expect(trace.getSpanContext(extracted)).toBeUndefined()
+      expect(propagation.getBaggage(extracted)?.getEntry('tenant')?.value).toBe('acme')
     })
 
-    it('still injects trace context into outgoing requests when disabled', () => {
+    it('keeps the active local span when disabled', () => {
+      logfireConfig.distributedTracing = false
+      start()
+
+      const extracted = getLatestTextMapPropagator().extract(
+        trace.setSpanContext(ROOT_CONTEXT, localSpanContext),
+        incomingHeaders,
+        defaultTextMapGetter
+      )
+
+      expect(trace.getSpanContext(extracted)).toEqual(localSpanContext)
+    })
+
+    it('still injects trace context and baggage when disabled', () => {
       logfireConfig.distributedTracing = false
       start()
       const carrier: Record<string, string> = {}
 
-      getLatestTextMapPropagator().inject(trace.setSpanContext(ROOT_CONTEXT, localSpanContext), carrier, defaultTextMapSetter)
+      getLatestTextMapPropagator().inject(outgoingContext, carrier, defaultTextMapSetter)
 
-      expect(carrier).toEqual({ traceparent: '00-11111111111111111111111111111111-2222222222222222-01' })
+      expect(carrier).toEqual(expectedOutgoingHeaders)
     })
   })
 })

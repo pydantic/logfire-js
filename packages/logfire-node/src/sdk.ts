@@ -5,7 +5,7 @@ import { context, diag, DiagConsoleLogger, metrics, propagation, trace } from '@
 import { logs } from '@opentelemetry/api-logs'
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node'
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
-import { W3CTraceContextPropagator } from '@opentelemetry/core'
+import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from '@opentelemetry/core'
 import type { Instrumentation } from '@opentelemetry/instrumentation'
 import { detectResources, envDetector, resourceFromAttributes } from '@opentelemetry/resources'
 import type { MetricReader } from '@opentelemetry/sdk-metrics'
@@ -388,9 +388,10 @@ export function start(): void {
   const contextManager = new AsyncLocalStorageContextManager()
 
   // Leaving textMapPropagator unset makes NodeSDK install its default extracting propagators.
-  const propagator = logfireConfig.distributedTracing
-    ? new W3CTraceContextPropagator()
-    : new NoExtractPropagator(new W3CTraceContextPropagator())
+  const basePropagator = new CompositePropagator({
+    propagators: [new W3CTraceContextPropagator(), new W3CBaggagePropagator()],
+  })
+  const propagator = logfireConfig.distributedTracing ? basePropagator : new NoExtractPropagator(basePropagator)
 
   const primarySpanProcessor = logfireSpanProcessor(logfireConfig.console)
   const spanProcessors: SpanProcessor[] = []
