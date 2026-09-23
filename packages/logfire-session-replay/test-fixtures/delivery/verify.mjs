@@ -2,8 +2,8 @@
 import { gunzipSync } from 'node:zlib'
 
 const scenario = process.argv[2]
-if (!['unload', 'csp', 'retry-after', 'utf8'].includes(scenario)) {
-  throw new Error('usage: verify.mjs <unload|csp|retry-after|utf8>')
+if (!['unload', 'csp', 'gap', 'retry-after', 'utf8'].includes(scenario)) {
+  throw new Error('usage: verify.mjs <unload|csp|gap|retry-after|utf8>')
 }
 
 try {
@@ -17,6 +17,9 @@ try {
   }
   if (scenario === 'csp') {
     verifyCsp(evidence, decoded)
+  }
+  if (scenario === 'gap') {
+    verifyGap(evidence, decoded)
   }
   if (scenario === 'retry-after') {
     verifyRetry(decoded)
@@ -80,6 +83,24 @@ function verifyCsp(evidence, decoded) {
   assert(decoded.length === 2, `expected two CSP replay batches, received ${String(decoded.length)}`)
   assert(JSON.stringify(decoded[0].envelope).includes('csp-marker-one'), 'first CSP batch marker missing')
   assert(JSON.stringify(decoded[1].envelope).includes('csp-marker-two'), 'second CSP batch marker missing')
+}
+
+function verifyGap(evidence, decoded) {
+  assert(
+    JSON.stringify(decoded.map((receipt) => [receipt.seq, receipt.accepted])) ===
+      JSON.stringify([
+        [0, true],
+        [1, false],
+        [2, true],
+      ]),
+    `unexpected gap receipts: ${JSON.stringify(decoded.map((receipt) => [receipt.seq, receipt.accepted]))}`
+  )
+  const resumed = decoded[2].envelope.events.map((event) => event.type)
+  assert(resumed[0] === 4 && resumed[1] === 2, `chunk after the gap does not start with Meta + FullSnapshot: ${JSON.stringify(resumed)}`)
+  assert(
+    JSON.stringify(evidence.state.errors) === JSON.stringify(['replay chunk seq=1 unconfirmed: replay ingest failed: 429']),
+    `unexpected gap errors: ${JSON.stringify(evidence.state.errors)}`
+  )
 }
 
 function verifyRetry(decoded) {

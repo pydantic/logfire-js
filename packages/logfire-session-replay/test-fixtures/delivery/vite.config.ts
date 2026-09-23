@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite-plus'
 
 interface ReplayReceipt {
+  accepted: boolean
   authorization: string | undefined
   body: string
   byteLength: number
@@ -124,7 +125,8 @@ export default defineConfig({
           }
           readBody(request, (body) => {
             const scenarioReceipts = receipts.get(scenario) ?? []
-            scenarioReceipts.push({
+            const receipt: ReplayReceipt = {
+              accepted: true,
               authorization: headerValue(request.headers.authorization),
               body: body.toString('base64'),
               byteLength: body.byteLength,
@@ -132,13 +134,23 @@ export default defineConfig({
               receivedAt: Date.now(),
               seq: Number(url.searchParams.get('seq')),
               url: request.url ?? '/',
-            })
+            }
+            scenarioReceipts.push(receipt)
             receipts.set(scenario, scenarioReceipts)
             if (scenario === 'unload') {
               heldResponses.push(response)
               return
             }
+            if (scenario === 'gap' && receipt.seq === 1) {
+              // Longer than the SDK retry budget, so the chunk is lost without waiting 30s.
+              receipt.accepted = false
+              response.statusCode = 429
+              response.setHeader('retry-after', '3600')
+              response.end()
+              return
+            }
             if (scenario === 'retry-after' && scenarioReceipts.length === 1) {
+              receipt.accepted = false
               response.statusCode = 429
               response.setHeader('retry-after', '1')
               response.end()

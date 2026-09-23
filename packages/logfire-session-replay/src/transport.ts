@@ -5,13 +5,20 @@ import { computeChunkMeta, normalizeReplayUser } from './extract'
 import { safeSessionStorage } from './session'
 import { CHUNK_ENVELOPE_VERSION, EventType } from './types'
 import type { ChunkEnvelope, ReplayUser, ResolvedSessionReplayConfig, RrwebEvent, SessionAttributes } from './types'
+import { ReplayUploadError } from './uploadError'
+import type { ReplayUploadFailureReason } from './uploadError'
 
 export const SEQ_STORAGE_KEY = 'lf_session_replay_seq'
 
-const MAX_SEND_ATTEMPTS = 3
-const SEND_BACKOFF_MS = 500
 const REPLAY_UPLOAD_TIMEOUT_MS = 10_000
-const MAX_RETRY_AFTER_MS = 10_000
+// Close to the previous worst case (3 attempts x 10s timeout) so flush() and
+// page-level waits keep their existing upper bound.
+const RETRY_BUDGET_MS = 30_000
+const BACKOFF_BASE_MS = 500
+const BACKOFF_MAX_MS = 8_000
+const MAX_QUEUED_BYTES = 2_000_000
+// A persistently failing endpoint would otherwise trigger a DOM snapshot on every flush.
+const RESYNC_MIN_INTERVAL_MS = 60_000
 const MAX_KEEPALIVE_RESERVED_BYTES = 48_000
 const MAX_KEEPALIVE_CHUNK_BYTES = 48_000
 interface Compression {
@@ -26,14 +33,31 @@ interface ChunkIdentity {
 
 interface PreparedUpload {
   body: Uint8Array
-  lifecycle: boolean
   requestKeepalive: boolean
   reservedBytes: number
   seq: number
   sessionId: string
 }
 
-type RetryAfter = { kind: 'delay'; milliseconds: number } | { kind: 'fallback' } | { kind: 'too-long' }
+interface QueuedUpload {
+  body: Uint8Array | undefined
+  done: Promise<void>
+  events: RrwebEvent[] | undefined
+  hasFullSnapshot: boolean
+  identity: ChunkIdentity
+  reachedFetch: boolean
+  resolve: () => void
+  retainedBytes: number
+  seq: number
+  sessionId: string
+  settled: boolean
+}
+
+interface UploadFailure {
+  cause: unknown
+  reason: ReplayUploadFailureReason
+  status?: number | undefined
+}
 
 interface ReplayTransportOptions {
   holdUntilActivity?: boolean
@@ -60,7 +84,19 @@ export class ReplayTransport {
   private lastObservedTimestamp: number | undefined
   private refreshingMinimumSnapshot = false
   private mode: 'full' | 'buffer'
-  private flushing: Promise<void> | undefined
+  private readonly queue: QueuedUpload[] = []
+  private retainedBytes = 0
+  private activeUpload: QueuedUpload | undefined
+  private drainPromise: Promise<void> | undefined
+  private draining = false
+  private readonly lifecycleFlights = new Set<Promise<void>>()
+  private closed = false
+  private shuttingDown = false
+  private readonly retryAbort = new AbortController()
+  private readonly deadlineAbort = new AbortController()
+  private resyncPending = false
+  private resyncTimer: ReturnType<typeof setTimeout> | undefined
+  private lastResyncAt: number | undefined
   private reservedKeepaliveBytes = 0
   private asyncCompressionAvailable = true
   private readonly config: ResolvedSessionReplayConfig
@@ -112,6 +148,10 @@ export class ReplayTransport {
       this.lastUserActivityAt = this.config.now()
     }
     const eventBytes = estimateBytes(event)
+    if (this.resyncPending) {
+      this.addDuringResync(event, eventBytes)
+      return
+    }
     if (this.refreshingMinimumSnapshot) {
       this.buffer.push(event)
       this.pendingBytes += eventBytes
@@ -183,6 +223,29 @@ export class ReplayTransport {
     }
   }
 
+  // After a lost chunk, incremental events would apply to DOM state the server
+  // never received. Only a new Meta + FullSnapshot anchor restarts the stream.
+  private addDuringResync(event: RrwebEvent, eventBytes: number): void {
+    if (event.type === EventType.Meta) {
+      this.buffer = [event]
+      this.pendingBytes = eventBytes
+      return
+    }
+    if (event.type !== EventType.FullSnapshot) {
+      return
+    }
+    const meta = this.buffer.length === 1 && this.buffer[0]?.type === EventType.Meta ? this.buffer[0] : undefined
+    this.buffer = meta === undefined ? [event] : [meta, event]
+    this.pendingBytes = eventBytes + (meta === undefined ? 0 : estimateBytes(meta))
+    this.resyncPending = false
+    this.clearResyncTimer()
+    if (this.pendingBytes >= this.config.maxBufferBytes) {
+      this.flushAndReport()
+    } else {
+      this.scheduleFlush()
+    }
+  }
+
   async triggerFlush(): Promise<void> {
     if (this.mode === 'buffer') {
       if (!this.bufferHasFullSnapshot) {
@@ -200,7 +263,7 @@ export class ReplayTransport {
   }
 
   private async flushInternal(options: { keepalive?: boolean } = {}): Promise<void> {
-    if (this.mode === 'buffer' || this.held || this.buffer.length === 0) {
+    if (this.closed || this.mode === 'buffer' || this.held || this.buffer.length === 0) {
       return
     }
     if (!this.minimumDurationReached()) {
@@ -215,66 +278,66 @@ export class ReplayTransport {
     this.minimumDurationSatisfied = true
 
     const events = this.buffer
+    const eventBytes = this.pendingBytes
     this.buffer = []
     this.bufferHasFullSnapshot = false
     this.minimumBufferIncomplete = false
     this.pendingBytes = 0
-    const eventChunks = options.keepalive === true ? splitKeepaliveEventChunks(events) : [events]
-    const seq = this.seq
-    this.seq += eventChunks.length
     const sessionId = this.sessionId
-    this.saveSeq(sessionId, this.seq)
-    // Ordinary uploads wait for earlier ones, so identity is captured with the
-    // events it describes rather than when the upload is finally sent.
+    // Queued uploads can wait behind earlier ones, so identity is captured with
+    // the events it describes rather than when the upload is finally sent.
     const identity = this.snapshotIdentity()
 
-    // A pagehide/visibility keepalive must start before the browser freezes the
-    // page, even when an ordinary upload is still awaiting its response.
-    const prior = options.keepalive === true ? Promise.resolve() : (this.flushing ?? Promise.resolve())
-    const run =
-      options.keepalive === true
-        ? this.deliverLifecycle(eventChunks, seq, sessionId, identity)
-        : prior.then(async () => {
-            for (let index = 0; index < eventChunks.length; index++) {
-              const eventChunk = eventChunks[index]
-              if (eventChunk === undefined) {
-                continue
-              }
-              // eslint-disable-next-line no-await-in-loop -- ordinary flushes preserve response order.
-              await this.deliverOrdinary(eventChunk, seq + index, sessionId, identity)
-            }
-          })
-    const previouslyTracked = this.flushing
-    this.flushing =
-      options.keepalive === true && previouslyTracked !== undefined
-        ? Promise.all([previouslyTracked, run]).then(
-            () => undefined,
-            () => undefined
-          )
-        : run.catch(() => undefined)
-    await run
+    if (options.keepalive === true) {
+      // A pagehide/visibility keepalive must start before the browser freezes the
+      // page, even when an ordinary upload is still awaiting its response.
+      const eventChunks = splitKeepaliveEventChunks(events)
+      const seq = this.allocateSeq(eventChunks.length)
+      const run = this.deliverLifecycle(eventChunks, seq, sessionId, identity)
+      this.lifecycleFlights.add(run)
+      const forget = (): void => {
+        this.lifecycleFlights.delete(run)
+      }
+      run.then(forget, forget)
+      await run
+      return
+    }
+
+    const upload = this.enqueue(events, eventBytes, sessionId, identity)
+    await upload?.done
   }
 
   async shutdown(options: { keepalive?: boolean } = {}): Promise<void> {
     this.started = false
     this.clearScheduledFlush()
-    if (this.held) {
+    if (this.held || !this.minimumDurationReached()) {
       this.discard()
-      await this.flushing
+      await this.settleWithinDeadline([])
       return
     }
-    if (!this.minimumDurationReached()) {
-      this.discard()
-      await this.flushing
+    if (options.keepalive === true) {
+      await this.flush(options)
+      this.closed = true
+      this.clearResyncTimer()
+      await this.settleWithinDeadline([])
       return
     }
-    await this.flush(options)
-    await this.flushing
+    // Admission runs synchronously, so the caller may stop the recorder right
+    // after this call without losing the buffered tail.
+    const finalFlush = this.flushInternal()
+    this.closed = true
+    this.shuttingDown = true
+    this.clearResyncTimer()
+    this.retryAbort.abort()
+    const finalAttempts = this.queue.filter((upload) => upload !== this.activeUpload).map(async (upload) => this.finalAttempt(upload))
+    await this.settleWithinDeadline([finalFlush, ...finalAttempts])
   }
 
   discard(): void {
     this.started = false
+    this.closed = true
     this.clearScheduledFlush()
+    this.clearResyncTimer()
     this.buffer = []
     this.bufferHasFullSnapshot = false
     this.minimumBufferIncomplete = false
@@ -422,16 +485,295 @@ export class ReplayTransport {
     }
   }
 
-  private async deliverOrdinary(events: RrwebEvent[], seq: number, sessionId: string, identity: ChunkIdentity): Promise<void> {
-    const envelope = this.createEnvelope(events, seq, identity)
+  private allocateSeq(count: number): number {
+    const seq = this.seq
+    this.seq += count
+    this.saveSeq(this.sessionId, this.seq)
+    return seq
+  }
 
+  private enqueue(events: RrwebEvent[], eventBytes: number, sessionId: string, identity: ChunkIdentity): QueuedUpload | undefined {
+    // Two full batches always fit, so a large maxBufferBytes does not reject
+    // the next batch while a healthy upload is still in flight.
+    const maxQueuedBytes = Math.max(MAX_QUEUED_BYTES, 2 * this.config.maxBufferBytes)
+    if (this.queue.length > 0 && this.retainedBytes + eventBytes > maxQueuedBytes) {
+      // The rejected batch gets no seq, so chunks already queued stay valid.
+      safeReportError(
+        this.config.onError,
+        new ReplayUploadError({ cause: new Error('replay upload queue is full'), reason: 'not-sent', seq: undefined, sessionId })
+      )
+      this.beginResync()
+      return undefined
+    }
+    let resolve: () => void = () => undefined
+    const done = new Promise<void>((settle) => {
+      resolve = settle
+    })
+    const upload: QueuedUpload = {
+      body: undefined,
+      done,
+      events,
+      hasFullSnapshot: events.some((event) => event.type === EventType.FullSnapshot),
+      identity,
+      reachedFetch: false,
+      resolve,
+      retainedBytes: eventBytes,
+      seq: this.allocateSeq(1),
+      sessionId,
+      settled: false,
+    }
+    this.queue.push(upload)
+    this.retainedBytes += eventBytes
+    if (!this.draining) {
+      this.draining = true
+      this.drainPromise = this.drain()
+    }
+    return upload
+  }
+
+  private async drain(): Promise<void> {
     try {
-      const input = strToU8(JSON.stringify(envelope))
-      const body = await this.compressOrdinary(input)
-      await this.sendWithRetry({ body, lifecycle: false, requestKeepalive: false, reservedBytes: 0, seq, sessionId })
+      while (!this.shuttingDown) {
+        const upload = this.queue[0]
+        if (upload === undefined) {
+          break
+        }
+        this.activeUpload = upload
+        // eslint-disable-next-line no-await-in-loop -- ordinary uploads are delivered in seq order.
+        const failure = await this.deliverQueued(upload)
+        this.activeUpload = undefined
+        this.settle(upload, failure)
+      }
+    } finally {
+      // Cleared synchronously with the loop exit so a concurrent enqueue restarts draining.
+      this.activeUpload = undefined
+      this.draining = false
+    }
+  }
+
+  private async deliverQueued(upload: QueuedUpload): Promise<UploadFailure | undefined> {
+    const compressionFailure = await this.compressQueued(upload)
+    if (compressionFailure !== undefined || upload.settled) {
+      return compressionFailure
+    }
+    const firstAttemptAt = Date.now()
+    for (let attempt = 1; ; attempt++) {
+      // eslint-disable-next-line no-await-in-loop -- retry attempts must be sequential for one chunk.
+      const error = await this.attemptQueued(upload)
+      if (error === undefined) {
+        return undefined
+      }
+      const retryDelay = getRetryDelay(error, attempt, this.config.random)
+      if (retryDelay === undefined || this.shuttingDown || Date.now() - firstAttemptAt + retryDelay >= RETRY_BUDGET_MS) {
+        return toUploadFailure(error, upload.reachedFetch)
+      }
+      // eslint-disable-next-line no-await-in-loop -- backoff must complete before the next retry.
+      await this.backoff(retryDelay)
+    }
+  }
+
+  private async compressQueued(upload: QueuedUpload): Promise<UploadFailure | undefined> {
+    if (upload.body !== undefined || upload.events === undefined) {
+      return undefined
+    }
+    try {
+      const input = strToU8(JSON.stringify(this.createEnvelope(upload.events, upload.seq, upload.identity)))
+      const body = this.shuttingDown ? this.compression.gzipSync(input) : await this.compressOrdinary(input)
+      if (!upload.settled) {
+        this.retainedBytes += body.byteLength - upload.retainedBytes
+        upload.retainedBytes = body.byteLength
+        upload.body = body
+        upload.events = undefined
+      }
+      return undefined
+    } catch (error) {
+      return { cause: error, reason: 'not-sent' }
+    }
+  }
+
+  private async attemptQueued(upload: QueuedUpload): Promise<unknown> {
+    const body = upload.body
+    if (body === undefined) {
+      return undefined
+    }
+    try {
+      await this.send({ body, requestKeepalive: false, reservedBytes: 0, seq: upload.seq, sessionId: upload.sessionId }, () => {
+        upload.reachedFetch = true
+      })
+      return undefined
+    } catch (error) {
+      return error
+    }
+  }
+
+  private async finalAttempt(upload: QueuedUpload): Promise<void> {
+    const compressionFailure = await this.compressQueued(upload)
+    if (compressionFailure !== undefined) {
+      this.settle(upload, compressionFailure)
+      return
+    }
+    const error = await this.attemptQueued(upload)
+    this.settle(upload, error === undefined ? undefined : toUploadFailure(error, upload.reachedFetch))
+  }
+
+  private async settleWithinDeadline(pending: Promise<unknown>[]): Promise<void> {
+    const outstanding = Promise.all([...pending, this.drainPromise, ...this.lifecycleFlights]).then(
+      () => undefined,
+      () => undefined
+    )
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, REPLAY_UPLOAD_TIMEOUT_MS)
+    })
+    await Promise.race([outstanding, deadline])
+    clearTimeout(timer)
+    if (!this.shuttingDown) {
+      return
+    }
+    this.deadlineAbort.abort(new Error('replay upload did not finish before shutdown'))
+    for (const upload of [...this.queue]) {
+      this.settle(upload, {
+        cause: new Error('replay upload did not finish before shutdown'),
+        reason: upload.reachedFetch ? 'unconfirmed' : 'not-sent',
+      })
+    }
+  }
+
+  private settle(upload: QueuedUpload, failure: UploadFailure | undefined): void {
+    if (upload.settled) {
+      return
+    }
+    upload.settled = true
+    this.retainedBytes -= upload.retainedBytes
+    const index = this.queue.indexOf(upload)
+    if (index >= 0) {
+      this.queue.splice(index, 1)
+    }
+    upload.body = undefined
+    upload.events = undefined
+    upload.resolve()
+    if (failure !== undefined) {
+      this.handleSequencedLoss(upload.seq, upload.sessionId, failure)
+    }
+  }
+
+  private handleSequencedLoss(seq: number, sessionId: string, failure: UploadFailure): void {
+    const droppedSeqs: number[] = []
+    if (!this.shuttingDown) {
+      let anchored = false
+      for (const upload of [...this.queue]) {
+        if (upload.seq < seq) {
+          continue
+        }
+        if (upload.hasFullSnapshot) {
+          anchored = true
+          break
+        }
+        // An in-flight request cannot be recalled; it is harmless once a new anchor follows.
+        if (upload === this.activeUpload) {
+          continue
+        }
+        droppedSeqs.push(upload.seq)
+        this.settle(upload, undefined)
+      }
+      if (!anchored && !this.trimBufferToAnchor()) {
+        this.beginResync()
+      }
+    }
+    safeReportError(
+      this.config.onError,
+      new ReplayUploadError({
+        cause: failure.cause,
+        droppedSeqs,
+        reason: failure.reason,
+        seq,
+        sessionId,
+        status: failure.status,
+      })
+    )
+  }
+
+  private trimBufferToAnchor(): boolean {
+    const snapshotIndex = this.buffer.findIndex((event) => event.type === EventType.FullSnapshot)
+    if (snapshotIndex < 0) {
+      return false
+    }
+    const start = snapshotIndex > 0 && this.buffer[snapshotIndex - 1]?.type === EventType.Meta ? snapshotIndex - 1 : snapshotIndex
+    this.buffer = this.buffer.slice(start)
+    this.pendingBytes = this.buffer.reduce((total, event) => total + estimateBytes(event), 0)
+    return true
+  }
+
+  private beginResync(): void {
+    if (this.closed) {
+      return
+    }
+    this.resyncPending = true
+    this.buffer = []
+    this.bufferHasFullSnapshot = false
+    this.pendingBytes = 0
+    this.clearScheduledFlush()
+    this.scheduleResyncSnapshot()
+  }
+
+  private scheduleResyncSnapshot(): void {
+    if (this.resyncTimer !== undefined || this.closed) {
+      return
+    }
+    const wait = this.lastResyncAt === undefined ? 0 : Math.max(0, this.lastResyncAt + RESYNC_MIN_INTERVAL_MS - this.config.now())
+    // A timer also moves rrweb's synchronous snapshot emission out of the
+    // transport call stack that detected the loss.
+    this.resyncTimer = setTimeout(() => {
+      this.resyncTimer = undefined
+      this.takeResyncSnapshot()
+    }, wait)
+  }
+
+  private takeResyncSnapshot(): void {
+    if (!this.resyncPending || this.closed || this.takeFullSnapshot === undefined) {
+      return
+    }
+    this.lastResyncAt = this.config.now()
+    try {
+      this.takeFullSnapshot()
     } catch (error) {
       safeReportError(this.config.onError, error)
+      this.scheduleResyncSnapshot()
+      return
     }
+    if (this.isResyncPending()) {
+      safeReportError(this.config.onError, new Error('replay resync snapshot produced no full snapshot'))
+      this.scheduleResyncSnapshot()
+    }
+  }
+
+  // Read through a method: takeFullSnapshot() re-enters add(), which clears the
+  // flag in a way TypeScript's narrowing cannot see.
+  private isResyncPending(): boolean {
+    return this.resyncPending
+  }
+
+  private clearResyncTimer(): void {
+    if (this.resyncTimer !== undefined) {
+      clearTimeout(this.resyncTimer)
+      this.resyncTimer = undefined
+    }
+  }
+
+  private async backoff(milliseconds: number): Promise<void> {
+    const signal = this.retryAbort.signal
+    if (signal.aborted) {
+      return
+    }
+    await new Promise<void>((resolve) => {
+      const finish = (): void => {
+        clearTimeout(timer)
+        signal.removeEventListener('abort', finish)
+        resolve()
+      }
+      const timer = setTimeout(finish, milliseconds)
+      signal.addEventListener('abort', finish)
+    })
   }
 
   private async deliverLifecycle(eventChunks: RrwebEvent[][], seq: number, sessionId: string, identity: ChunkIdentity): Promise<void> {
@@ -446,14 +788,13 @@ export class ReplayTransport {
       try {
         prepared.push({
           body: this.compression.gzipSync(strToU8(JSON.stringify(envelope))),
-          lifecycle: true,
           requestKeepalive: false,
           reservedBytes: 0,
           seq: seq + index,
           sessionId,
         })
       } catch (error) {
-        safeReportError(this.config.onError, error)
+        this.handleSequencedLoss(seq + index, sessionId, { cause: error, reason: 'not-sent' })
         prepared.push(undefined)
       }
     }
@@ -480,10 +821,14 @@ export class ReplayTransport {
         if (upload === undefined) {
           return
         }
+        let reachedFetch = false
         try {
-          await this.sendWithRetry(upload)
+          // Lifecycle uploads get one attempt: the page may be frozen before a retry.
+          await this.send(upload, () => {
+            reachedFetch = true
+          })
         } catch (error) {
-          safeReportError(this.config.onError, error)
+          this.handleSequencedLoss(upload.seq, upload.sessionId, toUploadFailure(error, reachedFetch))
         }
       })
     )
@@ -501,25 +846,7 @@ export class ReplayTransport {
     }
   }
 
-  private async sendWithRetry(upload: PreparedUpload): Promise<void> {
-    const maxAttempts = upload.lifecycle ? 1 : MAX_SEND_ATTEMPTS
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        // eslint-disable-next-line no-await-in-loop -- retry attempts must be sequential for one chunk.
-        await this.send(upload)
-        return
-      } catch (error) {
-        const retryDelay = getRetryDelay(error, attempt)
-        if (retryDelay === undefined || attempt >= maxAttempts) {
-          throw error
-        }
-        // eslint-disable-next-line no-await-in-loop -- backoff must complete before the next retry.
-        await delay(retryDelay)
-      }
-    }
-  }
-
-  private async send(upload: PreparedUpload): Promise<void> {
+  private async send(upload: PreparedUpload, onRequestStarted: () => void): Promise<void> {
     let requestStarted: boolean | undefined
     let responseReceived: boolean | undefined
     let responseComplete: boolean | undefined
@@ -527,9 +854,16 @@ export class ReplayTransport {
     const timeout = setTimeout(() => {
       controller.abort(new Error(`replay upload timed out after ${String(REPLAY_UPLOAD_TIMEOUT_MS)}ms`))
     }, REPLAY_UPLOAD_TIMEOUT_MS)
+    const deadline = this.deadlineAbort.signal
+    const onDeadline = (): void => {
+      controller.abort(deadline.reason)
+    }
+    deadline.addEventListener('abort', onDeadline)
     try {
       const url = `${this.config.replayUrl.replace(/\/+$/u, '')}/${encodeURIComponent(upload.sessionId)}?seq=${String(upload.seq)}`
-      const headers = await this.getUploadHeaders()
+      // A stalled header or token callback would otherwise hold the queue head forever.
+      const headers = await raceAbort(this.getUploadHeaders(), controller.signal)
+      onRequestStarted()
       const responsePromise = this.config.fetchImpl(url, {
         method: 'POST',
         headers,
@@ -543,11 +877,13 @@ export class ReplayTransport {
       responseComplete = await confirmResponseEnd(response)
 
       if (!response.ok) {
-        const retryAfter = response.status === 429 ? parseRetryAfter(response.headers.get('retry-after'), Date.now()) : undefined
+        const retryAfter =
+          response.status === 429 || response.status === 503 ? parseRetryAfter(response.headers.get('retry-after'), Date.now()) : undefined
         throw new ReplayIngestError(response.status, retryAfter)
       }
     } finally {
       clearTimeout(timeout)
+      deadline.removeEventListener('abort', onDeadline)
       if (upload.reservedBytes > 0 && (requestStarted !== true || responseReceived !== true || responseComplete === true)) {
         this.reservedKeepaliveBytes = Math.max(0, this.reservedKeepaliveBytes - upload.reservedBytes)
       }
@@ -619,10 +955,10 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
 }
 
 class ReplayIngestError extends Error {
-  readonly retryAfter: RetryAfter | undefined
+  readonly retryAfter: number | undefined
   readonly status: number
 
-  constructor(status: number, retryAfter?: RetryAfter) {
+  constructor(status: number, retryAfter?: number) {
     super(`replay ingest failed: ${String(status)}`)
     this.status = status
     this.retryAfter = retryAfter
@@ -637,9 +973,25 @@ async function resolveToken(token: ResolvedSessionReplayConfig['token']): Promis
   return token
 }
 
-async function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms)
+async function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    throw signal.reason
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      reject(signal.reason as Error)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    )
   })
 }
 
@@ -728,41 +1080,46 @@ async function confirmResponseEnd(response: Response): Promise<boolean> {
   }
 }
 
-function getRetryDelay(error: unknown, attempt: number): number | undefined {
-  if (!(error instanceof ReplayIngestError)) {
-    return SEND_BACKOFF_MS * attempt
-  }
-  if (error.status === 429) {
-    if (error.retryAfter?.kind === 'too-long') {
-      return undefined
-    }
-    return error.retryAfter?.kind === 'delay' ? error.retryAfter.milliseconds : SEND_BACKOFF_MS * attempt
-  }
-  return error.status < 500 ? undefined : SEND_BACKOFF_MS * attempt
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500
 }
 
-function parseRetryAfter(value: string | null, now: number): RetryAfter {
+/** Returns undefined for a terminal failure. */
+function getRetryDelay(error: unknown, attempt: number, random: () => number): number | undefined {
+  if (error instanceof ReplayIngestError) {
+    if (!isRetryableStatus(error.status)) {
+      return undefined
+    }
+    if (error.retryAfter !== undefined) {
+      return error.retryAfter
+    }
+  }
+  const exponential = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (attempt - 1))
+  // Jitter spreads retries from many browsers recovering from the same outage.
+  return Math.round(exponential * (1 - 0.5 * random()))
+}
+
+function toUploadFailure(error: unknown, reachedFetch: boolean): UploadFailure {
+  const status = error instanceof ReplayIngestError ? error.status : undefined
+  if (status !== undefined && !isRetryableStatus(status)) {
+    return { cause: error, reason: 'rejected', status }
+  }
+  return { cause: error, reason: reachedFetch ? 'unconfirmed' : 'not-sent', status }
+}
+
+/** Returns the requested delay in milliseconds, or undefined when the header is absent or invalid. */
+function parseRetryAfter(value: string | null, now: number): number | undefined {
   if (value === null) {
-    return { kind: 'fallback' }
+    return undefined
   }
   const normalized = value.trim()
   if (/^\d+$/u.test(normalized)) {
     const seconds = Number(normalized)
-    if (!Number.isSafeInteger(seconds)) {
-      return { kind: 'fallback' }
-    }
-    return classifyRetryDelay(seconds * 1_000)
+    return Number.isSafeInteger(seconds) ? seconds * 1_000 : undefined
   }
 
   const timestamp = parseHttpDate(normalized, now)
-  if (timestamp === undefined) {
-    return { kind: 'fallback' }
-  }
-  return classifyRetryDelay(Math.max(0, timestamp - now))
-}
-
-function classifyRetryDelay(milliseconds: number): RetryAfter {
-  return milliseconds > MAX_RETRY_AFTER_MS ? { kind: 'too-long' } : { kind: 'delay', milliseconds }
+  return timestamp === undefined ? undefined : Math.max(0, timestamp - now)
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const

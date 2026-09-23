@@ -768,7 +768,7 @@ describe('startSessionReplay lifecycle', () => {
   })
 
   it('does not let a throwing onError callback escape from transport reporting', async () => {
-    const fetchImpl = vi.fn(async () => new Response(null, { status: 500 })) as unknown as typeof fetch
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 400 })) as unknown as typeof fetch
     const replay = startSessionReplay(
       baseConfig(fetchImpl, {
         onError: () => {
@@ -823,7 +823,7 @@ describe('startSessionReplay lifecycle', () => {
         setTimeout(resolve, 0)
       })
 
-      expect(onError).toHaveBeenCalledWith(uploadError)
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ cause: uploadError, reason: 'unconfirmed', seq: 0 }))
       expect(unhandledRejection).not.toHaveBeenCalled()
       await expect(replay.stop()).resolves.toBeUndefined()
     } finally {
@@ -911,6 +911,65 @@ describe('startSessionReplay lifecycle', () => {
     window.dispatchEvent(new ErrorEvent('error', { message: 'late' }))
     await drainMicrotasks()
     expect(calls).toHaveLength(callsAfterStop)
+  })
+
+  it('resolves stop within one upload timeout when every upload hangs', async () => {
+    const seqs: string[] = []
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      seqs.push(new URL(String(url)).searchParams.get('seq')!)
+      return new Promise<Response>(() => {})
+    }) as unknown as typeof fetch
+    const onError = vi.fn<(error: unknown) => void>()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { onError }))
+    emit(fullSnapshot)
+    const flushes = [replay.flush()]
+    await vi.waitFor(() => {
+      expect(seqs).toEqual(['0'])
+    })
+    emit(click)
+    flushes.push(replay.flush())
+    await drainMicrotasks()
+    emit({ ...click, timestamp: 3 })
+
+    vi.useFakeTimers()
+    let stopped = false
+    const stop = replay.stop().then(() => {
+      stopped = true
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect([...seqs].sort()).toEqual(['0', '1', '2'])
+    await vi.advanceTimersByTimeAsync(9_999)
+    expect(stopped).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await stop
+    await Promise.all(flushes)
+
+    expect(handle.stop).toHaveBeenCalledTimes(1)
+    expect(
+      onError.mock.calls.map(([error]) => {
+        const { reason, seq } = error as { reason: string; seq: number }
+        return { reason, seq }
+      })
+    ).toEqual([
+      { reason: 'unconfirmed', seq: 0 },
+      { reason: 'unconfirmed', seq: 1 },
+      { reason: 'unconfirmed', seq: 2 },
+    ])
+  })
+
+  it('takes a recorder full snapshot after a rejected chunk', async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 400 })) as unknown as typeof fetch
+    const onError = vi.fn<(error: unknown) => void>()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { onError }))
+    emit(fullSnapshot)
+    await replay.flush()
+    expect(handle.takeFullSnapshot).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(handle.takeFullSnapshot).toHaveBeenCalledTimes(1)
+    })
+
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ name: 'ReplayUploadError', reason: 'rejected', seq: 0, status: 400 }))
+    await replay.stop()
   })
 
   it('honors capture toggles', async () => {

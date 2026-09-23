@@ -23,6 +23,8 @@ export type {
   SessionReplayConfig,
 } from './types'
 export { CHUNK_ENVELOPE_VERSION, CustomTag, EventType, IncrementalSource, MouseInteractions } from './types'
+export { ReplayUploadError } from './uploadError'
+export type { ReplayUploadErrorInit, ReplayUploadFailureReason } from './uploadError'
 
 export interface SessionReplay {
   readonly recording: boolean
@@ -350,11 +352,12 @@ function createActiveRuntime(options: {
       transport,
       deactivate: async () => {
         deactivation ??= (async () => {
-          const finalFlush = transport.flush({ keepalive: false })
+          // shutdown() admits the buffered tail synchronously, so the recorder
+          // can stop before its bounded final upload pass finishes.
+          const shutdown = transport.shutdown({ keepalive: false })
           active = false
           stopCleanup(cleanup)
-          await finalFlush
-          await transport.shutdown({ keepalive: false })
+          await shutdown
         })()
         return deactivation
       },

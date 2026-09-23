@@ -46,6 +46,20 @@ test.describe('session replay delivery in Chromium', () => {
     expect(replayedText?.length).toBe(26_018)
   })
 
+  test('a lost chunk re-anchors so later changes replay', async ({ page, request }, testInfo) => {
+    await page.goto('http://127.0.0.1:4177/gap/')
+    await expect(page.locator('#status')).toHaveText(/^(?:complete|failed)$/u)
+    await expect(page.locator('#status')).toHaveText('complete')
+    await runVerifier(deliveryVerifier, 'gap', testInfo)
+
+    const response = await request.get('http://127.0.0.1:4177/fixture/status?scenario=gap')
+    expect(response.ok()).toBe(true)
+    const events = replayEvents(await response.text())
+    await page.goto('http://127.0.0.1:4177/playback.html')
+    await page.evaluate(async (recordedEvents) => window.logfireReplayPlayback.load(recordedEvents), events)
+    await expect(page.frameLocator('iframe').locator('#late')).toHaveText('gap-after')
+  })
+
   test('navigation drops a replay shorter than five seconds', async ({ page, request }) => {
     await page.goto('http://127.0.0.1:4177/short/')
     await expect(page.locator('#status')).toHaveText('ready')
@@ -94,26 +108,30 @@ function replayEvents(serializedEvidence: string): unknown[] {
   if (!Array.isArray(receipts)) {
     throw new Error('delivery evidence has no receipts')
   }
-  return receipts
-    .map((value) => {
-      if (!isRecord(value) || typeof value['body'] !== 'string' || typeof value['seq'] !== 'number') {
-        throw new Error('delivery evidence contains an invalid receipt')
-      }
-      return { body: value['body'], seq: value['seq'] }
-    })
-    .sort((left, right) => left.seq - right.seq)
-    .flatMap(({ body }) => {
-      const envelope = parseRecord(gunzipSync(Buffer.from(body, 'base64')).toString('utf8'), 'replay envelope')
-      const events = envelope['events']
-      if (!Array.isArray(events)) {
-        throw new Error('replay envelope has no events')
-      }
-      const values: unknown[] = []
-      for (const event of events) {
-        values.push(event)
-      }
-      return values
-    })
+  return (
+    receipts
+      .map((value) => {
+        if (!isRecord(value) || typeof value['body'] !== 'string' || typeof value['seq'] !== 'number') {
+          throw new Error('delivery evidence contains an invalid receipt')
+        }
+        return { accepted: value['accepted'] !== false, body: value['body'], seq: value['seq'] }
+      })
+      // The server did not store rejected chunks, so playback must not see them.
+      .filter(({ accepted }) => accepted)
+      .sort((left, right) => left.seq - right.seq)
+      .flatMap(({ body }) => {
+        const envelope = parseRecord(gunzipSync(Buffer.from(body, 'base64')).toString('utf8'), 'replay envelope')
+        const events = envelope['events']
+        if (!Array.isArray(events)) {
+          throw new Error('replay envelope has no events')
+        }
+        const values: unknown[] = []
+        for (const event of events) {
+          values.push(event)
+        }
+        return values
+      })
+  )
 }
 
 function parseRecord(serialized: string, name: string): Record<string, unknown> {
