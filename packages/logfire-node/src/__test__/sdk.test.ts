@@ -1,12 +1,24 @@
 /* eslint-disable import/first */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 import type { MockInstance } from 'vite-plus/test'
-import type { HrTime } from '@opentelemetry/api'
+import type { HrTime, TextMapPropagator } from '@opentelemetry/api'
 import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
 import type { Instrumentation } from '@opentelemetry/instrumentation'
 
-import { context, diag, metrics, propagation, ROOT_CONTEXT, SpanKind, SpanStatusCode, trace, TraceFlags } from '@opentelemetry/api'
+import {
+  context,
+  defaultTextMapGetter,
+  defaultTextMapSetter,
+  diag,
+  metrics,
+  propagation,
+  ROOT_CONTEXT,
+  SpanKind,
+  SpanStatusCode,
+  trace,
+  TraceFlags,
+} from '@opentelemetry/api'
 import { logs } from '@opentelemetry/api-logs'
 
 const mocks = vi.hoisted(() => {
@@ -372,6 +384,15 @@ function getLatestMetricReaders(): { forceFlush: () => Promise<void>; id?: numbe
   )
 }
 
+function getLatestTextMapPropagator(): TextMapPropagator {
+  const instance = mocks.nodeSdkInstances[mocks.nodeSdkInstances.length - 1]
+  expect(instance).toBeDefined()
+  if (instance === undefined) {
+    throw new Error('expected NodeSDK mock instance')
+  }
+  return (instance.options as { textMapPropagator: TextMapPropagator }).textMapPropagator
+}
+
 function makeReadableSpan(): Span {
   const traceId = '11111111111111111111111111111111'
   const spanId = '2222222222222222'
@@ -421,6 +442,7 @@ describe('sdk lifecycle helpers', () => {
       apiKey: undefined,
       codeSource: undefined,
       deploymentEnvironment: undefined,
+      distributedTracing: true,
       instrumentations: [],
       metrics: undefined,
       resourceAttributes: {},
@@ -1282,5 +1304,46 @@ describe('sdk lifecycle helpers', () => {
     start()
 
     expect(getLatestResourceAttributes()['service.instance.id']).toBe('env-instance')
+  })
+
+  describe('distributed tracing', () => {
+    const incomingTraceparent = '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'
+    const localSpanContext = {
+      spanId: '2222222222222222',
+      traceFlags: TraceFlags.SAMPLED,
+      traceId: '11111111111111111111111111111111',
+    }
+
+    it('extracts incoming trace context when enabled', () => {
+      start()
+
+      const extracted = getLatestTextMapPropagator().extract(ROOT_CONTEXT, { traceparent: incomingTraceparent }, defaultTextMapGetter)
+
+      expect(trace.getSpanContext(extracted)).toEqual({
+        isRemote: true,
+        spanId: 'b7ad6b7169203331',
+        traceFlags: TraceFlags.SAMPLED,
+        traceId: '0af7651916cd43dd8448eb211c80319c',
+      })
+    })
+
+    it('ignores incoming trace context when disabled', () => {
+      logfireConfig.distributedTracing = false
+      start()
+
+      const extracted = getLatestTextMapPropagator().extract(ROOT_CONTEXT, { traceparent: incomingTraceparent }, defaultTextMapGetter)
+
+      expect(extracted).toBe(ROOT_CONTEXT)
+    })
+
+    it('still injects trace context into outgoing requests when disabled', () => {
+      logfireConfig.distributedTracing = false
+      start()
+      const carrier: Record<string, string> = {}
+
+      getLatestTextMapPropagator().inject(trace.setSpanContext(ROOT_CONTEXT, localSpanContext), carrier, defaultTextMapSetter)
+
+      expect(carrier).toEqual({ traceparent: '00-11111111111111111111111111111111-2222222222222222-01' })
+    })
   })
 })

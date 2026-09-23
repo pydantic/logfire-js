@@ -31,6 +31,7 @@ import { configureVariables, shutdownVariables } from 'logfire/vars'
 
 import { logfireConfig } from './logfireConfig'
 import { logfireLogRecordProcessor } from './logsExporter'
+import { NoExtractPropagator } from './noExtractPropagator'
 import { periodicMetricReader } from './metricExporter'
 import { logfireSpanProcessor } from './traceExporter'
 import { removeEmptyKeys } from './utils'
@@ -386,7 +387,10 @@ export function start(): void {
   // use AsyncLocalStorageContextManager to manage parent <> child relationshps in async functions
   const contextManager = new AsyncLocalStorageContextManager()
 
-  const propagator = logfireConfig.distributedTracing ? new W3CTraceContextPropagator() : undefined
+  // Leaving textMapPropagator unset makes NodeSDK install its default extracting propagators.
+  const propagator = logfireConfig.distributedTracing
+    ? new W3CTraceContextPropagator()
+    : new NoExtractPropagator(new W3CTraceContextPropagator())
 
   const primarySpanProcessor = logfireSpanProcessor(logfireConfig.console)
   const spanProcessors: SpanProcessor[] = []
@@ -430,7 +434,7 @@ export function start(): void {
     resource,
     ...(sampler ? { sampler } : {}),
     spanProcessors,
-    ...(propagator !== undefined ? { textMapPropagator: propagator } : {}),
+    textMapPropagator: propagator,
   })
 
   const runtime: ActiveRuntime = {
