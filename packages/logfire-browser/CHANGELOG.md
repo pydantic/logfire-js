@@ -1,5 +1,12 @@
 # @pydantic/logfire-browser
 
+## 0.24.1
+
+### Patch Changes
+
+- Updated dependencies [f9b75ca]
+  - @pydantic/logfire-session-replay@0.5.0
+
 ## 0.24.0
 
 ### Minor Changes
