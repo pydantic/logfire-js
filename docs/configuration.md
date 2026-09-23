@@ -56,8 +56,8 @@ Node.js and Cloudflare read `LOGFIRE_TOKEN` by default. Browser applications ins
 For local Node.js development, you can also let the CLI write project credentials:
 
 ```bash
-npx logfire auth
-npx logfire projects use my-project
+npx logfire --region us auth
+npx logfire init use --name my-project --permission send
 ```
 
 `@pydantic/logfire-node` reads `.logfire/logfire_credentials.json` when no explicit `token` and no `LOGFIRE_TOKEN` are set. Token precedence in Node.js is:

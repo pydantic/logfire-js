@@ -12,7 +12,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
       resolver: 'tsc',
     },
     deps: {
-      neverBundle: [/^@opentelemetry/u, /^node:/u, 'handlebars', 'js-yaml', 'p-retry', 'zod'],
+      neverBundle: [/^@opentelemetry/u, /^logfire-cli(?:\/|$)/u, /^node:/u, 'handlebars', 'js-yaml', 'p-retry', 'zod'],
     },
     entry: {
       cli: 'src/cli/index.ts',
