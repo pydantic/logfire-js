@@ -558,8 +558,10 @@ export class ReplayTransport {
     }
     const firstAttemptAt = Date.now()
     for (let attempt = 1; ; attempt++) {
+      // The budget covers each attempt's request time, not only the waits between them.
+      const remaining = RETRY_BUDGET_MS - (Date.now() - firstAttemptAt)
       // eslint-disable-next-line no-await-in-loop -- retry attempts must be sequential for one chunk.
-      const error = await this.attemptQueued(upload)
+      const error = await this.attemptQueued(upload, Math.min(REPLAY_UPLOAD_TIMEOUT_MS, remaining))
       if (error === undefined) {
         return undefined
       }
@@ -591,15 +593,19 @@ export class ReplayTransport {
     }
   }
 
-  private async attemptQueued(upload: QueuedUpload): Promise<unknown> {
+  private async attemptQueued(upload: QueuedUpload, timeoutMs = REPLAY_UPLOAD_TIMEOUT_MS): Promise<unknown> {
     const body = upload.body
     if (body === undefined) {
       return undefined
     }
     try {
-      await this.send({ body, requestKeepalive: false, reservedBytes: 0, seq: upload.seq, sessionId: upload.sessionId }, () => {
-        upload.reachedFetch = true
-      })
+      await this.send(
+        { body, requestKeepalive: false, reservedBytes: 0, seq: upload.seq, sessionId: upload.sessionId },
+        () => {
+          upload.reachedFetch = true
+        },
+        timeoutMs
+      )
       return undefined
     } catch (error) {
       return error
@@ -846,14 +852,14 @@ export class ReplayTransport {
     }
   }
 
-  private async send(upload: PreparedUpload, onRequestStarted: () => void): Promise<void> {
+  private async send(upload: PreparedUpload, onRequestStarted: () => void, timeoutMs = REPLAY_UPLOAD_TIMEOUT_MS): Promise<void> {
     let requestStarted: boolean | undefined
     let responseReceived: boolean | undefined
     let responseComplete: boolean | undefined
     const controller = new AbortController()
     const timeout = setTimeout(() => {
-      controller.abort(new Error(`replay upload timed out after ${String(REPLAY_UPLOAD_TIMEOUT_MS)}ms`))
-    }, REPLAY_UPLOAD_TIMEOUT_MS)
+      controller.abort(new Error(`replay upload timed out after ${String(timeoutMs)}ms`))
+    }, timeoutMs)
     const deadline = this.deadlineAbort.signal
     const onDeadline = (): void => {
       controller.abort(deadline.reason)
@@ -1090,13 +1096,14 @@ function getRetryDelay(error: unknown, attempt: number, random: () => number): n
     if (!isRetryableStatus(error.status)) {
       return undefined
     }
-    if (error.retryAfter !== undefined) {
-      return error.retryAfter
-    }
   }
   const exponential = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (attempt - 1))
   // Jitter spreads retries from many browsers recovering from the same outage.
-  return Math.round(exponential * (1 - 0.5 * random()))
+  const backoff = Math.round(exponential * (1 - 0.5 * random()))
+  // Retry-After can only lengthen the wait: `0` or a past date (clock skew)
+  // would otherwise retry a rate-limited endpoint without pause.
+  const retryAfter = error instanceof ReplayIngestError ? error.retryAfter : undefined
+  return retryAfter === undefined ? backoff : Math.max(retryAfter, backoff)
 }
 
 function toUploadFailure(error: unknown, reachedFetch: boolean): UploadFailure {

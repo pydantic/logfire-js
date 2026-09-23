@@ -203,16 +203,18 @@ Ordinary uploads wait in an in-memory queue and are sent in sequence order.
 Network errors, timeouts, `408`, `425`, `429`, and `5xx` responses are retried
 with the same sequence number and the same compressed bytes. The backoff starts
 at 500 ms, doubles up to 8 s, and uses jitter. Each chunk has a 30-second retry
-budget. `Retry-After` on `429` and `503` is honored while it fits that budget.
+budget that includes the time of its requests. `Retry-After` on `429` and `503`
+can lengthen a wait, never shorten it, and is honored while it fits that budget.
 Other `4xx` responses are not retried. The receiver must accept a repeated
 `(sessionId, seq)` as the same chunk, because a retry can follow a request that
 the server stored but whose response was lost.
 
 The queue holds at most 2,000,000 bytes, or twice `maxBufferBytes` when that is
 larger. It counts uncompressed events until they are compressed, and compressed
-bodies afterwards. A batch that does not fit is
-discarded without a sequence number, and the chunks already queued are still
-delivered.
+bodies afterwards. An empty queue always admits the next batch, even when that
+batch is larger than the limit, because an initial full snapshot can exceed it
+and must not be lost. Otherwise, a batch that does not fit is discarded without
+a sequence number, and the chunks already queued are still delivered.
 
 A lost chunk is reported to `onError` as a `ReplayUploadError`:
 

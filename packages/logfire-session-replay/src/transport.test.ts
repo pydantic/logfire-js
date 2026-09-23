@@ -1238,13 +1238,15 @@ describe('ReplayTransport Retry-After policy', () => {
     ['Sun, 06 Nov 1994 08:49:37 GMT', 1_000],
     ['Sunday, 06-Nov-94 08:49:37 GMT', 1_000],
     ['Sun Nov  6 08:49:37 1994', 1_000],
-    ['Sun, 06 Nov 1994 08:49:35 GMT', 0],
+    // A past date or zero must not skip the backoff.
+    ['Sun, 06 Nov 1994 08:49:35 GMT', 500],
+    ['0', 500],
   ] as const)('honors Retry-After %s', async (header, delayMs) => {
     await expectRetryAfter(header, delayMs)
   })
 
   it('applies the RFC850 more-than-50-years rollback', async () => {
-    await expectRetryAfter('Sunday, 06-Nov-77 08:49:37 GMT', 0, '2026-07-13T00:00:00.000Z')
+    await expectRetryAfter('Sunday, 06-Nov-77 08:49:37 GMT', 500, '2026-07-13T00:00:00.000Z')
   })
 
   it.each(['Sun, 31 Feb 1994 08:49:37 GMT', '1994-11-06T08:49:37Z', 'tomorrow', '+1', '1.5', '999999999999999999999999999999'])(
@@ -1256,6 +1258,59 @@ describe('ReplayTransport Retry-After policy', () => {
 
   it('honors Retry-After beyond ten seconds while it fits the retry budget', async () => {
     await expectRetryAfter('11', 11_000)
+  })
+
+  it('keeps backing off when a rate-limited endpoint keeps sending Retry-After: 0', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchImpl = vi.fn(async () => new Response(null, { status: 429, headers: { 'retry-after': '0' } })) as unknown as typeof fetch
+      const onError = vi.fn()
+      const transport = new ReplayTransport({ ...makeConfig(fetchImpl), onError }, 'sess-zero', 'full', null, immediateCompression())
+      transport.add(fullSnapshot)
+      const flush = transport.flush()
+      await vi.advanceTimersByTimeAsync(30_000)
+      await flush
+
+      expect(fetchImpl).toHaveBeenCalledTimes(7)
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'unconfirmed', seq: 0, status: 429 }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('caps the last attempt so a chunk settles within the retry budget', async () => {
+    vi.useFakeTimers()
+    try {
+      let attempts = 0
+      const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+        attempts += 1
+        if (attempts === 1) {
+          return new Response(null, { status: 429, headers: { 'retry-after': '29' } })
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new Error('aborted'))
+          })
+        })
+      }) as unknown as typeof fetch
+      const onError = vi.fn()
+      const transport = new ReplayTransport({ ...makeConfig(fetchImpl), onError }, 'sess-cap', 'full', null, immediateCompression())
+      transport.add(fullSnapshot)
+      let settled = false
+      const flush = transport.flush().then(() => {
+        settled = true
+      })
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await flush
+
+      expect(settled).toBe(true)
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'unconfirmed', seq: 0 }))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not retry early when Retry-After exceeds the remaining retry budget', async () => {
