@@ -1,5 +1,5 @@
 import { CustomTag, EventType, IncrementalSource, MouseInteractions } from './types'
-import type { ChunkMeta, RrwebEvent, SessionAttributes } from './types'
+import type { ChunkMeta, ReplayUser, RrwebEvent, SessionAttributes } from './types'
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined
@@ -9,11 +9,28 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
 }
 
+// Copies only the documented fields so arbitrary application user data never reaches replay metadata.
+export function normalizeReplayUser(value: unknown): ReplayUser | undefined {
+  const record = asRecord(value)
+  const id = asString(record?.['id'])
+  if (record === undefined || id === undefined) {
+    return undefined
+  }
+  const name = asString(record['name'])
+  const email = asString(record['email'])
+  return {
+    id,
+    ...(name === undefined ? {} : { name }),
+    ...(email === undefined ? {} : { email }),
+  }
+}
+
 export function computeChunkMeta(
   seq: number,
   events: RrwebEvent[],
   distinctId?: string,
-  sessionAttributes: SessionAttributes = {}
+  sessionAttributes: SessionAttributes = {},
+  user?: ReplayUser
 ): ChunkMeta {
   let firstTimestamp = Number.POSITIVE_INFINITY
   let lastTimestamp = 0
@@ -78,6 +95,7 @@ export function computeChunkMeta(
     hasFullSnapshot,
     urls: [...urls],
     ...(distinctId !== undefined && distinctId.length > 0 ? { distinctId } : {}),
+    ...(user === undefined ? {} : { user: { ...user } }),
     ...(Object.keys(sessionAttributes).length === 0 ? {} : { sessionAttributes: { ...sessionAttributes } }),
   }
 }

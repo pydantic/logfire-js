@@ -1,10 +1,10 @@
 import { gzip, gzipSync, strToU8 } from 'fflate'
 
 import { isUserActivityEvent, resolveFlushInterval } from './activity'
-import { computeChunkMeta } from './extract'
+import { computeChunkMeta, normalizeReplayUser } from './extract'
 import { safeSessionStorage } from './session'
 import { CHUNK_ENVELOPE_VERSION, EventType } from './types'
-import type { ChunkEnvelope, ResolvedSessionReplayConfig, RrwebEvent, SessionAttributes } from './types'
+import type { ChunkEnvelope, ReplayUser, ResolvedSessionReplayConfig, RrwebEvent, SessionAttributes } from './types'
 
 export const SEQ_STORAGE_KEY = 'lf_session_replay_seq'
 
@@ -380,6 +380,7 @@ export class ReplayTransport {
   }
 
   private createEnvelope(events: RrwebEvent[], seq: number): ChunkEnvelope {
+    const user = this.snapshotUser()
     let distinctId = this.config.distinctId
     if (this.config.getDistinctId !== undefined) {
       try {
@@ -387,11 +388,25 @@ export class ReplayTransport {
       } catch (error) {
         safeReportError(this.config.onError, error)
       }
+    } else if (user !== undefined) {
+      distinctId = user.id
     }
     return {
       version: CHUNK_ENVELOPE_VERSION,
-      meta: computeChunkMeta(seq, events, distinctId, this.sessionAttributes),
+      meta: computeChunkMeta(seq, events, distinctId, this.sessionAttributes, user),
       events,
+    }
+  }
+
+  private snapshotUser(): ReplayUser | undefined {
+    if (this.config.getUser === undefined) {
+      return undefined
+    }
+    try {
+      return normalizeReplayUser(this.config.getUser())
+    } catch (error) {
+      safeReportError(this.config.onError, error)
+      return undefined
     }
   }
 

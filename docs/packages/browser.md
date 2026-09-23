@@ -466,9 +466,19 @@ subsequent replay events only peek at the session id and do not refresh the
 timeout. Span starts are the ongoing automatic activity;
 `getBrowserSessionId()` also explicitly touches the session.
 
-When `sessionReplay.getDistinctId` is not configured, replay uses the current
-`rum.session.getUser()?.id` so replay rows and span `user.id` agree. An explicit
-`getDistinctId` remains authoritative. A static `sessionReplay.distinctId`
+Each replay chunk snapshots `rum.session.getUser()` once and reports its `id`,
+`name`, and `email` as `meta.user`, so recordings can be displayed and searched
+by the same user as spans. Name and email are optional personal data; omit
+them from `getUser` unless replay viewers need them. Other fields of the
+returned object are not sent, and the user is never written to rrweb events or
+`sessionStorage`. `meta.user` is omitted when `getUser` is not configured,
+returns no user, or throws, and later chunks follow login, logout, and user
+switches.
+
+When `sessionReplay.getDistinctId` is not configured, replay uses the same
+snapshot's `id` as `meta.distinctId`, so replay rows and span `user.id` agree.
+An explicit `getDistinctId` remains authoritative, and `distinctId` and
+`user.id` are then reported independently. A static `sessionReplay.distinctId`
 remains the fallback while the selected live getter returns `undefined`.
 
 After a replay reaches the minimum duration, hiding the document or receiving
