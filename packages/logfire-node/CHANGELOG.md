@@ -1,5 +1,11 @@
 # logfire
 
+## 0.18.26
+
+### Patch Changes
+
+- 0eee64b: Honor `distributedTracing: false`. Incoming `traceparent` headers were still extracted because NodeSDK fell back to its default propagators; they are now ignored, while outgoing requests still carry trace context. W3C baggage now propagates in both modes, matching the documented baggage behavior.
+
 ## 0.18.25
 
 ### Patch Changes
