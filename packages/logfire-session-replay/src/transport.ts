@@ -557,14 +557,20 @@ export class ReplayTransport {
       return compressionFailure
     }
     const firstAttemptAt = Date.now()
+    let previousError: unknown
     for (let attempt = 1; ; attempt++) {
       // The budget covers each attempt's request time, not only the waits between them.
       const remaining = RETRY_BUDGET_MS - (Date.now() - firstAttemptAt)
+      // A background tab can fire the backoff timer after the budget has already run out.
+      if (attempt > 1 && remaining <= 0) {
+        return toUploadFailure(previousError, upload.reachedFetch)
+      }
       // eslint-disable-next-line no-await-in-loop -- retry attempts must be sequential for one chunk.
       const error = await this.attemptQueued(upload, Math.min(REPLAY_UPLOAD_TIMEOUT_MS, remaining))
       if (error === undefined) {
         return undefined
       }
+      previousError = error
       const retryDelay = getRetryDelay(error, attempt, this.config.random)
       if (retryDelay === undefined || this.shuttingDown || Date.now() - firstAttemptAt + retryDelay >= RETRY_BUDGET_MS) {
         return toUploadFailure(error, upload.reachedFetch)
@@ -671,13 +677,23 @@ export class ReplayTransport {
         if (upload.seq < seq) {
           continue
         }
-        if (upload.hasFullSnapshot) {
+        // An in-flight request cannot be recalled; a snapshot inside it still re-anchors what follows.
+        if (upload === this.activeUpload) {
+          if (upload.hasFullSnapshot) {
+            anchored = true
+            break
+          }
+          continue
+        }
+        if (upload.hasFullSnapshot && upload.events !== undefined) {
+          // Events recorded before the snapshot still depend on the lost chunk.
+          const events = eventsFromAnchor(upload.events)
+          const eventBytes = sumEventBytes(events)
+          this.retainedBytes += eventBytes - upload.retainedBytes
+          upload.retainedBytes = eventBytes
+          upload.events = events
           anchored = true
           break
-        }
-        // An in-flight request cannot be recalled; it is harmless once a new anchor follows.
-        if (upload === this.activeUpload) {
-          continue
         }
         droppedSeqs.push(upload.seq)
         this.settle(upload, undefined)
@@ -700,13 +716,11 @@ export class ReplayTransport {
   }
 
   private trimBufferToAnchor(): boolean {
-    const snapshotIndex = this.buffer.findIndex((event) => event.type === EventType.FullSnapshot)
-    if (snapshotIndex < 0) {
+    if (!this.buffer.some((event) => event.type === EventType.FullSnapshot)) {
       return false
     }
-    const start = snapshotIndex > 0 && this.buffer[snapshotIndex - 1]?.type === EventType.Meta ? snapshotIndex - 1 : snapshotIndex
-    this.buffer = this.buffer.slice(start)
-    this.pendingBytes = this.buffer.reduce((total, event) => total + estimateBytes(event), 0)
+    this.buffer = eventsFromAnchor(this.buffer)
+    this.pendingBytes = sumEventBytes(this.buffer)
     return true
   }
 
@@ -1007,6 +1021,20 @@ function estimateBytes(event: RrwebEvent): number {
   } catch {
     return 0
   }
+}
+
+/** Drops the events before the first FullSnapshot, keeping its preceding Meta event. */
+function eventsFromAnchor(events: RrwebEvent[]): RrwebEvent[] {
+  const snapshotIndex = events.findIndex((event) => event.type === EventType.FullSnapshot)
+  if (snapshotIndex < 0) {
+    return events
+  }
+  const start = snapshotIndex > 0 && events[snapshotIndex - 1]?.type === EventType.Meta ? snapshotIndex - 1 : snapshotIndex
+  return events.slice(start)
+}
+
+function sumEventBytes(events: RrwebEvent[]): number {
+  return events.reduce((total, event) => total + estimateBytes(event), 0)
 }
 
 function splitKeepaliveEventChunks(events: RrwebEvent[]): RrwebEvent[][] {

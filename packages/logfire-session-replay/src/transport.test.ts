@@ -1985,6 +1985,52 @@ describe('ReplayTransport upload recovery', () => {
     }
   })
 
+  it('trims dependent events that precede the anchor inside a queued chunk', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch((seq) => (seq === 0 ? new Response(null, { status: 400 }) : accepted()))
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl)
+      transport.add(fullSnapshot)
+      const lost = transport.flush()
+      transport.add({ ...mutation, timestamp: 39 })
+      transport.add({ ...meta, timestamp: 40 })
+      transport.add({ ...fullSnapshot, timestamp: 41 })
+      transport.add({ ...click, timestamp: 42 })
+      const anchored = transport.flush()
+      await Promise.all([lost, anchored])
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ droppedSeqs: [], reason: 'rejected', seq: 0 }))
+      expect(takeFullSnapshot).not.toHaveBeenCalled()
+      expect(calls.filter((call) => call.seq === 1).map((call) => timestamps(call.body))).toEqual([[40, 41, 42]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not start another attempt when a delayed backoff outlasts the retry budget', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch(() => {
+        throw new TypeError('Failed to fetch')
+      })
+      const { onError, transport } = recoveringTransport(fetchImpl)
+      transport.add(fullSnapshot)
+      const flush = transport.flush()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toHaveLength(1)
+      // Simulates a background tab that fires the 500ms backoff timer 31 seconds late.
+      vi.setSystemTime(Date.now() + 31_000)
+      await vi.advanceTimersByTimeAsync(500)
+      await flush
+
+      expect(calls).toHaveLength(1)
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'unconfirmed', seq: 0 }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps a buffered anchor instead of taking a new snapshot', async () => {
     vi.useFakeTimers()
     try {
