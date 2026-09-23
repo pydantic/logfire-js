@@ -496,6 +496,15 @@ restrictive Content Security Policy blocks the compressor worker. The fallback
 preserves the batch and is remembered for the active replay controller, but it
 may briefly use the main thread.
 
+Ordinary replay uploads are retried with the same sequence number and bytes for
+up to 30 seconds per chunk after network errors, timeouts, `408`, `425`, `429`,
+and `5xx` responses. The in-memory queue holds at most about 2 MB. When a chunk
+is still lost, `sessionReplay.onError` receives a `ReplayUploadError` with the
+lost `seq`, the dependent `droppedSeqs`, and a `reason` of `unconfirmed`,
+`rejected`, or `not-sent`. Replay then takes a fresh full snapshot so playback
+resumes correctly after the gap. Queued chunks do not survive a page close or
+reload.
+
 A backend proxy can add application-specific authentication, origin checks, or
 rate limits. Keep its replay headers synchronous so lifecycle uploads do not
 wait on asynchronous work:

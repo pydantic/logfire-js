@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ReplayTransport, SEQ_STORAGE_KEY } from './transport'
 import { CHUNK_ENVELOPE_VERSION, EventType, IncrementalSource, MouseInteractions } from './types'
+import { ReplayUploadError } from './uploadError'
 import type { ChunkEnvelope, ResolvedSessionReplayConfig, RrwebEvent } from './types'
 
 const meta: RrwebEvent = {
@@ -885,7 +886,11 @@ describe('ReplayTransport retries', () => {
 
       expect(uploadSignal?.aborted).toBe(true)
       expect(fetchImpl).toHaveBeenCalledTimes(1)
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'replay upload timed out after 10000ms' }))
+      expect(onError).toHaveBeenCalledOnce()
+      const reported = onError.mock.calls[0]?.[0] as ReplayUploadError
+      expect(reported).toBeInstanceOf(ReplayUploadError)
+      expect(reported).toMatchObject({ reason: 'unconfirmed', seq: 0 })
+      expect((reported.cause as Error).message).toBe('replay upload timed out after 10000ms')
     } finally {
       vi.useRealTimers()
     }
@@ -1160,8 +1165,11 @@ describe('ReplayTransport lifecycle keepalive budget', () => {
 
     transport.add(largeEvent(10, 1))
     await transport.flush({ keepalive: true })
+    // The lost first chunk requires a new anchor before later events upload.
+    transport.add(fullSnapshot)
     transport.add(largeEvent(20, 2))
     await transport.flush({ keepalive: true })
+    expect(keepaliveFlags).toHaveLength(failure === 'network' ? 2 : 1)
     expect(keepaliveFlags.at(-1)).toBe(true)
   })
 
@@ -1230,13 +1238,15 @@ describe('ReplayTransport Retry-After policy', () => {
     ['Sun, 06 Nov 1994 08:49:37 GMT', 1_000],
     ['Sunday, 06-Nov-94 08:49:37 GMT', 1_000],
     ['Sun Nov  6 08:49:37 1994', 1_000],
-    ['Sun, 06 Nov 1994 08:49:35 GMT', 0],
+    // A past date or zero must not skip the backoff.
+    ['Sun, 06 Nov 1994 08:49:35 GMT', 500],
+    ['0', 500],
   ] as const)('honors Retry-After %s', async (header, delayMs) => {
     await expectRetryAfter(header, delayMs)
   })
 
   it('applies the RFC850 more-than-50-years rollback', async () => {
-    await expectRetryAfter('Sunday, 06-Nov-77 08:49:37 GMT', 0, '2026-07-13T00:00:00.000Z')
+    await expectRetryAfter('Sunday, 06-Nov-77 08:49:37 GMT', 500, '2026-07-13T00:00:00.000Z')
   })
 
   it.each(['Sun, 31 Feb 1994 08:49:37 GMT', '1994-11-06T08:49:37Z', 'tomorrow', '+1', '1.5', '999999999999999999999999999999'])(
@@ -1246,23 +1256,80 @@ describe('ReplayTransport Retry-After policy', () => {
     }
   )
 
-  it('does not retry early when valid guidance exceeds ten seconds', async () => {
+  it('honors Retry-After beyond ten seconds while it fits the retry budget', async () => {
+    await expectRetryAfter('11', 11_000)
+  })
+
+  it('keeps backing off when a rate-limited endpoint keeps sending Retry-After: 0', async () => {
     vi.useFakeTimers()
     try {
-      const fetchImpl = vi.fn(async () => new Response(null, { status: 429, headers: { 'retry-after': '11' } })) as unknown as typeof fetch
+      const fetchImpl = vi.fn(async () => new Response(null, { status: 429, headers: { 'retry-after': '0' } })) as unknown as typeof fetch
+      const onError = vi.fn()
+      const transport = new ReplayTransport({ ...makeConfig(fetchImpl), onError }, 'sess-zero', 'full', null, immediateCompression())
+      transport.add(fullSnapshot)
+      const flush = transport.flush()
+      await vi.advanceTimersByTimeAsync(30_000)
+      await flush
+
+      expect(fetchImpl).toHaveBeenCalledTimes(7)
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'unconfirmed', seq: 0, status: 429 }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('caps the last attempt so a chunk settles within the retry budget', async () => {
+    vi.useFakeTimers()
+    try {
+      let attempts = 0
+      const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+        attempts += 1
+        if (attempts === 1) {
+          return new Response(null, { status: 429, headers: { 'retry-after': '29' } })
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new Error('aborted'))
+          })
+        })
+      }) as unknown as typeof fetch
+      const onError = vi.fn()
+      const transport = new ReplayTransport({ ...makeConfig(fetchImpl), onError }, 'sess-cap', 'full', null, immediateCompression())
+      transport.add(fullSnapshot)
+      let settled = false
+      const flush = transport.flush().then(() => {
+        settled = true
+      })
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await flush
+
+      expect(settled).toBe(true)
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'unconfirmed', seq: 0 }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not retry early when Retry-After exceeds the remaining retry budget', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchImpl = vi.fn(async () => new Response(null, { status: 429, headers: { 'retry-after': '31' } })) as unknown as typeof fetch
       const onError = vi.fn()
       const transport = new ReplayTransport({ ...makeConfig(fetchImpl), onError }, 'sess-long', 'full', null, immediateCompression())
       transport.add(fullSnapshot)
       await transport.flush()
       await vi.advanceTimersByTimeAsync(60_000)
       expect(fetchImpl).toHaveBeenCalledTimes(1)
-      expect(onError).toHaveBeenCalledTimes(1)
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'unconfirmed', seq: 0, status: 429 }))
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('uses 500ms then 1000ms fallback, exhausts three attempts, and refreshes credentials', async () => {
+  it('backs off exponentially, exhausts the 30s budget, and refreshes credentials', async () => {
     vi.useFakeTimers()
     try {
       const bodies: Uint8Array[] = []
@@ -1284,17 +1351,26 @@ describe('ReplayTransport Retry-After policy', () => {
       )
       transport.add(fullSnapshot)
       const flush = transport.flush()
-      await vi.advanceTimersByTimeAsync(500)
-      expect(fetchImpl).toHaveBeenCalledTimes(2)
-      await vi.advanceTimersByTimeAsync(1_000)
+      // Attempts at 0, 0.5, 1.5, 3.5, 7.5, 15.5 and 23.5 seconds; the next 8s wait would pass 30s.
+      const attemptTimes = [500, 1_500, 3_500, 7_500, 15_500, 23_500]
+      let elapsed = 0
+      for (const [index, attemptTime] of attemptTimes.entries()) {
+        // eslint-disable-next-line no-await-in-loop -- each step checks the schedule before the next attempt.
+        await vi.advanceTimersByTimeAsync(attemptTime - elapsed - 1)
+        expect(fetchImpl).toHaveBeenCalledTimes(index + 1)
+        // eslint-disable-next-line no-await-in-loop -- each step checks the schedule before the next attempt.
+        await vi.advanceTimersByTimeAsync(1)
+        expect(fetchImpl).toHaveBeenCalledTimes(index + 2)
+        elapsed = attemptTime
+      }
       await flush
 
-      expect(fetchImpl).toHaveBeenCalledTimes(3)
-      expect(token).toHaveBeenCalledTimes(3)
-      expect(headers).toHaveBeenCalledTimes(3)
-      expect(urls).toEqual(Array(3).fill('https://app.example.com/replay-proxy/sess-exhausted?seq=0'))
-      expect(bodies.map((body) => Array.from(body))).toEqual(Array(3).fill(Array.from(bodies[0]!)))
-      expect(onError).toHaveBeenCalledTimes(1)
+      expect(fetchImpl).toHaveBeenCalledTimes(7)
+      expect(token).toHaveBeenCalledTimes(7)
+      expect(headers).toHaveBeenCalledTimes(7)
+      expect(urls).toEqual(Array(7).fill('https://app.example.com/replay-proxy/sess-exhausted?seq=0'))
+      expect(bodies.map((body) => Array.from(body))).toEqual(Array(7).fill(Array.from(bodies[0]!)))
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'unconfirmed', seq: 0, status: 429 }))
     } finally {
       vi.useRealTimers()
     }
@@ -1494,3 +1570,582 @@ function memoryStorage(): Storage {
     },
   }
 }
+
+describe('ReplayTransport upload recovery', () => {
+  const anchorMeta: RrwebEvent = { ...meta, timestamp: 100 }
+  const anchorSnapshot: RrwebEvent = { ...fullSnapshot, timestamp: 101 }
+
+  function scriptedFetch(respond: (seq: number, attempt: number) => Response | Promise<Response>) {
+    const calls: { seq: number; body: Uint8Array }[] = []
+    const attempts = new Map<number, number>()
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const seq = Number(new URL(String(url)).searchParams.get('seq'))
+      const attempt = (attempts.get(seq) ?? 0) + 1
+      attempts.set(seq, attempt)
+      calls.push({ seq, body: init?.body as Uint8Array })
+      return respond(seq, attempt)
+    }) as unknown as typeof fetch
+    return { calls, fetchImpl }
+  }
+
+  function accepted(): Response {
+    return new Response(null, { status: 202 })
+  }
+
+  function recoveringTransport(
+    fetchImpl: typeof fetch,
+    overrides: Partial<ResolvedSessionReplayConfig> = {},
+    compression = immediateCompression()
+  ) {
+    const onError = vi.fn()
+    const holder: { transport?: ReplayTransport } = {}
+    const takeFullSnapshot = vi.fn(() => {
+      holder.transport!.add(anchorMeta)
+      holder.transport!.add(anchorSnapshot)
+    })
+    const transport = new ReplayTransport(
+      { ...makeConfig(fetchImpl), now: () => Date.now(), onError, ...overrides },
+      'sess-recover',
+      'full',
+      null,
+      compression,
+      {},
+      { takeFullSnapshot }
+    )
+    holder.transport = transport
+    return { onError, takeFullSnapshot, transport }
+  }
+
+  function timestamps(body: Uint8Array): number[] {
+    return decodeBody(body as BodyInit).events.map((event) => event.timestamp)
+  }
+
+  it('reports an exhausted chunk and re-anchors before later events upload', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch((seq) => {
+        if (seq === 1) {
+          throw new TypeError('Failed to fetch')
+        }
+        return accepted()
+      })
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl)
+      transport.add(fullSnapshot)
+      await transport.flush()
+      transport.add(mutation)
+      const lost = transport.flush()
+      await vi.advanceTimersByTimeAsync(10_000)
+      // Recorded while seq=1 is still retrying, so it depends on the lost chunk.
+      transport.add({ ...mutation, timestamp: 50 })
+      await vi.advanceTimersByTimeAsync(20_000)
+      await lost
+
+      expect(onError).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ droppedSeqs: [], name: 'ReplayUploadError', reason: 'unconfirmed', seq: 1, sessionId: 'sess-recover' })
+      )
+      expect(takeFullSnapshot).toHaveBeenCalledTimes(1)
+      transport.add({ ...click, timestamp: 102 })
+      await transport.flush()
+
+      const delivered = calls.filter((call) => call.seq !== 1)
+      expect(delivered.map((call) => call.seq)).toEqual([0, 2])
+      expect(timestamps(delivered[1]!.body)).toEqual([100, 101, 102])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retries a lost acknowledgement with the same seq and bytes', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch((_seq, attempt) => {
+        if (attempt === 1) {
+          throw new TypeError('Failed to fetch')
+        }
+        return accepted()
+      })
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl)
+      transport.add(fullSnapshot)
+      const flush = transport.flush()
+      await vi.advanceTimersByTimeAsync(500)
+      await flush
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(calls.map((call) => call.seq)).toEqual([0, 0])
+      expect(Array.from(calls[1]!.body)).toEqual(Array.from(calls[0]!.body))
+      expect(onError).not.toHaveBeenCalled()
+      expect(takeFullSnapshot).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([408, 425, 429, 500, 502, 503])('retries status %i', async (status) => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch((_seq, attempt) => (attempt === 1 ? new Response(null, { status }) : accepted()))
+      const { onError, transport } = recoveringTransport(fetchImpl)
+      transport.add(fullSnapshot)
+      const flush = transport.flush()
+      await vi.advanceTimersByTimeAsync(499)
+      expect(calls).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1)
+      await flush
+
+      expect(calls).toHaveLength(2)
+      expect(onError).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('honors Retry-After on 503', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch((_seq, attempt) =>
+        attempt === 1 ? new Response(null, { status: 503, headers: { 'retry-after': '2' } }) : accepted()
+      )
+      const { transport } = recoveringTransport(fetchImpl)
+      transport.add(fullSnapshot)
+      const flush = transport.flush()
+      await vi.advanceTimersByTimeAsync(1_999)
+      expect(calls).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(1)
+      await flush
+      expect(calls).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([400, 401, 403, 404, 413, 422])('does not retry terminal status %i and re-anchors', async (status) => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch(() => new Response(null, { status }))
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl)
+      transport.add(fullSnapshot)
+      await transport.flush()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(calls).toHaveLength(1)
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'rejected', seq: 0, status }))
+      expect(takeFullSnapshot).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retries header failures before the request and keeps the seq', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch(() => accepted())
+      let headerCalls = 0
+      const headers = vi.fn(async () => {
+        headerCalls += 1
+        if (headerCalls <= 2) {
+          throw new Error('credentials unavailable')
+        }
+        return {}
+      })
+      const { onError, transport } = recoveringTransport(fetchImpl, { headers })
+      transport.add(fullSnapshot)
+      const flush = transport.flush()
+      await vi.advanceTimersByTimeAsync(1_500)
+      await flush
+
+      expect(calls.map((call) => call.seq)).toEqual([0])
+      expect(onError).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    [
+      'rejecting headers',
+      {
+        headers: async () => {
+          throw new Error('headers unavailable')
+        },
+      },
+    ],
+    [
+      'throwing headers',
+      {
+        headers: () => {
+          throw new Error('headers unavailable')
+        },
+      },
+    ],
+    [
+      'rejecting token',
+      {
+        token: async () => {
+          throw new Error('token unavailable')
+        },
+      },
+    ],
+  ] as const)('reports %s that never recover as not-sent', async (_name, overrides) => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch(() => accepted())
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl, overrides)
+      transport.add(fullSnapshot)
+      const flush = transport.flush()
+      await vi.advanceTimersByTimeAsync(30_000)
+      await flush
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(calls).toHaveLength(0)
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'not-sent', seq: 0 }))
+      expect(takeFullSnapshot).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('delivers queued chunks in order with their original bytes after an outage', async () => {
+    vi.useFakeTimers()
+    try {
+      const outageEnd = Date.now() + 20_000
+      const { calls, fetchImpl } = scriptedFetch(() => {
+        if (Date.now() < outageEnd) {
+          throw new TypeError('Failed to fetch')
+        }
+        return accepted()
+      })
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl)
+      transport.add(fullSnapshot)
+      const first = transport.flush()
+      await vi.advanceTimersByTimeAsync(5_000)
+      transport.add(click)
+      const second = transport.flush()
+      await vi.advanceTimersByTimeAsync(5_000)
+      transport.add(mutation)
+      const third = transport.flush()
+      await vi.advanceTimersByTimeAsync(20_000)
+      await Promise.all([first, second, third])
+
+      expect(onError).not.toHaveBeenCalled()
+      expect(takeFullSnapshot).not.toHaveBeenCalled()
+      expect(calls.slice(-3).map((call) => call.seq)).toEqual([0, 1, 2])
+      const firstBodies = calls.filter((call) => call.seq === 0).map((call) => Array.from(call.body))
+      expect(firstBodies.length).toBeGreaterThan(1)
+      expect(new Set(firstBodies.map((body) => body.join(','))).size).toBe(1)
+      expect(calls.slice(-3).map((call) => timestamps(call.body))).toEqual([[1], [2], [3]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['hung upload', 'stalled compressor'] as const)(
+    'rejects a batch that would overflow the queue during a %s and keeps queued chunks',
+    async (stall) => {
+      vi.useFakeTimers()
+      try {
+        let release: () => void = () => undefined
+        const gate = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        const { calls, fetchImpl } = scriptedFetch(async () => {
+          if (stall === 'hung upload') {
+            await gate
+          }
+          return accepted()
+        })
+        const compression = {
+          gzip: ((input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
+            gate.then(
+              () => {
+                callback(null, gzipSync(input))
+              },
+              () => undefined
+            )
+          }) as typeof gzip,
+          gzipSync,
+        }
+        const { onError, takeFullSnapshot, transport } = recoveringTransport(
+          fetchImpl,
+          { maxBufferBytes: 1_000_000 },
+          stall === 'stalled compressor' ? compression : immediateCompression()
+        )
+        transport.add(fullSnapshot)
+        transport.add(largeEvent(10, 1, 700_000))
+        const first = transport.flush()
+        transport.add(largeEvent(20, 2, 700_000))
+        const second = transport.flush()
+        transport.add(largeEvent(30, 3, 700_000))
+        const rejected = transport.flush()
+        await rejected
+
+        expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ droppedSeqs: [], reason: 'not-sent', seq: undefined }))
+        await vi.advanceTimersByTimeAsync(0)
+        expect(takeFullSnapshot).toHaveBeenCalledTimes(1)
+
+        release()
+        await Promise.all([first, second])
+        await transport.flush()
+
+        expect(calls.map((call) => call.seq)).toEqual([0, 1, 2])
+        expect(calls.map((call) => timestamps(call.body))).toEqual([[1, 10], [20], [100, 101]])
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('admits a second full batch while a large-buffer upload is in flight', async () => {
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { calls, fetchImpl } = scriptedFetch(async () => {
+      await gate
+      return accepted()
+    })
+    const { onError, transport } = recoveringTransport(fetchImpl, { maxBufferBytes: 4_000_000 })
+    transport.add(fullSnapshot)
+    transport.add(largeEvent(10, 1, 2_500_000))
+    const first = transport.flush()
+    transport.add(largeEvent(20, 2, 2_500_000))
+    const second = transport.flush()
+    release()
+    await Promise.all([first, second])
+
+    expect(onError).not.toHaveBeenCalled()
+    expect(calls.map((call) => call.seq)).toEqual([0, 1])
+  })
+
+  it('keeps flush order when compression callbacks finish in reverse order', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch(() => accepted())
+      let compressions = 0
+      const compression = {
+        gzip: ((input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
+          compressions += 1
+          setTimeout(
+            () => {
+              callback(null, gzipSync(input))
+            },
+            compressions === 1 ? 300 : 1
+          )
+        }) as typeof gzip,
+        gzipSync,
+      }
+      const { transport } = recoveringTransport(fetchImpl, {}, compression)
+      transport.add(fullSnapshot)
+      const first = transport.flush()
+      transport.add(click)
+      const second = transport.flush()
+      transport.add(mutation)
+      const third = transport.flush()
+      await vi.advanceTimersByTimeAsync(1_000)
+      await Promise.all([first, second, third])
+
+      expect(calls.map((call) => call.seq)).toEqual([0, 1, 2])
+      expect(calls.map((call) => timestamps(call.body))).toEqual([[1], [2], [3]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('drops only dependent chunks after a lost chunk and keeps the next anchor', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch((seq) => {
+        if (seq === 0) {
+          throw new TypeError('Failed to fetch')
+        }
+        return accepted()
+      })
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl)
+      transport.add(fullSnapshot)
+      const first = transport.flush()
+      transport.add(mutation)
+      const dependent = transport.flush()
+      transport.add({ ...meta, timestamp: 40 })
+      transport.add({ ...fullSnapshot, timestamp: 41 })
+      const anchor = transport.flush()
+      transport.add({ ...click, timestamp: 42 })
+      const afterAnchor = transport.flush()
+      transport.add({ ...mutation, timestamp: 43 })
+      await vi.advanceTimersByTimeAsync(30_000)
+      await Promise.all([first, dependent, anchor, afterAnchor])
+      await vi.advanceTimersByTimeAsync(0)
+      await transport.flush()
+
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ droppedSeqs: [1], reason: 'unconfirmed', seq: 0 }))
+      expect(takeFullSnapshot).not.toHaveBeenCalled()
+      const delivered = calls.filter((call) => call.seq !== 0)
+      expect(delivered.map((call) => call.seq)).toEqual([2, 3, 4])
+      expect(delivered.map((call) => timestamps(call.body))).toEqual([[40, 41], [42], [43]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('trims dependent events that precede the anchor inside a queued chunk', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch((seq) => (seq === 0 ? new Response(null, { status: 400 }) : accepted()))
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl)
+      transport.add(fullSnapshot)
+      const lost = transport.flush()
+      transport.add({ ...mutation, timestamp: 39 })
+      transport.add({ ...meta, timestamp: 40 })
+      transport.add({ ...fullSnapshot, timestamp: 41 })
+      transport.add({ ...click, timestamp: 42 })
+      const anchored = transport.flush()
+      await Promise.all([lost, anchored])
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ droppedSeqs: [], reason: 'rejected', seq: 0 }))
+      expect(takeFullSnapshot).not.toHaveBeenCalled()
+      expect(calls.filter((call) => call.seq === 1).map((call) => timestamps(call.body))).toEqual([[40, 41, 42]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('trims an upload whose compression is still running when an earlier lifecycle chunk is lost', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch(async (seq) => {
+        if (seq === 0) {
+          await new Promise((resolve) => {
+            setTimeout(resolve, 10)
+          })
+          throw new TypeError('Failed to fetch')
+        }
+        return accepted()
+      })
+      const compression = {
+        gzip: ((input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
+          setTimeout(() => {
+            callback(null, gzipSync(input))
+          }, 100)
+        }) as typeof gzip,
+        gzipSync,
+      }
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl, {}, compression)
+      transport.add(fullSnapshot)
+      const lifecycle = transport.flush({ keepalive: true })
+      transport.add({ ...mutation, timestamp: 39 })
+      transport.add({ ...meta, timestamp: 40 })
+      transport.add({ ...fullSnapshot, timestamp: 41 })
+      transport.add({ ...click, timestamp: 42 })
+      const ordinary = transport.flush()
+      await vi.advanceTimersByTimeAsync(1_000)
+      await Promise.all([lifecycle, ordinary])
+
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ droppedSeqs: [], reason: 'unconfirmed', seq: 0 }))
+      expect(takeFullSnapshot).not.toHaveBeenCalled()
+      expect(calls.filter((call) => call.seq === 1).map((call) => timestamps(call.body))).toEqual([[40, 41, 42]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not start another attempt when a delayed backoff outlasts the retry budget', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch(() => {
+        throw new TypeError('Failed to fetch')
+      })
+      const { onError, transport } = recoveringTransport(fetchImpl)
+      transport.add(fullSnapshot)
+      const flush = transport.flush()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(calls).toHaveLength(1)
+      // Simulates a background tab that fires the 500ms backoff timer 31 seconds late.
+      vi.setSystemTime(Date.now() + 31_000)
+      await vi.advanceTimersByTimeAsync(500)
+      await flush
+
+      expect(calls).toHaveLength(1)
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'unconfirmed', seq: 0 }))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a buffered anchor instead of taking a new snapshot', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch((seq) => (seq === 0 ? new Response(null, { status: 400 }) : accepted()))
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl)
+      transport.add(fullSnapshot)
+      const lost = transport.flush()
+      transport.add(click)
+      transport.add({ ...meta, timestamp: 40 })
+      transport.add({ ...fullSnapshot, timestamp: 41 })
+      transport.add({ ...mutation, timestamp: 42 })
+      await lost
+      await vi.advanceTimersByTimeAsync(0)
+      await transport.flush()
+
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'rejected', seq: 0 }))
+      expect(takeFullSnapshot).not.toHaveBeenCalled()
+      expect(calls.filter((call) => call.seq === 1).map((call) => timestamps(call.body))).toEqual([[40, 41, 42]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('takes at most one resync snapshot per minute', async () => {
+    vi.useFakeTimers()
+    try {
+      const { fetchImpl } = scriptedFetch(() => new Response(null, { status: 401 }))
+      const takeFullSnapshot = vi.fn()
+      const onError = vi.fn()
+      const transport = new ReplayTransport(
+        { ...makeConfig(fetchImpl), now: () => Date.now(), onError },
+        'sess-rate',
+        'full',
+        null,
+        immediateCompression(),
+        {},
+        { takeFullSnapshot }
+      )
+      transport.add(fullSnapshot)
+      await transport.flush()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(takeFullSnapshot).toHaveBeenCalledTimes(1)
+      expect(onError).toHaveBeenLastCalledWith(expect.objectContaining({ message: 'replay resync snapshot produced no full snapshot' }))
+
+      await vi.advanceTimersByTimeAsync(59_999)
+      expect(takeFullSnapshot).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(takeFullSnapshot).toHaveBeenCalledTimes(2)
+      transport.discard()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('re-anchors after a lost lifecycle chunk when recording continues', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch((seq) => {
+        if (seq === 0) {
+          throw new TypeError('Failed to fetch')
+        }
+        return accepted()
+      })
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl)
+      transport.add(fullSnapshot)
+      await transport.flush({ keepalive: true })
+      transport.add(click)
+      await vi.advanceTimersByTimeAsync(0)
+      await transport.flush()
+
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'unconfirmed', seq: 0 }))
+      expect(takeFullSnapshot).toHaveBeenCalledTimes(1)
+      expect(calls.map((call) => call.seq)).toEqual([0, 1])
+      expect(timestamps(calls[1]!.body)).toEqual([100, 101])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

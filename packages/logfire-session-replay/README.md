@@ -197,6 +197,46 @@ Security Policy blocks fflate's worker compressor, replay retries the same batch
 with synchronous gzip and remembers the fallback for that replay controller.
 This preserves the batch, but compression may briefly use the main thread.
 
+## Upload Failures
+
+Ordinary uploads wait in an in-memory queue and are sent in sequence order.
+Network errors, timeouts, `408`, `425`, `429`, and `5xx` responses are retried
+with the same sequence number and the same compressed bytes. The backoff starts
+at 500 ms, doubles up to 8 s, and uses jitter. Each chunk has a 30-second retry
+budget that includes the time of its requests. `Retry-After` on `429` and `503`
+can lengthen a wait, never shorten it, and is honored while it fits that budget.
+Other `4xx` responses are not retried. The receiver must accept a repeated
+`(sessionId, seq)` as the same chunk, because a retry can follow a request that
+the server stored but whose response was lost.
+
+The queue holds at most 2,000,000 bytes, or twice `maxBufferBytes` when that is
+larger. It counts uncompressed events until they are compressed, and compressed
+bodies afterwards. An empty queue always admits the next batch, even when that
+batch is larger than the limit, because an initial full snapshot can exceed it
+and must not be lost. Otherwise, a batch that does not fit is discarded without
+a sequence number, and the chunks already queued are still delivered.
+
+A lost chunk is reported to `onError` as a `ReplayUploadError`:
+
+- `reason`: `'unconfirmed'` when retries ran out after a request reached the
+  network (the server may still hold the chunk), `'rejected'` for a terminal
+  HTTP status, or `'not-sent'` when no request left the browser (full queue,
+  compression failure, or a failing `headers` or `token` callback).
+- `seq`: the lost chunk, or `undefined` for a batch the full queue rejected.
+- `droppedSeqs`: later chunks that were discarded without upload because they
+  depended on the lost one.
+- `status`, `sessionId`, and `cause`.
+
+After a loss, replay discards the events that depend on the missing DOM state
+and takes a fresh full snapshot, so playback resumes correctly after the gap.
+Chunks that already start from a later full snapshot are kept. Replay takes at
+most one of these recovery snapshots per minute.
+
+`stop()` gives each unsent chunk one last attempt and resolves within about 10
+seconds, even when uploads hang. The queue lives in memory only: chunks that are
+still queued when the page closes or reloads are lost, and a reloaded page does
+not retry them.
+
 ## Privacy
 
 The recorder masks all rendered text and input values by default

@@ -1,7 +1,7 @@
 import { startSessionReplay } from 'lf-replay-delivery'
 import type { SessionReplay } from '@pydantic/logfire-session-replay'
 
-type Scenario = 'csp' | 'retry-after' | 'short' | 'unload' | 'utf8'
+type Scenario = 'csp' | 'gap' | 'retry-after' | 'short' | 'unload' | 'utf8'
 type Phase = 'starting' | 'ready' | 'complete' | 'failed'
 
 interface DeliveryState {
@@ -73,6 +73,8 @@ async function run(): Promise<void> {
     await delay(100)
   } else if (scenario === 'retry-after') {
     await replay.flush()
+  } else if (scenario === 'gap') {
+    await runGap(replay)
   } else {
     await fetch(`/application/fetch?scenario=${scenario}`, { method: 'POST', body: 'é🚀' })
     await sendXhr(`/application/xhr?scenario=${scenario}`, 'é🚀')
@@ -83,6 +85,28 @@ async function run(): Promise<void> {
   state.phase = 'complete'
   await saveState()
   setStatus('complete')
+}
+
+// The lost chunk creates #late; the change after the gap only replays if the
+// SDK re-anchors with a full snapshot that contains it.
+async function runGap(replay: SessionReplay): Promise<void> {
+  const payload = document.querySelector('#payload')
+  if (payload === null) {
+    throw new Error('missing payload node')
+  }
+  payload.textContent = 'gap-before'
+  await nextFrame()
+  await replay.flush()
+  const late = document.createElement('span')
+  late.id = 'late'
+  late.textContent = 'gap-lost'
+  payload.appendChild(late)
+  await nextFrame()
+  await replay.flush()
+  await delay(100)
+  late.textContent = 'gap-after'
+  await nextFrame()
+  await replay.flush()
 }
 
 async function prepareUnload(): Promise<void> {
@@ -144,6 +168,9 @@ function scenarioFromPath(pathname: string): Scenario {
   }
   if (pathname.startsWith('/csp/')) {
     return 'csp'
+  }
+  if (pathname.startsWith('/gap/')) {
+    return 'gap'
   }
   if (pathname.startsWith('/retry-after/')) {
     return 'retry-after'
