@@ -276,7 +276,7 @@ export function createFetchHandler(fetchFn: FetchHandler, initialiser: Initialis
         const args: FetchHandlerArgs = [request, env, ctx]
         return await api_context.with(context, executeFetchHandler, undefined, target, args)
       } finally {
-        orig_ctx.waitUntil(exportSpans(tracker))
+        orig_ctx.waitUntil(exportSpans(config.spanProcessors, tracker))
       }
     },
   }

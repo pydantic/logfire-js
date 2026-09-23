@@ -141,6 +141,8 @@ For configuration you can either pass in a
 
 Because the configuration function is run separately for every new invocation, it is possible to tailor your configuration for every type of request. So it is for example possible to have a much lower sampling ratio for your healthchecks than actual API requests.
 
+The exporter, span processors, service resource and propagator are also taken from each invocation's configuration, so a configuration function can route different requests to different destinations. The `instrumentation` options patch the global `fetch` and `caches` once per isolate, so they follow the first invocation's configuration.
+
 ### Exporter
 
 In the `exporter`, you need to configure where to send spans to. It can take either an instance of a class that implements the standard OpenTelemetry `SpanExporter` interface, or an object with the properties `url` and optionally `headers` to configure an exporter for the OpenTelemetry format.
