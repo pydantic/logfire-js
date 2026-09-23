@@ -19,6 +19,11 @@ interface Compression {
   gzipSync: typeof gzipSync
 }
 
+interface ChunkIdentity {
+  distinctId: string
+  user: ReplayUser | undefined
+}
+
 interface PreparedUpload {
   body: Uint8Array
   lifecycle: boolean
@@ -219,13 +224,16 @@ export class ReplayTransport {
     this.seq += eventChunks.length
     const sessionId = this.sessionId
     this.saveSeq(sessionId, this.seq)
+    // Ordinary uploads wait for earlier ones, so identity is captured with the
+    // events it describes rather than when the upload is finally sent.
+    const identity = this.snapshotIdentity()
 
     // A pagehide/visibility keepalive must start before the browser freezes the
     // page, even when an ordinary upload is still awaiting its response.
     const prior = options.keepalive === true ? Promise.resolve() : (this.flushing ?? Promise.resolve())
     const run =
       options.keepalive === true
-        ? this.deliverLifecycle(eventChunks, seq, sessionId)
+        ? this.deliverLifecycle(eventChunks, seq, sessionId, identity)
         : prior.then(async () => {
             for (let index = 0; index < eventChunks.length; index++) {
               const eventChunk = eventChunks[index]
@@ -233,7 +241,7 @@ export class ReplayTransport {
                 continue
               }
               // eslint-disable-next-line no-await-in-loop -- ordinary flushes preserve response order.
-              await this.deliverOrdinary(eventChunk, seq + index, sessionId)
+              await this.deliverOrdinary(eventChunk, seq + index, sessionId, identity)
             }
           })
     const previouslyTracked = this.flushing
@@ -379,7 +387,7 @@ export class ReplayTransport {
     return false
   }
 
-  private createEnvelope(events: RrwebEvent[], seq: number): ChunkEnvelope {
+  private snapshotIdentity(): ChunkIdentity {
     const user = this.snapshotUser()
     let distinctId = this.config.distinctId
     if (this.config.getDistinctId !== undefined) {
@@ -391,9 +399,13 @@ export class ReplayTransport {
     } else if (user !== undefined) {
       distinctId = user.id
     }
+    return { distinctId, user }
+  }
+
+  private createEnvelope(events: RrwebEvent[], seq: number, identity: ChunkIdentity): ChunkEnvelope {
     return {
       version: CHUNK_ENVELOPE_VERSION,
-      meta: computeChunkMeta(seq, events, distinctId, this.sessionAttributes, user),
+      meta: computeChunkMeta(seq, events, identity.distinctId, this.sessionAttributes, identity.user),
       events,
     }
   }
@@ -410,8 +422,8 @@ export class ReplayTransport {
     }
   }
 
-  private async deliverOrdinary(events: RrwebEvent[], seq: number, sessionId: string): Promise<void> {
-    const envelope = this.createEnvelope(events, seq)
+  private async deliverOrdinary(events: RrwebEvent[], seq: number, sessionId: string, identity: ChunkIdentity): Promise<void> {
+    const envelope = this.createEnvelope(events, seq, identity)
 
     try {
       const input = strToU8(JSON.stringify(envelope))
@@ -422,7 +434,7 @@ export class ReplayTransport {
     }
   }
 
-  private async deliverLifecycle(eventChunks: RrwebEvent[][], seq: number, sessionId: string): Promise<void> {
+  private async deliverLifecycle(eventChunks: RrwebEvent[][], seq: number, sessionId: string, identity: ChunkIdentity): Promise<void> {
     const prepared: (PreparedUpload | undefined)[] = []
     for (let index = 0; index < eventChunks.length; index++) {
       const events = eventChunks[index]
@@ -430,7 +442,7 @@ export class ReplayTransport {
         prepared.push(undefined)
         continue
       }
-      const envelope = this.createEnvelope(events, seq + index)
+      const envelope = this.createEnvelope(events, seq + index, identity)
       try {
         prepared.push({
           body: this.compression.gzipSync(strToU8(JSON.stringify(envelope))),

@@ -375,6 +375,42 @@ describe('ReplayTransport full mode', () => {
       expect(onError).toHaveBeenCalledWith(failure)
     })
 
+    it('keeps the user of the recorded events when an earlier upload delays delivery', async () => {
+      let releaseFirst: ((response: Response) => void) | undefined
+      const bodies: BodyInit[] = []
+      const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+        bodies.push(init?.body as BodyInit)
+        if (bodies.length === 1) {
+          return new Promise<Response>((resolve) => {
+            releaseFirst = resolve
+          })
+        }
+        return { ok: true, status: 202 } as Response
+      }) as unknown as typeof fetch
+      let user: { id: string } | undefined = { id: 'user-a' }
+      const transport = new ReplayTransport(
+        { ...makeConfig(fetchImpl), getUser: () => user },
+        'sess-queued',
+        'full',
+        null,
+        immediateCompression()
+      )
+
+      transport.add(fullSnapshot)
+      const firstFlush = transport.flush()
+      await vi.waitFor(() => {
+        expect(bodies).toHaveLength(1)
+      })
+      transport.add(click)
+      const secondFlush = transport.flush()
+      user = { id: 'user-b' }
+      releaseFirst?.({ ok: true, status: 202 } as Response)
+      await Promise.all([firstFlush, secondFlush])
+
+      expect(bodies.map((body) => decodeBody(body).meta.user)).toEqual([{ id: 'user-a' }, { id: 'user-a' }])
+      expect(bodies.map((body) => decodeBody(body).meta.distinctId)).toEqual(['user-a', 'user-a'])
+    })
+
     it('leaves metadata unchanged without getUser', async () => {
       const [meta] = await flushChunks({}, 1)
       expect(meta).not.toHaveProperty('user')

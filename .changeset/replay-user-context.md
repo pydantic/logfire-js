@@ -1,5 +1,5 @@
 ---
-'@pydantic/logfire-session-replay': patch
+'@pydantic/logfire-session-replay': minor
 '@pydantic/logfire-browser': minor
 ---
 
