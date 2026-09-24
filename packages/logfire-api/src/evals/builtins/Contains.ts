@@ -1,6 +1,7 @@
 import type { EvaluationReason, EvaluatorContext } from '../types'
 
 import { ceilCodePointBoundary, floorCodePointBoundary } from '../../formatter'
+import { attributeJsonReplacer } from '../../serializeAttributes'
 import { Evaluator } from '../Evaluator'
 import { registerEvaluator } from '../registry'
 import { deepEqual } from './Equals'
@@ -190,19 +191,25 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function truncatedRepr(value: unknown, maxLength: number): string {
-  let repr: string
-  if (typeof value === 'string') {
-    repr = JSON.stringify(value)
-  } else {
-    try {
-      repr = JSON.stringify(value)
-    } catch {
-      repr = String(value)
-    }
-  }
+  // `JSON.stringify` is not total, and both of its gaps arrive here as the evaluated output. It
+  // hands back `undefined` rather than a string for `undefined`, a function or a symbol, and the
+  // length check below reads `.length` outside the try, so an absent property took the evaluator
+  // down instead of reporting the mismatch. It also throws on a BigInt at any depth, where
+  // `String(value)` flattened a whole object to `[object Object]` and lost the diagnostic; the
+  // shared replacer carries the value instead.
+  const repr = stringifyRepr(value)
   if (repr.length <= maxLength) {
     return repr
   }
   const half = Math.floor(maxLength / 2)
   return `${repr.slice(0, floorCodePointBoundary(repr, half))}...${repr.slice(ceilCodePointBoundary(repr, repr.length - half))}`
+}
+
+function stringifyRepr(value: unknown): string {
+  try {
+    const serialized: unknown = JSON.stringify(value, attributeJsonReplacer)
+    return typeof serialized === 'string' ? serialized : String(value)
+  } catch {
+    return String(value)
+  }
 }

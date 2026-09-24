@@ -278,6 +278,23 @@ describe('built-in evaluator edge cases', () => {
     })
   })
 
+  it('Contains reports a mismatch that JSON.stringify cannot represent', () => {
+    // An own property whose value is `undefined` passes the key check and fails the value
+    // comparison, so the reason has to render `undefined`. `JSON.stringify(undefined)` is
+    // `undefined`, not a string, and the length check reads `.length` outside the try.
+    expect(new Contains({ value: { a: 1 } }).evaluate(ctx({ a: undefined }))).toEqual({
+      reason: 'Output has different value for key "a": undefined != 1',
+      value: false,
+    })
+
+    // A BigInt throws inside `JSON.stringify`, and the old fallback of `String(value)` rendered
+    // the whole object as `[object Object]`, losing every field including the ones that are fine.
+    expect(new Contains({ value: 'missing' }).evaluate(ctx({ model: 'gpt', tokens: 9007199254740993n }))).toEqual({
+      reason: 'Output {"model":"gpt","tokens":"9007199254740993"} does not contain provided value as a key',
+      value: false,
+    })
+  })
+
   it('Contains does not leave a lone surrogate when truncating a reason', () => {
     // repr is '"' + value + '"' and the string limit is 100, so the head cut lands
     // at repr index 50, putting an emoji's halves either side of it.
