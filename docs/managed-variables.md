@@ -119,3 +119,5 @@ await resolved.withContext(async () => {
 ```
 
 See `examples/node/variables.ts` for a complete local and remote example.
+
+[Agent Control](agent-control.md) is built on managed variables: an agent's instructions, model, settings, and tool definitions live in one `agent__<name>` variable that the Logfire UI edits.

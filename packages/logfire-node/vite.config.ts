@@ -12,9 +12,11 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
       resolver: 'tsc',
     },
     deps: {
-      neverBundle: [/^@opentelemetry/u, /^node:/u, 'logfire', 'logfire/datasets', 'logfire/evals', 'logfire/vars', 'picocolors'],
+      neverBundle: [/^@opentelemetry/u, /^node:/u, 'logfire', 'logfire/datasets', 'logfire/evals', 'logfire/vars', 'picocolors', 'zod'],
     },
     entry: {
+      'agent-control/index': 'src/agent-control/index.ts',
+      'agent-control/testing': 'src/agent-control/testing.ts',
       datasets: 'src/datasets.ts',
       index: 'src/index.ts',
       vars: 'src/vars.ts',
@@ -22,7 +24,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
     format: ['esm', 'cjs'],
     hooks: {
       'build:done': () => {
-        copyCjsDeclarations(['datasets', 'index', 'vars'])
+        copyCjsDeclarations(['agent-control/index', 'agent-control/testing', 'datasets', 'index', 'vars'])
       },
     },
     minify: true,
