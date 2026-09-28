@@ -98,6 +98,12 @@ pnpm run changeset-add
 - Prefer existing package patterns, helpers, and OpenTelemetry abstractions over introducing new wrappers.
 - Keep changes scoped to the package or example relevant to the task.
 - Update examples or docs when public behavior, configuration, or package usage changes.
+- `docs/navigation.yml` owns the TypeScript subtree embedded in the Logfire docs.
+  Update it alongside changes to published JS docs pages; keep public slugs and
+  existing aliases stable unless a redirect is intentional. The Logfire Python
+  repository only supplies the subtree's placement. Unified-docs reads this
+  manifest from logfire-js `main`; trigger its docs deployment after merging a
+  navigation change. No `pydantic/logfire` change is needed.
 - Add or update tests for behavior changes. If a package has minimal tests or `--passWithNoTests`, still run typecheck/build for that package when relevant.
 - Avoid adding production dependencies without a clear need; keep workspace dependency and lockfile changes together.
 - Do not put agent-specific or vendor-specific instructions here unless they are explicitly about repository compatibility. Use generic wording that applies to any coding agent.
