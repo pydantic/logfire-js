@@ -1,146 +1,99 @@
 ---
 title: CLI
-description: Use npx logfire to authenticate, select projects, and manage read tokens.
+description: Use npx logfire to authenticate, connect projects, and query telemetry.
 ---
 
 # CLI
 
-The `logfire` package exposes a Node-only CLI:
+The `logfire` package delegates its `logfire` command to the native Logfire CLI:
 
 ```bash
 npx logfire --help
 ```
 
-Supported commands:
+The optional native package contains one binary for the current operating system
+and architecture. If optional dependencies are disabled, reinstall without
+`--omit=optional` or `--no-optional` before using the command. Importing the
+JavaScript SDK does not execute the CLI.
 
-- `auth`: authenticate with Logfire and write user credentials to `~/.logfire/default.toml`.
-- `auth logout`: remove user credentials.
-- `projects list`: list projects where the current user can create write tokens.
-- `projects new [project-name]`: create a project and write local project credentials.
-- `projects use [project-name]`: create a write token for an existing project and write local project credentials.
-- `projects status`: show what telemetry has actually reached the project this directory is linked to.
-- `read-tokens --project <org>/<project> create`: create a read token and print it to stdout.
-- `read-tokens create --save`: create a read token and store it in the data directory instead of printing it.
-- `whoami`: show configured user and project information.
-- `clean`: remove local project credentials.
-- `info`: print SDK and runtime information.
-
-The JavaScript CLI does not implement Python SDK commands such as `run`, `inspect`, `gateway`, or `prompt`.
-
-## Global options
-
-- `--version`: print the CLI, Node.js, and platform versions, then exit.
-- `--region <region>`: select a Logfire data region (`us` or `eu`).
-- `--base-url <url>`: target a self-hosted or custom Logfire API. Mutually exclusive with `--region`.
-- `LOGFIRE_BASE_URL`: the same target as `--base-url`, read from the environment. Either flag takes precedence over it.
-
-## Auth
-
-Authenticate once per machine:
+## Version
 
 ```bash
-npx logfire auth
+npx logfire --version
 ```
 
-Use `--region` or `--base-url` to select a specific Logfire API:
+This reports both the native CLI version and the JavaScript SDK version that
+invoked it.
+
+## Authenticate
+
+Sign in with your browser and store the OAuth session in the operating system
+credential store:
 
 ```bash
 npx logfire --region us auth
-npx logfire --base-url https://logfire-us.pydantic.dev auth
+npx logfire auth whoami
 ```
 
-User auth tokens are stored in `~/.logfire/default.toml`, using the same token section shape as the Python SDK.
+Use `--region eu` for the EU service, `--base-url` for a self-hosted service, and
+`--org` to select an exact organization. List remembered profiles without opening
+the credential store with `npx logfire auth status`.
 
-Log out to remove stored user tokens:
+## Connect a project
+
+Choose an existing project interactively:
 
 ```bash
-npx logfire auth logout
+npx logfire init
 ```
 
-By default this removes every stored user token. Pass `--region` or `--base-url` to log out from only one Logfire API:
+Or make the choice explicit for scripts and coding agents:
 
 ```bash
-npx logfire --region eu auth logout
+npx logfire --org my-org --no-input init use --name my-project --permission send
 ```
 
-## Projects
+To create a project instead, use `init new --name my-project`. These commands
+write `.logfire/logfire_credentials.json` and protect it with a local
+`.gitignore`. The Node.js SDK reads that project credential when neither an
+explicit `token` nor `LOGFIRE_TOKEN` is set.
 
-Configure the current Node.js project to use an existing Logfire project:
+Inspect or remove only the local project connection with:
 
 ```bash
-npx logfire projects use my-project
+npx logfire project current
+npx logfire project clean
 ```
 
-Or create a new project:
+## Query and tokens
+
+List available projects and query recent telemetry through the hosted MCP server:
 
 ```bash
-npx logfire projects new my-project
+npx logfire mcp projects
+npx logfire mcp query schema
+npx logfire mcp query run \
+  "SELECT service_name, count(*) FROM records GROUP BY service_name" \
+  --project my-project
 ```
 
-Both commands write `.logfire/logfire_credentials.json` and `.logfire/.gitignore`. The Node.js runtime package reads those local credentials when no explicit `token` and no `LOGFIRE_TOKEN` are set.
-
-Pass `--data-dir <dir>` to write credentials somewhere other than `.logfire`.
-
-## Status
-
-To see what telemetry has actually reached the project this directory is linked to, run:
+Create a read or write token for the project connected to the current directory:
 
 ```bash
-npx logfire projects status
+npx logfire token read
+npx logfire token write
 ```
 
-```
-Project  my-org/orders
-         https://logfire-us.pydantic.dev/my-org/orders
+Token values are printed once. Treat them as secrets and do not paste them into
+logs, issues, or chat.
 
- Service         | Records | Last seen
------------------|---------|---------------------------------
- orders-web      | 87      | 2026-08-19T01:01:29.717170+00:00
- orders-worker   | 84      | 2026-08-19T01:01:29.716577+00:00
-```
+For non-interactive use, add `--no-input --output json` and select `--org`
+explicitly. Run `npx logfire help <command>` for the complete command-specific
+contract.
 
-One row per service, so a partly-instrumented system shows up as one: if you instrumented a web app and a worker but only the web app appears, the worker is not reporting.
+## Browser safety
 
-This needs a saved read token — see below — and reports the last hour. Add `--json` for machine-readable output.
-
-## Read tokens
-
-To create a read token for a project and print it to stdout, run:
-
-```bash
-npx logfire read-tokens --project <org>/<project> create
-```
-
-### Saving a token instead of printing it
-
-To store the token in the data directory rather than printing it, use `--save`:
-
-```bash
-npx logfire read-tokens create --save
-```
-
-With no `--project`, this uses the project the current directory is linked to. The token is written to `.logfire/read_token.json`, readable only by you, in the same gitignored directory that already holds your write credentials — and it is never printed, so it cannot end up in your terminal history, a CI log, or a coding agent's transcript.
-
-`npx logfire projects status` uses this token. A saved token expires after 30 days; run the command again to replace it.
-
-> A read token can read everything in the project, which may include personal data captured in span attributes. Keep `.logfire/` out of version control — the CLI adds a `.gitignore` for you — and use `npx logfire clean` to remove stored credentials.
-
-## Whoami and clean
-
-Show the configured user and project for the current directory:
-
-```bash
-npx logfire whoami
-```
-
-Remove the local project credentials written by `projects use/new`, and any saved read token:
-
-```bash
-npx logfire clean
-```
-
-Both commands accept `--data-dir <dir>` to read or remove credentials from a directory other than `.logfire`. `whoami` resolves project information from `LOGFIRE_TOKEN`, then global user auth, then local credentials, matching the Node.js runtime precedence.
-
-## Browser Safety
-
-Local credential files are Node-only. Browser applications use the restricted token and ingest settings generated under **Frontend > Applications**. Never put a normal Logfire write token in browser code. See the [Browser package](../packages/browser.md) for setup.
+Local credential files are Node-only. Browser applications use the restricted
+token and ingest settings generated under **Frontend > Applications**. Never put
+a normal Logfire write token in browser code. See the
+[Browser package](../packages/browser.md) for setup.

@@ -106,6 +106,9 @@
     "p-retry": "catalog:",
     "zod": "catalog:"
   },
+  "optionalDependencies": {
+    "logfire-cli": "^0.1.7"
+  },
   "devDependencies": {
     "@opentelemetry/api": "catalog:",
     "@opentelemetry/api-logs": "catalog:",

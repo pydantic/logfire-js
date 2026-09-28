@@ -85,7 +85,7 @@ export interface LogfireConfigOptions {
    */
   distributedTracing?: boolean
   /**
-   * Directory containing `.logfire` project credentials written by `npx logfire projects use/new`.
+   * Directory containing `.logfire` project credentials written by `npx logfire init`.
    * Defaults to `LOGFIRE_CREDENTIALS_DIR`, then `.logfire` in the current working directory.
    */
   dataDir?: string
