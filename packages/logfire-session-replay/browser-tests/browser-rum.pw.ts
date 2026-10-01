@@ -36,9 +36,15 @@ test.describe('browser soft-navigation Web Vitals', () => {
       // The product navigation needs its own soft-navigation entry before the
       // next click starts another one.
       await page.waitForFunction(() => performance.getEntriesByType('soft-navigation').length > 0)
+      // The fixture shows its final status before it publishes the state the
+      // verifier reads, so the verifier waits for that upload.
+      const statePublished = page.waitForResponse(
+        (response) => response.request().method() === 'POST' && new URL(response.url()).pathname === '/receipts/state'
+      )
       await page.locator('#navigate').click()
       await expect(page.locator('#status')).toHaveText(/^(?:complete|failed)$/u)
       await expect(page.locator('#status')).toHaveText('complete')
+      await statePublished
       await runVerifier(softNavigationVerifier, scenario, testInfo)
     })
   }
