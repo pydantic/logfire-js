@@ -1,2 +1,7 @@
+# Git exports GIT_DIR and other repository variables to hooks. The test tasks
+# run git in temporary repositories, and an inherited GIT_DIR sends those
+# commands to the repository that started this push.
+unset $(git rev-parse --local-env-vars)
+
 vp run --filter "./packages/*" build
 vp run --filter "./packages/*" test
