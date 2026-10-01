@@ -163,7 +163,8 @@ logfire.configure({
 })
 ```
 
-`getRouteName` is evaluated for each span and becomes `logfire.page.route`.
+`getRouteName` is evaluated for each span and becomes `logfire.page.route`. See
+[Route names](#route-names) for the contract and router recipes.
 `getUser` is also evaluated for each span. A non-empty `id` becomes `user.id`;
 non-empty `name` and `email` values become `user.name` and `user.email`.
 Use an opaque application id. Name and email are opt-in PII. The SDK emits
@@ -216,6 +217,225 @@ logfire.configure({
 Use `getBrowserSessionId()` after `configure({ rum: { session: true } })` when
 another browser integration needs the SDK-owned session id before the first
 span is created.
+
+### Route names
+
+Set `getRouteName` in every single-page application. Without it, the only page
+dimension is `logfire.page.url.path`, so each id in a URL makes a separate page.
+`/projects/123` and `/projects/456` become two pages, and page tables, filters,
+and Web Vitals breakdowns split one screen into many rows. The route gives
+every view of one screen the same value, so page-level analysis can group by
+screen instead of by URL.
+
+The callback has this contract:
+
+- Return the matched route template, such as `/projects/:id`. Never return the
+  concrete path.
+- Return a fixed name for catch-all and not-found routes, such as `/*`. Do not
+  fall back to the URL.
+- Do not put ids, slugs, or user data in the value.
+- The SDK calls the callback for every new span. Keep it synchronous and cheap.
+  Read router state, or a variable that the application updates on navigation.
+- Change the value together with the URL. A span that starts after the URL
+  changes but before the value changes gets the previous route.
+- Return `undefined` until the router resolves the first route. The SDK then
+  omits the attribute.
+
+Each recipe below returns one value for both `/acme/shop/agents` and
+`/globex/web/agents`.
+
+#### React Router
+
+In data mode (`createBrowserRouter`), the router changes the URL and
+`router.state.matches` together. Join the matched route paths:
+
+```ts
+function routeTemplate(matches: readonly { route: { path?: string } }[]): string {
+  let template = ''
+  for (const { route } of matches) {
+    if (route.path === undefined || route.path === '') {
+      continue
+    }
+    template = route.path.startsWith('/') ? route.path : `${template.replace(/\/$/, '')}/${route.path}`
+  }
+  return template === '' ? '/' : template
+}
+
+const router = createBrowserRouter(routes)
+
+logfire.configureFrontend({
+  ...frontendOptions,
+  rum: {
+    session: {
+      getRouteName: () => routeTemplate(router.state.matches),
+    },
+  },
+})
+```
+
+Pathless layout and index routes add nothing to the template, and a `*` route
+returns `/*`. In declarative mode, match the current location against the same
+route objects. If the routes are `<Route>` elements, build the objects with
+`createRoutesFromElements`:
+
+```ts
+import { createRoutesFromElements, matchRoutes } from 'react-router'
+
+const routeObjects = createRoutesFromElements(routeElements)
+
+const getRouteName = () => routeTemplate(matchRoutes(routeObjects, window.location.pathname) ?? [])
+```
+
+If the router has a `basename`, pass it as the third argument of `matchRoutes`.
+
+#### TanStack Router
+
+Use the `fullPath` of the deepest match. Do not use `routeId`, because it
+contains the ids of pathless layout routes. TanStack Router changes the URL
+before its loaders finish, while `router.state.matches` still holds the
+previous route. Match the current path instead, and cache the result for each
+path:
+
+```ts
+let lastPathname: string | undefined
+let lastRoute: string | undefined
+
+const getRouteName = () => {
+  const { pathname } = router.history.location
+  if (pathname !== lastPathname) {
+    lastPathname = pathname
+    lastRoute = router.matchRoutes(pathname).at(-1)?.fullPath
+  }
+  return lastRoute
+}
+```
+
+#### Vue Router
+
+```ts
+const getRouteName = () => router.currentRoute.value.matched.at(-1)?.path
+```
+
+The deepest matched record holds the full path, for example
+`/:org/:project/agents`.
+
+#### Next.js Pages Router
+
+`router.pathname` is the page file path, for example `/blog/[slug]`. Store it
+in `pages/_app.tsx`:
+
+```tsx
+import type { AppProps } from 'next/app'
+import { useRouter } from 'next/router'
+
+import { setRouteName } from '../lib/logfire-route'
+
+export default function App({ Component, pageProps }: AppProps) {
+  setRouteName(useRouter().pathname)
+  return <Component {...pageProps} />
+}
+```
+
+```ts
+// lib/logfire-route.ts
+let routeName: string | undefined
+
+export function setRouteName(value: string | undefined): void {
+  routeName = value
+}
+
+export function getRouteName(): string | undefined {
+  return routeName
+}
+```
+
+Pass `getRouteName` from this module to `rum.session.getRouteName`.
+
+#### Next.js App Router
+
+The App Router has no public API that returns the matched route template.
+Rebuild it from `usePathname()` and `useParams()` in a client component that
+the root layout renders. The function replaces each parameter value with its
+`[name]` segment. It starts from the end of the path, because Next.js lists the
+parameters in segment order and a catch-all is always last:
+
+```tsx
+'use client'
+
+import { useParams, usePathname } from 'next/navigation'
+import { useEffect } from 'react'
+
+import { setRouteName } from '../lib/logfire-route'
+
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
+function routeTemplate(pathname: string, params: Record<string, string | string[] | undefined>): string {
+  const segments = pathname.split('/')
+  let end = segments.length - 1
+  for (const [name, value] of Object.entries(params).reverse()) {
+    if (value === undefined) {
+      continue
+    }
+    if (Array.isArray(value)) {
+      const start = segments.length - value.length
+      segments.splice(start, value.length, `[...${name}]`)
+      end = start - 1
+      continue
+    }
+    let index = end
+    while (index > 0 && decodeSegment(segments[index] ?? '') !== value) {
+      index--
+    }
+    if (index > 0) {
+      segments[index] = `[${name}]`
+      end = index - 1
+    }
+  }
+  return segments.join('/') || '/'
+}
+
+export function LogfireRouteName() {
+  const pathname = usePathname()
+  const params = useParams()
+  useEffect(() => {
+    setRouteName(routeTemplate(pathname, params))
+  }, [pathname, params])
+  return null
+}
+```
+
+This is an approximation. The template does not show route groups, and a
+static segment after a parameter with the same text can take the parameter's
+place. The effect runs after the new page renders, so spans that start during
+that render get the previous route.
+
+#### SvelteKit
+
+`route.id` is the route directory, for example `/blog/[slug]`. Store it from the
+root `+layout.svelte`, and pass the same `getRouteName` to
+`rum.session.getRouteName`:
+
+```svelte
+<script lang="ts">
+  import { afterNavigate } from '$app/navigation'
+
+  import { setRouteName } from '$lib/logfire-route'
+
+  afterNavigate(({ to }) => {
+    setRouteName(to?.route.id ?? undefined)
+  })
+</script>
+```
+
+`afterNavigate` runs after the new page renders, so spans that start during
+that render get the previous route. `$lib/logfire-route` is the same module as
+in the Next.js Pages Router recipe.
 
 ## RUM Web Vitals
 
