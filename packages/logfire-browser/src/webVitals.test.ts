@@ -559,31 +559,153 @@ describe('browser Web Vitals reporting', () => {
     expect(mocks.spans[0]?.attributes).toMatchObject({ 'logfire.page.route': '/projects/:id' })
   })
 
-  it('forgets the oldest observed routes after 50 URLs', async () => {
+  it('keeps the document route but forgets soft-navigation pages beyond the latest 50', async () => {
+    let now = 0
     let route = '/first'
     const sessionManager = new BrowserSessionManager({
       getRouteName: () => route,
+      performanceNow: () => now,
       storage: null,
     })
     sessionManager.getRouteName(new URL('https://example.com/first'))
     route = '/items/:id'
-    for (let index = 0; index < 50; index++) {
+    for (let index = 0; index <= 50; index++) {
+      now = (index + 1) * 100
       sessionManager.getRouteName(new URL(`https://example.com/items/${String(index)}`))
     }
-    setLocation('https://example.com/items/49')
+    setLocation('https://example.com/items/50')
+    await startWebVitals({ reportSoftNavs: true, sessionManager })
+
+    const cls = createMetric('CLS', { largestShiftValue: 0.1, loadState: 'complete' })
+    report('CLS', { ...cls, navigationURL: 'https://example.com/first' })
+    report('CLS', { ...cls, navigationStartTime: 90, navigationType: 'soft-navigation', navigationURL: 'https://example.com/items/0' })
+    report('CLS', { ...cls, navigationStartTime: 5_090, navigationType: 'soft-navigation', navigationURL: 'https://example.com/items/50' })
+
+    expect(mocks.spans.map((span) => span.attributes['logfire.page.route'])).toEqual(['/first', undefined, '/items/:id'])
+  })
+
+  it('keeps the first route observed while the document URL was current', async () => {
+    let route: string | undefined = undefined
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      storage: null,
+    })
+    sessionManager.getRouteName(new URL('https://example.com/projects/123'))
+    route = '/projects/:id'
+    sessionManager.getRouteName(new URL('https://example.com/projects/123'))
+    route = '/projects/:id/settings-modal'
+    sessionManager.getRouteName(new URL('https://example.com/projects/123'))
+    setLocation('https://example.com/projects/123')
     await startWebVitals({ sessionManager })
 
-    report('CLS', {
-      ...createMetric('CLS', { largestShiftValue: 0.1, loadState: 'complete' }),
-      navigationURL: 'https://example.com/first',
+    for (const name of ['LCP', 'CLS', 'INP'] as const) {
+      report(name, { ...createMetric(name, {}), navigationURL: 'https://example.com/projects/123' })
+    }
+
+    expect(mocks.spans.map((span) => span.attributes['logfire.page.route'])).toEqual(['/projects/:id', '/projects/:id', '/projects/:id'])
+  })
+
+  it('keeps the document route after a later visit to the same URL', async () => {
+    let route = '/products/:id'
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      storage: null,
     })
-    report('CLS', {
-      ...createMetric('CLS', { largestShiftValue: 0.1, loadState: 'complete' }),
-      navigationURL: 'https://example.com/items/0',
+    sessionManager.getRouteName(new URL('https://example.com/products/123'))
+    route = '/settings'
+    sessionManager.getRouteName(new URL('https://example.com/settings'))
+    route = '/products/:id/compare'
+    sessionManager.getRouteName(new URL('https://example.com/products/123'))
+    setLocation('https://example.com/products/123')
+    await startWebVitals({ sessionManager })
+
+    report('CLS', { ...createMetric('CLS', {}), navigationURL: 'https://example.com/products/123' })
+
+    expect(mocks.spans[0]?.attributes['logfire.page.route']).toBe('/products/:id')
+  })
+
+  it('omits the document route when the document URL was first observed on a later visit', async () => {
+    let route = '/products/:id/compare'
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      performanceNow: () => 3_000,
+      softNavigationStartTimes: () => [1_000, 2_000],
+      storage: null,
     })
+    sessionManager.getRouteName(new URL('https://example.com/products/123'))
+    route = '/settings'
+    setLocation('https://example.com/settings')
+    await startWebVitals({ sessionManager })
+
+    report('CLS', { ...createMetric('CLS', {}), navigationURL: 'https://example.com/products/123' })
 
     expect(mocks.spans[0]?.attributes).not.toHaveProperty('logfire.page.route')
-    expect(mocks.spans[1]?.attributes).toMatchObject({ 'logfire.page.route': '/items/:id' })
+  })
+
+  it('bounds a soft-navigation visit by the start of the next soft navigation', async () => {
+    let now = 0
+    let route = '/home'
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      performanceNow: () => now,
+      softNavigationStartTimes: () => [1_000, 2_000, 3_000],
+      storage: null,
+    })
+    const navigate = (href: string, nextRoute: string, at: number): void => {
+      now = at
+      route = nextRoute
+      sessionManager.getRouteName(new URL(href))
+    }
+    navigate('https://example.com/home', '/home', 0)
+    navigate('https://example.com/login-redirect', '/login-redirect', 1_010)
+    navigate('https://example.com/products/123', '/products/:id', 1_020)
+    navigate('https://example.com/settings', '/settings', 2_500)
+    navigate('https://example.com/products/123', '/products/:id/compare', 3_010)
+    setLocation('https://example.com/products/123')
+    await startWebVitals({ reportSoftNavs: true, sessionManager })
+
+    const softNavigation = (navigationStartTime: number, navigationURL: string) => ({
+      ...createMetric('INP', {}),
+      navigationStartTime,
+      navigationType: 'soft-navigation',
+      navigationURL,
+    })
+    report('INP', softNavigation(1_000, 'https://example.com/products/123'))
+    report('INP', softNavigation(2_000, 'https://example.com/account'))
+
+    expect(mocks.spans.map((span) => span.attributes['logfire.page.route'])).toEqual(['/products/:id', undefined])
+  })
+
+  it('matches each soft-navigation visit to the same URL by its start time', async () => {
+    let now = 0
+    let route = '/home'
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      performanceNow: () => now,
+      storage: null,
+    })
+    const navigate = (href: string, nextRoute: string, at: number): void => {
+      now = at
+      route = nextRoute
+      sessionManager.getRouteName(new URL(href))
+    }
+    navigate('https://example.com/home', '/home', 0)
+    navigate('https://example.com/products/123', '/products/:id', 1_000)
+    navigate('https://example.com/settings', '/settings', 2_000)
+    navigate('https://example.com/products/123', '/products/:id/compare', 3_000)
+    setLocation('https://example.com/products/123')
+    await startWebVitals({ reportSoftNavs: true, sessionManager })
+
+    const softNavigation = (navigationStartTime: number) => ({
+      ...createMetric('INP', {}),
+      navigationStartTime,
+      navigationType: 'soft-navigation',
+      navigationURL: 'https://example.com/products/123',
+    })
+    report('INP', softNavigation(990))
+    report('INP', softNavigation(2_990))
+
+    expect(mocks.spans.map((span) => span.attributes['logfire.page.route'])).toEqual(['/products/:id', '/products/:id/compare'])
   })
 
   it('omits document page context when a historical navigation URL cannot be sanitized', async () => {

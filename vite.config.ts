@@ -1,6 +1,16 @@
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+
 import { defineConfig } from 'vite-plus'
 
 const generatedFiles = ['**/dist/**', '**/.next/**', '**/next-env.d.ts', '**/worker-configuration.d.ts']
+
+// Browser fixtures type their virtual recorder module through a sibling
+// ambient declaration that a check of only the staged files would not load.
+function withFixtureDeclarations(files: readonly string[]): string[] {
+  const declarations = files.map((file) => join(dirname(file), 'recorder.d.ts')).filter((file) => existsSync(file))
+  return [...new Set([...files, ...declarations])]
+}
 
 const generatedAndExternalFiles = ['node_modules/**', '.pnpm-store/**', 'pnpm-lock.yaml', '*.tgz', '**/.turbo/**', ...generatedFiles]
 
@@ -231,6 +241,9 @@ export default defineConfig({
     },
   },
   staged: {
-    '*.{js,ts,tsx,mjs,mts,json,md,yaml,yml}': 'vp check --fix',
+    '*.{js,ts,tsx,mjs,mts,json,md,yaml,yml}': (files) =>
+      `vp check --fix ${withFixtureDeclarations(files)
+        .map((file) => JSON.stringify(file))
+        .join(' ')}`,
   },
 })

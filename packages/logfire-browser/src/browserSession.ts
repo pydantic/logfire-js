@@ -2,6 +2,7 @@ import type { BrowserWebVitalsOptions } from './webVitals'
 import type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
 
 import { setOwn } from './ownRecord'
+import { PageRouteHistory } from './pageRoutes'
 
 export const BROWSER_SESSION_ACTIVITY_WRITE_DELAY_MS = 1_000
 const MAX_SESSION_ATTRIBUTES = 20
@@ -9,7 +10,6 @@ const MAX_SESSION_ATTRIBUTE_STRING_CODE_POINTS = 200
 const SESSION_ATTRIBUTE_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u
 // A long single-page session can visit many URLs. Web Vitals report for the
 // current and recent navigations only, so older entries are not needed.
-const MAX_OBSERVED_ROUTE_URLS = 50
 
 export type BrowserSessionAttributeValue = string | number | boolean
 export type BrowserSessionAttributesInput = Record<string, BrowserSessionAttributeValue | undefined>
@@ -105,6 +105,16 @@ export interface BrowserSessionManagerOptions extends BrowserSessionOptions {
    * Internal injection point for deterministic tests.
    */
   generateId?: () => string
+  /**
+   * Internal injection point for deterministic tests. Must share the
+   * performance timeline that Web Vitals navigation start times use.
+   */
+  performanceNow?: () => number
+  /**
+   * Internal injection point for deterministic tests. Returns the start times
+   * of the browser-detected soft navigations so far.
+   */
+  softNavigationStartTimes?: () => readonly number[]
 }
 
 export const DEFAULT_BROWSER_SESSION_OPTIONS: {
@@ -130,6 +140,14 @@ function getDefaultSessionStorage(): Storage | null {
 // routers match on it.
 function routeUrlKey(url: URL): string {
   return `${url.origin}${url.pathname}${url.hash}`
+}
+
+function readSoftNavigationStartTimes(): number[] {
+  try {
+    return globalThis.performance.getEntriesByType('soft-navigation').map((entry) => entry.startTime)
+  } catch {
+    return []
+  }
 }
 
 function generateBrowserSessionId(): string {
@@ -266,7 +284,9 @@ export class BrowserSessionManager {
   private readonly storageKey: string
   private readonly urlAttributes: BrowserSessionOptions['urlAttributes'] | undefined
   private readonly sessionChangeListeners = new Set<(session: BrowserSessionState) => void>()
-  private readonly observedRouteNames = new Map<string, string>()
+  private readonly pageRoutes = new PageRouteHistory()
+  private readonly performanceNow: () => number
+  private readonly softNavigationStartTimes: () => readonly number[]
   private memorySession: BrowserSessionState | undefined
   private pendingSession: BrowserSessionState | undefined
   private persistenceTimer: ReturnType<typeof setTimeout> | undefined
@@ -274,6 +294,8 @@ export class BrowserSessionManager {
   constructor(options: BrowserSessionManagerOptions = {}) {
     this.generateId = options.generateId ?? generateBrowserSessionId
     this.routeNameCallback = options.getRouteName
+    this.performanceNow = options.performanceNow ?? (() => globalThis.performance.now())
+    this.softNavigationStartTimes = options.softNavigationStartTimes ?? readSoftNavigationStartTimes
     this.sessionAttributesCallback = options.getSessionAttributes
     this.userCallback = options.getUser
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_BROWSER_SESSION_OPTIONS.idleTimeoutMs
@@ -354,43 +376,39 @@ export class BrowserSessionManager {
    * after a later navigation can use the route of its own navigation.
    */
   getRouteName(currentUrl?: URL): string | undefined {
-    let routeName: unknown
+    let routeName: string | undefined
     try {
-      routeName = this.routeNameCallback?.()
+      const value: unknown = this.routeNameCallback?.()
+      routeName = typeof value === 'string' ? value : undefined
     } catch {
-      return undefined
-    }
-    if (typeof routeName !== 'string') {
-      return undefined
+      routeName = undefined
     }
     if (currentUrl !== undefined) {
-      const key = routeUrlKey(currentUrl)
-      this.observedRouteNames.delete(key)
-      this.observedRouteNames.set(key, routeName)
-      if (this.observedRouteNames.size > MAX_OBSERVED_ROUTE_URLS) {
-        const oldestKey = this.observedRouteNames.keys().next().value
-        if (oldestKey !== undefined) {
-          this.observedRouteNames.delete(oldestKey)
-        }
-      }
+      // A page without a route still ends the previous page, so a later visit
+      // to an earlier URL is not mistaken for that earlier navigation.
+      const at = this.performanceNow()
+      this.pageRoutes.observe(routeUrlKey(currentUrl), routeName, at, () =>
+        this.softNavigationStartTimes().some((startTime) => startTime <= at)
+      )
     }
     return routeName
   }
 
   /**
-   * Returns the route of the navigation to `navigationUrl`. If that URL is still
-   * current, the callback answers. Otherwise the manager returns the route it
-   * last observed for that URL, or `undefined` when it observed none.
+   * Returns the first route observed while the navigation to `navigationUrl`
+   * was current, or `undefined` when none was observed. Document navigations
+   * omit `softNavigationStartTime`.
    */
-  getNavigationRouteName(navigationUrl: URL, currentUrl: URL | undefined): string | undefined {
+  getNavigationRouteName(navigationUrl: URL, softNavigationStartTime?: number): string | undefined {
     const key = routeUrlKey(navigationUrl)
-    if (currentUrl !== undefined && routeUrlKey(currentUrl) === key) {
-      const routeName = this.getRouteName(currentUrl)
-      if (routeName !== undefined) {
-        return routeName
-      }
+    if (softNavigationStartTime === undefined) {
+      return this.pageRoutes.documentRoute(key)
     }
-    return this.observedRouteNames.get(key)
+    const nextStartTime = Math.min(
+      ...this.softNavigationStartTimes().filter((startTime) => startTime > softNavigationStartTime),
+      Number.POSITIVE_INFINITY
+    )
+    return this.pageRoutes.softNavigationRoute(key, softNavigationStartTime, nextStartTime)
   }
 
   getUser(): BrowserUser | undefined {
