@@ -151,9 +151,7 @@ describe('BrowserSessionSpanProcessor', () => {
     setLocation({ href: 'https://example.com/settings' })
     startSpan(processor, createSpan())
 
-    expect(
-      sessionManager.getNavigationRouteName(new URL('https://example.com/products/123'), new URL('https://example.com/settings'))
-    ).toBe('/products/:id')
+    expect(sessionManager.getNavigationRouteName(new URL('https://example.com/products/123'))).toBe('/products/:id')
   })
 
   it('keeps page context for non-Web-Vital spans from the Web Vitals tracer', () => {

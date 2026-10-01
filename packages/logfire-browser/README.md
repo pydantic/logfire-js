@@ -567,14 +567,15 @@ spans for raw-sample drilldown, session/replay correlation, exact page context,
 and attribution selectors. When metrics are configured, Logfire Platform should
 treat these histograms as the aggregate Web Vitals surface.
 
-By default, Web Vitals use the standard document-level measurement method.
-Web Vital span URL attributes describe the navigation that produced the
-measurement, even when its callback runs after the browser URL changes. The
-span's `logfire.page.route` is the route of that same navigation. The SDK
-remembers the route that `getRouteName` returned while each recent URL was
-current, and it uses that route for a late report. If the SDK never observed a
-route for that URL, the span omits `logfire.page.route` instead of using the
-current route. If the browser does not supply a valid navigation URL for a
+By default, Web Vitals use the standard document-level measurement method. Web
+Vital span URL attributes describe the navigation that produced the measurement,
+even when its callback runs after the browser URL changes. The span's
+`logfire.page.route` is the route of that same navigation. The SDK remembers the
+first route that `getRouteName` returned while each navigation's URL was
+current, and it uses that route for a late report, even after the application
+changes its route state or returns to the same URL. If the SDK never observed a
+route for that navigation, the span omits `logfire.page.route` instead of using
+the current route. If the browser does not supply a valid navigation URL for a
 document report, the span falls back to the current sanitized URL and route.
 
 Chromium 151 and newer can also report metrics separately for browser-detected
@@ -600,10 +601,10 @@ cold load of the same URL, and soft-navigation TTFB is reported as `0` rather
 than as request latency.
 
 Soft-navigation spans use the metric's sanitized navigation URL. They carry
-`logfire.page.route` when the SDK observed a route for that URL, and omit it
-otherwise. Web Vitals metrics do not carry the route. To add a low-cardinality
-route dimension to metrics, derive it from the metric's `navigationURL` in
-`rum.webVitals.metrics.attributes`.
+`logfire.page.route` when the SDK observed a route for that navigation, and omit
+it otherwise. Web Vitals metrics do not carry the route. To add a
+low-cardinality route dimension to metrics, derive it from the metric's
+`navigationURL` in `rum.webVitals.metrics.attributes`.
 
 ## RUM Long Animation Frames
 
