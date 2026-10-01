@@ -274,8 +274,10 @@ logfire.configureFrontend({
 ```
 
 Pathless layout and index routes add nothing to the template, and a `*` route
-returns `/*`. In declarative mode, match the current location against the same
-route objects. If the routes are `<Route>` elements, build the objects with
+returns `/*`. Add a `*` route. Without one, React Router matches only the root
+route for an unknown URL, and the recipe returns `/`, the same value as the home
+page. In declarative mode, match the current location against the same route
+objects. If the routes are `<Route>` elements, build the objects with
 `createRoutesFromElements`:
 
 ```ts
@@ -283,7 +285,10 @@ import { createRoutesFromElements, matchRoutes } from 'react-router'
 
 const routeObjects = createRoutesFromElements(routeElements)
 
-const getRouteName = () => routeTemplate(matchRoutes(routeObjects, window.location.pathname) ?? [])
+const getRouteName = () => {
+  const matches = matchRoutes(routeObjects, window.location.pathname)
+  return matches === null ? '/*' : routeTemplate(matches)
+}
 ```
 
 If the router has a `basename`, pass it as the third argument of `matchRoutes`.
@@ -410,10 +415,19 @@ export function LogfireRouteName() {
 }
 ```
 
-This is an approximation. The template does not show route groups, and a
-static segment after a parameter with the same text can take the parameter's
-place. The effect runs after the new page renders, so spans that start during
-that render get the previous route.
+This is an approximation, and it has these limits:
+
+- The template does not show route groups.
+- A static segment after a parameter with the same text can take the
+  parameter's place.
+- An optional catch-all (`[[...slug]]`) gives two values. Next.js omits the
+  parameter when it is empty, so `/shop` stays `/shop` while `/shop/a` becomes
+  `/shop/[...slug]`. Map such routes to one name in the application.
+- A not-found page has no parameters, so the helper returns its raw path. No
+  public API tells the component that the page is not found. Set a fixed name,
+  such as `/*`, from the `not-found` page instead.
+- The effect runs after the new page renders, so spans that start during that
+  render get the previous route.
 
 #### SvelteKit
 
@@ -428,12 +442,15 @@ root `+layout.svelte`, and pass the same `getRouteName` to
   import { setRouteName } from '$lib/logfire-route'
 
   afterNavigate(({ to }) => {
-    setRouteName(to?.route.id ?? undefined)
+    if (to !== null) {
+      setRouteName(to.route.id ?? '/*')
+    }
   })
 </script>
 ```
 
-`afterNavigate` runs after the new page renders, so spans that start during
+SvelteKit sets `route.id` to `null` when no route matches, so the recipe uses
+`/*` for not-found pages. `afterNavigate` runs after the new page renders, so spans that start during
 that render get the previous route. `$lib/logfire-route` is the same module as
 in the Next.js Pages Router recipe.
 
@@ -570,9 +587,10 @@ Soft-navigation LCP considers newly painted content, which can differ from a
 cold load of the same URL, and soft-navigation TTFB is reported as `0` rather
 than as request latency.
 
-Soft-navigation spans use the metric's sanitized navigation URL and also omit
-`logfire.page.route`. To add a low-cardinality route dimension to metrics,
-derive it from the metric's `navigationURL` in
+Soft-navigation spans use the metric's sanitized navigation URL. They carry
+`logfire.page.route` when the SDK observed a route for that URL, and omit it
+otherwise. Web Vitals metrics do not carry the route. To add a low-cardinality
+route dimension to metrics, derive it from the metric's `navigationURL` in
 `rum.webVitals.metrics.attributes`.
 
 ## RUM Long Animation Frames
