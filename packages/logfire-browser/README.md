@@ -368,7 +368,7 @@ parameters in segment order and a catch-all is always last:
 'use client'
 
 import { useParams, usePathname } from 'next/navigation'
-import { useEffect } from 'react'
+import { Suspense, useEffect } from 'react'
 
 import { setRouteName } from '../lib/logfire-route'
 
@@ -405,7 +405,7 @@ function routeTemplate(pathname: string, params: Record<string, string | string[
   return segments.join('/') || '/'
 }
 
-export function LogfireRouteName() {
+function RouteName() {
   const pathname = usePathname()
   const params = useParams()
   useEffect(() => {
@@ -413,7 +413,19 @@ export function LogfireRouteName() {
   }, [pathname, params])
   return null
 }
+
+export function LogfireRouteName() {
+  return (
+    <Suspense fallback={null}>
+      <RouteName />
+    </Suspense>
+  )
+}
 ```
+
+With `cacheComponents` enabled, `useParams()` suspends during prerendering on a
+route whose parameters `generateStaticParams` does not cover. The `Suspense`
+boundary keeps that from failing the build.
 
 This is an approximation, and it has these limits:
 
