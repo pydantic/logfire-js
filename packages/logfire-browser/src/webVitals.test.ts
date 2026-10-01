@@ -624,6 +624,58 @@ describe('browser Web Vitals reporting', () => {
     expect(mocks.spans[0]?.attributes['logfire.page.route']).toBe('/products/:id')
   })
 
+  it('omits the document route when the document URL was first observed on a later visit', async () => {
+    let route = '/products/:id/compare'
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      performanceNow: () => 3_000,
+      softNavigationStartTimes: () => [1_000, 2_000],
+      storage: null,
+    })
+    sessionManager.getRouteName(new URL('https://example.com/products/123'))
+    route = '/settings'
+    setLocation('https://example.com/settings')
+    await startWebVitals({ sessionManager })
+
+    report('CLS', { ...createMetric('CLS', {}), navigationURL: 'https://example.com/products/123' })
+
+    expect(mocks.spans[0]?.attributes).not.toHaveProperty('logfire.page.route')
+  })
+
+  it('bounds a soft-navigation visit by the start of the next soft navigation', async () => {
+    let now = 0
+    let route = '/home'
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      performanceNow: () => now,
+      softNavigationStartTimes: () => [1_000, 2_000, 3_000],
+      storage: null,
+    })
+    const navigate = (href: string, nextRoute: string, at: number): void => {
+      now = at
+      route = nextRoute
+      sessionManager.getRouteName(new URL(href))
+    }
+    navigate('https://example.com/home', '/home', 0)
+    navigate('https://example.com/login-redirect', '/login-redirect', 1_010)
+    navigate('https://example.com/products/123', '/products/:id', 1_020)
+    navigate('https://example.com/settings', '/settings', 2_500)
+    navigate('https://example.com/products/123', '/products/:id/compare', 3_010)
+    setLocation('https://example.com/products/123')
+    await startWebVitals({ reportSoftNavs: true, sessionManager })
+
+    const softNavigation = (navigationStartTime: number, navigationURL: string) => ({
+      ...createMetric('INP', {}),
+      navigationStartTime,
+      navigationType: 'soft-navigation',
+      navigationURL,
+    })
+    report('INP', softNavigation(1_000, 'https://example.com/products/123'))
+    report('INP', softNavigation(2_000, 'https://example.com/account'))
+
+    expect(mocks.spans.map((span) => span.attributes['logfire.page.route'])).toEqual(['/products/:id', undefined])
+  })
+
   it('matches each soft-navigation visit to the same URL by its start time', async () => {
     let now = 0
     let route = '/home'

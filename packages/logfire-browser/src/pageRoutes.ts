@@ -17,14 +17,22 @@ interface ObservedPage {
  */
 export class PageRouteHistory {
   private documentPage: ObservedPage | undefined
+  private observedAnyPage = false
   private readonly pages: ObservedPage[] = []
 
-  observe(key: string, route: string | undefined, at: number): void {
+  /**
+   * `leftDocument` is called only for the first observed page. When a soft
+   * navigation had already started, that page is not the initial document.
+   */
+  observe(key: string, route: string | undefined, at: number, leftDocument: () => boolean = () => false): void {
     let page = this.pages.at(-1)
     if (page?.key !== key) {
       page = { key, route: undefined, startedAt: at }
       this.pages.push(page)
-      this.documentPage ??= page
+      if (!this.observedAnyPage) {
+        this.observedAnyPage = true
+        this.documentPage = leftDocument() ? undefined : page
+      }
       if (this.pages.length > MAX_TRACKED_PAGES) {
         this.pages.shift()
       }
@@ -36,16 +44,22 @@ export class PageRouteHistory {
     return this.documentPage?.key === key ? this.documentPage.route : undefined
   }
 
-  softNavigationRoute(key: string, startTime: number): string | undefined {
-    // The navigation's URL became current after it started, so its page is the
-    // first one observed from then on. A same-URL navigation creates no new
+  /**
+   * `nextStartTime` is when the following soft navigation started, if one did.
+   * Pages observed from then on belong to that later navigation.
+   */
+  softNavigationRoute(key: string, startTime: number, nextStartTime: number = Number.POSITIVE_INFINITY): string | undefined {
+    // The navigation's URL became current after it started, possibly through
+    // an intermediate redirect URL, so its page is the first one with its key
+    // observed during the navigation. A same-URL navigation creates no new
     // page, which leaves the page that was already current.
-    const nextIndex = this.pages.findIndex((page) => page.startedAt >= startTime)
-    const next = nextIndex === -1 ? undefined : this.pages[nextIndex]
-    if (next?.key === key) {
-      return next.route
+    const firstIndex = this.pages.findIndex((page) => page.startedAt >= startTime)
+    const during = firstIndex === -1 ? [] : this.pages.slice(firstIndex)
+    const match = during.find((page) => page.startedAt < nextStartTime && page.key === key)
+    if (match !== undefined) {
+      return match.route
     }
-    const previous = this.pages[(nextIndex === -1 ? this.pages.length : nextIndex) - 1]
+    const previous = this.pages[(firstIndex === -1 ? this.pages.length : firstIndex) - 1]
     return previous?.key === key ? previous.route : undefined
   }
 }

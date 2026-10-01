@@ -53,6 +53,35 @@ describe('PageRouteHistory', () => {
     expect(history.softNavigationRoute('/b', 100)).toBeUndefined()
   })
 
+  it('does not take a page observed after a soft navigation started as the document', () => {
+    const history = new PageRouteHistory()
+
+    history.observe('/a', '/a/later', 300, () => true)
+
+    expect(history.documentRoute('/a')).toBeUndefined()
+  })
+
+  it('matches a soft navigation that passed through an intermediate URL', () => {
+    const history = new PageRouteHistory()
+
+    history.observe('/a', '/a', 0)
+    history.observe('/redirect', '/redirect', 110)
+    history.observe('/b', '/b', 120)
+
+    expect(history.softNavigationRoute('/b', 100, 200)).toBe('/b')
+  })
+
+  it('does not match a later visit to the same URL after the next soft navigation started', () => {
+    const history = new PageRouteHistory()
+
+    history.observe('/a', '/a', 0)
+    history.observe('/c', '/c', 250)
+    history.observe('/b', '/b/second', 350)
+
+    expect(history.softNavigationRoute('/b', 100, 200)).toBeUndefined()
+    expect(history.softNavigationRoute('/b', 100)).toBe('/b/second')
+  })
+
   it('keeps the document page after older soft-navigation pages are evicted', () => {
     const history = new PageRouteHistory()
 
