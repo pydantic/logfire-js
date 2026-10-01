@@ -77,6 +77,9 @@ const cleanup = logfire.configure({
     captureNetwork: false,
     flushIntervalMs: 60_000,
     ignoreUrlPatterns: [/\/receipts(?:\/|$)/u],
+    // Each phase records for less than the default 10s minimum, which would
+    // otherwise discard every replay on cleanup().
+    minSessionDurationMs: 0,
     load: async () => {
       const replayModule = await import('lf-rum-dimensions-recorder')
       return {
