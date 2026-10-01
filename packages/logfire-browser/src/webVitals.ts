@@ -264,7 +264,8 @@ function createPageContextAttributes(metric: MetricWithAttribution, sessionManag
       navigationUrl = undefined
     }
   }
-  const url = navigationUrl ?? (isSoftNavigation ? undefined : getCurrentUrl())
+  const currentUrl = getCurrentUrl()
+  const url = navigationUrl ?? (isSoftNavigation ? undefined : currentUrl)
   if (url !== undefined) {
     try {
       const urlAttributes = sessionManager.getUrlAttributes(url)
@@ -275,8 +276,12 @@ function createPageContextAttributes(metric: MetricWithAttribution, sessionManag
     }
   }
 
-  if (!isSoftNavigation && navigationUrl === undefined) {
-    setPrimitiveAttribute(attributes, ATTR_LOGFIRE_PAGE_ROUTE, sessionManager.getRouteName())
+  // The callback returns the route at report time. A metric can report after a
+  // later navigation, so a historical navigation URL uses the route observed for it.
+  if (navigationUrl !== undefined) {
+    setPrimitiveAttribute(attributes, ATTR_LOGFIRE_PAGE_ROUTE, sessionManager.getNavigationRouteName(navigationUrl, currentUrl))
+  } else if (!isSoftNavigation) {
+    setPrimitiveAttribute(attributes, ATTR_LOGFIRE_PAGE_ROUTE, sessionManager.getRouteName(currentUrl))
   }
   return attributes
 }

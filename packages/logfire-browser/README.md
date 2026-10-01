@@ -320,12 +320,13 @@ treat these histograms as the aggregate Web Vitals surface.
 
 By default, Web Vitals use the standard document-level measurement method.
 Web Vital span URL attributes describe the navigation that produced the
-measurement, even when its callback runs after the browser URL changes. When
-the browser supplies that historical URL, the span omits
-`logfire.page.route`, because the current route callback cannot reconstruct the
-historical route template. If the browser does not supply a valid navigation
-URL for a document report, the span falls back to the current sanitized URL
-and route.
+measurement, even when its callback runs after the browser URL changes. The
+span's `logfire.page.route` is the route of that same navigation. The SDK
+remembers the route that `getRouteName` returned while each recent URL was
+current, and it uses that route for a late report. If the SDK never observed a
+route for that URL, the span omits `logfire.page.route` instead of using the
+current route. If the browser does not supply a valid navigation URL for a
+document report, the span falls back to the current sanitized URL and route.
 
 Chromium 151 and newer can also report metrics separately for browser-detected
 soft navigations in single-page applications:
