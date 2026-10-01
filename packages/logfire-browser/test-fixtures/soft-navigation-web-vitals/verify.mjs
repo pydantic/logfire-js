@@ -13,12 +13,20 @@ const spans = receipts.flatMap((body) => {
   return (payload.resourceSpans ?? []).flatMap((resource) => (resource.scopeSpans ?? []).flatMap((scope) => scope.spans ?? []))
 })
 const softNavigationSpans = spans.filter((span) => attributesOf(span)['web_vital.navigation_type'] === 'soft-navigation')
-const documentSpan = spans.find((span) => {
+const routesByPath = { '/': '/home', '/products/123': '/products/:id', '/settings': '/settings' }
+const documentSpans = spans.filter((span) => {
   const attributes = attributesOf(span)
-  return attributes['web_vital.navigation_type'] !== 'soft-navigation' && attributes['logfire.page.url.path'] === '/'
+  return (
+    span.name.startsWith('web_vital.') &&
+    attributes['web_vital.navigation_type'] !== 'soft-navigation' &&
+    attributes['logfire.page.url.path'] === '/'
+  )
 })
-assert(documentSpan !== undefined, 'no document Web Vital span retained the initial navigation URL')
-assert(attributesOf(documentSpan)['logfire.page.route'] === undefined, 'document span combines a historical URL with a route')
+assert(documentSpans.length > 0, 'no document Web Vital span retained the initial navigation URL')
+for (const span of documentSpans) {
+  const route = attributesOf(span)['logfire.page.route']
+  assert(route === '/home', `document ${span.name} span has route ${String(route)} instead of the initial navigation route`)
+}
 
 if (scenario === 'enabled') {
   assert(state.reportSoftNavs === true, 'enabled fixture did not enable soft navigation reporting')
@@ -29,7 +37,14 @@ if (scenario === 'enabled') {
   const attributes = attributesOf(productSpan)
   assert(Number(attributes['web_vital.navigation_id']) > 0, 'soft-navigation span lacks a non-zero navigation id')
   assert(attributes['logfire.page.url.full'] === 'http://127.0.0.1:4182/products/123', 'navigation URL was not sanitized')
-  assert(attributes['logfire.page.route'] === undefined, 'soft-navigation span contains a callback-time route')
+  for (const span of softNavigationSpans) {
+    const spanAttributes = attributesOf(span)
+    const path = spanAttributes['logfire.page.url.path']
+    assert(
+      spanAttributes['logfire.page.route'] === routesByPath[path],
+      `soft-navigation ${span.name} span for ${String(path)} has route ${String(spanAttributes['logfire.page.route'])}`
+    )
+  }
 } else {
   assert(state.reportSoftNavs === false, 'disabled fixture enabled soft navigation reporting')
   assert(softNavigationSpans.length === 0, 'disabled fixture exported a soft-navigation Web Vital span')

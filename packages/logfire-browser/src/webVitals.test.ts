@@ -433,7 +433,7 @@ describe('browser Web Vitals reporting', () => {
     })
   })
 
-  it('uses navigation-time URL context and omits a soft-navigation route', async () => {
+  it('uses navigation-time URL context and omits an unobserved soft-navigation route', async () => {
     setLocation('https://example.com/settings')
     const sessionManager = new BrowserSessionManager({
       getRouteName: () => '/settings',
@@ -461,7 +461,7 @@ describe('browser Web Vitals reporting', () => {
     expect(mocks.spans[0]?.attributes).not.toHaveProperty('logfire.page.route')
   })
 
-  it('does not combine a document navigation URL with a callback-time route', async () => {
+  it('does not combine an unobserved document navigation URL with a callback-time route', async () => {
     setLocation('https://example.com/settings')
     const sessionManager = new BrowserSessionManager({
       getRouteName: () => '/settings',
@@ -479,6 +479,111 @@ describe('browser Web Vitals reporting', () => {
       'logfire.page.url.path': '/home',
     })
     expect(mocks.spans[0]?.attributes).not.toHaveProperty('logfire.page.route')
+  })
+
+  it('uses the route observed for a document navigation after a later navigation', async () => {
+    let route = '/products/:id'
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      storage: null,
+    })
+    sessionManager.getRouteName(new URL('https://example.com/products/123#details'))
+    route = '/settings'
+    setLocation('https://example.com/settings')
+    await startWebVitals({ sessionManager })
+
+    report('CLS', {
+      ...createMetric('CLS', { largestShiftValue: 0.1, loadState: 'complete' }),
+      navigationURL: 'https://example.com/products/123?token=secret#details',
+    })
+
+    expect(mocks.spans[0]?.attributes).toMatchObject({
+      'logfire.page.route': '/products/:id',
+      'logfire.page.url.path': '/products/123',
+    })
+  })
+
+  it('uses the callback route when the document navigation URL is still current', async () => {
+    setLocation('https://example.com/products/123')
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => '/products/:id',
+      storage: null,
+    })
+    await startWebVitals({ sessionManager })
+
+    report('LCP', {
+      ...createMetric('LCP', { target: '#hero' }),
+      navigationURL: 'https://example.com/products/123?utm_source=mail',
+    })
+
+    expect(mocks.spans[0]?.attributes).toMatchObject({ 'logfire.page.route': '/products/:id' })
+  })
+
+  it('uses the route observed for a soft navigation', async () => {
+    let route = '/products/:id'
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      storage: null,
+    })
+    sessionManager.getRouteName(new URL('https://example.com/products/123'))
+    route = '/settings'
+    setLocation('https://example.com/settings')
+    await startWebVitals({ sessionManager })
+
+    report('INP', {
+      ...createMetric('INP', { interactionTarget: '#buy' }),
+      navigationType: 'soft-navigation',
+      navigationURL: 'https://example.com/products/123',
+    })
+
+    expect(mocks.spans[0]?.attributes).toMatchObject({ 'logfire.page.route': '/products/:id' })
+  })
+
+  it('keeps hash-router routes apart', async () => {
+    let route = '/projects/:id'
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      storage: null,
+    })
+    sessionManager.getRouteName(new URL('https://example.com/#/projects/1'))
+    route = '/settings'
+    sessionManager.getRouteName(new URL('https://example.com/#/settings'))
+    setLocation('https://example.com/#/settings')
+    await startWebVitals({ sessionManager })
+
+    report('LCP', {
+      ...createMetric('LCP', { target: '#hero' }),
+      navigationURL: 'https://example.com/#/projects/1',
+    })
+
+    expect(mocks.spans[0]?.attributes).toMatchObject({ 'logfire.page.route': '/projects/:id' })
+  })
+
+  it('forgets the oldest observed routes after 50 URLs', async () => {
+    let route = '/first'
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      storage: null,
+    })
+    sessionManager.getRouteName(new URL('https://example.com/first'))
+    route = '/items/:id'
+    for (let index = 0; index < 50; index++) {
+      sessionManager.getRouteName(new URL(`https://example.com/items/${String(index)}`))
+    }
+    setLocation('https://example.com/items/49')
+    await startWebVitals({ sessionManager })
+
+    report('CLS', {
+      ...createMetric('CLS', { largestShiftValue: 0.1, loadState: 'complete' }),
+      navigationURL: 'https://example.com/first',
+    })
+    report('CLS', {
+      ...createMetric('CLS', { largestShiftValue: 0.1, loadState: 'complete' }),
+      navigationURL: 'https://example.com/items/0',
+    })
+
+    expect(mocks.spans[0]?.attributes).not.toHaveProperty('logfire.page.route')
+    expect(mocks.spans[1]?.attributes).toMatchObject({ 'logfire.page.route': '/items/:id' })
   })
 
   it('omits document page context when a historical navigation URL cannot be sanitized', async () => {

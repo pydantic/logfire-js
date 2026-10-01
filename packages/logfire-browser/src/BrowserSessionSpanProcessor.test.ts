@@ -137,6 +137,25 @@ describe('BrowserSessionSpanProcessor', () => {
     })
   })
 
+  it('remembers the route of each URL for later Web Vital reports', () => {
+    let route = '/products/:id'
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      storage: null,
+    })
+    const processor = new BrowserSessionSpanProcessor(sessionManager)
+    setLocation({ href: 'https://example.com/products/123?token=secret' })
+    startSpan(processor, createSpan())
+
+    route = '/settings'
+    setLocation({ href: 'https://example.com/settings' })
+    startSpan(processor, createSpan())
+
+    expect(
+      sessionManager.getNavigationRouteName(new URL('https://example.com/products/123'), new URL('https://example.com/settings'))
+    ).toBe('/products/:id')
+  })
+
   it('keeps page context for non-Web-Vital spans from the Web Vitals tracer', () => {
     setLocation({ href: 'https://example.com/settings' })
     const span = new TestSpan('custom-span', 'logfire-web-vitals')

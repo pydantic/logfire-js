@@ -89,12 +89,12 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
       return
     }
 
-    const routeName = this.sessionManager.getRouteName()
+    const url = getCurrentUrl()
+    const routeName = this.sessionManager.getRouteName(url)
     if (routeName !== undefined) {
       span.setAttribute(ATTR_LOGFIRE_PAGE_ROUTE, routeName)
     }
 
-    const url = getCurrentUrl()
     if (url === undefined) {
       return
     }

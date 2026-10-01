@@ -363,7 +363,8 @@ function routeTemplate(pathname: string): string {
   if (pathname === '' || pathname === '/') {
     return '/'
   }
-  return pathname
+  // A raw path would make every unknown URL its own page.
+  return '/*'
 }
 
 function delay(ms: number): Promise<void> {

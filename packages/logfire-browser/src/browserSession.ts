@@ -7,6 +7,9 @@ export const BROWSER_SESSION_ACTIVITY_WRITE_DELAY_MS = 1_000
 const MAX_SESSION_ATTRIBUTES = 20
 const MAX_SESSION_ATTRIBUTE_STRING_CODE_POINTS = 200
 const SESSION_ATTRIBUTE_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u
+// A long single-page session can visit many URLs. Web Vitals report for the
+// current and recent navigations only, so older entries are not needed.
+const MAX_OBSERVED_ROUTE_URLS = 50
 
 export type BrowserSessionAttributeValue = string | number | boolean
 export type BrowserSessionAttributesInput = Record<string, BrowserSessionAttributeValue | undefined>
@@ -120,6 +123,13 @@ function getDefaultSessionStorage(): Storage | null {
   } catch {
     return null
   }
+}
+
+// Routers do not match on the query string, and applications often remove it
+// with `history.replaceState` after load. The fragment stays because hash
+// routers match on it.
+function routeUrlKey(url: URL): string {
+  return `${url.origin}${url.pathname}${url.hash}`
 }
 
 function generateBrowserSessionId(): string {
@@ -256,6 +266,7 @@ export class BrowserSessionManager {
   private readonly storageKey: string
   private readonly urlAttributes: BrowserSessionOptions['urlAttributes'] | undefined
   private readonly sessionChangeListeners = new Set<(session: BrowserSessionState) => void>()
+  private readonly observedRouteNames = new Map<string, string>()
   private memorySession: BrowserSessionState | undefined
   private pendingSession: BrowserSessionState | undefined
   private persistenceTimer: ReturnType<typeof setTimeout> | undefined
@@ -337,13 +348,49 @@ export class BrowserSessionManager {
     }
   }
 
-  getRouteName(): string | undefined {
+  /**
+   * Returns the callback's current route. When `currentUrl` is given, the
+   * manager also remembers the route for that URL, so a Web Vital that reports
+   * after a later navigation can use the route of its own navigation.
+   */
+  getRouteName(currentUrl?: URL): string | undefined {
+    let routeName: unknown
     try {
-      const routeName = this.routeNameCallback?.()
-      return typeof routeName === 'string' ? routeName : undefined
+      routeName = this.routeNameCallback?.()
     } catch {
       return undefined
     }
+    if (typeof routeName !== 'string') {
+      return undefined
+    }
+    if (currentUrl !== undefined) {
+      const key = routeUrlKey(currentUrl)
+      this.observedRouteNames.delete(key)
+      this.observedRouteNames.set(key, routeName)
+      if (this.observedRouteNames.size > MAX_OBSERVED_ROUTE_URLS) {
+        const oldestKey = this.observedRouteNames.keys().next().value
+        if (oldestKey !== undefined) {
+          this.observedRouteNames.delete(oldestKey)
+        }
+      }
+    }
+    return routeName
+  }
+
+  /**
+   * Returns the route of the navigation to `navigationUrl`. If that URL is still
+   * current, the callback answers. Otherwise the manager returns the route it
+   * last observed for that URL, or `undefined` when it observed none.
+   */
+  getNavigationRouteName(navigationUrl: URL, currentUrl: URL | undefined): string | undefined {
+    const key = routeUrlKey(navigationUrl)
+    if (currentUrl !== undefined && routeUrlKey(currentUrl) === key) {
+      const routeName = this.getRouteName(currentUrl)
+      if (routeName !== undefined) {
+        return routeName
+      }
+    }
+    return this.observedRouteNames.get(key)
   }
 
   getUser(): BrowserUser | undefined {

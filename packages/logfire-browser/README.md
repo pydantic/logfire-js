@@ -163,7 +163,8 @@ logfire.configure({
 })
 ```
 
-`getRouteName` is evaluated for each span and becomes `logfire.page.route`.
+`getRouteName` is evaluated for each span and becomes `logfire.page.route`. See
+[Route names](#route-names) for the contract and router recipes.
 `getUser` is also evaluated for each span. A non-empty `id` becomes `user.id`;
 non-empty `name` and `email` values become `user.name` and `user.email`.
 Use an opaque application id. Name and email are opt-in PII. The SDK emits
@@ -216,6 +217,254 @@ logfire.configure({
 Use `getBrowserSessionId()` after `configure({ rum: { session: true } })` when
 another browser integration needs the SDK-owned session id before the first
 span is created.
+
+### Route names
+
+Set `getRouteName` in every single-page application. Without it, the only page
+dimension is `logfire.page.url.path`, so each id in a URL makes a separate page.
+`/projects/123` and `/projects/456` become two pages, and page tables, filters,
+and Web Vitals breakdowns split one screen into many rows. The route gives
+every view of one screen the same value, so page-level analysis can group by
+screen instead of by URL.
+
+The callback has this contract:
+
+- Return the matched route template, such as `/projects/:id`. Never return the
+  concrete path.
+- Return a fixed name for catch-all and not-found routes, such as `/*`. Do not
+  fall back to the URL.
+- Do not put ids, slugs, or user data in the value.
+- The SDK calls the callback for every new span. Keep it synchronous and cheap.
+  Read router state, or a variable that the application updates on navigation.
+- Change the value together with the URL. A span that starts after the URL
+  changes but before the value changes gets the previous route.
+- Return `undefined` until the router resolves the first route. The SDK then
+  omits the attribute.
+
+Each recipe below returns one value for both `/acme/shop/agents` and
+`/globex/web/agents`.
+
+#### React Router
+
+In data mode (`createBrowserRouter`), the router changes the URL and
+`router.state.matches` together. Join the matched route paths:
+
+```ts
+function routeTemplate(matches: readonly { route: { path?: string } }[]): string {
+  let template = ''
+  for (const { route } of matches) {
+    if (route.path === undefined || route.path === '') {
+      continue
+    }
+    template = route.path.startsWith('/') ? route.path : `${template.replace(/\/$/, '')}/${route.path}`
+  }
+  return template === '' ? '/' : template
+}
+
+const router = createBrowserRouter(routes)
+
+logfire.configureFrontend({
+  ...frontendOptions,
+  rum: {
+    session: {
+      getRouteName: () => routeTemplate(router.state.matches),
+    },
+  },
+})
+```
+
+Pathless layout and index routes add nothing to the template, and a `*` route
+returns `/*`. Add a `*` route. Without one, React Router matches only the root
+route for an unknown URL, and the recipe returns `/`, the same value as the home
+page. In declarative mode, match the current location against the same route
+objects. If the routes are `<Route>` elements, build the objects with
+`createRoutesFromElements`:
+
+```ts
+import { createRoutesFromElements, matchRoutes } from 'react-router'
+
+const routeObjects = createRoutesFromElements(routeElements)
+
+const getRouteName = () => {
+  const matches = matchRoutes(routeObjects, window.location.pathname)
+  return matches === null ? '/*' : routeTemplate(matches)
+}
+```
+
+If the router has a `basename`, pass it as the third argument of `matchRoutes`.
+
+#### TanStack Router
+
+Use the `fullPath` of the deepest match. Do not use `routeId`, because it
+contains the ids of pathless layout routes. TanStack Router changes the URL
+before its loaders finish, while `router.state.matches` still holds the
+previous route. Match the current path instead, and cache the result for each
+path:
+
+```ts
+let lastPathname: string | undefined
+let lastRoute: string | undefined
+
+const getRouteName = () => {
+  const { pathname } = router.history.location
+  if (pathname !== lastPathname) {
+    lastPathname = pathname
+    lastRoute = router.matchRoutes(pathname).at(-1)?.fullPath
+  }
+  return lastRoute
+}
+```
+
+#### Vue Router
+
+```ts
+const getRouteName = () => router.currentRoute.value.matched.at(-1)?.path
+```
+
+The deepest matched record holds the full path, for example
+`/:org/:project/agents`.
+
+#### Next.js Pages Router
+
+`router.pathname` is the page file path, for example `/blog/[slug]`. Store it
+in `pages/_app.tsx`:
+
+```tsx
+import type { AppProps } from 'next/app'
+import { useRouter } from 'next/router'
+
+import { setRouteName } from '../lib/logfire-route'
+
+export default function App({ Component, pageProps }: AppProps) {
+  setRouteName(useRouter().pathname)
+  return <Component {...pageProps} />
+}
+```
+
+```ts
+// lib/logfire-route.ts
+let routeName: string | undefined
+
+export function setRouteName(value: string | undefined): void {
+  routeName = value
+}
+
+export function getRouteName(): string | undefined {
+  return routeName
+}
+```
+
+Pass `getRouteName` from this module to `rum.session.getRouteName`.
+
+#### Next.js App Router
+
+The App Router has no public API that returns the matched route template.
+Rebuild it from `usePathname()` and `useParams()` in a client component that
+the root layout renders. The function replaces each parameter value with its
+`[name]` segment. It starts from the end of the path, because Next.js lists the
+parameters in segment order and a catch-all is always last:
+
+```tsx
+'use client'
+
+import { useParams, usePathname } from 'next/navigation'
+import { Suspense, useEffect } from 'react'
+
+import { setRouteName } from '../lib/logfire-route'
+
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
+function routeTemplate(pathname: string, params: Record<string, string | string[] | undefined>): string {
+  const segments = pathname.split('/')
+  let end = segments.length - 1
+  for (const [name, value] of Object.entries(params).reverse()) {
+    if (value === undefined) {
+      continue
+    }
+    if (Array.isArray(value)) {
+      const start = segments.length - value.length
+      segments.splice(start, value.length, `[...${name}]`)
+      end = start - 1
+      continue
+    }
+    let index = end
+    while (index > 0 && decodeSegment(segments[index] ?? '') !== value) {
+      index--
+    }
+    if (index > 0) {
+      segments[index] = `[${name}]`
+      end = index - 1
+    }
+  }
+  return segments.join('/') || '/'
+}
+
+function RouteName() {
+  const pathname = usePathname()
+  const params = useParams()
+  useEffect(() => {
+    setRouteName(routeTemplate(pathname, params))
+  }, [pathname, params])
+  return null
+}
+
+export function LogfireRouteName() {
+  return (
+    <Suspense fallback={null}>
+      <RouteName />
+    </Suspense>
+  )
+}
+```
+
+With `cacheComponents` enabled, `useParams()` suspends during prerendering on a
+route whose parameters `generateStaticParams` does not cover. The `Suspense`
+boundary keeps that from failing the build.
+
+This is an approximation, and it has these limits:
+
+- The template does not show route groups.
+- A static segment after a parameter with the same text can take the
+  parameter's place.
+- An optional catch-all (`[[...slug]]`) gives two values. Next.js omits the
+  parameter when it is empty, so `/shop` stays `/shop` while `/shop/a` becomes
+  `/shop/[...slug]`. Map such routes to one name in the application.
+- A not-found page has no parameters, so the helper returns its raw path. No
+  public API tells the component that the page is not found. Set a fixed name,
+  such as `/*`, from the `not-found` page instead.
+- The effect runs after the new page renders, so spans that start during that
+  render get the previous route.
+
+#### SvelteKit
+
+`route.id` is the route directory, for example `/blog/[slug]`. Store it from the
+root `+layout.svelte`, and pass the same `getRouteName` to
+`rum.session.getRouteName`:
+
+```svelte
+<script lang="ts">
+  import { afterNavigate } from '$app/navigation'
+
+  import { setRouteName } from '$lib/logfire-route'
+
+  afterNavigate(({ to }) => {
+    if (to !== null) {
+      setRouteName(to.route.id ?? '/*')
+    }
+  })
+</script>
+```
+
+SvelteKit sets `route.id` to `null` when no route matches, so the recipe uses
+`/*` for not-found pages. `afterNavigate` runs after the new page renders, so spans that start during
+that render get the previous route. `$lib/logfire-route` is the same module as
+in the Next.js Pages Router recipe.
 
 ## RUM Web Vitals
 
@@ -320,12 +569,13 @@ treat these histograms as the aggregate Web Vitals surface.
 
 By default, Web Vitals use the standard document-level measurement method.
 Web Vital span URL attributes describe the navigation that produced the
-measurement, even when its callback runs after the browser URL changes. When
-the browser supplies that historical URL, the span omits
-`logfire.page.route`, because the current route callback cannot reconstruct the
-historical route template. If the browser does not supply a valid navigation
-URL for a document report, the span falls back to the current sanitized URL
-and route.
+measurement, even when its callback runs after the browser URL changes. The
+span's `logfire.page.route` is the route of that same navigation. The SDK
+remembers the route that `getRouteName` returned while each recent URL was
+current, and it uses that route for a late report. If the SDK never observed a
+route for that URL, the span omits `logfire.page.route` instead of using the
+current route. If the browser does not supply a valid navigation URL for a
+document report, the span falls back to the current sanitized URL and route.
 
 Chromium 151 and newer can also report metrics separately for browser-detected
 soft navigations in single-page applications:
@@ -349,9 +599,10 @@ Soft-navigation LCP considers newly painted content, which can differ from a
 cold load of the same URL, and soft-navigation TTFB is reported as `0` rather
 than as request latency.
 
-Soft-navigation spans use the metric's sanitized navigation URL and also omit
-`logfire.page.route`. To add a low-cardinality route dimension to metrics,
-derive it from the metric's `navigationURL` in
+Soft-navigation spans use the metric's sanitized navigation URL. They carry
+`logfire.page.route` when the SDK observed a route for that URL, and omit it
+otherwise. Web Vitals metrics do not carry the route. To add a low-cardinality
+route dimension to metrics, derive it from the metric's `navigationURL` in
 `rum.webVitals.metrics.attributes`.
 
 ## RUM Long Animation Frames
