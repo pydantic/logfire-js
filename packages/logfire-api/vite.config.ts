@@ -8,9 +8,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
   define: defines,
   pack: {
     define: defines,
-    dts: {
-      resolver: 'tsc',
-    },
+    dts: true,
     deps: {
       neverBundle: [/^@opentelemetry/u, /^node:/u, 'handlebars', 'js-yaml', 'p-retry', 'zod'],
     },

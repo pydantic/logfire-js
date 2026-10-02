@@ -76,7 +76,7 @@ class MockPerformanceObserver {
       {
         getEntries: () => entries,
       } as PerformanceObserverEntryList,
-      this as unknown as PerformanceObserver
+      this
     )
   }
 

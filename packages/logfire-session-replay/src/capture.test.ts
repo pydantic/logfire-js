@@ -437,12 +437,12 @@ describe('captureNetwork', () => {
     const originalSend = vi.fn(function () {
       return sendResult
     })
-    prototype.open = originalOpen as unknown as typeof prototype.open
-    prototype.send = originalSend as unknown as typeof prototype.send
+    prototype.open = originalOpen
+    prototype.send = originalSend
     const stop = captureNetwork(vi.fn(), { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0 })
     const xhr = new window.XMLHttpRequest()
-    const wrappedOpen = xhr.open as unknown as (method: string, url: string) => unknown
-    const wrappedSend = xhr.send as unknown as () => unknown
+    const wrappedOpen: (method: string, url: string) => unknown = xhr.open
+    const wrappedSend: () => unknown = xhr.send
 
     expect(wrappedOpen.call(xhr, 'GET', '/exact-arguments')).toBe(openResult)
     expect(wrappedSend.call(xhr)).toBe(sendResult)
@@ -639,8 +639,8 @@ describe('captureNavigation', () => {
     const predecessorReplace = vi.fn(function () {
       return replaceResult
     })
-    history.pushState = predecessorPush as unknown as typeof history.pushState
-    history.replaceState = predecessorReplace as unknown as typeof history.replaceState
+    history.pushState = predecessorPush
+    history.replaceState = predecessorReplace
     try {
       const stop = captureNavigation(vi.fn())
       const wrappedPush = history.pushState as unknown as (data: unknown, unused: string, url: string) => unknown
@@ -686,7 +686,7 @@ class FakeXhr extends EventTarget {
 
 function installFakeXhr(): void {
   Object.defineProperty(window, 'XMLHttpRequest', {
-    value: FakeXhr as unknown as typeof XMLHttpRequest,
+    value: FakeXhr,
     writable: true,
     configurable: true,
   })

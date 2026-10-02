@@ -20,7 +20,7 @@ describe('BrowserUrlSpanProcessor', () => {
       'url.fragment': 'secret',
       'http.method': 'GET',
     })
-    processor.onEnd(span as ReadableSpan)
+    processor.onEnd(span)
     expect(span.attributes).toEqual({
       'http.url': 'https://example.com/reset',
       'url.full': 'https://example.com/callback',

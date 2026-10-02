@@ -328,7 +328,7 @@ export async function queryProject(
   if (!Array.isArray(data) || !data.every((row) => isRecord(row))) {
     throw new LogfireCliError('Could not read the project: unexpected response shape ("data" is not a list of objects)')
   }
-  return data as QueryProjectRow[]
+  return data
 }
 
 export function urlFor(baseUrl: string, endpoint: string): string {

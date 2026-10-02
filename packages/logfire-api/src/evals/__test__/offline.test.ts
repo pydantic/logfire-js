@@ -201,7 +201,7 @@ describe('offline evals — span attribute parity', () => {
         return Object.fromEntries([
           ['__proto__', 0.9],
           ['toString', 0.5],
-        ]) as Record<string, number>
+        ])
       }
     }
 
@@ -466,10 +466,10 @@ describe('offline evals — span attribute parity', () => {
   })
 
   // The option returns void, but these are all assignable to it in TypeScript, which
-  // is how a consumer reaches them. The casts reproduce that without tripping the lint
-  // rules this repo applies to its own call sites.
+  // is how a consumer reaches them.
   const asProgress = (fn: () => unknown): ((event: { caseName: string; done: number; total: number }) => void) =>
-    fn as unknown as (event: { caseName: string; done: number; total: number }) => void
+    // eslint-disable-next-line @typescript-eslint/strict-void-return -- reproduces what a consumer can pass
+    fn
 
   const hostileProgressCallbacks: [string, () => unknown][] = [
     [

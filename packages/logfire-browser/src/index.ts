@@ -588,7 +588,6 @@ function startBrowserInstrumentations(options: {
         }
       }
       if (firstError !== undefined) {
-        // eslint-disable-next-line no-throw-literal -- always an Error, normalized at capture
         throw firstError
       }
     })()
@@ -686,7 +685,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   )
 
   if (options.sampling?.tail) {
-    spanProcessor = new TailSamplingProcessor(spanProcessor, options.sampling.tail) as unknown as SpanProcessor
+    spanProcessor = new TailSamplingProcessor(spanProcessor, options.sampling.tail)
   }
 
   const browserSessionManager = configureBrowserSession(browserSessionOptions)
