@@ -62,7 +62,7 @@ catalog:
   'js-yaml': ^4.3.2
   'p-retry': ^6.2.1
   '@rrweb/record': 2.1.1
-  typescript: ^6.0.3
+  typescript: ^7.0.2
   vitest: 5.0.1
   web-vitals: ^6.2.2
   zod: ^4.0.0
