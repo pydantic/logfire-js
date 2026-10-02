@@ -76,7 +76,7 @@ function createSpan(): TestSpan {
 function setLocation(location: { href: string } | undefined): void {
   Object.defineProperty(globalThis, 'location', {
     configurable: true,
-    value: location as Location | undefined,
+    value: location,
   })
 }
 

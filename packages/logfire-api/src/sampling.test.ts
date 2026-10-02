@@ -243,10 +243,10 @@ describe('TailSamplingProcessor', () => {
     processor.onStart(child, ROOT_CONTEXT)
     expect(downstream.calls).toHaveLength(0)
 
-    processor.onEnd(child as unknown as ReadableSpan)
+    processor.onEnd(child)
     expect(downstream.calls).toHaveLength(0)
 
-    processor.onEnd(root as unknown as ReadableSpan)
+    processor.onEnd(root)
     expect(downstream.calls).toHaveLength(0)
   })
 
@@ -260,10 +260,10 @@ describe('TailSamplingProcessor', () => {
     const child = makeSpan({ parentSpanContext: { spanId: '1234567890abcdef' }, spanId: 'child00000000000', startTime: [1001, 0] })
     processor.onStart(child, ROOT_CONTEXT)
 
-    processor.onEnd(root as unknown as ReadableSpan)
+    processor.onEnd(root)
     expect(downstream.calls).toHaveLength(0)
 
-    processor.onEnd(child as unknown as ReadableSpan)
+    processor.onEnd(child)
     expect(downstream.calls).toHaveLength(0)
   })
 
@@ -277,8 +277,8 @@ describe('TailSamplingProcessor', () => {
     const child = makeSpan({ parentSpanContext: { spanId: '1234567890abcdef' }, spanId: 'child00000000000', startTime: [1001, 0] })
     processor.onStart(child, ROOT_CONTEXT)
 
-    processor.onEnd(root as unknown as ReadableSpan)
-    processor.onEnd(child as unknown as ReadableSpan)
+    processor.onEnd(root)
+    processor.onEnd(child)
 
     // The late child reaches both processors, not just one of them.
     expect(downstream.calls.filter((c) => c.event === 'end').map((c) => c.span)).toEqual([root, child])
@@ -341,7 +341,7 @@ describe('TailSamplingProcessor', () => {
         traceId: traceId(index),
       })
       processor.onStart(child, ROOT_CONTEXT)
-      processor.onEnd(root as unknown as ReadableSpan)
+      processor.onEnd(root)
       openChildren.push(child)
     }
     expect(downstream.calls).toHaveLength(0)
@@ -381,10 +381,10 @@ describe('TailSamplingProcessor', () => {
     ])
 
     // After flush, subsequent spans pass through directly
-    processor.onEnd(child as unknown as ReadableSpan)
+    processor.onEnd(child)
     expect(downstream.calls).toHaveLength(3)
 
-    processor.onEnd(root as unknown as ReadableSpan)
+    processor.onEnd(root)
     expect(downstream.calls).toHaveLength(4)
     expect(downstream.calls[3]).toEqual({ event: 'end', span: root })
   })
@@ -407,7 +407,7 @@ describe('TailSamplingProcessor', () => {
     processor.onStart(child, ROOT_CONTEXT)
     expect(downstream.calls).toHaveLength(2)
 
-    processor.onEnd(child as unknown as ReadableSpan)
+    processor.onEnd(child)
     expect(downstream.calls).toHaveLength(3)
   })
 

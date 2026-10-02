@@ -357,7 +357,7 @@ function reportProgress(progress: EvaluateOptions['progress'], event: { caseName
     // The option is declared as returning void, but an async callback is assignable
     // to it, so read the result as unknown and subscribe to any rejection. Otherwise
     // it would surface as an unhandled rejection well after the case completed.
-    const callProgress = progress as (progressEvent: typeof event) => unknown
+    const callProgress: (progressEvent: typeof event) => unknown = progress
     let outcome: unknown
     try {
       outcome = callProgress(event)
@@ -526,7 +526,7 @@ async function runOneCase<Inputs, Output, Metadata>(args: {
     }
 
     const allEvaluators: Evaluator<Inputs, Output, Metadata>[] = [...originalCase.evaluators, ...datasetEvaluators]
-    const evResult = await runEvaluators(allEvaluators as Evaluator[], ctx as EvaluatorContext, retryEvaluators)
+    const evResult = await runEvaluators(allEvaluators, ctx, retryEvaluators)
 
     const totalDuration = nowSec() - totalStart
 

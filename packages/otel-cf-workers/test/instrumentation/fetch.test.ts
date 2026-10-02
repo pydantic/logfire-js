@@ -34,7 +34,7 @@ function mockTracer(span: Span, onStart?: (name: string, args: unknown[]) => voi
       onStart?.(name, args)
       const options = args.find((arg): arg is SpanOptions => typeof arg === 'object' && arg !== null && 'attributes' in arg)
       if (options?.attributes) {
-        ;(span as Span & { attributes: Record<string, unknown> }).attributes = options.attributes as Record<string, unknown>
+        ;(span as Span & { attributes: Record<string, unknown> }).attributes = options.attributes
       }
       const fn = args.at(-1) as (span: Span) => Promise<unknown>
       return fn(span)
@@ -202,7 +202,7 @@ describe('instrumentClientFetch', () => {
         })
       )
     })
-    const instrumentedFetch = instrumentClientFetch(fetcher as unknown as Fetcher['fetch'], (config) => config.fetch)
+    const instrumentedFetch = instrumentClientFetch(fetcher, (config) => config.fetch)
     const activeContext = setConfig({
       fetch: {
         captureHeaders: {
@@ -247,7 +247,7 @@ describe('instrumentClientFetch', () => {
     const tracer = mockTracer(span as unknown as Span)
     const getTracer = vitest.spyOn(trace, 'getTracer').mockReturnValue(tracer)
     const fetcher = vitest.fn<(request: Request) => Promise<Response>>(async () => Promise.reject(error))
-    const instrumentedFetch = instrumentClientFetch(fetcher as unknown as Fetcher['fetch'], (config) => config.fetch)
+    const instrumentedFetch = instrumentClientFetch(fetcher, (config) => config.fetch)
     const activeContext = setConfig({ fetch: { includeTraceContext: false } } as unknown as ResolvedTraceConfig)
 
     try {

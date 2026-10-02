@@ -307,11 +307,7 @@ export interface ValidationReport {
 }
 
 export type VariablePushBlockReason =
-  | 'reference_cycles'
-  | 'reference_errors'
-  | 'template_field_issues'
-  | 'incompatible_labels'
-  | 'incompatible_type_labels'
+  'reference_cycles' | 'reference_errors' | 'template_field_issues' | 'incompatible_labels' | 'incompatible_type_labels'
 
 export interface VariablePushResult {
   blocked: boolean

@@ -81,7 +81,7 @@ function mockTracer(span: Span, onStart?: (name: string, args: unknown[]) => voi
       onStart?.(name, args)
       const options = args.find((arg): arg is SpanOptions => typeof arg === 'object' && arg !== null && 'attributes' in arg)
       if (options?.attributes) {
-        ;(span as Span & { attributes: Record<string, unknown> }).attributes = options.attributes as Record<string, unknown>
+        ;(span as Span & { attributes: Record<string, unknown> }).attributes = options.attributes
       }
       const fn = args.at(-1) as (span: Span) => Promise<unknown>
       return fn(span)
@@ -135,7 +135,7 @@ describe('instrumentDOClass', () => {
     const durableObject = new InstrumentedDurableObject(durableObjectState, {}) as unknown as CustomMethodDurableObjectInstance
 
     try {
-      const increment = Reflect.get(durableObject, 'increment') as (delta: number) => number
+      const increment = Reflect.get(durableObject, 'increment')
 
       expect(increment(2)).toBe(2)
       expect(durableObject.increment(3)).toBe(5)

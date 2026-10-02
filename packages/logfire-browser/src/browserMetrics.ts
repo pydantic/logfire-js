@@ -247,7 +247,7 @@ export async function startBrowserMetrics(options: BrowserMetricsOptions, resour
     ...DEFAULT_METRIC_READER_CONFIG,
     ...options.metricReaderConfig,
     exporter,
-  } as PeriodicExportingMetricReaderOptions)
+  })
   const metricReaders = [defaultReader, ...(options.metricReaders ?? [])]
   const meterProvider = new MeterProvider({
     readers: metricReaders,

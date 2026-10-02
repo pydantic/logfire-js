@@ -4,6 +4,7 @@ import { instrument as instrumentFunction, startPendingSpan, withSettings, withT
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { NoopSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as packageRoot from '@pydantic/logfire-cf-workers'
+import type * as OtelCfWorkers from '@pydantic/otel-cf-workers'
 
 import logfireCfWorkers, { instrument as instrumentWorker } from './index'
 
@@ -95,7 +96,8 @@ describe('User-Agent', () => {
     const [{ exportTailEventsToLogfire }, { USER_AGENT }, { OTLP_EXPORTER_USER_AGENT }] = await Promise.all([
       import('./exportTailEventsToLogfire'),
       import('./userAgent'),
-      import('@pydantic/otel-cf-workers'),
+      // Vitest 5 keeps serving an earlier doMock factory to this file's own imports after doUnmock.
+      vi.importActual<typeof OtelCfWorkers>('@pydantic/otel-cf-workers'),
     ])
 
     const events = [{ logs: [{ message: [{ resourceSpans: [] }] }] }]

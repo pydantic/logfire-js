@@ -345,7 +345,8 @@ function reportWebVital(
 }
 
 function registerWebVitals(webVitals: WebVitalsAttributionModule, requestedOptions: BrowserWebVitalsStartOptions): void {
-  const options = (observerOptionsDuringStartup ??= normalizeObserverOptions(requestedOptions))
+  observerOptionsDuringStartup ??= normalizeObserverOptions(requestedOptions)
+  const options = observerOptionsDuringStartup
   const reportOptions = createBaseReportOptions(options)
   const report = (metric: MetricWithAttribution) => {
     if (registeredObserverOptions === undefined || currentOwner?.active !== true) {
@@ -364,7 +365,7 @@ function registerWebVitals(webVitals: WebVitalsAttributionModule, requestedOptio
     if (registeredWebVitals.has(name)) {
       continue
     }
-    register(report, registrationOptions as never)
+    register(report, registrationOptions)
     registeredWebVitals.add(name)
   }
   registeredObserverOptions = options

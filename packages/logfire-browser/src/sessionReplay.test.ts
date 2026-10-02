@@ -60,7 +60,7 @@ function createReplayRuntime(overrides: Partial<BrowserSessionReplayRuntime> = {
     get stopCalls() {
       return stopCalls
     },
-  } as BrowserSessionReplayRuntime & { readonly stopCalls: number }
+  }
 }
 
 afterEach(() => {
