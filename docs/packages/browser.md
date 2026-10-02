@@ -35,6 +35,8 @@ Logfire associates the token with the frontend application's service name, so it
 
 `autoInstrumentations` is enabled by default with `configureFrontend()` and lazily loads OpenTelemetry browser auto-instrumentations after the Logfire browser provider is ready. For advanced integrations, `instrumentations` also accepts factories, so custom instrumentation construction can be deferred until `configure()` has registered the provider.
 
+When the page does not load Zone.js, the automatic user interaction instrumentation records one span for each event, such as a click, even when the event reaches several listeners. Every listener runs in the context of that span, so the spans and requests a listener starts are its children. A user interaction instrumentation that you pass through `instrumentations` keeps the upstream behavior of one span for each listener.
+
 Set `autoInstrumentations: false` to disable automatic instrumentation, or
 `rum: { webVitals: false }` to disable Web Vitals capture. To keep Web Vitals
 spans without metrics, use `rum: { webVitals: { metrics: false } }`. Nested

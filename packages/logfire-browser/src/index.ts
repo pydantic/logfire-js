@@ -74,6 +74,7 @@ import {
   settleProviderCleanup,
 } from './providerLifecycle'
 import { assertBrowserReplayUrl, createTelemetryUrlPatterns, isBrowserReplayUrlValid } from './telemetryUrls'
+import { collapseUserInteractionSpans } from './userInteraction'
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from 'logfire'
 export { getBrowserSessionId } from './browserSession'
@@ -554,6 +555,7 @@ function startBrowserInstrumentations(options: {
           .then(({ getWebAutoInstrumentations }) => {
             const instrumentations = getWebAutoInstrumentations(autoInstrumentationsConfig)
             try {
+              collapseUserInteractionSpans(instrumentations)
               return registerInstrumentations({
                 instrumentations,
                 tracerProvider: options.tracerProvider,
