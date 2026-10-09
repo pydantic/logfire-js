@@ -1,5 +1,15 @@
 # @pydantic/logfire-browser
 
+## 0.25.0
+
+### Minor Changes
+
+- 4bc2a78: Export the newest spans first when the document hides, in one request small enough to outlive a navigation. The document-hide flush now listens for `visibilitychange` on `window`, so a span that an application ends in its own `document` listener is part of the flush whenever that listener registered, and for `pagehide` on `window`, where the event is dispatched. `batchSpanProcessorConfig.documentHideKeepaliveBytes` sets the size of the first request.
+
+### Patch Changes
+
+- 364ca24: A click now exports one span, not one span for each event listener that the click reaches. Without Zone.js, the OpenTelemetry user interaction instrumentation started a new click span for every listener and parented it to the span of the previous listener. A single click on a page with many listeners became a deep chain of identical click spans. The automatic user interaction instrumentation now keeps the first span for each event. Every later listener runs in the context of that span, so the spans and requests that a listener starts are still its children. The click span ends when the first listener returns, so its duration does not include the time of later listeners. A user interaction instrumentation that you pass through `instrumentations` keeps the upstream behavior.
+
 ## 0.24.3
 
 ### Patch Changes
