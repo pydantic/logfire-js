@@ -28,8 +28,6 @@ export interface BrowserLongAnimationFramesHandle {
 }
 
 interface BrowserLongAnimationFramesStartOptions extends BrowserLongAnimationFramesOptions {
-  autoFlushOnDocumentHide: boolean
-  forceFlush: () => Promise<void>
   now?: () => number
   sessionManager: BrowserSessionManager
   storage?: Storage | null
@@ -172,20 +170,15 @@ class LongAnimationFrameCollector {
       this.openWindow()
       return
     }
-    const emitted = this.closeWindow()
-    if (emitted) {
-      this.flushAfterDocumentHide()
-    }
+    // The capture-phase listener closes the window before the span processor's hide flush runs.
+    this.closeWindow()
   }
 
   private readonly onPageHide = () => {
     if (!this.active || !this.collecting) {
       return
     }
-    const emitted = this.closeWindow()
-    if (emitted) {
-      this.flushAfterDocumentHide()
-    }
+    this.closeWindow()
   }
 
   private readonly onPageShow = () => {
@@ -333,15 +326,6 @@ class LongAnimationFrameCollector {
 
   private frameTime(frame: NormalizedFrame): number {
     return (this.startOptions.timeOrigin ?? performance.timeOrigin) + frame.startTime
-  }
-
-  private flushAfterDocumentHide(): void {
-    if (!this.startOptions.autoFlushOnDocumentHide) {
-      return
-    }
-    this.startOptions.forceFlush().catch((error: unknown) => {
-      diag.error('logfire-browser: failed to flush long animation frame spans on document hide', error)
-    })
   }
 
   private async shutdown(): Promise<void> {

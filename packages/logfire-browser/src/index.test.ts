@@ -1758,26 +1758,20 @@ describe('browser Long Animation Frames config', () => {
 
     expect(mocks.longAnimationFramesStartCalls).toHaveLength(1)
     const call = mocks.longAnimationFramesStartCalls[0] as {
-      autoFlushOnDocumentHide: boolean
       blockingDurationThresholdMs: number
-      forceFlush: () => Promise<void>
       sessionManager: unknown
       sessionSampleRate: number
       tracer: { name: string }
       windowDurationMs: number
     }
     expect({
-      autoFlushOnDocumentHide: call.autoFlushOnDocumentHide,
       blockingDurationThresholdMs: call.blockingDurationThresholdMs,
-      hasForceFlush: typeof call.forceFlush === 'function',
       hasSessionManager: call.sessionManager !== undefined,
       sessionSampleRate: call.sessionSampleRate,
       tracerName: call.tracer.name,
       windowDurationMs: call.windowDurationMs,
     }).toEqual({
-      autoFlushOnDocumentHide: true,
       blockingDurationThresholdMs: 150,
-      hasForceFlush: true,
       hasSessionManager: true,
       sessionSampleRate: 0.5,
       tracerName: 'logfire-long-animation-frames',
@@ -1804,18 +1798,6 @@ describe('browser Long Animation Frames config', () => {
     }).not.toThrow()
     await cleanup()
     cleanup = undefined
-  })
-
-  it('preserves disabled document-hide auto-flush', () => {
-    cleanup = configure({
-      batchSpanProcessorConfig: { disableAutoFlushOnDocumentHide: true },
-      rum: { longAnimationFrames: true },
-      traceUrl: 'http://localhost:8989/client-traces',
-    })
-
-    expect(mocks.longAnimationFramesStartCalls[0]).toMatchObject({
-      autoFlushOnDocumentHide: false,
-    })
   })
 
   it('rejects Long Animation Frames when session attributes are explicitly disabled', () => {

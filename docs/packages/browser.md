@@ -1033,12 +1033,19 @@ generations. Ensure the bundler deduplicates both `@pydantic/logfire-browser`
 and `logfire`, because reconfiguration across duplicate physical copies is not
 supported.
 
-Browser pages also get OpenTelemetry's built-in batch-processor auto-flush on
-document hide. The underlying batch span processor calls `forceFlush()` when the
-document becomes hidden or emits `pagehide`, which helps export spans during
-navigation away from the page. You can disable that OpenTelemetry behavior with
-`batchSpanProcessorConfig.disableAutoFlushOnDocumentHide`, but doing so means
-only explicit cleanup or normal batch timing will flush spans.
+Browser pages also get a batch-processor flush when the document hides. Logfire
+force-flushes the OpenTelemetry batch span processor when the document becomes
+hidden or emits `pagehide`, and the trace exporter then sends the newest spans
+of that flush first, in one small request that the browser lets outlive a
+navigation, before the rest of the batch. `batchSpanProcessorConfig.documentHideKeepaliveBytes` sets the
+estimated size of that first request. The default of 12 000 bytes leaves room
+for the session replay upload, which shares the browser's keepalive quota on the
+same events. The flush listens on `window`, so a span that your own `document`
+`visibilitychange` listener ends is included whenever that listener registered.
+A span ended in your own `pagehide` listener is included when the browser fires
+`visibilitychange` afterwards, which Chromium does on navigation. You can disable
+the flush with `batchSpanProcessorConfig.disableAutoFlushOnDocumentHide`, but
+doing so means only explicit cleanup or normal batch timing will flush spans.
 
 ```ts
 const cleanup = logfire.configure({
