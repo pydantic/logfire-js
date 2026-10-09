@@ -58,6 +58,7 @@
     "@opentelemetry/core": "catalog:",
     "@opentelemetry/exporter-metrics-otlp-http": "catalog:",
     "@opentelemetry/exporter-trace-otlp-http": "catalog:",
+    "@opentelemetry/otlp-transformer": "catalog:",
     "@opentelemetry/instrumentation": "catalog:",
     "@opentelemetry/resources": "catalog:",
     "@opentelemetry/sdk-metrics": "catalog:",
@@ -77,6 +78,7 @@
   "devDependencies": {
     "@opentelemetry/context-zone": "catalog:",
     "@opentelemetry/instrumentation-fetch": "catalog:",
+    "@opentelemetry/otlp-exporter-base": "catalog:",
     "@opentelemetry/sdk-trace-web": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
     "@pydantic/logfire-session-replay": "workspace:*",

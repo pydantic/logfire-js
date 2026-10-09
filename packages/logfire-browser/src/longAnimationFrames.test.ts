@@ -179,8 +179,6 @@ describe('browser long animation frame reporting', () => {
     MockPerformanceObserver.supportedEntryTypes = []
     expect(
       startBrowserLongAnimationFrames({
-        autoFlushOnDocumentHide: true,
-        forceFlush: async () => Promise.resolve(),
         sessionManager,
         sessionSampleRate: 1,
         storage,
@@ -191,8 +189,6 @@ describe('browser long animation frame reporting', () => {
     MockPerformanceObserver.supportedEntryTypes = ['long-animation-frame']
     expect(
       startBrowserLongAnimationFrames({
-        autoFlushOnDocumentHide: true,
-        forceFlush: async () => Promise.resolve(),
         sessionManager,
         sessionSampleRate: 0,
         storage,
@@ -208,9 +204,7 @@ describe('browser long animation frame reporting', () => {
     const spans: TestSpan[] = []
     const storage = new MemoryStorage()
     const handle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: false,
       blockingDurationThresholdMs: Number.NaN,
-      forceFlush: async () => Promise.resolve(),
       now: () => now,
       sessionManager: createSessionManager(storage, () => now),
       sessionSampleRate: 2,
@@ -235,8 +229,6 @@ describe('browser long animation frame reporting', () => {
     const spans: TestSpan[] = []
     const storage = new MemoryStorage()
     const handle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: true,
-      forceFlush: async () => Promise.resolve(),
       now: () => now,
       sessionManager: createSessionManager(storage, () => now),
       sessionSampleRate: 1,
@@ -295,8 +287,6 @@ describe('browser long animation frame reporting', () => {
       () => `session-${sessionNumber.toString()}`
     )
     const firstHandle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: true,
-      forceFlush: async () => Promise.resolve(),
       now: () => now,
       sessionManager,
       sessionSampleRate: 1,
@@ -325,8 +315,6 @@ describe('browser long animation frame reporting', () => {
       () => `session-${sessionNumber.toString()}`
     )
     const reloadedHandle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: true,
-      forceFlush: async () => Promise.resolve(),
       now: () => now,
       sessionManager: reloadedSessionManager,
       sessionSampleRate: 1,
@@ -352,14 +340,11 @@ describe('browser long animation frame reporting', () => {
     await reloadedHandle?.shutdown()
   })
 
-  it('flushes positive foreground partial windows once and removes lifecycle work', async () => {
+  it('emits positive foreground partial windows once and removes lifecycle work', async () => {
     let now = 0
     const spans: TestSpan[] = []
     const storage = new MemoryStorage()
-    const forceFlush = vi.fn<() => Promise<void>>(async () => Promise.resolve())
     const handle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: true,
-      forceFlush,
       now: () => now,
       sessionManager: createSessionManager(storage, () => now),
       sessionSampleRate: 1,
@@ -371,14 +356,12 @@ describe('browser long animation frame reporting', () => {
     setVisibilityState('hidden')
     document.dispatchEvent(new Event('visibilitychange'))
     window.dispatchEvent(new Event('pagehide'))
-    expect(forceFlush).toHaveBeenCalledTimes(1)
 
     now = 65_000
     setVisibilityState('visible')
     document.dispatchEvent(new Event('visibilitychange'))
     now = 75_000
     window.dispatchEvent(new Event('pagehide'))
-    expect(forceFlush).toHaveBeenCalledTimes(2)
     expect(
       spans
         .filter((span) => span.name === 'browser.main_thread_window')
@@ -401,8 +384,6 @@ describe('browser long animation frame reporting', () => {
     const spans: TestSpan[] = []
     const storage = new MemoryStorage()
     const handle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: false,
-      forceFlush: async () => Promise.resolve(),
       now: () => now,
       sessionManager: createSessionManager(storage, () => now),
       sessionSampleRate: 1,
@@ -427,8 +408,6 @@ describe('browser long animation frame reporting', () => {
     const spans: TestSpan[] = []
     const storage = new MemoryStorage()
     const handle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: false,
-      forceFlush: async () => Promise.resolve(),
       now: () => now,
       sessionManager: createSessionManager(storage, () => now),
       sessionSampleRate: 1,
@@ -458,8 +437,6 @@ describe('browser long animation frame reporting', () => {
     const spans: TestSpan[] = []
     const storage = new MemoryStorage()
     const handle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: false,
-      forceFlush: async () => Promise.resolve(),
       now: () => now,
       sessionManager: createSessionManager(storage, () => now),
       sessionSampleRate: 1,
@@ -494,8 +471,6 @@ describe('browser long animation frame reporting', () => {
       () => sessionIds.shift() ?? 'unsampled'
     )
     const handle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: false,
-      forceFlush: async () => Promise.resolve(),
       sessionManager,
       sessionSampleRate: 0.5,
       storage,
@@ -522,8 +497,6 @@ describe('browser long animation frame reporting', () => {
       () => sampledOutIds.shift() ?? 'sampled'
     )
     const sampledOutHandle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: false,
-      forceFlush: async () => Promise.resolve(),
       sessionManager: sampledOutManager,
       sessionSampleRate: 0.5,
       tracer: createTracer([]) as never,
@@ -547,8 +520,6 @@ describe('browser long animation frame reporting', () => {
       () => `session-${(++sessionNumber).toString()}`
     )
     const handle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: false,
-      forceFlush: async () => Promise.resolve(),
       now: () => now,
       sessionManager,
       sessionSampleRate: 1,
@@ -579,8 +550,6 @@ describe('browser long animation frame reporting', () => {
     const spans: TestSpan[] = []
     const storage = new MemoryStorage()
     const firstHandle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: false,
-      forceFlush: async () => Promise.resolve(),
       now: () => now,
       sessionManager: createSessionManager(
         storage,
@@ -598,8 +567,6 @@ describe('browser long animation frame reporting', () => {
     await firstHandle?.shutdown()
 
     const secondHandle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: false,
-      forceFlush: async () => Promise.resolve(),
       now: () => now,
       sessionManager: createSessionManager(
         storage,
@@ -626,8 +593,6 @@ describe('browser long animation frame reporting', () => {
     const spans: TestSpan[] = []
     const storage = new MemoryStorage()
     const handle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: false,
-      forceFlush: async () => Promise.resolve(),
       now: () => now,
       sessionManager: createSessionManager(storage, () => now),
       sessionSampleRate: 1,
@@ -664,8 +629,6 @@ describe('browser long animation frame reporting', () => {
     const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
     const storage = new ThrowingStorage()
     const handle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: false,
-      forceFlush: async () => Promise.resolve(),
       now: () => now,
       sessionManager: createSessionManager(storage, () => now),
       sessionSampleRate: 1,
@@ -690,46 +653,5 @@ describe('browser long animation frame reporting', () => {
     expect(diagError).toHaveBeenCalledTimes(2)
 
     await handle?.shutdown()
-  })
-
-  it('honors document-hide auto-flush and contains flush rejection', async () => {
-    let now = 0
-    const flushError = new Error('flush failed')
-    const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
-    const forceFlush = vi.fn<() => Promise<void>>(async () => Promise.reject(flushError))
-    const storage = new MemoryStorage()
-    const handle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: true,
-      forceFlush,
-      now: () => now,
-      sessionManager: createSessionManager(storage, () => now),
-      sessionSampleRate: 1,
-      storage,
-      tracer: createTracer([]) as never,
-    })
-    now = 10_000
-    setVisibilityState('hidden')
-    document.dispatchEvent(new Event('visibilitychange'))
-    await vi.waitFor(() => {
-      expect(diagError).toHaveBeenCalledWith('logfire-browser: failed to flush long animation frame spans on document hide', flushError)
-    })
-    expect(forceFlush).toHaveBeenCalledTimes(1)
-    await handle?.shutdown()
-
-    setVisibilityState('visible')
-    const disabledFlush = vi.fn<() => Promise<void>>(async () => Promise.resolve())
-    const disabledHandle = startBrowserLongAnimationFrames({
-      autoFlushOnDocumentHide: false,
-      forceFlush: disabledFlush,
-      now: () => now,
-      sessionManager: createSessionManager(new MemoryStorage(), () => now),
-      sessionSampleRate: 1,
-      tracer: createTracer([]) as never,
-    })
-    now = 20_000
-    setVisibilityState('hidden')
-    document.dispatchEvent(new Event('visibilitychange'))
-    expect(disabledFlush).not.toHaveBeenCalled()
-    await disabledHandle?.shutdown()
   })
 })

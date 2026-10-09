@@ -63,6 +63,8 @@ import { BrowserSessionReplayState, startBrowserSessionReplay } from './sessionR
 import type { BrowserSessionReplayControl, BrowserSessionReplayOptions } from './sessionReplay'
 import { startBrowserWebVitals } from './webVitals'
 import type { BrowserWebVitalsOptions } from './webVitals'
+import { DocumentHideChunkingExporter } from './DocumentHideChunkingExporter'
+import { installDocumentHideFlush } from './documentHideFlush'
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
 import {
   activateProviderGeneration,
@@ -96,6 +98,15 @@ type TraceExporterConfig = NonNullable<typeof OTLPTraceExporter extends new (con
 export type BrowserInstrumentationInput = Instrumentation | Instrumentation[] | (() => Instrumentation | Instrumentation[])
 export type AutoInstrumentationsConfig = WebAutoInstrumentationConfigMap & { enabled?: boolean }
 
+export interface BrowserBatchSpanProcessorConfig extends BatchSpanProcessorBrowserConfig {
+  /**
+   * Estimated size, in bytes, of the request that carries the newest spans when the document
+   * hides. Defaults to 12 000. The flush sends that request first, so it is the one most likely to
+   * outlive a navigation, and the rest of the batch follows in a second request.
+   */
+  documentHideKeepaliveBytes?: number
+}
+
 export interface BrowserResourceTimingOptions {
   /** Resource timing detail. Defaults to `summary` when configured. */
   detail?: 'summary' | 'full'
@@ -117,7 +128,7 @@ export interface LogfireConfigOptions {
   /**
    * The configuration of the batch span processor.
    */
-  batchSpanProcessorConfig?: BatchSpanProcessorBrowserConfig
+  batchSpanProcessorConfig?: BrowserBatchSpanProcessorConfig
   /**
    * Active OpenTelemetry baggage keys to copy to Logfire manual spans/logs as span attributes.
    */
@@ -673,16 +684,22 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
 
   // Browser configure intentionally does not install PendingSpanProcessor.
   // Use startPendingSpan() for explicit, per-span pending placeholders.
+  const { documentHideKeepaliveBytes, ...batchSpanProcessorConfig } = options.batchSpanProcessorConfig ?? {}
+  const traceExporter = new DocumentHideChunkingExporter(
+    new OTLPTraceExporter({
+      ...options.traceExporterConfig,
+      headers: async () =>
+        resolveTraceExporterHeaders(options.traceExporterConfig?.headers, options.traceExporterHeaders ?? defaultTraceExporterHeaders),
+      url: options.traceUrl,
+    }),
+    documentHideKeepaliveBytes
+  )
+  // The processor's own document-hide flush stays off: its `pagehide` listener is on `document`,
+  // where the event never arrives, and its `visibilitychange` listener runs before application
+  // listeners registered later. `installDocumentHideFlush` below replaces both.
+  const processorConfig: BatchSpanProcessorBrowserConfig = { ...batchSpanProcessorConfig, disableAutoFlushOnDocumentHide: true }
   let spanProcessor: SpanProcessor = new LogfireSpanProcessor(
-    new BatchSpanProcessor(
-      new OTLPTraceExporter({
-        ...options.traceExporterConfig,
-        headers: async () =>
-          resolveTraceExporterHeaders(options.traceExporterConfig?.headers, options.traceExporterHeaders ?? defaultTraceExporterHeaders),
-        url: options.traceUrl,
-      }),
-      options.batchSpanProcessorConfig
-    ),
+    new BatchSpanProcessor(traceExporter, processorConfig),
     Boolean(options.console)
   )
 
@@ -715,6 +732,16 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
 
   const sharedApiConfigSnapshot = snapshotSharedLogfireApiConfig()
   const generationToken = activateProviderGeneration(tracerProvider)
+  const removeDocumentHideFlush =
+    batchSpanProcessorConfig.disableAutoFlushOnDocumentHide === true
+      ? () => undefined
+      : installDocumentHideFlush(() => {
+          traceExporter
+            .withHideFlush(async () => tracerProvider.forceFlush())
+            .catch((error: unknown) => {
+              diag.error('logfire-browser: failed to flush spans on document hide', error)
+            })
+        })
   try {
     const apiConfig: LogfireApiConfigOptions = {
       errorFingerprinting: options.errorFingerprinting ?? false,
@@ -737,6 +764,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
     }
     logfireApiConfig.tracer = getStableBrowserTracer(logfireApiConfig.otelScope)
   } catch (error) {
+    removeDocumentHideFlush()
     beginProviderCleanup(generationToken)
     deactivateProviderDelegate(generationToken)
     restoreSharedLogfireApiConfig(sharedApiConfigSnapshot)
@@ -882,8 +910,6 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
           try {
             return startBrowserLongAnimationFrames({
               ...longAnimationFramesOptions,
-              autoFlushOnDocumentHide: options.batchSpanProcessorConfig?.disableAutoFlushOnDocumentHide !== true,
-              forceFlush: async () => tracerProvider.forceFlush(),
               sessionManager: browserSessionManager,
               tracer: tracerProvider.getTracer('logfire-long-animation-frames'),
             })
@@ -920,6 +946,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
       }
 
       diag.info('logfire-browser: shutting down')
+      removeDocumentHideFlush()
       if (sessionReplayHandle !== undefined) {
         await runCleanupStep('session replay shutdown', async () => sessionReplayHandle.stop())
       }
