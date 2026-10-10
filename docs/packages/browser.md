@@ -112,7 +112,7 @@ logfire.configureFrontend({
 ```
 
 The session is stored in `sessionStorage`, so it is scoped to the current tab
-and survives page reloads. It rotates after 30 minutes of inactivity or 4 hours
+and survives page reloads. It rotates after 30 minutes of inactivity or 2 hours
 of total duration by default. Each span gets the OpenTelemetry `session.id`
 semantic attribute.
 

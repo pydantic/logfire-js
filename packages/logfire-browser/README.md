@@ -132,7 +132,7 @@ logfire.configure({
 
 The SDK stores the session in `sessionStorage`, so it is scoped to the browser
 tab and survives page reloads. Sessions rotate after 30 minutes of inactivity
-or 4 hours of total duration by default. Spans get the OpenTelemetry
+or 2 hours of total duration by default. Spans get the OpenTelemetry
 `session.id` semantic attribute.
 
 Use `getRouteName` for the application's normalized route template and
