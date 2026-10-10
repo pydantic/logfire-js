@@ -252,7 +252,8 @@ function createActiveRuntime(options: {
       maskAllInputs: config.maskAllInputs,
       maskTextSelector: config.maskTextSelector,
       blockSelector: config.blockSelector,
-      checkoutEveryNms: mode === 'buffer' ? 120_000 : 300_000,
+      // A periodic replacement anchor must not reset a longer minimum-duration gate.
+      checkoutEveryNms: mode === 'buffer' ? 120_000 : Math.max(300_000, config.minSessionDurationMs),
       redactUrlPatterns: config.redactUrlPatterns,
     })
     cleanup.push(() => {
