@@ -252,7 +252,7 @@ function createActiveRuntime(options: {
       maskAllInputs: config.maskAllInputs,
       maskTextSelector: config.maskTextSelector,
       blockSelector: config.blockSelector,
-      checkoutEveryNms: mode === 'buffer' ? 120_000 : 0,
+      checkoutEveryNms: mode === 'buffer' ? 120_000 : 300_000,
       redactUrlPatterns: config.redactUrlPatterns,
     })
     cleanup.push(() => {

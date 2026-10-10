@@ -345,11 +345,14 @@ describe('startSessionReplay full mode', () => {
     await replay.stop()
   })
 
-  it('passes checkoutEveryNms=0 to the recorder in full mode', async () => {
+  it('takes a full DOM checkpoint every five minutes in full mode', async () => {
     const { fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl))
-    expect(captured.checkoutEveryNms).toBe(0)
-    await replay.stop()
+    try {
+      expect(captured.checkoutEveryNms).toBe(300_000)
+    } finally {
+      await replay.stop()
+    }
   })
 
   it('uses getDistinctId per flush', async () => {
