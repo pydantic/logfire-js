@@ -345,11 +345,34 @@ describe('startSessionReplay full mode', () => {
     await replay.stop()
   })
 
-  it('passes checkoutEveryNms=0 to the recorder in full mode', async () => {
+  it('takes a full DOM checkpoint every five minutes in full mode', async () => {
     const { fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl))
-    expect(captured.checkoutEveryNms).toBe(0)
-    await replay.stop()
+    try {
+      expect(captured.checkoutEveryNms).toBe(300_000)
+    } finally {
+      await replay.stop()
+    }
+  })
+
+  it('allows a minimum duration longer than the checkpoint interval to finish', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { minSessionDurationMs: 600_000 }))
+    try {
+      expect(captured.checkoutEveryNms).toBe(600_000)
+      emit(fullSnapshot)
+      emit({ ...click, timestamp: fullSnapshot.timestamp + 300_001 })
+      await replay.flush()
+      expect(calls).toHaveLength(0)
+      // rrweb emits the triggering incremental event before taking its checkpoint.
+      emit({ ...click, timestamp: fullSnapshot.timestamp + 600_001 })
+      await replay.flush()
+      await vi.waitFor(() => {
+        expect(calls.length).toBeGreaterThan(0)
+      })
+    } finally {
+      await replay.stop()
+    }
   })
 
   it('uses getDistinctId per flush', async () => {

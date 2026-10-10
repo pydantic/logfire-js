@@ -158,6 +158,14 @@ configured cadence. After five minutes without activity, background events use
 the greater of `flushIntervalMs` and five minutes. After the replay reaches its
 minimum duration, reaching `maxBufferBytes` still flushes immediately.
 
+Normal recording takes a full-DOM checkpoint on the first recorded incremental
+event after five minutes since the previous full snapshot. Each checkpoint
+starts a new upload chunk with its `Meta` and `FullSnapshot` pair. This does not
+change the upload cadence. Error-buffered recording retains its two-minute
+checkpoint interval. If `minSessionDurationMs` exceeds five minutes, normal
+recording uses that longer checkpoint interval so replacement snapshots cannot
+restart the minimum-duration gate before it completes.
+
 Replays must contain at least `minSessionDurationMs` of recorded events (10
 seconds by default) before they are uploaded. While waiting, events stay
 buffered. The initial `Meta` and `FullSnapshot` anchor is retained even when it
