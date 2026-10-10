@@ -152,6 +152,7 @@ export interface SessionReplayConfig {
   /** Minimum recording duration before a replay is uploaded. Defaults to 10 seconds. */
   minSessionDurationMs?: number
   sessionIdleTimeoutMs?: number
+  /** Maximum recording duration before the session ID rotates. Defaults to 2 hours. */
   maxSessionDurationMs?: number
 
   distinctId?: string
@@ -218,7 +219,7 @@ export const DEFAULTS = {
   maxBufferBytes: 1_000_000,
   minSessionDurationMs: 10_000,
   sessionIdleTimeoutMs: 1_800_000,
-  maxSessionDurationMs: 14_400_000,
+  maxSessionDurationMs: 7_200_000,
   distinctId: '',
   captureConsole: false,
   captureNetwork: true,

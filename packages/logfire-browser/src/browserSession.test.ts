@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vite-plus/test'
 
-import { BrowserSessionManager } from './browserSession'
+import { BrowserSessionManager, DEFAULT_BROWSER_SESSION_OPTIONS } from './browserSession'
 
 class MemoryStorage implements Storage {
   private readonly items = new Map<string, string>()
@@ -74,6 +74,26 @@ function createIdGenerator(): () => string {
 }
 
 describe('BrowserSessionManager', () => {
+  it('rotates the default RUM session after two hours of activity', () => {
+    let now = 1_000
+    const manager = new BrowserSessionManager({
+      generateId: createIdGenerator(),
+      now: () => now,
+      storage: new MemoryStorage(),
+    })
+    const first = manager.touch()
+    for (let minutes = 20; minutes <= 120; minutes += 20) {
+      now = first.startedAt + minutes * 60_000
+      expect(manager.touch().id).toBe(first.id)
+    }
+    expect(DEFAULT_BROWSER_SESSION_OPTIONS.maxDurationMs).toBe(2 * 60 * 60_000)
+    now += 1
+    const next = manager.touch()
+    expect(next.id).not.toBe(first.id)
+    expect(next.startedAt).toBe(now)
+    manager.flushPendingStorage()
+  })
+
   it('persists session state in storage across manager instances', () => {
     const storage = new MemoryStorage()
     const generateId = createIdGenerator()
