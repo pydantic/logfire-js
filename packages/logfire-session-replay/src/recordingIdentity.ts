@@ -5,7 +5,7 @@ export const RECORDING_STORAGE_KEY = 'lf_session_replay_recording'
 export const RECORDING_OWNER_STORAGE_KEY = 'lf_session_replay_recording_owner'
 export const MAX_RECORDING_DURATION_MS: number = 2 * 60 * 60 * 1_000
 
-interface RecordingState {
+export interface RecordingState {
   id: string
   rumSessionId: string
   startedAt: number
@@ -112,26 +112,31 @@ export class RecordingIdentity {
     if (openerState === serialized) {
       return undefined
     }
-    const candidate: unknown = JSON.parse(serialized)
-    const sequence: unknown = JSON.parse(serializedSequence)
-    if (typeof candidate !== 'object' || candidate === null || typeof sequence !== 'object' || sequence === null) {
-      return undefined
-    }
-    const state = candidate as Partial<RecordingState>
-    const next = sequence as { id?: unknown; seq?: unknown }
-    if (
-      typeof state.id !== 'string' ||
-      state.id.length === 0 ||
-      typeof state.rumSessionId !== 'string' ||
-      typeof state.startedAt !== 'number' ||
-      !Number.isFinite(state.startedAt) ||
-      next.id !== state.id ||
-      typeof next.seq !== 'number' ||
-      !Number.isSafeInteger(next.seq) ||
-      next.seq < 0
-    ) {
-      return undefined
-    }
-    return { id: state.id, rumSessionId: state.rumSessionId, startedAt: state.startedAt }
+    return parseRecordingState(serialized, serializedSequence)
   }
+}
+
+/** Decode persisted identity and sequence together; malformed JSON raises to the storage boundary. */
+export function parseRecordingState(serialized: string, serializedSequence: string): RecordingState | undefined {
+  const candidate: unknown = JSON.parse(serialized)
+  const sequence: unknown = JSON.parse(serializedSequence)
+  if (typeof candidate !== 'object' || candidate === null || typeof sequence !== 'object' || sequence === null) {
+    return undefined
+  }
+  const state = candidate as Partial<RecordingState>
+  const next = sequence as { id?: unknown; seq?: unknown }
+  if (
+    typeof state.id !== 'string' ||
+    state.id.length === 0 ||
+    typeof state.rumSessionId !== 'string' ||
+    typeof state.startedAt !== 'number' ||
+    !Number.isFinite(state.startedAt) ||
+    next.id !== state.id ||
+    typeof next.seq !== 'number' ||
+    !Number.isSafeInteger(next.seq) ||
+    next.seq < 0
+  ) {
+    return undefined
+  }
+  return { id: state.id, rumSessionId: state.rumSessionId, startedAt: state.startedAt }
 }

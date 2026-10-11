@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { MAX_RECORDING_DURATION_MS, RECORDING_OWNER_STORAGE_KEY, RECORDING_STORAGE_KEY, RecordingIdentity } from './recordingIdentity'
+import {
+  MAX_RECORDING_DURATION_MS,
+  RECORDING_OWNER_STORAGE_KEY,
+  RECORDING_STORAGE_KEY,
+  RecordingIdentity,
+  parseRecordingState,
+} from './recordingIdentity'
 import { SEQ_STORAGE_KEY } from './transport'
 
 class MemoryStorage implements Storage {
@@ -31,6 +37,48 @@ function resumableStorage(): MemoryStorage {
   storage.setItem(SEQ_STORAGE_KEY, JSON.stringify({ id: 'tab-replay', seq: 7 }))
   return storage
 }
+
+describe('parseRecordingState', () => {
+  const state = { id: 'tab-replay', rumSessionId: 'rum-session', startedAt: 1_000 }
+  const sequence = { id: 'tab-replay', seq: 7 }
+
+  it('accepts a matching identity and sequence without depending on browser storage', () => {
+    expect(parseRecordingState(JSON.stringify(state), JSON.stringify(sequence))).toEqual(state)
+  })
+
+  it.each([null, 1, [], {}, { ...state, id: '' }, { ...state, rumSessionId: null }, { ...state, startedAt: '1000' }])(
+    'rejects invalid identity: %j',
+    (candidate) => {
+      expect(parseRecordingState(JSON.stringify(candidate), JSON.stringify(sequence))).toBeUndefined()
+    }
+  )
+
+  it('rejects an infinite timestamp from otherwise valid JSON', () => {
+    expect(
+      parseRecordingState('{"id":"tab-replay","rumSessionId":"rum-session","startedAt":1e309}', JSON.stringify(sequence))
+    ).toBeUndefined()
+  })
+
+  it.each([
+    null,
+    [],
+    {},
+    { id: 'other-replay', seq: 7 },
+    { id: 'tab-replay', seq: -1 },
+    { id: 'tab-replay', seq: 1.5 },
+    { id: 'tab-replay', seq: '7' },
+    { id: 'tab-replay', seq: Number.MAX_SAFE_INTEGER + 1 },
+  ])('rejects invalid sequence: %j', (candidate) => {
+    expect(parseRecordingState(JSON.stringify(state), JSON.stringify(candidate))).toBeUndefined()
+  })
+
+  it.each([
+    ['{', JSON.stringify(sequence)],
+    [JSON.stringify(state), '{'],
+  ])('raises malformed JSON to the storage boundary', (identityJson, sequenceJson) => {
+    expect(() => parseRecordingState(identityJson, sequenceJson)).toThrow(SyntaxError)
+  })
+})
 
 describe('RecordingIdentity', () => {
   it('resumes a released tab with a matching saved sequence', () => {
