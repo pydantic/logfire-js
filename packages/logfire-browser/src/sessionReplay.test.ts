@@ -68,6 +68,30 @@ afterEach(() => {
 })
 
 describe('startBrowserSessionReplay', () => {
+  it('contains a failing recording-id getter without breaking span correlation', async () => {
+    const failure = new Error('recording id unavailable')
+    const onError = vi.fn<(error: unknown) => void>()
+    const state = new BrowserSessionReplayState()
+    const runtime = createReplayRuntime({
+      getRecordingId: () => {
+        throw failure
+      },
+    })
+    const replay = await startBrowserSessionReplay(
+      { load: () => ({ startSessionReplay: () => runtime }), onError, replayUrl: '/logfire/replay' },
+      createManager(),
+      state,
+      { traceUrl: '/v1/traces' }
+    )
+    try {
+      expect(state.getState()).toBeUndefined()
+      expect(replay?.getRecordingId?.()).toBe('')
+      expect(onError).toHaveBeenCalledWith(failure)
+    } finally {
+      await replay?.stop()
+    }
+  })
+
   it('forwards the current recording id through the runtime facade', async () => {
     let recordingId = 'recording-1'
     const state = new BrowserSessionReplayState()

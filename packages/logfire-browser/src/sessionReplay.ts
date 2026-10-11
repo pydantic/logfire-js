@@ -300,7 +300,18 @@ function wrapReplayRuntime(
   let stopPromise: Promise<void> | undefined
   const getRecordingId = replay.getRecordingId?.bind(replay)
   return {
-    ...(getRecordingId === undefined ? {} : { getRecordingId }),
+    ...(getRecordingId === undefined
+      ? {}
+      : {
+          getRecordingId: () => {
+            try {
+              return getRecordingId()
+            } catch (error) {
+              safeReportError(onError, error)
+              return ''
+            }
+          },
+        }),
     get mode() {
       try {
         return replay.mode
