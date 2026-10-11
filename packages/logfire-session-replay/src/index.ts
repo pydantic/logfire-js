@@ -98,6 +98,8 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
     let runtime: ActiveRuntime | undefined
     let stopped = false
     let suspended = false
+    let lifecycleGeneration = 0
+    let sequenceIsResumable = true
     let transition = Promise.resolve()
     let stopPromise: Promise<void> | undefined
 
@@ -164,11 +166,15 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
 
     const onPageHide = () => {
       suspended = true
+      lifecycleGeneration += 1
       const oldRuntime = runtime
       runtime = undefined
       const shutdown = oldRuntime?.deactivate(true) ?? Promise.resolve()
       transition = transition.then(async () => reportPromise(shutdown, resolvedConfig.onError))
-      recordingIdentity.release()
+      sequenceIsResumable = oldRuntime?.transport.canResumeSequence() ?? sequenceIsResumable
+      if (sequenceIsResumable) {
+        recordingIdentity.release()
+      }
     }
     const onPageShow = (event: PageTransitionEvent) => {
       if (!event.persisted || stopped) {
@@ -178,11 +184,23 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       // after visiting another page. Resume from storage with a fresh recorder.
       runtime?.discard()
       runtime = undefined
-      suspended = false
-      recordingIdentity.resume()
-      currentSessionId = getSessionId(false)
-      currentRecordingId = recordingIdentity.get(currentSessionId)
-      activate(currentSessionId, false, false)
+      const generation = lifecycleGeneration
+      transition = transition.then(async () => {
+        // Incoming pageshow can precede the outgoing document's pagehide.
+        // Yield a task before claiming its final persisted sequence.
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 0)
+        })
+        if (stopped || lifecycleGeneration !== generation) {
+          return
+        }
+        suspended = false
+        recordingIdentity.resume()
+        currentSessionId = getSessionId(false)
+        currentRecordingId = recordingIdentity.get(currentSessionId)
+        sequenceIsResumable = true
+        activate(currentSessionId, false, false)
+      })
     }
     window.addEventListener('pagehide', onPageHide)
     window.addEventListener('pageshow', onPageShow)
@@ -218,6 +236,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       stop: async () => {
         stopPromise ??= (async () => {
           stopped = true
+          lifecycleGeneration += 1
           clearInterval(sessionTimer)
           window.removeEventListener('pagehide', onPageHide)
           window.removeEventListener('pageshow', onPageShow)
@@ -227,7 +246,10 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           await reportPromise(oldShutdown, resolvedConfig.onError)
           await transition
           internalSessions.flushPendingStorage()
-          recordingIdentity.release()
+          sequenceIsResumable = oldRuntime?.transport.canResumeSequence() ?? sequenceIsResumable
+          if (sequenceIsResumable) {
+            recordingIdentity.release()
+          }
           releaseLease()
         })()
         return stopPromise

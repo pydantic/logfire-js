@@ -311,6 +311,62 @@ describe('startSessionReplay full mode', () => {
     }
   })
 
+  it.each([
+    ['throw', 'stop'],
+    ['discard', 'stop'],
+    ['throw', 'pagehide'],
+    ['discard', 'pagehide'],
+  ])('does not resume a stale sequence after storage writes %s during %s', async (failureMode, lifecycle) => {
+    sessionStorage.setItem(
+      'lf_session_replay_recording',
+      JSON.stringify({ id: 'existing-replay', rumSessionId: 'same-rum-session', startedAt: 1_000 })
+    )
+    sessionStorage.setItem('lf_session_replay_seq', JSON.stringify({ id: 'existing-replay', seq: 9 }))
+    const { calls, fetchImpl } = recordingFetch()
+    const first = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => 'same-rum-session' }))
+    expect(first.getRecordingId()).toBe('existing-replay')
+    const setItem = sessionStorage.setItem.bind(sessionStorage)
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key, value) => {
+      if (key === 'lf_session_replay_seq') {
+        if (failureMode === 'throw') {
+          throw new DOMException('Quota exceeded', 'QuotaExceededError')
+        }
+        return
+      }
+      setItem(key, value)
+    })
+    emit(fullSnapshot)
+    if (lifecycle === 'pagehide') {
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+    }
+    await first.stop()
+    write.mockRestore()
+    const second = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => 'same-rum-session' }))
+    try {
+      expect(second.getRecordingId()).not.toBe('existing-replay')
+      emit(fullSnapshot)
+      await second.flush()
+      expect(calls.map((call) => call.url)).toEqual([
+        'https://app.example.com/replay/existing-replay?seq=9',
+        `https://app.example.com/replay/${second.getRecordingId()}?seq=0`,
+      ])
+    } finally {
+      await second.stop()
+    }
+  })
+
+  it('does not restart a cached recorder when stopped before restoration completes', async () => {
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl))
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+    await replay.stop()
+    await replay.flush()
+    expect(replay.recording).toBe(false)
+    expect(replay.getRecordingId()).toBe('')
+    expect(handles).toHaveLength(1)
+  })
+
   it('restores a cached document from the newest persisted sequence and a fresh DOM recorder', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => 'same-rum-session' }))
@@ -321,6 +377,7 @@ describe('startSessionReplay full mode', () => {
       window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
       sessionStorage.setItem('lf_session_replay_seq', JSON.stringify({ id: recordingId, seq: 6 }))
       window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+      await replay.flush()
       expect(replay.getRecordingId()).toBe(recordingId)
       expect(handles).toHaveLength(2)
       expect(handles[0]?.stop).toHaveBeenCalledOnce()
