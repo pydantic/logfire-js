@@ -124,7 +124,7 @@ export class ReplayTransport {
     this.held = options.holdUntilActivity === true && mode === 'full'
     this.takeFullSnapshot = options.takeFullSnapshot
     this.minimumDurationSatisfied = config.minSessionDurationMs === 0
-    this.seq = this.loadSeq(sessionId)
+    this.seq = this.readPersistedSequence() ?? 0
     this.startedAt = this.config.now()
     this.lastUserActivityAt = this.startedAt
   }
@@ -933,23 +933,31 @@ export class ReplayTransport {
     }
   }
 
-  private loadSeq(sessionId: string): number {
+  canResumeSequence(): boolean {
+    // A failed write leaves the previous value in storage. Do not hand that
+    // stale sequence to a new document, even if setItem silently discarded it.
+    return this.readPersistedSequence() === this.seq
+  }
+
+  private readPersistedSequence(): number | undefined {
     if (this.storage === null) {
-      return 0
+      return undefined
     }
     try {
       const raw = this.storage.getItem(SEQ_STORAGE_KEY)
       if (raw === null) {
-        return 0
+        return undefined
       }
       const parsed: unknown = JSON.parse(raw)
       if (typeof parsed !== 'object' || parsed === null) {
-        return 0
+        return undefined
       }
       const value = parsed as { id?: unknown; seq?: unknown }
-      return value.id === sessionId && typeof value.seq === 'number' && Number.isFinite(value.seq) ? value.seq : 0
+      return value.id === this.sessionId && typeof value.seq === 'number' && Number.isSafeInteger(value.seq) && value.seq >= 0
+        ? value.seq
+        : undefined
     } catch {
-      return 0
+      return undefined
     }
   }
 

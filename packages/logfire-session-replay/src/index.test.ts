@@ -69,6 +69,7 @@ describe('startSessionReplay environment and sampling gates', () => {
     expect(replay.recording).toBe(false)
     expect(replay.mode).toBe('off')
     expect(replay.getSessionId()).toBe('')
+    expect(replay.getRecordingId()).toBe('')
     expect(start).not.toHaveBeenCalled()
     expect(calls).toHaveLength(0)
   })
@@ -233,6 +234,191 @@ describe('startSessionReplay controller ownership', () => {
 })
 
 describe('startSessionReplay full mode', () => {
+  it.each([false, true])('uses fresh recording ids with a shared RUM session (storage blocked: %s)', async (blocked) => {
+    // Opener tabs can clone both keys. A reinitialized recorder must not adopt
+    // that upload identity even if persisting a new sequence is impossible.
+    const clonedSequence = JSON.stringify({ id: 'shared-rum-session', seq: 7 })
+    sessionStorage.setItem('lf_session_replay_seq', clonedSequence)
+    if (blocked) {
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+        throw new Error('storage unavailable')
+      })
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('storage unavailable')
+      })
+    }
+    const { calls, fetchImpl } = recordingFetch()
+    const recordingIds: string[] = []
+    for (let index = 0; index < 2; index += 1) {
+      const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => 'shared-rum-session' }))
+      try {
+        expect(replay.getSessionId()).toBe('shared-rum-session')
+        const recordingId = replay.getRecordingId()
+        expect(recordingId).not.toBe('shared-rum-session')
+        expect(recordingId).not.toBe('')
+        recordingIds.push(recordingId)
+        emit(fullSnapshot)
+        // eslint-disable-next-line no-await-in-loop -- each recorder is shut down before starting another.
+        await replay.flush()
+      } finally {
+        // eslint-disable-next-line no-await-in-loop -- release the page's recorder lease.
+        await replay.stop()
+      }
+      if (!blocked) {
+        sessionStorage.setItem('lf_session_replay_seq', clonedSequence)
+        sessionStorage.setItem('lf_session_replay_recording_owner', 'cloned-live-owner')
+      }
+    }
+    expect(new Set(recordingIds).size).toBe(2)
+    expect(calls.map((call) => call.url)).toEqual(recordingIds.map((id) => `https://app.example.com/replay/${id}?seq=0`))
+  })
+
+  it('does not expose the old recording id after the RUM session changes', async () => {
+    let sessionId = 'first-rum-session'
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId }))
+    try {
+      const firstId = replay.getRecordingId()
+      expect(firstId).not.toBe('')
+      sessionId = 'second-rum-session'
+      expect(replay.getRecordingId()).toBe('')
+      emitActivity(click)
+      await replay.flush()
+      expect(replay.getRecordingId()).not.toBe('')
+      expect(replay.getRecordingId()).not.toBe(firstId)
+    } finally {
+      await replay.stop()
+    }
+  })
+
+  it('continues a released tab replay at the next persisted sequence', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const first = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => 'same-rum-session' }))
+    const recordingId = first.getRecordingId()
+    emit(fullSnapshot)
+    await first.stop()
+    const second = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => 'same-rum-session' }))
+    try {
+      expect(second.getRecordingId()).toBe(recordingId)
+      emit(fullSnapshot)
+      await second.flush()
+      expect(calls.map((call) => call.url)).toEqual([
+        `https://app.example.com/replay/${recordingId}?seq=0`,
+        `https://app.example.com/replay/${recordingId}?seq=1`,
+      ])
+    } finally {
+      await second.stop()
+    }
+  })
+
+  it.each([
+    ['throw', 'stop'],
+    ['discard', 'stop'],
+    ['throw', 'pagehide'],
+    ['discard', 'pagehide'],
+  ])('does not resume a stale sequence after storage writes %s during %s', async (failureMode, lifecycle) => {
+    sessionStorage.setItem(
+      'lf_session_replay_recording',
+      JSON.stringify({ id: 'existing-replay', rumSessionId: 'same-rum-session', startedAt: 1_000 })
+    )
+    sessionStorage.setItem('lf_session_replay_seq', JSON.stringify({ id: 'existing-replay', seq: 9 }))
+    const { calls, fetchImpl } = recordingFetch()
+    const first = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => 'same-rum-session' }))
+    expect(first.getRecordingId()).toBe('existing-replay')
+    const setItem = sessionStorage.setItem.bind(sessionStorage)
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key, value) => {
+      if (key === 'lf_session_replay_seq') {
+        if (failureMode === 'throw') {
+          throw new DOMException('Quota exceeded', 'QuotaExceededError')
+        }
+        return
+      }
+      setItem(key, value)
+    })
+    emit(fullSnapshot)
+    if (lifecycle === 'pagehide') {
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+    }
+    await first.stop()
+    write.mockRestore()
+    const second = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => 'same-rum-session' }))
+    try {
+      expect(second.getRecordingId()).not.toBe('existing-replay')
+      emit(fullSnapshot)
+      await second.flush()
+      expect(calls.map((call) => call.url)).toEqual([
+        'https://app.example.com/replay/existing-replay?seq=9',
+        `https://app.example.com/replay/${second.getRecordingId()}?seq=0`,
+      ])
+    } finally {
+      await second.stop()
+    }
+  })
+
+  it('does not restart a cached recorder when stopped before restoration completes', async () => {
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl))
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+    await replay.stop()
+    await replay.flush()
+    expect(replay.recording).toBe(false)
+    expect(replay.getRecordingId()).toBe('')
+    expect(handles).toHaveLength(1)
+  })
+
+  it('restores a cached document from the newest persisted sequence and a fresh DOM recorder', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => 'same-rum-session' }))
+    try {
+      const recordingId = replay.getRecordingId()
+      emit(fullSnapshot)
+      await replay.flush()
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+      sessionStorage.setItem('lf_session_replay_seq', JSON.stringify({ id: recordingId, seq: 6 }))
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+      await replay.flush()
+      expect(replay.getRecordingId()).toBe(recordingId)
+      expect(handles).toHaveLength(2)
+      expect(handles[0]?.stop).toHaveBeenCalledOnce()
+      emit(fullSnapshot)
+      await replay.flush()
+      expect(calls.map((call) => call.url)).toEqual([
+        `https://app.example.com/replay/${recordingId}?seq=0`,
+        `https://app.example.com/replay/${recordingId}?seq=6`,
+      ])
+    } finally {
+      await replay.stop()
+    }
+  })
+
+  it('rolls over after two hours even when an external RUM session does not rotate', async () => {
+    let now = 1_000
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { now: () => now, getSessionId: () => 'persistent-rum-session' }))
+    try {
+      const firstId = replay.getRecordingId()
+      emit(fullSnapshot)
+      await replay.flush()
+      now += 2 * 60 * 60 * 1_000
+      expect(replay.getSessionId()).toBe('persistent-rum-session')
+      expect(replay.getRecordingId()).toBe('')
+      emitActivity(click)
+      await replay.flush()
+      const secondId = replay.getRecordingId()
+      expect(secondId).not.toBe('')
+      expect(secondId).not.toBe(firstId)
+      emit(fullSnapshot)
+      await replay.flush()
+      expect(calls.map((call) => call.url)).toEqual([
+        `https://app.example.com/replay/${firstId}?seq=0`,
+        `https://app.example.com/replay/${secondId}?seq=0`,
+      ])
+    } finally {
+      await replay.stop()
+    }
+  })
+
   it('defaults to a ten-second minimum session duration', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(0)
@@ -337,7 +523,7 @@ describe('startSessionReplay full mode', () => {
     await replay.flush()
 
     expect(calls).toHaveLength(1)
-    expect(calls[0]!.url).toBe(`https://app.example.com/replay/${replay.getSessionId()}?seq=0`)
+    expect(calls[0]!.url).toBe(`https://app.example.com/replay/${replay.getRecordingId()}?seq=0`)
     const envelope = decodeBody(calls[0]!.init.body)
     expect(envelope.version).toBe(CHUNK_ENVELOPE_VERSION)
     expect(envelope.events).toHaveLength(2)
@@ -368,6 +554,7 @@ describe('startSessionReplay full mode', () => {
     const { calls, fetchImpl } = recordingFetch()
     const start = vi.spyOn(recorderMod, 'startRecording')
     const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionAttributes, getSessionId: () => sessionId }))
+    const firstRecordingId = replay.getRecordingId()
     expect(replay.getSessionId()).toBe('external-1')
     emit(fullSnapshot)
 
@@ -378,13 +565,15 @@ describe('startSessionReplay full mode', () => {
     await replay.flush()
     expect(replay.recording).toBe(true)
     expect(start).toHaveBeenCalledTimes(2)
+    const secondRecordingId = replay.getRecordingId()
+    expect(secondRecordingId).not.toBe(firstRecordingId)
     emit(fullSnapshot)
     await replay.flush()
     await replay.stop()
 
     expect(calls.map((call) => call.url)).toEqual([
-      'https://app.example.com/replay/external-1?seq=0',
-      'https://app.example.com/replay/external-2?seq=0',
+      `https://app.example.com/replay/${firstRecordingId}?seq=0`,
+      `https://app.example.com/replay/${secondRecordingId}?seq=0`,
     ])
     expect(calls.map((call) => decodeBody(call.init.body).meta.sessionAttributes)).toEqual([
       { account_tier: 'pro' },
@@ -427,6 +616,7 @@ describe('startSessionReplay full mode', () => {
     let sessionId = 'external-1'
     const { calls, fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId }))
+    const firstRecordingId = replay.getRecordingId()
     emit(fullSnapshot)
     await replay.flush()
 
@@ -434,6 +624,7 @@ describe('startSessionReplay full mode', () => {
     await vi.advanceTimersByTimeAsync(1_000)
     await replay.flush()
     emit(fullSnapshot)
+    const secondRecordingId = replay.getRecordingId()
     await replay.flush()
     expect(calls).toHaveLength(1)
 
@@ -441,8 +632,8 @@ describe('startSessionReplay full mode', () => {
     await replay.flush()
 
     expect(calls.map((call) => call.url)).toEqual([
-      'https://app.example.com/replay/external-1?seq=0',
-      'https://app.example.com/replay/external-2?seq=0',
+      `https://app.example.com/replay/${firstRecordingId}?seq=0`,
+      `https://app.example.com/replay/${secondRecordingId}?seq=0`,
     ])
     expect(decodeBody(calls[1]!.init.body).events).toEqual([fullSnapshot, click])
     await replay.stop()
@@ -480,6 +671,7 @@ describe('startSessionReplay full mode', () => {
     let sessionId = 'external-1'
     const { calls, fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId }))
+    const firstRecordingId = replay.getRecordingId()
     emit(fullSnapshot)
     await replay.flush()
 
@@ -491,13 +683,14 @@ describe('startSessionReplay full mode', () => {
     sessionId = 'external-3'
     emitActivity(click)
     await replay.flush()
+    const thirdRecordingId = replay.getRecordingId()
     emit(fullSnapshot)
     emitActivity(click)
     await replay.flush()
 
     expect(calls.map((call) => call.url)).toEqual([
-      'https://app.example.com/replay/external-1?seq=0',
-      'https://app.example.com/replay/external-3?seq=0',
+      `https://app.example.com/replay/${firstRecordingId}?seq=0`,
+      `https://app.example.com/replay/${thirdRecordingId}?seq=0`,
     ])
     await replay.stop()
   })
@@ -506,7 +699,7 @@ describe('startSessionReplay full mode', () => {
     vi.useFakeTimers()
     const { calls, fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl))
-    const sessionId = replay.getSessionId()
+    const sessionId = replay.getRecordingId()
     emit(fullSnapshot)
     await vi.advanceTimersByTimeAsync(5_000)
     await vi.waitFor(() => {
@@ -646,8 +839,9 @@ describe('startSessionReplay buffer mode', () => {
 
     window.dispatchEvent(new ErrorEvent('error', { message: 'boom' }))
     expect(replay.mode).toBe('full')
+    const recordingId = replay.getRecordingId()
     await replay.stop()
-    expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${replay.getSessionId()}?seq=0`])
+    expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${recordingId}?seq=0`])
   })
 
   it('does not treat resource load failures as unhandled JavaScript errors', async () => {
@@ -844,6 +1038,7 @@ describe('startSessionReplay lifecycle', () => {
     ) as unknown as typeof fetch
     const start = vi.spyOn(recorderMod, 'startRecording')
     const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId }))
+    const firstRecordingId = replay.getRecordingId()
     emit(fullSnapshot)
 
     sessionId = 'session-new'
@@ -867,7 +1062,7 @@ describe('startSessionReplay lifecycle', () => {
     await stopPromise
 
     expect(start).toHaveBeenCalledTimes(1)
-    expect(calls).toEqual(['https://app.example.com/replay/session-old?seq=0'])
+    expect(calls).toEqual([`https://app.example.com/replay/${firstRecordingId}?seq=0`])
     expect(decodeBody(vi.mocked(fetchImpl).mock.calls[0]![1]?.body).events).toEqual([fullSnapshot])
   })
 
@@ -880,19 +1075,24 @@ describe('startSessionReplay lifecycle', () => {
       return new Response(null, { status: calls.length === 1 ? 400 : 202 })
     }) as unknown as typeof fetch
     const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId, onError }))
+    const firstRecordingId = replay.getRecordingId()
     emit(fullSnapshot)
 
     sessionId = 'session-new'
     emit(click)
     await replay.flush()
     expect(replay.recording).toBe(true)
+    const secondRecordingId = replay.getRecordingId()
     expect(onError).toHaveBeenCalledTimes(1)
 
     emit(fullSnapshot)
     emitActivity(click)
     await replay.flush()
     await replay.stop()
-    expect(calls).toEqual(['https://app.example.com/replay/session-old?seq=0', 'https://app.example.com/replay/session-new?seq=0'])
+    expect(calls).toEqual([
+      `https://app.example.com/replay/${firstRecordingId}?seq=0`,
+      `https://app.example.com/replay/${secondRecordingId}?seq=0`,
+    ])
   })
 
   it('awaits the final stop flush and makes repeated stop calls idempotent', async () => {

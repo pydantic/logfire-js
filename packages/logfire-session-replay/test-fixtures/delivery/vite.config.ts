@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { defineConfig } from 'vite-plus'
 
-interface ReplayReceipt {
+export interface ReplayReceipt {
   accepted: boolean
   authorization: string | undefined
   body: string
@@ -164,6 +164,10 @@ export default defineConfig({
     },
   ],
   server: {
+    // Tests exercise shipped recorder behavior, not Vite's dev WebSocket.
+    // Leaving that socket open prevents a real Chromium BFCache restore.
+    ws: false,
+    forwardConsole: false,
     host: '127.0.0.1',
     port: 4177,
     strictPort: true,

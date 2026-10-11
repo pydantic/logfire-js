@@ -150,6 +150,8 @@ async function run(): Promise<void> {
 
   // Replay observes external browser-session rotation on its one-second poll.
   await delay(1_100)
+  document.querySelector<HTMLButtonElement>('#interaction')?.click()
+  logfire.info('normal-recording-after-rotation')
   document.querySelector('#status')?.setAttribute('data-replay-session', 'rotated')
   await replayRuntime?.flush()
   await cleanup()
