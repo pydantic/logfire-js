@@ -8,6 +8,195 @@ import { repositoryRoot, runVerifier } from './runVerifier'
 const deliveryVerifier = resolve(repositoryRoot, 'packages/logfire-session-replay/test-fixtures/delivery/verify.mjs')
 const privacyVerifier = resolve(repositoryRoot, 'packages/logfire-browser/test-fixtures/privacy-defaults/verify.mjs')
 
+test.describe('recording identity', () => {
+  test('a child reload continues after its opener navigates cross-origin', async ({ page, request }) => {
+    await request.post('http://127.0.0.1:4177/fixture/reset?scenario=identity')
+    await page.goto('http://127.0.0.1:4177/identity.html')
+    await expect(page.getByRole('status')).toHaveText('ready')
+    const childPromise = page.waitForEvent('popup')
+    await page.getByRole('button', { name: 'Open another tab' }).click()
+    const child = await childPromise
+    try {
+      await expect(child.getByRole('status')).toHaveText('ready')
+      const childId = await child.evaluate(() => window.logfireReplayIdentity.recordingId)
+      await page.route('https://opener.example.invalid/', async (route) => {
+        await route.fulfill({ body: '<p>Uninstrumented cross-origin page</p>', contentType: 'text/html' })
+      })
+      await page.goto('https://opener.example.invalid/')
+      await child.reload()
+      await expect(child.getByRole('status')).toHaveText('ready')
+      expect(await child.evaluate(() => window.logfireReplayIdentity.recordingId)).toBe(childId)
+    } finally {
+      await child.evaluate(async () => window.logfireReplayIdentity.stop())
+      await child.close()
+    }
+  })
+
+  test('a new tab from an uninstrumented page does not resume its released replay', async ({ page, request }) => {
+    await request.post('http://127.0.0.1:4177/fixture/reset?scenario=identity')
+    await page.goto('http://127.0.0.1:4177/identity.html')
+    await expect(page.getByRole('status')).toHaveText('ready')
+    const firstId = await page.evaluate(() => window.logfireReplayIdentity.recordingId)
+    await page.goto('http://127.0.0.1:4177/after-unload.html')
+    const childPromise = page.waitForEvent('popup')
+    await page.evaluate(() => {
+      window.open('/identity.html', '_blank')
+    })
+    const child = await childPromise
+    try {
+      await expect(child.getByRole('status')).toHaveText('ready')
+      const childId = await child.evaluate(() => window.logfireReplayIdentity.recordingId)
+      expect(childId).not.toBe(firstId)
+      await child.reload()
+      await expect(child.getByRole('status')).toHaveText('ready')
+      expect(await child.evaluate(() => window.logfireReplayIdentity.recordingId)).toBe(childId)
+      await page.goto('http://127.0.0.1:4177/identity.html')
+      await expect(page.getByRole('status')).toHaveText('ready')
+      expect(await page.evaluate(() => window.logfireReplayIdentity.recordingId)).toBe(firstId)
+    } finally {
+      await child.evaluate(async () => window.logfireReplayIdentity.stop())
+      await child.close()
+      await page.evaluate(async () => {
+        if (window.location.pathname === '/identity.html') {
+          await window.logfireReplayIdentity.stop()
+        }
+      })
+    }
+  })
+
+  test('an opener tab and its cloned storage produce independently playable recordings', async ({ page, context, request }) => {
+    await request.post('http://127.0.0.1:4177/fixture/reset?scenario=identity')
+    await page.goto('http://127.0.0.1:4177/identity.html')
+    await expect(page.getByRole('status')).toHaveText('ready')
+    const first = await page.evaluate(() => ({
+      recordingId: window.logfireReplayIdentity.recordingId,
+      rumSessionId: window.logfireReplayIdentity.rumSessionId,
+    }))
+    const childPromise = page.waitForEvent('popup')
+    await page.getByRole('button', { name: 'Open another tab' }).click()
+    const child = await childPromise
+    try {
+      await expect(child.getByRole('status')).toHaveText('ready')
+      const second = await child.evaluate(() => ({
+        inheritedSequence: window.logfireReplayIdentity.inheritedSequence,
+        recordingId: window.logfireReplayIdentity.recordingId,
+        rumSessionId: window.logfireReplayIdentity.rumSessionId,
+      }))
+      expect(first.recordingId).not.toBe(second.recordingId)
+      expect(first.rumSessionId).toBe(second.rumSessionId)
+      expect(JSON.parse(second.inheritedSequence ?? '{}')).toEqual({ id: first.recordingId, seq: 1 })
+      await page.evaluate(async () => window.logfireReplayIdentity.stop())
+      await child.evaluate(async () => window.logfireReplayIdentity.stop())
+
+      const response = await request.get('http://127.0.0.1:4177/fixture/status?scenario=identity')
+      expect(response.ok()).toBe(true)
+      const evidence = parseRecord(await response.text(), 'identity evidence')
+      const receipts = evidence['receipts']
+      expect(Array.isArray(receipts)).toBe(true)
+      if (!Array.isArray(receipts)) {
+        throw new Error('identity evidence has no receipts')
+      }
+      const playback = await context.newPage()
+      try {
+        for (const [recordingId, marker] of [
+          [first.recordingId, 'parent-marker'],
+          [second.recordingId, 'child-marker'],
+        ] as const) {
+          const recordingReceipts = receipts.filter(
+            (receipt: unknown) =>
+              isRecord(receipt) &&
+              typeof receipt['url'] === 'string' &&
+              new URL(receipt['url'], 'http://127.0.0.1:4177').pathname === `/replay/identity/${recordingId}`
+          )
+          expect(recordingReceipts.length).toBeGreaterThan(0)
+          expect(recordingReceipts[0]).toMatchObject({ seq: 0, accepted: true })
+          const events = replayEvents(JSON.stringify({ receipts: recordingReceipts }))
+          // eslint-disable-next-line no-await-in-loop -- exercise each independent rrweb DOM mirror separately.
+          await playback.goto('http://127.0.0.1:4177/playback.html')
+          // eslint-disable-next-line no-await-in-loop -- wait until that recording is loaded.
+          await playback.evaluate(async (recordedEvents) => window.logfireReplayPlayback.load(recordedEvents), events)
+          // eslint-disable-next-line no-await-in-loop -- verify the corresponding recording, not a combined event stream.
+          await expect(playback.frameLocator('iframe').getByText(marker, { exact: true })).toBeVisible()
+        }
+      } finally {
+        await playback.close()
+      }
+    } finally {
+      await page.evaluate(async () => window.logfireReplayIdentity.stop())
+      await child.evaluate(async () => window.logfireReplayIdentity.stop())
+      await child.close()
+    }
+  })
+
+  test('a reload continues the replay and its sequence while retaining RUM identity', async ({ page, request }) => {
+    await request.post('http://127.0.0.1:4177/fixture/reset?scenario=identity')
+    await page.goto('http://127.0.0.1:4177/identity.html')
+    await expect(page.getByRole('status')).toHaveText('ready')
+    const first = await page.evaluate(() => ({
+      recordingId: window.logfireReplayIdentity.recordingId,
+      rumSessionId: window.logfireReplayIdentity.rumSessionId,
+    }))
+    await page.reload()
+    await expect(page.getByRole('status')).toHaveText('ready')
+    try {
+      const second = await page.evaluate(() => ({
+        recordingId: window.logfireReplayIdentity.recordingId,
+        rumSessionId: window.logfireReplayIdentity.rumSessionId,
+      }))
+      expect(second.recordingId).toBe(first.recordingId)
+      expect(second.rumSessionId).toBe(first.rumSessionId)
+      const response = await request.get('http://127.0.0.1:4177/fixture/status?scenario=identity')
+      expect(response.ok()).toBe(true)
+      const evidence = parseRecord(await response.text(), 'reload evidence')
+      const receipts = evidence['receipts']
+      if (!Array.isArray(receipts)) {
+        throw new Error('reload evidence has no receipts')
+      }
+      const sequences = receipts.map((receipt: unknown) => (isRecord(receipt) ? receipt['seq'] : undefined))
+      expect(sequences.length).toBeGreaterThanOrEqual(2)
+      expect(new Set(sequences).size).toBe(sequences.length)
+      expect(
+        receipts.every(
+          (receipt: unknown) =>
+            isRecord(receipt) &&
+            typeof receipt['url'] === 'string' &&
+            new URL(receipt['url'], 'http://127.0.0.1:4177').pathname === `/replay/identity/${first.recordingId}`
+        )
+      ).toBe(true)
+    } finally {
+      await page.evaluate(async () => window.logfireReplayIdentity.stop())
+    }
+  })
+
+  test('same-tab navigation and back retain the replay without reusing sequences', async ({ page, request }) => {
+    await request.post('http://127.0.0.1:4177/fixture/reset?scenario=identity')
+    await page.goto('http://127.0.0.1:4177/identity.html')
+    await expect(page.getByRole('status')).toHaveText('ready')
+    const recordingId = await page.evaluate(() => window.logfireReplayIdentity.recordingId)
+    await page.getByRole('link', { name: 'Navigate in this tab' }).click()
+    await expect(page).toHaveURL('http://127.0.0.1:4177/identity.html?next=true')
+    await expect(page.getByRole('status')).toHaveText('ready')
+    expect(await page.evaluate(() => window.logfireReplayIdentity.recordingId)).toBe(recordingId)
+    await page.goBack()
+    await expect(page.getByRole('status')).toHaveText('ready')
+    try {
+      expect(await page.evaluate(() => window.logfireReplayIdentity.recordingId)).toBe(recordingId)
+      await page.evaluate(async () => window.logfireReplayIdentity.stop())
+      const response = await request.get('http://127.0.0.1:4177/fixture/status?scenario=identity')
+      expect(response.ok()).toBe(true)
+      const receipts = parseRecord(await response.text(), 'navigation evidence')['receipts']
+      if (!Array.isArray(receipts)) {
+        throw new Error('navigation evidence has no receipts')
+      }
+      const sequences = receipts.map((receipt: unknown) => (isRecord(receipt) ? receipt['seq'] : undefined))
+      expect(sequences.length).toBeGreaterThanOrEqual(3)
+      expect(new Set(sequences).size).toBe(sequences.length)
+    } finally {
+      await page.evaluate(async () => window.logfireReplayIdentity.stop())
+    }
+  })
+})
+
 declare global {
   interface Window {
     logfireReplayPlayback: {

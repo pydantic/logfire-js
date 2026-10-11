@@ -68,6 +68,26 @@ afterEach(() => {
 })
 
 describe('startBrowserSessionReplay', () => {
+  it('forwards the current recording id through the runtime facade', async () => {
+    let recordingId = 'recording-1'
+    const state = new BrowserSessionReplayState()
+    const runtime = createReplayRuntime({ getRecordingId: () => recordingId })
+    const replay = await startBrowserSessionReplay(
+      { load: () => ({ startSessionReplay: () => runtime }), replayUrl: '/logfire/replay' },
+      createManager(),
+      state,
+      { traceUrl: '/v1/traces' }
+    )
+    expect(replay?.getRecordingId?.()).toBe('recording-1')
+    expect(state.getState()).toEqual({ active: true, mode: 'full', recordingId: 'recording-1' })
+    recordingId = ''
+    expect(state.getState()).toBeUndefined()
+    recordingId = 'recording-2'
+    expect(state.getState()).toEqual({ active: true, mode: 'full', recordingId: 'recording-2' })
+    await replay?.stop()
+    expect(state.getState()).toBeUndefined()
+  })
+
   it('loads replay, passes browser-owned config, and uses peekSessionId on the hot path', async () => {
     const manager = createManager()
     const touchSpy = vi.spyOn(manager, 'touch')

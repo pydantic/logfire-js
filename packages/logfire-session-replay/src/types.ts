@@ -108,7 +108,8 @@ export interface SessionReplayConfig {
   /**
    * Browser-safe replay upload endpoint, either direct Logfire ingest with a
    * restricted frontend application token or an application-owned proxy. The
-   * SDK posts to `${replayUrl}/${sessionId}?seq=${seq}`.
+   * SDK posts to `${replayUrl}/${recordingId}?seq=${seq}`. A replay continues
+   * across same-tab reloads/navigations; a new tab gets a separate recording id.
    */
   replayUrl: string
   /**
@@ -125,7 +126,8 @@ export interface SessionReplayConfig {
   token?: string | (() => MaybePromise<string>)
   /**
    * Optional external session id source. The browser SDK integration should
-   * pass its RUM session id here.
+   * pass its RUM session id here. This controls sampling and session rotation;
+   * it is not used as the upload/playback id (see `getRecordingId()`).
    */
   getSessionId?: () => string | undefined
   /**
