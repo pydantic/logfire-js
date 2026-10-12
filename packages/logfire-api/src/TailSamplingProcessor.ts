@@ -87,10 +87,10 @@ async function runBoth(first: () => Promise<void>, second: () => Promise<void>):
 export class TailSamplingProcessor implements SpanProcessor {
   private readonly buffers = new Map<string, TraceBuffer>()
   /**
-   * Traces that ended without being sampled, in insertion order for eviction. A span can still
-   * start in such a trace, for example from a listener that runs after the root ended.
+   * Start times of traces that ended without being sampled, in insertion order for eviction. A span
+   * can still start in such a trace, for example from a listener that runs after the root ended.
    */
-  private readonly droppedTraces = new Set<string>()
+  private readonly droppedTraces = new Map<string, HrTime>()
   /** Traces still held after their root ended, in insertion order for eviction. */
   private readonly retainedAfterRoot = new Set<string>()
   private readonly deferredProcessor: SpanProcessor | undefined
@@ -145,7 +145,7 @@ export class TailSamplingProcessor implements SpanProcessor {
       if (entry.flushed) {
         this.droppedTraces.delete(traceId)
       } else {
-        this.rememberDropped(traceId)
+        this.rememberDropped(traceId, entry.startTime)
       }
     } else if (entry.rootEnded) {
       this.retainAfterRoot(traceId)
@@ -171,7 +171,8 @@ export class TailSamplingProcessor implements SpanProcessor {
 
     // A span that starts in a dropped trace is buffered as the start of what is left of that trace,
     // so it is exported only when it, or a span after it, meets the criteria itself.
-    const lateInDroppedTrace = readable.parentSpanContext !== undefined && this.droppedTraces.has(traceId)
+    const droppedTraceStart = readable.parentSpanContext === undefined ? undefined : this.droppedTraces.get(traceId)
+    const lateInDroppedTrace = droppedTraceStart !== undefined
     if (!readable.parentSpanContext || lateInDroppedTrace) {
       const buffer: TraceBuffer = {
         ended: [],
@@ -180,7 +181,8 @@ export class TailSamplingProcessor implements SpanProcessor {
         outstanding: 1,
         rootEnded: lateInDroppedTrace,
         started: [],
-        startTime: readable.startTime,
+        // Durations stay measured from the start of the whole trace, as for any other span.
+        startTime: droppedTraceStart ?? readable.startTime,
       }
       this.buffers.set(traceId, buffer)
       this.addStart(buffer, span, parentContext)
@@ -204,11 +206,11 @@ export class TailSamplingProcessor implements SpanProcessor {
     )
   }
 
-  private rememberDropped(traceId: string): void {
+  private rememberDropped(traceId: string, startTime: HrTime): void {
     this.droppedTraces.delete(traceId)
-    this.droppedTraces.add(traceId)
+    this.droppedTraces.set(traceId, startTime)
     if (this.droppedTraces.size > MAX_DROPPED_TRACES) {
-      const oldest = this.droppedTraces.values().next().value
+      const oldest = this.droppedTraces.keys().next().value
       if (oldest !== undefined) {
         this.droppedTraces.delete(oldest)
       }

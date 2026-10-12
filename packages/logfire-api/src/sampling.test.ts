@@ -305,6 +305,44 @@ describe('TailSamplingProcessor', () => {
     ])
   })
 
+  test('measures a late span of a dropped trace from the trace start', () => {
+    const downstream = makeProcessor()
+    const tail = levelOrDuration({ durationThreshold: 5.0 }).tail
+    if (tail === undefined) {
+      throw new Error('expected tail sampler')
+    }
+    const processor = new TailSamplingProcessor(downstream, tail)
+
+    const root = makeSpan({ endTime: [1001, 0], name: 'root', startTime: [1000, 0] })
+    processor.onStart(root, ROOT_CONTEXT)
+    processor.onEnd(root)
+    // An early late span is dropped too, and must not reset the start of the trace.
+    const early = makeSpan({
+      endTime: [1002, 0],
+      name: 'early',
+      parentSpanContext: root.spanContext(),
+      spanId: 'early00000000000',
+      startTime: [1001, 0],
+    })
+    processor.onStart(early, ROOT_CONTEXT)
+    processor.onEnd(early)
+    // Starts 10 seconds into the trace but runs for only one second.
+    const late = makeSpan({
+      endTime: [1011, 0],
+      name: 'late',
+      parentSpanContext: root.spanContext(),
+      spanId: 'late000000000000',
+      startTime: [1010, 0],
+    })
+    processor.onStart(late, ROOT_CONTEXT)
+    processor.onEnd(late)
+
+    expect(downstream.calls).toEqual([
+      { event: 'start', span: late },
+      { event: 'end', span: late },
+    ])
+  })
+
   test('exports a sampled trace span that ends after the root through both processors', () => {
     const downstream = makeProcessor()
     const deferred = makeProcessor()
