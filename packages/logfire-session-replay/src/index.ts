@@ -512,13 +512,21 @@ function isSamplingMode(value: unknown): value is SamplingMode {
 }
 
 function errorMessage(error: unknown): string {
-  const message = typeof error === 'object' && error !== null && 'message' in error ? (error as { message?: unknown }).message : undefined
-  return coerceRejectionMessage(message ?? error)
+  return coerceRejectionMessage(readErrorProperty(error, 'message') ?? error)
 }
 
 function errorStack(error: unknown): string | undefined {
-  const stack = typeof error === 'object' && error !== null && 'stack' in error ? (error as { stack?: unknown }).stack : undefined
+  const stack = readErrorProperty(error, 'stack')
   return typeof stack === 'string' ? stack : undefined
+}
+
+// A rejected or reported value can have throwing getters, which must not stop the error event.
+function readErrorProperty(error: unknown, key: 'message' | 'stack'): unknown {
+  try {
+    return typeof error === 'object' && error !== null && key in error ? (error as Record<string, unknown>)[key] : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function ignorePromise(promise: Promise<void>, onError: ((error: unknown) => void) | undefined): void {
@@ -613,5 +621,10 @@ function coerceRejectionMessage(value: unknown): string {
   }
   // Replay custom events are not masked, and a rejected or reported object can hold credentials,
   // so only its type is recorded. The span for the same error carries the scrubbed details.
-  return Object.prototype.toString.call(value)
+  try {
+    return Object.prototype.toString.call(value)
+  } catch {
+    // A throwing Symbol.toStringTag getter.
+    return '[object Object]'
+  }
 }

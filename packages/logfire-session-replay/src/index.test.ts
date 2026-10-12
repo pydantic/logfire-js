@@ -639,6 +639,26 @@ describe('startSessionReplay errors', () => {
     await replay.stop()
   })
 
+  it('records an error event for a value whose getters throw', async () => {
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl))
+    const hostile = Object.defineProperties(
+      {},
+      {
+        message: { get: () => raise() },
+        stack: { get: () => raise() },
+        [Symbol.toStringTag]: { get: () => raise() },
+      }
+    )
+
+    replay.captureError(hostile)
+    dispatchRejection(Object.defineProperty({}, Symbol.toStringTag, { get: () => raise() }))
+
+    const payloads = handle.addCustomEvent.mock.calls.filter(([tag]) => tag === CustomTag.Error).map(([, payload]) => payload)
+    expect(payloads).toEqual([{ message: '[object Object]' }, { message: '[object Object]' }])
+    await replay.stop()
+  })
+
   it('coerces non-string rejection messages', async () => {
     const { fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl))
@@ -1182,6 +1202,10 @@ async function drainMicrotasks(): Promise<void> {
 function rng(values: number[]): () => number {
   let index = 0
   return () => values[index++] ?? 1
+}
+
+function raise(): never {
+  throw new Error('hostile getter')
 }
 
 function dispatchRejection(reason: unknown): void {
