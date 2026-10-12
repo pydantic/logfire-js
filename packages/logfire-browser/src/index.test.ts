@@ -378,6 +378,8 @@ vi.mock('@opentelemetry/sdk-trace-web', () => ({
 }))
 
 vi.mock('./webVitals', () => ({
+  observeDocumentPage: () => undefined,
+  observeNavigatedPages: () => () => undefined,
   startBrowserWebVitals: async (options: unknown) => mocks.startBrowserWebVitals(options),
 }))
 

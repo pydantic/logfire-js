@@ -237,8 +237,10 @@ The callback has this contract:
 - Return a fixed name for catch-all and not-found routes, such as `/*`. Do not
   fall back to the URL.
 - Do not put ids, slugs, or user data in the value.
-- The SDK calls the callback for every new span. Keep it synchronous and cheap.
-  Read router state, or a variable that the application updates on navigation.
+- The SDK calls the callback for every new span. With Web Vitals it also calls
+  it in `configure()`, and with `reportSoftNavs` one task after each URL change.
+  Keep it synchronous and cheap. Read router state, or a variable that the
+  application updates on navigation.
 - Change the value together with the URL. A span that starts after the URL
   changes but before the value changes gets the previous route.
 - Return `undefined` until the router resolves the first route. The SDK then

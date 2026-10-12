@@ -62,7 +62,7 @@ import { startBrowserLongAnimationFrames } from './longAnimationFrames'
 import type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
 import { BrowserSessionReplayState, snapshotErrorForReplay, startBrowserSessionReplay } from './sessionReplay'
 import type { BrowserSessionReplayControl, BrowserSessionReplayOptions } from './sessionReplay'
-import { startBrowserWebVitals } from './webVitals'
+import { observeDocumentPage, observeNavigatedPages, startBrowserWebVitals } from './webVitals'
 import type { BrowserWebVitalsOptions } from './webVitals'
 import { DocumentHideChunkingExporter } from './DocumentHideChunkingExporter'
 import { keepFailedTraces } from './errorsProfile'
@@ -947,6 +947,14 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
             return undefined
           })
 
+  // Synchronous, because Web Vitals start only after their module (and browser metrics) load.
+  if (webVitalsOptions !== undefined && browserSessionManager !== undefined) {
+    observeDocumentPage(browserSessionManager)
+  }
+  const removeNavigatedPageObserver =
+    webVitalsOptions?.reportSoftNavs === true && browserSessionManager !== undefined
+      ? observeNavigatedPages(browserSessionManager)
+      : undefined
   const webVitalsStartupPromise =
     webVitalsOptions === undefined
       ? undefined
@@ -1025,6 +1033,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
 
       diag.info('logfire-browser: shutting down')
       removeDocumentHideFlush()
+      removeNavigatedPageObserver?.()
       removeGlobalErrorCapture?.()
       if (logfireApiConfig.onReportError === onReportError) {
         logfireApiConfig.onReportError = previousOnReportError

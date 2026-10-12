@@ -54,6 +54,9 @@ const optionalFeatureMocks = vi.hoisted(() => {
     registerWebVital(callback: (metric: unknown) => void) {
       webVitalCallback = callback
     },
+    reportWebVital(metric: unknown) {
+      webVitalCallback?.(metric)
+    },
     reset() {
       metricsStartupError = undefined
     },
@@ -409,6 +412,86 @@ describe('public browser configure startup ordering', () => {
       )
     } finally {
       await cleanup()
+    }
+  })
+
+  it('keeps the document route when the application navigates before Web Vitals load', async () => {
+    const exporter = new InMemorySpanExporter()
+    let route = '/home'
+    history.replaceState({}, '', '/')
+    const cleanup = configure({
+      rum: { session: { getRouteName: () => route }, webVitals: true },
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      route = '/products/:id'
+      history.pushState({}, '', '/products/123')
+      await waitUntil(() => optionalFeatureMocks.hasWebVitalCallback)
+      await delay(0)
+      optionalFeatureMocks.reportWebVital({
+        attribution: { loadState: 'complete' },
+        delta: 1200,
+        entries: [],
+        id: 'document-lcp',
+        name: 'LCP',
+        navigationType: 'navigate',
+        navigationURL: `${location.origin}/`,
+        rating: 'good',
+        value: 1200,
+      })
+      const span = exporter.getFinishedSpans().find(({ name }) => name === 'web_vital.lcp')
+      expect(span?.attributes['logfire.page.url.path']).toBe('/')
+      expect(span?.attributes['logfire.page.route']).toBe('/home')
+    } finally {
+      await cleanup()
+      history.replaceState({}, '', '/')
+    }
+  })
+
+  it('keeps a soft navigation route that only the URL change observed', async () => {
+    const exporter = new InMemorySpanExporter()
+    const navigation = new EventTarget()
+    Object.defineProperty(globalThis, 'navigation', { configurable: true, value: navigation })
+    let route = '/home'
+    history.replaceState({}, '', '/')
+    const cleanup = configure({
+      rum: { session: { getRouteName: () => route }, webVitals: { reportSoftNavs: true } },
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      const navigationStartTime = performance.now()
+      history.pushState({}, '', '/products/123')
+      navigation.dispatchEvent(new Event('currententrychange'))
+      route = '/products/:id'
+      await delay(0)
+      route = '/settings'
+      history.pushState({}, '', '/settings')
+      await waitUntil(() => optionalFeatureMocks.hasWebVitalCallback)
+      await delay(0)
+      optionalFeatureMocks.reportWebVital({
+        attribution: { loadState: 'complete' },
+        delta: 900,
+        entries: [],
+        id: 'soft-lcp',
+        name: 'LCP',
+        navigationId: 1,
+        navigationStartTime,
+        navigationType: 'soft-navigation',
+        navigationURL: `${location.origin}/products/123`,
+        rating: 'good',
+        value: 900,
+      })
+      const span = exporter.getFinishedSpans().find(({ name }) => name === 'web_vital.lcp')
+      expect(span?.attributes['logfire.page.url.path']).toBe('/products/123')
+      expect(span?.attributes['logfire.page.route']).toBe('/products/:id')
+    } finally {
+      await cleanup()
+      Reflect.deleteProperty(globalThis, 'navigation')
+      history.replaceState({}, '', '/')
     }
   })
 
