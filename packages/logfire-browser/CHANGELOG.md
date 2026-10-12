@@ -1,5 +1,34 @@
 # @pydantic/logfire-browser
 
+## 0.26.0
+
+### Minor Changes
+
+- 9b493c5: Report browser errors and keep the replays around them without application-owned listeners or a custom sampler.
+  
+  - `configure()` and `configureFrontend()` now report uncaught errors and unhandled promise rejections as error-level spans named `Uncaught error` and `Unhandled promise rejection`. Resource load failures are not reported. An error object that the application already reported, for example before rethrowing it or from its own `window` `error` listener, is reported once. Pass `captureGlobalErrors: false` to turn global capture off.
+  - Every `reportError()` call now adds the error to an active session replay and promotes an error-buffered replay, so a handled error gets a replay, not only an uncaught one. Up to 10 errors reported before replay has loaded are held and added when it starts, with the time they occurred, so an error during page startup still promotes the replay. The browser SDK turns off the replay package's own global error listeners, so an uncaught error appears in the replay once.
+  - `configureFrontend({ profile: 'errors' })` sets defaults for errors and replay without performance data: it exports only traces with an error-level span, an error status, or an HTTP 5xx response; turns off Web Vitals, their metrics, and document-load spans; and records replay only for sessions with an error. Options passed explicitly take precedence.
+  - The automatic click span now ends when the last listener for the click returns, or throws, instead of when the first one returns. The first listener is often a library's capture listener, such as the replay recorder's, so the span ended before the application's handler ran, and tail sampling decided the trace without the handler's work. A click whose first listener threw also never ended its span.
+- f2e4bc5: Give each tab replay an upload/playback ID distinct from its RUM session ID. Preserve it across same-tab reloads and navigations, but start a new replay for another tab or after two hours. Add `getRecordingId()` to the standalone recorder and `logfire.session_replay.id` to browser spans. Start a new replay when its saved sequence cannot be safely resumed.
+  
+  Requires Platform compatibility readers before upgrading. New tabs produce separate billable replays; same-tab reloads continue the existing replay. The RUM `session.id` attribute and `getSessionId()` remain unchanged; standalone callers linking to playback must use `getRecordingId()`.
+- 9b493c5: Trace the clicks and requests that an application sets up during startup. The browser auto-instrumentations loaded through a dynamic import, so they patched `addEventListener`, `fetch`, and XHR only after `configure()` had returned. A listener registered before the patch, such as the delegated listeners that a framework root registers when it mounts right after configuration, never produced click spans, and requests sent before the patch were not traced. `configure()` and `configureFrontend()` now register the auto-instrumentations before they return, so applications that passed them through `instrumentations` only to register them early can return to `autoInstrumentations`. The auto-instrumentations are part of the main bundle, which adds about 8 kB gzipped for applications that bundle the browser SDK.
+- 1c7f0e7: Rotate browser and standalone replay session IDs after two hours of active recording by default, instead of four hours. Browser telemetry and integrated replay keep the same session ID when they rotate.
+  
+  Applications that configure a custom maximum duration retain that setting.
+
+### Patch Changes
+
+- 59666aa: Keep each page's route on its Web Vitals when the application navigates before anything else observed that page. The SDK learned a page's route only when a span started or a Web Vital reported while its URL was current, so an early client-side navigation, or a quick second one, left Web Vitals without `logfire.page.route`. `configure()` now records the initial page and its route when Web Vitals are enabled, and with `reportSoftNavs` it also records each page the application navigates to, in browsers with the Navigation API (all browsers that report soft navigations).
+- Updated dependencies [cc4c206]
+- Updated dependencies [f2e4bc5]
+- Updated dependencies [9b493c5]
+- Updated dependencies [9b493c5]
+- Updated dependencies [1c7f0e7]
+  - @pydantic/logfire-session-replay@0.6.0
+  - logfire@0.23.0
+
 ## 0.25.0
 
 ### Minor Changes
