@@ -135,7 +135,7 @@ logfire.configure({
 
 The SDK stores the session in `sessionStorage`, so it is scoped to the browser
 tab and survives page reloads. Sessions rotate after 30 minutes of inactivity
-or 4 hours of total duration by default. Spans get the OpenTelemetry
+or 2 hours of total duration by default. Spans get the OpenTelemetry
 `session.id` semantic attribute.
 
 Use `getRouteName` for the application's normalized route template and
@@ -886,7 +886,7 @@ queries.
 4. In the frontend application's Live view, find the two error-level spans:
    `Checkout failed` with the click span that started it in the same trace, and
    `Uncaught error`. The healthy clicks from step 3 do not appear.
-5. The error spans carry `session.id`. Open the replay for that session. It
+5. The error spans carry `logfire.session_replay.id`. Open that replay. It
    contains both errors as error events, and it starts before the first one,
    because the buffer covers the time before the error.
 

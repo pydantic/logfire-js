@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { SESSION_STORAGE_KEY, SessionManager } from './session'
+import { DEFAULTS } from './types'
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>()
@@ -45,6 +46,25 @@ function manager(now: () => number, options: { idleTimeoutMs: number; maxDuratio
 }
 
 describe('SessionManager', () => {
+  it('rotates active recordings after the default two-hour limit', () => {
+    let now = 1_000
+    const sessions = manager(() => now, {
+      idleTimeoutMs: DEFAULTS.sessionIdleTimeoutMs,
+      maxDurationMs: DEFAULTS.maxSessionDurationMs,
+    })
+    const first = sessions.getSession()
+    for (let minutes = 20; minutes <= 120; minutes += 20) {
+      now = first.startedAt + minutes * 60_000
+      expect(sessions.touch().id).toBe(first.id)
+    }
+    expect(DEFAULTS.maxSessionDurationMs).toBe(2 * 60 * 60_000)
+    now += 1
+    const next = sessions.touch()
+    expect(next.id).not.toBe(first.id)
+    expect(next.startedAt).toBe(now)
+    sessions.flushPendingStorage()
+  })
+
   it('reuses the session while the user stays active', () => {
     let now = 1_000
     const sessions = manager(() => now, { idleTimeoutMs: 100, maxDurationMs: 10_000 })

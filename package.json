@@ -16,8 +16,7 @@
     "check": "pnpm run build && vp check && pnpm run typecheck && pnpm run test && pnpm run test:release-tooling",
     "release": "pnpm run build && pnpm changeset publish",
     "changeset-add": "pnpm changeset add",
-    "test:release-tooling": "node scripts/create-npm-token.test.mjs",
-    "verify:browser-rum-release-plan": "node scripts/verify-browser-release-plan.mjs"
+    "test:release-tooling": "node scripts/create-npm-token.test.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.1",

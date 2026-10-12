@@ -113,7 +113,7 @@ logfire.configureFrontend({
 ```
 
 The session is stored in `sessionStorage`, so it is scoped to the current tab
-and survives page reloads. It rotates after 30 minutes of inactivity or 4 hours
+and survives page reloads. It rotates after 30 minutes of inactivity or 2 hours
 of total duration by default. Each span gets the OpenTelemetry `session.id`
 semantic attribute.
 
@@ -697,13 +697,28 @@ Both tokens must be restricted frontend application tokens, since the browser
 can read them. The two deployments need the same application identity and
 access to matching RUM session data to navigate from traces to replay.
 
-`sessionReplay` implies default RUM session behavior. Replay chunks and browser
-spans share `session.id`. Spans started after replay has
+`sessionReplay` implies default RUM session behavior. Browser spans keep their
+RUM `session.id`. Each tab replay has a separate upload/playback identifier in
+`logfire.session_replay.id`. Same-tab reloads and navigations continue that replay;
+new tabs start separate replays, even when they share a RUM session. Replays
+roll over after at most two hours. Spans started after replay has
 loaded and sampled into `full` or `buffer` mode include
 `logfire.session_replay.active` and `logfire.session_replay.mode`. Those active
-attributes are truthful best-effort annotations, not the primary correlation
-key; early spans should be correlated to replay by browser session id and replay
-time bounds. Replay chunks do not include per-trace correlation metadata.
+attributes are truthful best-effort annotations. Link a marked span to its
+recording using `logfire.session_replay.id`, falling back to `session.id` for
+older SDK recordings. Spans emitted before replay startup do not have a recording
+link. Replay chunks do not include per-trace correlation metadata.
+
+The standalone recorder's `getSessionId()` still returns its RUM session.
+Use `getRecordingId()` for its current upload/playback ID; it returns an empty
+string when no recorder is active or during a session transition. Deploy Platform
+support for this attribute before upgrading the SDK.
+
+New tabs count as separate billable replays; same-tab reloads do not. If browser
+storage is unavailable or its saved sequence cannot be safely resumed, the SDK
+starts a new replay rather than risking a sequence collision. Upgrade both
+`@pydantic/logfire-browser` and `@pydantic/logfire-session-replay` together so
+browser spans carry the new recording link.
 
 Before lazy replay startup completes, after startup failure, and after replay is
 stopped, the facade reports `mode: 'off'` and `recording: false`. Its `stop()`
@@ -902,7 +917,7 @@ queries.
 4. In the frontend application's Live view, find the two error-level spans:
    `Checkout failed` with the click span that started it in the same trace, and
    `Uncaught error`. The healthy clicks from step 3 do not appear.
-5. The error spans carry `session.id`. Open the replay for that session. It
+5. The error spans carry `logfire.session_replay.id`. Open that replay. It
    contains both errors as error events, and it starts before the first one,
    because the buffer covers the time before the error.
 

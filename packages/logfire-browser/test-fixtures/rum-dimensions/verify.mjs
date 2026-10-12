@@ -31,6 +31,9 @@ function verifyNormal(snapshot, requestedPhase) {
   const named = new Map(snapshot.spans.map((span) => [span.name, span]))
   const before = required(named, 'normal-before-reload')
   const firstSession = attribute(before, 'session.id')
+  const firstRecording = attribute(before, 'logfire.session_replay.id')
+  assert(typeof firstRecording === 'string', 'missing first recording link')
+  assert(firstRecording !== firstSession, 'recording identity reused the RUM session')
   const beforeRoute = '/projects/:project_id'
   const beforePath = '/projects/123'
   const beforeUrl = 'http://127.0.0.1:4180/projects/123'
@@ -51,7 +54,7 @@ function verifyNormal(snapshot, requestedPhase) {
     assertEqual(`${span.name} session tier`, attribute(span, 'logfire.session.account_tier'), 'pro')
   }
 
-  const firstReplays = snapshot.replays.filter(({ sessionId }) => sessionId === firstSession)
+  const firstReplays = snapshot.replays.filter(({ recordingId }) => recordingId === firstRecording)
   assert(firstReplays.length > 0, 'missing first-session replay chunks')
   assertReplayChunks('first session', firstReplays, dimensions('pro', 1))
   if (requestedPhase === 'before-reload') {
@@ -62,6 +65,7 @@ function verifyNormal(snapshot, requestedPhase) {
   assertEqual('same-tab persisted session', attribute(after, 'session.id'), firstSession)
   assertEqual('route after reload', attribute(after, 'logfire.page.route'), beforeRoute)
   assertEqual('persisted account tier', attribute(after, 'logfire.session.account_tier'), 'pro')
+  assertEqual('same-tab persisted replay', attribute(after, 'logfire.session_replay.id'), firstRecording)
   if (requestedPhase === 'after-reload') {
     return
   }
@@ -73,7 +77,9 @@ function verifyNormal(snapshot, requestedPhase) {
   assertEqual('rotated account tier', attribute(rotated, 'logfire.session.account_tier'), 'enterprise')
   assertEqual('callback count', attribute(required(named, 'normal-callback-count'), 'acceptance.callback_count'), 2)
 
-  const rotatedReplays = snapshot.replays.filter(({ sessionId }) => sessionId === rotatedSession)
+  const rotatedRecording = attribute(required(named, 'normal-recording-after-rotation'), 'logfire.session_replay.id')
+  assert(typeof rotatedRecording === 'string', 'missing rotated recording link')
+  const rotatedReplays = snapshot.replays.filter(({ recordingId }) => recordingId === rotatedRecording)
   assert(rotatedReplays.length > 0, 'missing rotated-session replay chunks')
   assertReplayChunks('rotated session', rotatedReplays, dimensions('enterprise', 2))
 
@@ -155,14 +161,14 @@ async function readSnapshot(selectedScenario) {
   const traces = receipts.filter(({ kind }) => kind === 'trace').map(decodeJson)
   const metrics = receipts.filter(({ kind }) => kind === 'metric').map(decodeJson)
   const spans = traces.flatMap((payload) => collectSpans(payload, serviceName))
-  const sessionIds = new Set(spans.map((span) => attribute(span, 'session.id')).filter(Boolean))
+  const recordingIds = new Set(spans.map((span) => attribute(span, 'logfire.session_replay.id')).filter(Boolean))
   const replays = receipts
     .filter(({ kind }) => kind === 'replay')
     .map((receipt) => ({
       envelope: decodeReplay(receipt),
-      sessionId: new URL(receipt.url, 'http://127.0.0.1').pathname.split('/').at(-1),
+      recordingId: new URL(receipt.url, 'http://127.0.0.1').pathname.split('/').at(-1),
     }))
-    .filter(({ sessionId }) => sessionIds.has(sessionId))
+    .filter(({ recordingId }) => recordingIds.has(recordingId))
   return {
     metricPoints: metrics.flatMap((payload) => collectMetricPoints(payload, serviceName)),
     replays,
@@ -204,7 +210,8 @@ function hasRequiredEvidence(snapshot, selectedScenario, requestedPhase) {
   return (
     snapshot.spans.some(({ name }) => name === 'normal-after-rotation') &&
     snapshot.spans.some(({ name }) => name === 'normal-route-omitted') &&
-    new Set(snapshot.replays.map(({ sessionId }) => sessionId)).size >= 2 &&
+    snapshot.spans.some(({ name }) => name === 'normal-recording-after-rotation') &&
+    new Set(snapshot.replays.map(({ recordingId }) => recordingId)).size >= 2 &&
     snapshot.metricPoints.length > 0
   )
 }

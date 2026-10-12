@@ -108,7 +108,8 @@ export interface SessionReplayConfig {
   /**
    * Browser-safe replay upload endpoint, either direct Logfire ingest with a
    * restricted frontend application token or an application-owned proxy. The
-   * SDK posts to `${replayUrl}/${sessionId}?seq=${seq}`.
+   * SDK posts to `${replayUrl}/${recordingId}?seq=${seq}`. A replay continues
+   * across same-tab reloads/navigations; a new tab gets a separate recording id.
    */
   replayUrl: string
   /**
@@ -125,7 +126,8 @@ export interface SessionReplayConfig {
   token?: string | (() => MaybePromise<string>)
   /**
    * Optional external session id source. The browser SDK integration should
-   * pass its RUM session id here.
+   * pass its RUM session id here. This controls sampling and session rotation;
+   * it is not used as the upload/playback id (see `getRecordingId()`).
    */
   getSessionId?: () => string | undefined
   /**
@@ -152,6 +154,7 @@ export interface SessionReplayConfig {
   /** Minimum recording duration before a replay is uploaded. Defaults to 10 seconds. */
   minSessionDurationMs?: number
   sessionIdleTimeoutMs?: number
+  /** Maximum recording duration before the session ID rotates. Defaults to 2 hours. */
   maxSessionDurationMs?: number
 
   distinctId?: string
@@ -225,7 +228,7 @@ export const DEFAULTS = {
   maxBufferBytes: 1_000_000,
   minSessionDurationMs: 10_000,
   sessionIdleTimeoutMs: 1_800_000,
-  maxSessionDurationMs: 14_400_000,
+  maxSessionDurationMs: 7_200_000,
   distinctId: '',
   captureConsole: false,
   captureNetwork: true,

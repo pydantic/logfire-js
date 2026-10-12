@@ -84,7 +84,9 @@ function startSpan(processor: BrowserSessionSpanProcessor, span: TestSpan): void
   processor.onStart(span as unknown as Span, {} as Context)
 }
 
-function createReplayRuntime(mode: BrowserSessionReplayRuntime['mode']): Required<BrowserSessionReplayRuntime> {
+function createReplayRuntime(
+  mode: BrowserSessionReplayRuntime['mode']
+): BrowserSessionReplayRuntime & Pick<Required<BrowserSessionReplayRuntime>, 'captureError'> {
   return {
     mode,
     recording: true,
@@ -477,6 +479,27 @@ describe('BrowserSessionSpanProcessor', () => {
       'logfire.session_replay.mode': 'full',
       'session.id': 'session-1',
     })
+  })
+
+  it('links the DOM recording without replacing the RUM session id', () => {
+    const replayState = new BrowserSessionReplayState()
+    replayState.setReplay({ ...createReplayRuntime('full'), getRecordingId: () => 'recording-1' })
+    const span = createSpan()
+    startSpan(createProcessor({}, replayState), span)
+    expect(span.attributes).toEqual({
+      'logfire.session_replay.active': true,
+      'logfire.session_replay.mode': 'full',
+      'logfire.session_replay.id': 'recording-1',
+      'session.id': 'session-1',
+    })
+  })
+
+  it('does not link a span while the recording identity is unavailable', () => {
+    const replayState = new BrowserSessionReplayState()
+    replayState.setReplay({ ...createReplayRuntime('full'), getRecordingId: () => '' })
+    const span = createSpan()
+    startSpan(createProcessor({}, replayState), span)
+    expect(span.attributes).toEqual({ 'session.id': 'session-1' })
   })
 
   it('reads live replay mode on each span start', () => {

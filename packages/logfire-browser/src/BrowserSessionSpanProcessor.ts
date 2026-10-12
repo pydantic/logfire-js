@@ -7,6 +7,7 @@ import type { BrowserSessionReplayState } from './sessionReplay'
 const ATTR_SESSION_ID = 'session.id'
 const ATTR_SESSION_REPLAY_ACTIVE = 'logfire.session_replay.active'
 const ATTR_SESSION_REPLAY_MODE = 'logfire.session_replay.mode'
+const ATTR_SESSION_REPLAY_ID = 'logfire.session_replay.id'
 const ATTR_LOGFIRE_PAGE_ROUTE = 'logfire.page.route'
 const ATTR_LOGFIRE_PAGE_URL_FULL = 'logfire.page.url.full'
 const ATTR_LOGFIRE_PAGE_URL_PATH = 'logfire.page.url.path'
@@ -70,6 +71,9 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
     if (replayState !== undefined) {
       span.setAttribute(ATTR_SESSION_REPLAY_ACTIVE, replayState.active)
       span.setAttribute(ATTR_SESSION_REPLAY_MODE, replayState.mode)
+      if (replayState.recordingId !== undefined) {
+        span.setAttribute(ATTR_SESSION_REPLAY_ID, replayState.recordingId)
+      }
     }
 
     const user = this.sessionManager.getUser()

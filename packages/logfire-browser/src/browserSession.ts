@@ -53,7 +53,7 @@ export interface BrowserSessionOptions {
    */
   idleTimeoutMs?: number
   /**
-   * Hard cap on one browser session. Defaults to 4 hours.
+   * Hard cap on one browser session. Defaults to 2 hours.
    */
   maxDurationMs?: number
   /**
@@ -123,7 +123,7 @@ export const DEFAULT_BROWSER_SESSION_OPTIONS: {
   storageKey: string
 } = {
   idleTimeoutMs: 30 * 60_000,
-  maxDurationMs: 4 * 60 * 60_000,
+  maxDurationMs: 2 * 60 * 60_000,
   storageKey: 'lf_browser_session',
 }
 

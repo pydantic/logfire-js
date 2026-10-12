@@ -1,6 +1,7 @@
 import { isUserActivityEvent } from './activity'
 import { captureConsole, captureNavigation, captureNetwork } from './capture'
 import { startRecording } from './recorder'
+import { RECORDING_STORAGE_KEY, RecordingIdentity } from './recordingIdentity'
 import { decideSamplingMode } from './sampling'
 import { snapshotSessionAttributes } from './sessionAttributes'
 import { safeSessionStorage, SessionManager } from './session'
@@ -35,6 +36,8 @@ export interface SessionReplay {
    * The same error object is added once, however many times it is captured.
    */
   captureError(error: unknown): void
+  /** The current DOM recording's upload/playback id; distinct from the RUM session id. */
+  getRecordingId(): string
   flush(): Promise<void>
   stop(): Promise<void>
 }
@@ -44,6 +47,7 @@ const NOOP: SessionReplay = {
   recording: false,
   getSessionId: () => '',
   captureError: () => undefined,
+  getRecordingId: () => '',
   flush: async () => Promise.resolve(),
   stop: async () => Promise.resolve(),
 }
@@ -54,9 +58,10 @@ const SESSION_MONITOR_INTERVAL_MS = 1_000
 
 interface ActiveRuntime {
   readonly sessionId: string
+  readonly recordingId: string
   readonly transport: ReplayTransport
   captureError(error: unknown): void
-  deactivate(): Promise<void>
+  deactivate(keepalive?: boolean): Promise<void>
   discard(): void
 }
 
@@ -91,18 +96,28 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       return sessionId
     }
     const samplingModeStorage = safeSessionStorage()
+    const recordingIdentity = new RecordingIdentity(samplingModeStorage, resolvedConfig.now, resolvedConfig.maxSessionDurationMs, () => {
+      const opener = window.opener as Window | null
+      return opener?.sessionStorage.getItem(RECORDING_STORAGE_KEY) ?? null
+    })
     let currentSessionId = getSessionId(false)
+    let currentRecordingId = recordingIdentity.get(currentSessionId)
     let runtime: ActiveRuntime | undefined
     let stopped = false
+    let suspended = false
+    let lifecycleGeneration = 0
+    let sequenceIsResumable = true
     let transition = Promise.resolve()
+    let pageShutdowns = Promise.resolve()
     let stopPromise: Promise<void> | undefined
 
     const activate = (sessionId: string, initial: boolean, holdUntilActivity = !initial): void => {
       const mode = resolveSamplingMode(resolvedConfig, sessionId, samplingModeStorage)
-      if (mode === 'off' || stopped || sessionId !== currentSessionId) {
+      if (mode === 'off' || stopped || suspended || runtime !== undefined || sessionId !== currentSessionId) {
         return
       }
       try {
+        const recordingId = currentRecordingId
         runtime = createActiveRuntime({
           config: resolvedConfig,
           getSessionId,
@@ -110,6 +125,8 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           onSessionChanged: observeSession,
           samplingModeStorage,
           sessionId,
+          recordingId,
+          isCurrentRecording: () => recordingIdentity.isCurrent(recordingId, getSessionId(false)),
           holdUntilActivity,
         })
       } catch (error) {
@@ -122,16 +139,22 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
     }
 
     const observeSession = (sessionId: string, holdUntilActivity = true): void => {
-      if (stopped || sessionId === currentSessionId) {
+      if (stopped || suspended) {
+        return
+      }
+      const recordingId = recordingIdentity.get(sessionId)
+      if (sessionId === currentSessionId && recordingId === currentRecordingId) {
         return
       }
       currentSessionId = sessionId
+      currentRecordingId = recordingId
       const oldRuntime = runtime
       runtime = undefined
       const oldShutdown = oldRuntime?.deactivate() ?? Promise.resolve()
+      const generation = lifecycleGeneration
       transition = transition.then(async () => {
         await reportPromise(oldShutdown, resolvedConfig.onError)
-        if (!stopped && currentSessionId === sessionId) {
+        if (!stopped && lifecycleGeneration === generation && currentSessionId === sessionId && currentRecordingId === recordingId) {
           activate(sessionId, false, holdUntilActivity)
         }
       })
@@ -146,8 +169,53 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
     } catch (error) {
       runtime?.discard()
       runtime = undefined
+      recordingIdentity.release()
       throw error
     }
+
+    const onPageHide = () => {
+      suspended = true
+      lifecycleGeneration += 1
+      const oldRuntime = runtime
+      runtime = undefined
+      const shutdown = oldRuntime?.deactivate(true) ?? Promise.resolve()
+      // Sequences are reserved synchronously. Keep upload completion for stop(),
+      // but let a restored document record while the old requests are pending.
+      pageShutdowns = Promise.all([pageShutdowns, transition, reportPromise(shutdown, resolvedConfig.onError)]).then(() => undefined)
+      transition = Promise.resolve()
+      sequenceIsResumable = oldRuntime?.transport.canResumeSequence() ?? sequenceIsResumable
+      if (sequenceIsResumable) {
+        recordingIdentity.release()
+      }
+    }
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted || stopped) {
+        return
+      }
+      // A cached document's old transport has a stale sequence and DOM mirror
+      // after visiting another page. Resume from storage with a fresh recorder.
+      runtime?.discard()
+      runtime = undefined
+      const generation = lifecycleGeneration
+      transition = transition.then(async () => {
+        // Incoming pageshow can precede the outgoing document's pagehide.
+        // Yield a task before claiming its final persisted sequence.
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 0)
+        })
+        if (stopped || lifecycleGeneration !== generation) {
+          return
+        }
+        suspended = false
+        recordingIdentity.resume()
+        currentSessionId = getSessionId(false)
+        currentRecordingId = recordingIdentity.get(currentSessionId)
+        sequenceIsResumable = true
+        activate(currentSessionId, false, false)
+      })
+    }
+    window.addEventListener('pagehide', onPageHide)
+    window.addEventListener('pageshow', onPageShow)
 
     return {
       get mode() {
@@ -174,6 +242,8 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           safeReportError(resolvedConfig.onError, reportingError)
         }
       },
+      getRecordingId: () =>
+        runtime !== undefined && recordingIdentity.isCurrent(runtime.recordingId, getSessionId(false)) ? runtime.recordingId : '',
       flush: async () => {
         try {
           await transition
@@ -185,13 +255,21 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       stop: async () => {
         stopPromise ??= (async () => {
           stopped = true
+          lifecycleGeneration += 1
           clearInterval(sessionTimer)
+          window.removeEventListener('pagehide', onPageHide)
+          window.removeEventListener('pageshow', onPageShow)
           const oldRuntime = runtime
           runtime = undefined
           const oldShutdown = oldRuntime?.deactivate() ?? Promise.resolve()
           await reportPromise(oldShutdown, resolvedConfig.onError)
           await transition
+          await pageShutdowns
           internalSessions.flushPendingStorage()
+          sequenceIsResumable = oldRuntime?.transport.canResumeSequence() ?? sequenceIsResumable
+          if (sequenceIsResumable) {
+            recordingIdentity.release()
+          }
           releaseLease()
         })()
         return stopPromise
@@ -210,14 +288,26 @@ function createActiveRuntime(options: {
   onSessionChanged: (sessionId: string, holdUntilActivity?: boolean) => void
   samplingModeStorage: Storage | null
   sessionId: string
+  recordingId: string
+  isCurrentRecording: () => boolean
   holdUntilActivity: boolean
 }): ActiveRuntime {
-  const { config, getSessionId, holdUntilActivity, mode, onSessionChanged, samplingModeStorage, sessionId } = options
+  const {
+    config,
+    getSessionId,
+    holdUntilActivity,
+    mode,
+    onSessionChanged,
+    samplingModeStorage,
+    sessionId,
+    recordingId,
+    isCurrentRecording,
+  } = options
   const sessionAttributes = snapshotSessionAttributes(config.getSessionAttributes, (error) => {
     safeReportError(config.onError, error)
   })
   let recorder: ReturnType<typeof startRecording>
-  const transport = new ReplayTransport(config, sessionId, mode, undefined, undefined, sessionAttributes, {
+  const transport = new ReplayTransport(config, recordingId, mode, undefined, undefined, sessionAttributes, {
     holdUntilActivity,
     takeFullSnapshot: () => {
       recorder.takeFullSnapshot()
@@ -236,7 +326,7 @@ function createActiveRuntime(options: {
         }
         try {
           const observedSessionId = getSessionId(true)
-          if (observedSessionId !== sessionId) {
+          if (observedSessionId !== sessionId || !isCurrentRecording()) {
             onSessionChanged(observedSessionId, false)
             return
           }
@@ -253,7 +343,7 @@ function createActiveRuntime(options: {
         }
         try {
           const observedSessionId = getSessionId(isUserActivityEvent(event))
-          if (observedSessionId !== sessionId) {
+          if (observedSessionId !== sessionId || !isCurrentRecording()) {
             onSessionChanged(observedSessionId, false)
             return
           }
@@ -266,7 +356,8 @@ function createActiveRuntime(options: {
       maskAllInputs: config.maskAllInputs,
       maskTextSelector: config.maskTextSelector,
       blockSelector: config.blockSelector,
-      checkoutEveryNms: mode === 'buffer' ? 120_000 : 0,
+      // A periodic replacement anchor must not reset a longer minimum-duration gate.
+      checkoutEveryNms: mode === 'buffer' ? 120_000 : Math.max(300_000, config.minSessionDurationMs),
       redactUrlPatterns: config.redactUrlPatterns,
     })
     cleanup.push(() => {
@@ -383,13 +474,14 @@ function createActiveRuntime(options: {
 
     return {
       sessionId,
+      recordingId,
       transport,
       captureError,
-      deactivate: async () => {
+      deactivate: async (keepalive = false) => {
         deactivation ??= (async () => {
           // shutdown() admits the buffered tail synchronously, so the recorder
           // can stop before its bounded final upload pass finishes.
-          const shutdown = transport.shutdown({ keepalive: false })
+          const shutdown = transport.shutdown({ keepalive })
           active = false
           stopCleanup(cleanup)
           await shutdown

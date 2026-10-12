@@ -70,9 +70,10 @@ test('the errors profile exports failed traces and one promoted replay with both
   expect(spans.filter(({ name }) => name.startsWith('web_vital.') || name === 'documentLoad')).toEqual([])
   expect(receipts.filter(({ kind }) => kind === 'metric')).toEqual([])
 
-  const sessionId = stringAttribute(handled, 'session.id')
+  const recordingId = stringAttribute(handled, 'logfire.session_replay.id')
+  expect(recordingId).toBeDefined()
   const replayEvents = receipts
-    .filter(({ kind, url }) => kind === 'replay' && new URL(url, fixtureOrigin).pathname === `/v1/replay/${String(sessionId)}`)
+    .filter(({ kind, url }) => kind === 'replay' && new URL(url, fixtureOrigin).pathname === `/v1/replay/${String(recordingId)}`)
     .flatMap(({ body }) => (JSON.parse(gunzipSync(Buffer.from(body, 'base64')).toString('utf8')) as { events: ReplayEvent[] }).events)
   const errorMessages = replayEvents
     .filter(({ data, type }) => type === 5 && data?.tag === 'logfire.error')

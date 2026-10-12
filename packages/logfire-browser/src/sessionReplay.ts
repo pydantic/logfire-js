@@ -14,6 +14,8 @@ export interface BrowserSessionReplayRuntime {
   getSessionId(): string
   /** Absent from replay packages older than 0.6. */
   captureError?(error: unknown): void
+  /** Present in replay packages that separate a DOM recording from its RUM session. */
+  getRecordingId?(): string
   flush(): Promise<void>
   stop(): Promise<void>
 }
@@ -22,6 +24,7 @@ export interface BrowserSessionReplayControl {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
   captureError(error: unknown): void
+  getRecordingId?(): string
   flush(): Promise<void>
   stop(): Promise<void>
 }
@@ -122,6 +125,7 @@ export type BrowserSessionReplaySpanMode = 'full' | 'buffer'
 export interface BrowserSessionReplaySpanState {
   active: true
   mode: BrowserSessionReplaySpanMode
+  recordingId?: string
 }
 
 export class BrowserSessionReplayState {
@@ -141,7 +145,13 @@ export class BrowserSessionReplayState {
       return undefined
     }
 
-    return { active: true, mode }
+    const recordingId = this.replay.getRecordingId?.()
+    // A new recorder has no recording id during rotation. Do not link spans
+    // from the new RUM session to the recorder that is still shutting down.
+    if (recordingId?.length === 0) {
+      return undefined
+    }
+    return { active: true, mode, ...(recordingId === undefined ? {} : { recordingId }) }
   }
 }
 
@@ -297,7 +307,20 @@ function wrapReplayRuntime(
   onError: ((error: unknown) => void) | undefined
 ): BrowserSessionReplayControl {
   let stopPromise: Promise<void> | undefined
+  const getRecordingId = replay.getRecordingId?.bind(replay)
   return {
+    ...(getRecordingId === undefined
+      ? {}
+      : {
+          getRecordingId: () => {
+            try {
+              return getRecordingId()
+            } catch (error) {
+              safeReportError(onError, error)
+              return ''
+            }
+          },
+        }),
     get mode() {
       try {
         return replay.mode
