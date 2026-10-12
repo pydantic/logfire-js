@@ -131,7 +131,7 @@ vi.mock('web-vitals/attribution', () => ({
 }))
 
 import { BrowserSessionManager } from './browserSession'
-import { resetBrowserWebVitalsForTests, startBrowserWebVitals } from './webVitals'
+import { observeNavigatedPages, resetBrowserWebVitalsForTests, startBrowserWebVitals } from './webVitals'
 
 const webVitalNames: WebVitalName[] = ['LCP', 'INP', 'CLS', 'FCP', 'TTFB']
 
@@ -980,5 +980,96 @@ describe('browser Web Vitals reporting', () => {
     expect(mocks.diagErrors).toHaveLength(1)
     expect(mocks.diagErrors[0]?.[0]).toBe('logfire-browser: failed to report Web Vital metric')
     expect((mocks.diagErrors[0]?.[1] as Error | undefined)?.message).toBe('metric recorder failed')
+  })
+})
+
+describe('navigated page observation', () => {
+  let navigation: EventTarget
+  let now: number
+  let route: string
+  let softNavigationStartTimes: number[]
+  let sessionManager: BrowserSessionManager
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    navigation = new EventTarget()
+    Object.defineProperty(globalThis, 'navigation', { configurable: true, value: navigation })
+    now = 0
+    route = '/home'
+    softNavigationStartTimes = []
+    sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      performanceNow: () => now,
+      softNavigationStartTimes: () => softNavigationStartTimes,
+      storage: null,
+    })
+    setLocation('https://example.com/')
+    sessionManager.getRouteName(new URL('https://example.com/'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    Reflect.deleteProperty(globalThis, 'navigation')
+    if (originalLocationDescriptor === undefined) {
+      Reflect.deleteProperty(globalThis, 'location')
+    } else {
+      Object.defineProperty(globalThis, 'location', originalLocationDescriptor)
+    }
+  })
+
+  function changeUrl(href: string, at: number): void {
+    now = at
+    setLocation(href)
+    navigation.dispatchEvent(new Event('currententrychange'))
+  }
+
+  it('observes the route that the application sets after changing the URL', () => {
+    const remove = observeNavigatedPages(sessionManager)
+    softNavigationStartTimes = [100]
+    changeUrl('https://example.com/products/123', 110)
+    route = '/products/:id'
+    vi.advanceTimersByTime(0)
+    softNavigationStartTimes = [100, 200]
+    route = '/settings'
+    changeUrl('https://example.com/settings', 210)
+    vi.advanceTimersByTime(0)
+    remove()
+
+    expect(sessionManager.getNavigationRouteName(new URL('https://example.com/products/123'), 100)).toBe('/products/:id')
+    expect(sessionManager.getNavigationRouteName(new URL('https://example.com/settings'), 200)).toBe('/settings')
+  })
+
+  it('observes only the URL the application settles on', () => {
+    const remove = observeNavigatedPages(sessionManager)
+    softNavigationStartTimes = [100]
+    changeUrl('https://example.com/login', 110)
+    changeUrl('https://example.com/products/123', 120)
+    route = '/products/:id'
+    vi.advanceTimersByTime(0)
+    remove()
+
+    expect(sessionManager.getNavigationRouteName(new URL('https://example.com/login'), 100)).toBeUndefined()
+    expect(sessionManager.getNavigationRouteName(new URL('https://example.com/products/123'), 100)).toBe('/products/:id')
+  })
+
+  it('stops observing and cancels a pending observation when removed', () => {
+    const remove = observeNavigatedPages(sessionManager)
+    softNavigationStartTimes = [100]
+    route = '/products/:id'
+    changeUrl('https://example.com/products/123', 110)
+    remove()
+    vi.advanceTimersByTime(0)
+    changeUrl('https://example.com/products/123', 120)
+    vi.advanceTimersByTime(0)
+
+    expect(sessionManager.getNavigationRouteName(new URL('https://example.com/products/123'), 100)).toBeUndefined()
+  })
+
+  it('does nothing without the Navigation API', () => {
+    Reflect.deleteProperty(globalThis, 'navigation')
+    const remove = observeNavigatedPages(sessionManager)
+
+    expect(vi.getTimerCount()).toBe(0)
+    expect(remove).not.toThrow()
   })
 })

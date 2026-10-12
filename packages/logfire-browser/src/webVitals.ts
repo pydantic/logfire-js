@@ -371,6 +371,44 @@ function registerWebVitals(webVitals: WebVitalsAttributionModule, requestedOptio
   registeredObserverOptions = options
 }
 
+/**
+ * Web Vitals load lazily, and the application can navigate before the first one reports. A
+ * document metric keeps its route only if its page was observed while its URL was current.
+ */
+export function observeDocumentPage(sessionManager: BrowserSessionManager): void {
+  sessionManager.getRouteName(getCurrentUrl())
+}
+
+/**
+ * A soft-navigation metric keeps its route only if its page was observed while its URL was
+ * current, and the application can navigate again before anything else observes it. Browsers that
+ * report soft navigations also implement the Navigation API, so this needs no `history` patching.
+ */
+export function observeNavigatedPages(sessionManager: BrowserSessionManager): () => void {
+  const navigation = (globalThis as { navigation?: Navigation }).navigation
+  if (navigation === undefined) {
+    return () => undefined
+  }
+
+  let pending: ReturnType<typeof setTimeout> | undefined
+  const observe = () => {
+    pending = undefined
+    sessionManager.getRouteName(getCurrentUrl())
+  }
+  // Some routers change the URL before they update the route, so the route is read one task
+  // later. A pending observation is rescheduled, so only the URL the application settles on is
+  // observed, and a stale route is never kept for it.
+  const onEntryChange = () => {
+    clearTimeout(pending)
+    pending = setTimeout(observe, 0)
+  }
+  navigation.addEventListener('currententrychange', onEntryChange)
+  return () => {
+    clearTimeout(pending)
+    navigation.removeEventListener('currententrychange', onEntryChange)
+  }
+}
+
 export async function startBrowserWebVitals(options: BrowserWebVitalsStartOptions): Promise<BrowserWebVitalsHandle> {
   const owner = { active: true }
   if (options.metricRecorder !== undefined) {
