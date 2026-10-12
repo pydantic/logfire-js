@@ -779,6 +779,24 @@ describe('browser configureFrontend', () => {
     expect(captureError.mock.calls).toEqual([[error], [error]])
   })
 
+  it('keeps calling an existing reportError() hook and restores it on cleanup', async () => {
+    const existingHook = vi.fn<(error: unknown) => void>()
+    logfireApiConfig.onReportError = existingHook
+    try {
+      cleanup = configureFrontend(frontend)
+      const error = new Error('handled')
+
+      logfireApiConfig.onReportError(error)
+      await cleanup()
+      cleanup = undefined
+
+      expect(existingHook.mock.calls).toEqual([[error]])
+      expect(logfireApiConfig.onReportError).toBe(existingHook)
+    } finally {
+      logfireApiConfig.onReportError = undefined
+    }
+  })
+
   it('lets replay capture global errors itself when the browser SDK does not', async () => {
     const startSessionReplay = vi.fn<(options: unknown) => BrowserSessionReplayRuntime>(() => ({
       mode: 'full' as const,

@@ -916,6 +916,8 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
       forwardingToReplay = false
     }
   }
+  // The application or another package can own a hook already; it keeps receiving every error.
+  const previousOnReportError = logfireApiConfig.onReportError
   const onReportError = (reported: unknown) => {
     reportedErrors.add(reported)
     if (readySessionReplay !== undefined) {
@@ -923,6 +925,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
     } else if (pendingReplayErrors !== undefined && !replayStopped && pendingReplayErrors.length < MAX_PENDING_REPLAY_ERRORS) {
       pendingReplayErrors.push({ error: snapshotErrorForReplay(reported), timestamp: Date.now() })
     }
+    previousOnReportError?.(reported)
   }
   logfireApiConfig.onReportError = onReportError
   const removeGlobalErrorCapture = capturesGlobalErrors
@@ -1024,7 +1027,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
       removeDocumentHideFlush()
       removeGlobalErrorCapture?.()
       if (logfireApiConfig.onReportError === onReportError) {
-        logfireApiConfig.onReportError = undefined
+        logfireApiConfig.onReportError = previousOnReportError
       }
       if (sessionReplayHandle !== undefined) {
         await runCleanupStep('session replay shutdown', async () => sessionReplayHandle.stop())
