@@ -209,6 +209,10 @@ export class ReplayTransport {
       }
     }
 
+    // A checkpoint starts a fresh chunk with its Meta and FullSnapshot pair.
+    if (event.type === EventType.Meta && this.mode === 'full' && this.buffer.length > 0) {
+      this.flushAndReport()
+    }
     this.buffer.push(event)
     this.pendingBytes += eventBytes
     if (enforcingMinimum && this.minimumDurationReached()) {
@@ -216,7 +220,7 @@ export class ReplayTransport {
       return
     }
 
-    if (this.mode === 'full' && this.pendingBytes >= this.config.maxBufferBytes) {
+    if (this.mode === 'full' && this.pendingBytes >= this.config.maxBufferBytes && event.type !== EventType.Meta) {
       this.flushAndReport()
     } else {
       this.scheduleFlush()

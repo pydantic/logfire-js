@@ -59,6 +59,48 @@ test.describe('session replay delivery in Chromium', () => {
     await expect(page.frameLocator('iframe').locator('#late')).toHaveText('gap-after')
   })
 
+  test('a five-minute checkpoint plays without the preceding recording', async ({ page, request }) => {
+    const startedAt = Date.now()
+    await page.clock.install({ time: startedAt })
+    await page.goto('http://127.0.0.1:4177/unload/')
+    await expect(page.locator('#status')).toHaveText('ready')
+    await page.clock.setSystemTime(startedAt + 299_000)
+    await page.locator('#payload').evaluate(async (node) => {
+      node.textContent = 'before-five-minutes'
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          resolve()
+        })
+      })
+    })
+    await page.clock.setSystemTime(startedAt + 301_000)
+    await page.locator('#payload').evaluate((node) => {
+      node.textContent = 'five-minute-checkpoint'
+    })
+    await expect(page.locator('#payload')).toHaveText('five-minute-checkpoint')
+    await page.locator('#leave').click()
+    await expect(page).toHaveURL('http://127.0.0.1:4177/after-unload.html')
+
+    const response = await request.get('http://127.0.0.1:4177/fixture/status?scenario=unload')
+    expect(response.ok()).toBe(true)
+    const events = replayEvents(await response.text())
+    const checkpoints = events.flatMap((event, index) => {
+      const nextEvent = events[index + 1]
+      return isRecord(event) && event['type'] === 4 && isRecord(nextEvent) && nextEvent['type'] === 2 ? [index] : []
+    })
+    expect(checkpoints).toHaveLength(2)
+    const checkpoint = checkpoints[1]
+    if (checkpoint === undefined) {
+      throw new Error('five-minute checkpoint was not recorded')
+    }
+    const header = events[checkpoint]
+    expect(isRecord(header) && Number(header['timestamp']) - startedAt).toBeGreaterThanOrEqual(300_000)
+
+    await page.goto('http://127.0.0.1:4177/playback.html')
+    await page.evaluate(async (recordedEvents) => window.logfireReplayPlayback.load(recordedEvents), events.slice(checkpoint))
+    await expect(page.frameLocator('iframe').locator('#payload')).toHaveText('five-minute-checkpoint')
+  })
+
   test('navigation drops a replay shorter than five seconds', async ({ page, request }) => {
     await page.goto('http://127.0.0.1:4177/short/')
     await expect(page.locator('#status')).toHaveText('ready')

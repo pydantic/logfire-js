@@ -72,6 +72,36 @@ function decodeBody(body: BodyInit | null | undefined): ChunkEnvelope {
   return JSON.parse(strFromU8(gunzipSync(body as Uint8Array))) as ChunkEnvelope
 }
 
+it('starts a new chunk at a checkpoint and preserves its Meta and FullSnapshot pair', async () => {
+  const { calls, fetchImpl } = recordingFetch()
+  const transport = new ReplayTransport(makeConfig(fetchImpl), 'checkpoint-session', 'full', null, immediateCompression())
+  transport.add(meta)
+  transport.add(fullSnapshot)
+  transport.add(click)
+  const nextMeta = { ...meta, timestamp: 300_000 }
+  const nextSnapshot = { ...fullSnapshot, timestamp: 300_001 }
+  transport.add(nextMeta)
+  transport.add(nextSnapshot)
+  transport.add({ ...mutation, timestamp: 300_010 })
+  await transport.flush()
+  expect(calls).toHaveLength(2)
+  expect(decodeBody(calls[0]!.init.body).events).toEqual([meta, fullSnapshot, click])
+  expect(decodeBody(calls[1]!.init.body).events).toEqual([nextMeta, nextSnapshot, { ...mutation, timestamp: 300_010 }])
+  await transport.shutdown()
+})
+
+it('does not flush a checkpoint Meta without its FullSnapshot at the byte threshold', async () => {
+  const { calls, fetchImpl } = recordingFetch()
+  const config = { ...makeConfig(fetchImpl), maxBufferBytes: 1 }
+  const transport = new ReplayTransport(config, 'tiny-checkpoint', 'full', null, immediateCompression())
+  transport.add(meta)
+  expect(calls).toEqual([])
+  transport.add(fullSnapshot)
+  await transport.shutdown()
+  expect(calls).toHaveLength(1)
+  expect(decodeBody(calls[0]!.init.body).events).toEqual([meta, fullSnapshot])
+})
+
 function immediateCompression() {
   return {
     gzip: ((input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
@@ -1985,7 +2015,7 @@ describe('ReplayTransport upload recovery', () => {
     }
   })
 
-  it('trims dependent events that precede the anchor inside a queued chunk', async () => {
+  it('drops the dependent chunk before a queued checkpoint without dropping the checkpoint', async () => {
     vi.useFakeTimers()
     try {
       const { calls, fetchImpl } = scriptedFetch((seq) => (seq === 0 ? new Response(null, { status: 400 }) : accepted()))
@@ -2000,9 +2030,9 @@ describe('ReplayTransport upload recovery', () => {
       await Promise.all([lost, anchored])
       await vi.advanceTimersByTimeAsync(0)
 
-      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ droppedSeqs: [], reason: 'rejected', seq: 0 }))
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ droppedSeqs: [1], reason: 'rejected', seq: 0 }))
       expect(takeFullSnapshot).not.toHaveBeenCalled()
-      expect(calls.filter((call) => call.seq === 1).map((call) => timestamps(call.body))).toEqual([[40, 41, 42]])
+      expect(calls.filter((call) => call.seq !== 0).map((call) => [call.seq, timestamps(call.body)])).toEqual([[2, [40, 41, 42]]])
     } finally {
       vi.useRealTimers()
     }
@@ -2039,9 +2069,9 @@ describe('ReplayTransport upload recovery', () => {
       await vi.advanceTimersByTimeAsync(1_000)
       await Promise.all([lifecycle, ordinary])
 
-      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ droppedSeqs: [], reason: 'unconfirmed', seq: 0 }))
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ droppedSeqs: [1], reason: 'unconfirmed', seq: 0 }))
       expect(takeFullSnapshot).not.toHaveBeenCalled()
-      expect(calls.filter((call) => call.seq === 1).map((call) => timestamps(call.body))).toEqual([[40, 41, 42]])
+      expect(calls.filter((call) => call.seq !== 0).map((call) => [call.seq, timestamps(call.body)])).toEqual([[2, [40, 41, 42]]])
     } finally {
       vi.useRealTimers()
     }
@@ -2087,7 +2117,7 @@ describe('ReplayTransport upload recovery', () => {
 
       expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'rejected', seq: 0 }))
       expect(takeFullSnapshot).not.toHaveBeenCalled()
-      expect(calls.filter((call) => call.seq === 1).map((call) => timestamps(call.body))).toEqual([[40, 41, 42]])
+      expect(calls.filter((call) => call.seq !== 0).map((call) => [call.seq, timestamps(call.body)])).toEqual([[2, [40, 41, 42]]])
     } finally {
       vi.useRealTimers()
     }
