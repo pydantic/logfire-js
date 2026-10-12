@@ -392,6 +392,89 @@ describe('startSessionReplay full mode', () => {
     }
   })
 
+  it.each([202, 400])('restores recording before a pending pagehide upload returns HTTP %s', async (status) => {
+    vi.useFakeTimers()
+    const { calls, fetchImpl } = recordingFetch()
+    let finishUpload: ((response: Response) => void) | undefined
+    vi.mocked(fetchImpl).mockImplementationOnce(
+      async () =>
+        new Promise<Response>((resolve) => {
+          finishUpload = resolve
+        })
+    )
+    const onError = vi.fn<(error: unknown) => void>()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => 'same-rum-session', onError }))
+    try {
+      const recordingId = replay.getRecordingId()
+      emit(fullSnapshot)
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+      await drainMicrotasks()
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(replay.recording).toBe(true)
+      expect(replay.getRecordingId()).toBe(recordingId)
+      expect(handles).toHaveLength(2)
+      emit(fullSnapshot)
+      emitActivity(click)
+      await replay.flush()
+      expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${recordingId}?seq=1`])
+      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, click])
+
+      let stopped = false
+      const stop = replay.stop().then(() => {
+        stopped = true
+      })
+      await drainMicrotasks()
+      expect(stopped).toBe(false)
+      finishUpload?.(new Response(null, { status }))
+      await stop
+      expect(stopped).toBe(true)
+      expect(onError).toHaveBeenCalledTimes(status === 400 ? 1 : 0)
+    } finally {
+      finishUpload?.(new Response(null, { status }))
+      await vi.advanceTimersByTimeAsync(1)
+      await replay.stop()
+    }
+  })
+
+  it('restores recording while a previous session is still shutting down', async () => {
+    vi.useFakeTimers()
+    const { fetchImpl } = recordingFetch()
+    let finishUpload: ((response: Response) => void) | undefined
+    vi.mocked(fetchImpl).mockImplementationOnce(
+      async () =>
+        new Promise<Response>((resolve) => {
+          finishUpload = resolve
+        })
+    )
+    let sessionId = 'session-a'
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId }))
+    try {
+      emit(fullSnapshot)
+      sessionId = 'session-b'
+      emitActivity(click)
+      await vi.waitFor(() => {
+        expect(fetchImpl).toHaveBeenCalledOnce()
+      })
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(replay.recording).toBe(true)
+      expect(replay.getSessionId()).toBe('session-b')
+      expect(handles).toHaveLength(2)
+      finishUpload?.(new Response(null, { status: 202 }))
+      await vi.advanceTimersByTimeAsync(1)
+      expect(handles).toHaveLength(2)
+      expect(handles[1]!.stop).not.toHaveBeenCalled()
+    } finally {
+      finishUpload?.(new Response(null, { status: 202 }))
+      await vi.advanceTimersByTimeAsync(1)
+      await replay.stop()
+    }
+  })
+
   it('rolls over after two hours even when an external RUM session does not rotate', async () => {
     let now = 1_000
     const { calls, fetchImpl } = recordingFetch()

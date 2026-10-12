@@ -101,6 +101,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
     let lifecycleGeneration = 0
     let sequenceIsResumable = true
     let transition = Promise.resolve()
+    let pageShutdowns = Promise.resolve()
     let stopPromise: Promise<void> | undefined
 
     const activate = (sessionId: string, initial: boolean, holdUntilActivity = !initial): void => {
@@ -143,9 +144,10 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       const oldRuntime = runtime
       runtime = undefined
       const oldShutdown = oldRuntime?.deactivate() ?? Promise.resolve()
+      const generation = lifecycleGeneration
       transition = transition.then(async () => {
         await reportPromise(oldShutdown, resolvedConfig.onError)
-        if (!stopped && currentSessionId === sessionId && currentRecordingId === recordingId) {
+        if (!stopped && lifecycleGeneration === generation && currentSessionId === sessionId && currentRecordingId === recordingId) {
           activate(sessionId, false, holdUntilActivity)
         }
       })
@@ -170,7 +172,10 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       const oldRuntime = runtime
       runtime = undefined
       const shutdown = oldRuntime?.deactivate(true) ?? Promise.resolve()
-      transition = transition.then(async () => reportPromise(shutdown, resolvedConfig.onError))
+      // Sequences are reserved synchronously. Keep upload completion for stop(),
+      // but let a restored document record while the old requests are pending.
+      pageShutdowns = Promise.all([pageShutdowns, transition, reportPromise(shutdown, resolvedConfig.onError)]).then(() => undefined)
+      transition = Promise.resolve()
       sequenceIsResumable = oldRuntime?.transport.canResumeSequence() ?? sequenceIsResumable
       if (sequenceIsResumable) {
         recordingIdentity.release()
@@ -245,6 +250,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           const oldShutdown = oldRuntime?.deactivate() ?? Promise.resolve()
           await reportPromise(oldShutdown, resolvedConfig.onError)
           await transition
+          await pageShutdowns
           internalSessions.flushPendingStorage()
           sequenceIsResumable = oldRuntime?.transport.canResumeSequence() ?? sequenceIsResumable
           if (sequenceIsResumable) {
