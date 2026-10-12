@@ -891,8 +891,8 @@ queries.
    because the buffer covers the time before the error.
 
 A replay needs at least 10 seconds of recording before it uploads
-(`minSessionDurationMs`), so keep the page open for a few seconds after the
-errors.
+(`minSessionDurationMs`), so keep the page open until at least 10 seconds of
+recording have elapsed.
 
 ## Custom span processors
 

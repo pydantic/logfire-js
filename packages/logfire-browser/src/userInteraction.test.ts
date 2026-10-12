@@ -59,16 +59,19 @@ describe('collapseUserInteractionSpans', () => {
     const end = vi.fn<(endTime?: number) => void>()
     const firstSpan = { end, spanContext: () => createdSpan.spanContext() } as unknown as Span
     const instrumentation = fakeInstrumentation({ _createSpan: vi.fn<CreateSpan>(() => firstSpan) })
-    vi.spyOn(performance, 'now').mockReturnValueOnce(10).mockReturnValueOnce(25)
+    vi.spyOn(performance, 'now').mockReturnValueOnce(10).mockReturnValueOnce(25).mockReturnValueOnce(40)
     collapseUserInteractionSpans([instrumentation as unknown as Instrumentation])
 
     const span = instrumentation._createSpan?.('element', 'click')
     span?.end()
-    instrumentation._createSpan?.('element', 'click', span)?.end()
+    // The instrumentation passes each listener the span it returned for the previous listener.
+    const secondListenerSpan = instrumentation._createSpan?.('element', 'click', span)
+    secondListenerSpan?.end()
+    instrumentation._createSpan?.('element', 'click', secondListenerSpan)?.end()
     expect(end).not.toHaveBeenCalled()
     vi.runAllTimers()
 
-    expect(end.mock.calls).toEqual([[25]])
+    expect(end.mock.calls).toEqual([[40]])
   })
 
   it('delegates to the instrumentation after it is disabled', () => {

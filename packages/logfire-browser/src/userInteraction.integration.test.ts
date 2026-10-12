@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { hrTimeToNanoseconds } from '@opentelemetry/core'
+import { hrTimeToMilliseconds } from '@opentelemetry/core'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-web'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
@@ -122,20 +122,24 @@ describe('browser user interaction spans', () => {
     expect(clickSpans()).toEqual([])
     expect(calls).toEqual(['app'])
   })
+
   it('keeps the click span open until the last listener returns', async () => {
+    const lastListenerMs = 30
     const { button, removeListeners } = mountButtonWithListeners(() => {
-      startSpan('work in the last listener').end()
+      const start = performance.now()
+      while (performance.now() - start < lastListenerMs) {
+        // Busy work in the last listener, which a span that ends with the first listener excludes.
+      }
     })
 
     button.click()
     removeListeners()
     await nextTask()
 
-    const [click] = clickSpans()
-    const work = exporter.getFinishedSpans().find(({ name }) => name === 'work in the last listener')
-    expect(click).toBeDefined()
-    expect(work).toBeDefined()
-    expect(hrTimeToNanoseconds(click?.endTime ?? [0, 0]) >= hrTimeToNanoseconds(work?.endTime ?? [0, 0])).toBe(true)
+    const clicks = clickSpans()
+    expect(clicks).toHaveLength(1)
+    // The span clock converts between wall and performance time, so allow a few milliseconds.
+    expect(hrTimeToMilliseconds(clicks[0]?.duration ?? [0, 0])).toBeGreaterThanOrEqual(lastListenerMs - 5)
   })
 
   it('ends the click span when a listener throws', async () => {

@@ -41,9 +41,12 @@ export function collapseUserInteractionSpans(instrumentations: readonly Instrume
     internals._createSpan = (element, eventName, parentSpan) => {
       if (parentSpan !== undefined && internals._isEnabled !== false) {
         const listenerSpan = trace.wrapSpanContext(parentSpan.spanContext())
+        // The instrumentation passes the span returned for the previous listener, so each listener
+        // span carries the recorder on to the next one.
         const recordListenerEnd = listenerEnds.get(parentSpan)
         if (recordListenerEnd !== undefined) {
           listenerSpan.end = recordListenerEnd
+          listenerEnds.set(listenerSpan, recordListenerEnd)
         }
         return listenerSpan
       }
