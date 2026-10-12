@@ -167,6 +167,12 @@ export interface SessionReplayConfig {
   captureConsole?: boolean
   captureNetwork?: boolean
   captureNavigation?: boolean
+  /**
+   * Listen for uncaught `error` and `unhandledrejection` events, add them to the replay, and
+   * promote an error-sampled buffer. Defaults to true. The browser SDK turns this off when it
+   * captures global errors itself and forwards them through `captureError()`.
+   */
+  captureGlobalErrors?: boolean
   ignoreUrlPatterns?: RegExp[]
   redactUrlPatterns?: RegExp[]
 
@@ -199,6 +205,7 @@ export interface ResolvedSessionReplayConfig {
   captureConsole: boolean
   captureNetwork: boolean
   captureNavigation: boolean
+  captureGlobalErrors: boolean
   ignoreUrlPatterns: RegExp[]
   redactUrlPatterns: RegExp[]
   onError: ((error: unknown) => void) | undefined
@@ -223,5 +230,6 @@ export const DEFAULTS = {
   captureConsole: false,
   captureNetwork: true,
   captureNavigation: true,
+  captureGlobalErrors: true,
   redactUrlPatterns: [/.+/u] as RegExp[],
 } as const

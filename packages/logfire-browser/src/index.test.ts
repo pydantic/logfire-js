@@ -394,6 +394,7 @@ import { configureLogfireApi, Level, logfireApiConfig, PendingSpanProcessor, Tai
 import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
 import { BrowserUrlSpanProcessor } from './BrowserUrlSpanProcessor'
 import { clearConfiguredBrowserSessionForTests } from './browserSession'
+import { keepFailedTraces } from './errorsProfile'
 import logfireBrowser, {
   configure,
   configureFrontend,
@@ -651,6 +652,124 @@ describe('browser configureFrontend', () => {
     expect(flush).toHaveBeenCalledTimes(1)
     await cleanup()
     expect(stop).toHaveBeenCalledTimes(1)
+  })
+
+  it('forwards reported errors to replay and leaves global errors to the browser SDK', async () => {
+    const captureError = vi.fn<(error: unknown) => void>()
+    const startSessionReplay = vi.fn<(options: unknown) => BrowserSessionReplayRuntime>(() => ({
+      mode: 'buffer' as const,
+      recording: true,
+      captureError,
+      flush: async () => Promise.resolve(),
+      stop: async () => Promise.resolve(),
+      getSessionId: () => 'session',
+    }))
+    cleanup = configureFrontend({ ...frontend, sessionReplay: { load: () => ({ startSessionReplay }) } })
+    await waitForConfigureMicrotasks()
+    const replay = startSessionReplay.mock.calls[0]?.[0] as { captureGlobalErrors?: boolean }
+    expect(replay.captureGlobalErrors).toBe(false)
+
+    // The mocked tracer cannot record exceptions, so the reportError() hook is called directly.
+    const error = new Error('handled')
+    logfireApiConfig.onReportError?.(error)
+    expect(captureError.mock.calls).toEqual([[error]])
+
+    await cleanup()
+    cleanup = undefined
+    expect(logfireApiConfig.onReportError).toBeUndefined()
+  })
+
+  it('does not forward an error reported while replay handles another one', async () => {
+    const captureError = vi.fn<(error: unknown) => void>((error) => {
+      // An application that reports replay failures from sessionReplay.onError re-enters the hook.
+      logfireApiConfig.onReportError?.(new Error(`failed to capture ${String(error)}`))
+    })
+    const startSessionReplay = vi.fn<(options: unknown) => BrowserSessionReplayRuntime>(() => ({
+      mode: 'buffer' as const,
+      recording: true,
+      captureError,
+      flush: async () => Promise.resolve(),
+      stop: async () => Promise.resolve(),
+      getSessionId: () => 'session',
+    }))
+    cleanup = configureFrontend({ ...frontend, sessionReplay: { load: () => ({ startSessionReplay }) } })
+    await waitForConfigureMicrotasks()
+    const error = new Error('handled')
+
+    logfireApiConfig.onReportError?.(error)
+    logfireApiConfig.onReportError?.(error)
+
+    expect(captureError.mock.calls).toEqual([[error], [error]])
+  })
+
+  it('lets replay capture global errors itself when the browser SDK does not', async () => {
+    const startSessionReplay = vi.fn<(options: unknown) => BrowserSessionReplayRuntime>(() => ({
+      mode: 'full' as const,
+      recording: true,
+      flush: async () => Promise.resolve(),
+      stop: async () => Promise.resolve(),
+      getSessionId: () => 'session',
+    }))
+    cleanup = configureFrontend({ ...frontend, captureGlobalErrors: false, sessionReplay: { load: () => ({ startSessionReplay }) } })
+    await waitForConfigureMicrotasks()
+
+    const replay = startSessionReplay.mock.calls[0]?.[0] as { captureGlobalErrors?: boolean }
+    expect(replay.captureGlobalErrors).toBeUndefined()
+    // A replay package without captureError() must not break reportError().
+    expect(() => {
+      logfireApiConfig.onReportError?.(new Error('handled'))
+    }).not.toThrow()
+  })
+
+  it('keeps only failed traces and turns off performance signals with the errors profile', async () => {
+    const startSessionReplay = vi.fn<(options: unknown) => BrowserSessionReplayRuntime>(() => ({
+      mode: 'buffer' as const,
+      recording: true,
+      flush: async () => Promise.resolve(),
+      stop: async () => Promise.resolve(),
+      getSessionId: () => 'session',
+    }))
+    cleanup = configureFrontend({ ...frontend, profile: 'errors', sessionReplay: { load: () => ({ startSessionReplay }) } })
+    await waitForConfigureMicrotasks()
+
+    const tailProcessor = getLatestSpanProcessors().at(-1)
+    expect(tailProcessor).toBeInstanceOf(TailSamplingProcessor)
+    expect((tailProcessor as { tail?: unknown }).tail).toBe(keepFailedTraces)
+    const autoConfig = mocks.autoInstrumentationConfigs[0] as Record<string, unknown>
+    expect(autoConfig['@opentelemetry/instrumentation-document-load']).toEqual({ enabled: false })
+    expect(mocks.webVitalsStartCalls).toEqual([])
+    expect(mocks.browserMetricsStartCalls).toEqual([])
+    const replay = startSessionReplay.mock.calls[0]?.[0] as { onErrorSampleRate?: number; sessionSampleRate?: number }
+    expect(replay.sessionSampleRate).toBe(0)
+    expect(replay.onErrorSampleRate).toBeUndefined()
+  })
+
+  it('lets explicit options take precedence over the errors profile', async () => {
+    const startSessionReplay = vi.fn<(options: unknown) => BrowserSessionReplayRuntime>(() => ({
+      mode: 'full' as const,
+      recording: true,
+      flush: async () => Promise.resolve(),
+      stop: async () => Promise.resolve(),
+      getSessionId: () => 'session',
+    }))
+    const tail = () => 1
+    cleanup = configureFrontend({
+      ...frontend,
+      autoInstrumentations: true,
+      profile: 'errors',
+      rum: { webVitals: true },
+      sampling: { tail },
+      sessionReplay: { load: () => ({ startSessionReplay }), sessionSampleRate: 0.25 },
+    })
+    await waitForConfigureMicrotasks()
+
+    expect((getLatestSpanProcessors().at(-1) as { tail?: unknown }).tail).toBe(tail)
+    const autoConfig = mocks.autoInstrumentationConfigs[0] as Record<string, unknown>
+    expect(autoConfig['@opentelemetry/instrumentation-document-load']).toBeUndefined()
+    expect(mocks.webVitalsStartCalls).toHaveLength(1)
+    expect(mocks.browserMetricsStartCalls).toHaveLength(1)
+    const replay = startSessionReplay.mock.calls[0]?.[0] as { sessionSampleRate?: number }
+    expect(replay.sessionSampleRate).toBe(0.25)
   })
 
   it('sends replay to a separate frontend application without changing trace or metric exports', async () => {
@@ -1282,18 +1401,13 @@ describe('browser span processors', () => {
     cleanup = undefined
   })
 
-  it('lazily loads first-class browser auto-instrumentations after provider registration', async () => {
+  it('registers first-class browser auto-instrumentations after the provider, before configure returns', () => {
     cleanup = configure({
       autoInstrumentations: {
         '@opentelemetry/instrumentation-fetch': { enabled: true },
       },
       traceUrl: 'http://localhost:8989/client-traces',
     })
-
-    expect(mocks.lifecycleEvents).toEqual(['providerCreate'])
-    expect(mocks.autoInstrumentationConfigs).toEqual([])
-
-    await waitForConfigureMicrotasks()
 
     expect(mocks.lifecycleEvents).toEqual(['providerCreate', 'getWebAutoInstrumentations'])
     expect(mocks.autoInstrumentationConfigs).toHaveLength(1)
@@ -1527,13 +1641,41 @@ describe('browser span processors', () => {
     }
   })
 
-  it('does not load first-class browser auto-instrumentations when disabled', async () => {
+  it('keeps tracing configured when auto-instrumentation registration throws', async () => {
+    const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
+    const registrationError = new Error('auto registration failed')
+    const disable = vi.fn<() => void>()
+    vi.spyOn(mocks, 'getWebAutoInstrumentations').mockReturnValue([
+      { config: undefined, disable, name: 'auto-instrumentation' } as { config: unknown; name: string },
+    ])
+    const coreSpanStart = vi.fn<SpanProcessor['onStart']>()
+    const observer = { ...createTestSpanProcessor(), onStart: coreSpanStart }
+    // The first registration is the empty configured group; the second is the auto-instrumentations.
+    mocks.failNextRegistration(undefined)
+    mocks.failNextRegistration(registrationError)
+
+    cleanup = configure({
+      autoInstrumentations: {
+        '@opentelemetry/instrumentation-fetch': { enabled: true },
+      },
+      spanProcessors: [observer],
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+    trace.getTracer('consumer-after-auto-registration-failure').startSpan('still works').end()
+
+    expect(disable).toHaveBeenCalledTimes(1)
+    expect(coreSpanStart).toHaveBeenCalledTimes(1)
+    expect(diagError.mock.calls).toEqual([['logfire-browser: failed to start browser auto-instrumentations', registrationError]])
+    await expect(cleanup()).resolves.toBeUndefined()
+    cleanup = undefined
+  })
+
+  it('does not load first-class browser auto-instrumentations when disabled', () => {
     cleanup = configure({
       autoInstrumentations: { enabled: false },
       resourceTiming: { detail: 'summary' },
       traceUrl: 'http://localhost:8989/client-traces',
     })
-    await waitForConfigureMicrotasks()
 
     expect(mocks.autoInstrumentationConfigs).toEqual([])
     expect(mocks.registerInstrumentationCalls).toHaveLength(1)

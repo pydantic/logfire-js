@@ -954,6 +954,39 @@ describe('reportError', () => {
     mocks.reset()
   })
 
+  test('passes the original error to onReportError, even when minLevel filters the span', () => {
+    const reported: unknown[] = []
+    logfireApiConfig.onReportError = (error) => {
+      reported.push(error)
+    }
+    const error = new Error('boom')
+    try {
+      reportError('Caught error', error)
+      configureLogfireApi({ minLevel: 'fatal' })
+      reportError('Filtered error', 'plain string')
+    } finally {
+      logfireApiConfig.onReportError = undefined
+      configureLogfireApi({ minLevel: null })
+    }
+
+    expect(reported).toEqual([error, 'plain string'])
+  })
+
+  test('keeps reporting when onReportError throws', () => {
+    logfireApiConfig.onReportError = () => {
+      throw new Error('hook failed')
+    }
+    try {
+      expect(() => {
+        reportError('Caught error', new Error('boom'))
+      }).not.toThrow()
+    } finally {
+      logfireApiConfig.onReportError = undefined
+    }
+
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
   test('preserves legacy attributes argument and error behavior', () => {
     const error = new Error('legacy')
 

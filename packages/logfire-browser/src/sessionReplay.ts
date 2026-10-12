@@ -12,6 +12,8 @@ export interface BrowserSessionReplayRuntime {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
   getSessionId(): string
+  /** Absent from replay packages older than 0.6. */
+  captureError?(error: unknown): void
   flush(): Promise<void>
   stop(): Promise<void>
 }
@@ -19,6 +21,7 @@ export interface BrowserSessionReplayRuntime {
 export interface BrowserSessionReplayControl {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
+  captureError(error: unknown): void
   flush(): Promise<void>
   stop(): Promise<void>
 }
@@ -48,6 +51,7 @@ export interface BrowserSessionReplayPackageConfig {
   captureConsole?: boolean
   captureNetwork?: boolean
   captureNavigation?: boolean
+  captureGlobalErrors?: boolean
   ignoreUrlPatterns?: RegExp[]
   redactUrlPatterns?: RegExp[]
   onError?: (error: unknown) => void
@@ -142,6 +146,8 @@ export class BrowserSessionReplayState {
 }
 
 interface BrowserSessionReplayTelemetryOptions {
+  /** The browser SDK captures global errors and forwards them through `captureError()`. */
+  capturesGlobalErrors?: boolean
   metricUrl?: BrowserMetricsOptions['metricUrl'] | undefined
   traceUrl: string
 }
@@ -252,6 +258,9 @@ function createReplayConfig(
   if (options.captureNavigation !== undefined) {
     config.captureNavigation = options.captureNavigation
   }
+  if (telemetryOptions.capturesGlobalErrors === true) {
+    config.captureGlobalErrors = false
+  }
   if (options.redactUrlPatterns !== undefined) {
     config.redactUrlPatterns = options.redactUrlPatterns
   }
@@ -303,6 +312,13 @@ function wrapReplayRuntime(
       } catch (error) {
         safeReportError(onError, error)
         return false
+      }
+    },
+    captureError: (error) => {
+      try {
+        replay.captureError?.(error)
+      } catch (captureError) {
+        safeReportError(onError, captureError)
       }
     },
     flush: async () => {

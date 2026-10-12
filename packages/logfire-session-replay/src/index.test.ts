@@ -650,6 +650,50 @@ describe('startSessionReplay buffer mode', () => {
     expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${replay.getSessionId()}?seq=0`])
   })
 
+  it('promotes a buffered replay for an error passed to captureError', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 1, random: rng([0.9, 0.1]) }))
+    emit(fullSnapshot)
+    const error = new Error('handled')
+    error.stack = 'STACK'
+
+    replay.captureError(error)
+
+    expect(replay.mode).toBe('full')
+    expect(handle.addCustomEvent).toHaveBeenCalledWith(CustomTag.Error, { message: 'handled', stack: 'STACK' })
+    await replay.stop()
+    expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${replay.getSessionId()}?seq=0`])
+  })
+
+  it('adds an error object once when it is both captured and uncaught', async () => {
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 1, random: rng([0.9, 0.1]) }))
+    const error = new Error('reported, then rethrown')
+
+    replay.captureError(error)
+    window.dispatchEvent(new ErrorEvent('error', { error, message: error.message }))
+    replay.captureError(error)
+
+    expect(handle.addCustomEvent.mock.calls.filter(([tag]) => tag === CustomTag.Error)).toHaveLength(1)
+    await replay.stop()
+  })
+
+  it('leaves global errors to the caller when captureGlobalErrors is false', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, { captureGlobalErrors: false, sessionSampleRate: 0, onErrorSampleRate: 1, random: rng([0.9, 0.1]) })
+    )
+    emit(fullSnapshot)
+
+    window.dispatchEvent(new ErrorEvent('error', { message: 'uncaught' }))
+    dispatchRejection(new Error('rejected'))
+
+    expect(replay.mode).toBe('buffer')
+    expect(handle.addCustomEvent).not.toHaveBeenCalledWith(CustomTag.Error, expect.anything())
+    await replay.stop()
+    expect(calls).toHaveLength(0)
+  })
+
   it('does not treat resource load failures as unhandled JavaScript errors', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 1, random: rng([0.9, 0.1]) }))

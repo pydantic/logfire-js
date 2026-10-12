@@ -1,5 +1,6 @@
 import type { Attributes, ContextManager } from '@opentelemetry/api'
 import type { InstrumentationConfigMap as WebAutoInstrumentationConfigMap } from '@opentelemetry/auto-instrumentations-web'
+import { getWebAutoInstrumentations } from '@opentelemetry/auto-instrumentations-web'
 import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import type { Instrumentation } from '@opentelemetry/instrumentation'
@@ -64,6 +65,9 @@ import type { BrowserSessionReplayControl, BrowserSessionReplayOptions } from '.
 import { startBrowserWebVitals } from './webVitals'
 import type { BrowserWebVitalsOptions } from './webVitals'
 import { DocumentHideChunkingExporter } from './DocumentHideChunkingExporter'
+import { keepFailedTraces } from './errorsProfile'
+import type { FrontendProfile } from './errorsProfile'
+import { installGlobalErrorCapture, ReportedErrors } from './globalErrors'
 import { installDocumentHideFlush } from './documentHideFlush'
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
 import {
@@ -90,6 +94,7 @@ export type {
   RUMOptions,
 } from './browserSession'
 export type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
+export type { FrontendProfile } from './errorsProfile'
 export type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
 export type { BrowserSessionReplayOptions } from './sessionReplay'
 export type { BrowserWebVitalsOptions } from './webVitals'
@@ -134,6 +139,12 @@ export interface LogfireConfigOptions {
    */
   baggage?: BaggageOptions
   /**
+   * Report uncaught errors and unhandled promise rejections through `reportError()`. Defaults to
+   * true. An error object that the application already reported, for example before rethrowing it,
+   * is not reported again.
+   */
+  captureGlobalErrors?: boolean
+  /**
    * Whether to log the spans to the console in addition to sending them to the Logfire API.
    */
   console?: boolean
@@ -164,9 +175,9 @@ export interface LogfireConfigOptions {
    */
   jsonSchema?: JsonSchemaMode
   /**
-   * Lazily register OpenTelemetry browser auto-instrumentations after the
-   * Logfire browser provider and session span processor are ready. Disabled by
-   * default. Pass an object to configure `getWebAutoInstrumentations()`.
+   * Register OpenTelemetry browser auto-instrumentations after the Logfire browser provider and
+   * session span processor are ready, before `configure()` returns. Disabled by default. Pass an
+   * object to configure `getWebAutoInstrumentations()`.
    */
   autoInstrumentations?: boolean | AutoInstrumentationsConfig
   /**
@@ -271,6 +282,14 @@ export interface FrontendConfigOptions extends Omit<
   token: string
   /** Auto-instrumentation is enabled by default. Pass false to disable it. */
   autoInstrumentations?: boolean | AutoInstrumentationsConfig
+  /**
+   * `errors` sets defaults for an application that wants errors and the replays around them rather
+   * than performance data. It exports only traces that contain an error-level span, an error
+   * status, or an HTTP 5xx response; turns off Web Vitals, their metrics, and document-load spans;
+   * and records replay only for sessions with an error (`sessionSampleRate: 0`). Options passed
+   * explicitly take precedence.
+   */
+  profile?: FrontendProfile
   /** Web Vitals and their metrics are enabled by default. Nested options preserve these defaults. */
   rum?: RUMOptions
   /** Metric reader and exporter tuning. The frontend application owns the transport. */
@@ -330,9 +349,12 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
     environment: _environment,
     sessionReplay,
     captureUrlQueryAndFragment,
+    profile,
+    metrics: _metrics,
     ...captureOptions
   } = options as FrontendConfigOptions & Pick<LogfireConfigOptions, 'serviceName' | 'environment'>
-  const webVitals = options.rum?.webVitals
+  const errorsProfile = profile === 'errors'
+  const webVitals = options.rum?.webVitals ?? (errorsProfile ? false : undefined)
   let replay: BrowserSessionReplayOptions | undefined
   if (sessionReplay !== undefined && sessionReplay !== false) {
     const { destination, ...replayOptions } = sessionReplay
@@ -342,6 +364,7 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
     const replayOrigin = destination ? frontendOrigin(destination.baseUrl, 'session replay frontend application baseUrl') : baseUrl
     replay = {
       ...replayOptions,
+      ...(errorsProfile ? { sessionSampleRate: replayOptions.sessionSampleRate ?? 0 } : {}),
       headers: destination ? () => ({ Authorization: `Bearer ${destination.token}` }) : headers,
       replayUrl: new URL('/v1/replay', replayOrigin).toString(),
     }
@@ -349,7 +372,9 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
 
   return configure({
     ...captureOptions,
-    autoInstrumentations: options.autoInstrumentations ?? true,
+    autoInstrumentations:
+      options.autoInstrumentations ?? (errorsProfile ? { '@opentelemetry/instrumentation-document-load': { enabled: false } } : true),
+    ...(errorsProfile ? { sampling: { tail: keepFailedTraces, ...options.sampling } } : {}),
     ...(captureUrlQueryAndFragment === true ? {} : { spanProcessors: [new BrowserUrlSpanProcessor(), ...(options.spanProcessors ?? [])] }),
     rum: {
       ...options.rum,
@@ -361,11 +386,16 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
               metrics: typeof webVitals === 'object' ? (webVitals.metrics ?? true) : true,
             },
     },
-    metrics: {
-      ...options.metrics,
-      metricExporterHeaders: headers,
-      metricUrl: endpoint('/v1/metrics'),
-    },
+    // Browser metrics carry only Web Vitals, so the profile skips the meter provider without them.
+    ...(errorsProfile && webVitals === false
+      ? {}
+      : {
+          metrics: {
+            ...options.metrics,
+            metricExporterHeaders: headers,
+            metricUrl: endpoint('/v1/metrics'),
+          },
+        }),
     ...(replay === undefined ? {} : { sessionReplay: replay }),
     traceExporterHeaders: headers,
     traceUrl: endpoint('/v1/traces'),
@@ -525,17 +555,13 @@ function resolveAutoInstrumentationsConfig(
   }
 }
 
-function noopUnregister(): void {
-  return undefined
-}
-
 function startBrowserInstrumentations(options: {
   autoInstrumentations: LogfireConfigOptions['autoInstrumentations']
   instrumentations: LogfireConfigOptions['instrumentations']
   resourceTiming: LogfireConfigOptions['resourceTiming']
   telemetryUrls: { metricUrl?: string | undefined; replayUrl?: string | undefined; traceUrl: string }
   tracerProvider: WebTracerProvider
-}): () => Promise<void> {
+}): () => void {
   const unregisterConfigured: (() => void)[] = []
   const configuredInputs = options.instrumentations ?? []
   const inputs = configuredInputs.length === 0 ? ([[]] as BrowserInstrumentationInput[]) : configuredInputs
@@ -559,52 +585,45 @@ function startBrowserInstrumentations(options: {
     options.resourceTiming,
     options.telemetryUrls
   )
-  const unregisterAutoInstrumentationsPromise =
-    autoInstrumentationsConfig === undefined
-      ? undefined
-      : import('@opentelemetry/auto-instrumentations-web')
-          .then(({ getWebAutoInstrumentations }) => {
-            const instrumentations = getWebAutoInstrumentations(autoInstrumentationsConfig)
-            try {
-              collapseUserInteractionSpans(instrumentations)
-              return registerInstrumentations({
-                instrumentations,
-                tracerProvider: options.tracerProvider,
-              })
-            } catch (error) {
-              disableInstrumentations(instrumentations)
-              throw error
-            }
-          })
-          .catch((error: unknown) => {
-            diag.error('logfire-browser: failed to start browser auto-instrumentations', error)
-            return noopUnregister
-          })
+  // Registered synchronously: the instrumentations patch `addEventListener`, `fetch`, and XHR,
+  // and a listener or a `fetch` reference the application takes before the patch is never traced.
+  let unregisterAutoInstrumentations: (() => void) | undefined
+  if (autoInstrumentationsConfig !== undefined) {
+    let instrumentations: Instrumentation[] = []
+    try {
+      instrumentations = getWebAutoInstrumentations(autoInstrumentationsConfig)
+      collapseUserInteractionSpans(instrumentations)
+      unregisterAutoInstrumentations = registerInstrumentations({
+        instrumentations,
+        tracerProvider: options.tracerProvider,
+      })
+    } catch (error) {
+      disableInstrumentations(instrumentations)
+      diag.error('logfire-browser: failed to start browser auto-instrumentations', error)
+    }
+  }
 
-  let cleanupPromise: Promise<void> | undefined
-  return async () => {
-    cleanupPromise ??= (async () => {
-      const unregisterAutoInstrumentations = await unregisterAutoInstrumentationsPromise
-      const unregisters = [
-        ...unregisterConfigured,
-        ...(unregisterAutoInstrumentations === undefined ? [] : [unregisterAutoInstrumentations]),
-      ]
-      let firstError: Error | undefined
-      for (let index = unregisters.length - 1; index >= 0; index -= 1) {
-        try {
-          unregisters[index]?.()
-        } catch (error) {
-          // Normalized at capture, like the other error accumulators in this file: an unregister
-          // callback is user supplied, so it can throw `undefined` or `null`, which the raw value
-          // as the `??=` sentinel misread as no failure or overwrote with a later error.
-          firstError ??= error instanceof Error ? error : new Error('logfire-browser: instrumentation unregister failed', { cause: error })
-        }
+  let unregistered = false
+  return () => {
+    if (unregistered) {
+      return
+    }
+    unregistered = true
+    const unregisters = [...unregisterConfigured, ...(unregisterAutoInstrumentations === undefined ? [] : [unregisterAutoInstrumentations])]
+    let firstError: Error | undefined
+    for (let index = unregisters.length - 1; index >= 0; index -= 1) {
+      try {
+        unregisters[index]?.()
+      } catch (error) {
+        // Normalized at capture, like the other error accumulators in this file: an unregister
+        // callback is user supplied, so it can throw `undefined` or `null`, which the raw value
+        // as the `??=` sentinel misread as no failure or overwrote with a later error.
+        firstError ??= error instanceof Error ? error : new Error('logfire-browser: instrumentation unregister failed', { cause: error })
       }
-      if (firstError !== undefined) {
-        throw firstError
-      }
-    })()
-    return cleanupPromise
+    }
+    if (firstError !== undefined) {
+      throw firstError
+    }
   }
 }
 
@@ -651,6 +670,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
     throw new Error('logfire-browser: rum.webVitals.metrics requires top-level metrics.metricUrl')
   }
   const browserSessionOptions = resolveBrowserSessionOptions(options.rum, sessionReplayOptions)
+  const capturesGlobalErrors = options.captureGlobalErrors !== false
   initializeProviderLifecycleGlobals(options.contextManager)
 
   const resource = resourceFromAttributes(options.resourceAttributes ?? {}).merge(
@@ -810,6 +830,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
     sessionReplayOptions === undefined || browserSessionManager === undefined
       ? undefined
       : startBrowserSessionReplay(sessionReplayOptions, browserSessionManager, browserSessionReplayState, {
+          capturesGlobalErrors,
           metricUrl: browserMetricsOptions?.metricUrl,
           traceUrl: options.traceUrl,
         }).then((sessionReplay) => {
@@ -858,6 +879,31 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
             return replayStopPromise
           },
         }
+
+  const reportedErrors = new ReportedErrors()
+  // An application can call reportError() from sessionReplay.onError, which a failing capture calls.
+  let forwardingToReplay = false
+  const onReportError = (reported: unknown) => {
+    reportedErrors.add(reported)
+    if (replayStopped || forwardingToReplay) {
+      return
+    }
+    forwardingToReplay = true
+    try {
+      readySessionReplay?.captureError(reported)
+    } finally {
+      forwardingToReplay = false
+    }
+  }
+  logfireApiConfig.onReportError = onReportError
+  const removeGlobalErrorCapture = capturesGlobalErrors
+    ? installGlobalErrorCapture({
+        isReported: (reported) => reportedErrors.has(reported),
+        report: (message, reported) => {
+          reportError(message, reported)
+        },
+      })
+    : undefined
 
   const browserMetricsStartupPromise =
     browserMetricsOptions === undefined
@@ -947,6 +993,10 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
 
       diag.info('logfire-browser: shutting down')
       removeDocumentHideFlush()
+      removeGlobalErrorCapture?.()
+      if (logfireApiConfig.onReportError === onReportError) {
+        logfireApiConfig.onReportError = undefined
+      }
       if (sessionReplayHandle !== undefined) {
         await runCleanupStep('session replay shutdown', async () => sessionReplayHandle.stop())
       }

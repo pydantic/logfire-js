@@ -27,6 +27,7 @@ function fakeInstrumentation(overrides: Partial<FakeUserInteraction> = {}): Fake
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -51,6 +52,23 @@ describe('collapseUserInteractionSpans', () => {
 
     expect(instrumentation._createSpan?.('element', 'click')).toBe(createdSpan)
     expect(createSpan).toHaveBeenCalledWith('element', 'click', undefined)
+  })
+
+  it('ends the first span one task later, at the time the last listener returned', () => {
+    vi.useFakeTimers()
+    const end = vi.fn<(endTime?: number) => void>()
+    const firstSpan = { end, spanContext: () => createdSpan.spanContext() } as unknown as Span
+    const instrumentation = fakeInstrumentation({ _createSpan: vi.fn<CreateSpan>(() => firstSpan) })
+    vi.spyOn(performance, 'now').mockReturnValueOnce(10).mockReturnValueOnce(25)
+    collapseUserInteractionSpans([instrumentation as unknown as Instrumentation])
+
+    const span = instrumentation._createSpan?.('element', 'click')
+    span?.end()
+    instrumentation._createSpan?.('element', 'click', span)?.end()
+    expect(end).not.toHaveBeenCalled()
+    vi.runAllTimers()
+
+    expect(end.mock.calls).toEqual([[25]])
   })
 
   it('delegates to the instrumentation after it is disabled', () => {

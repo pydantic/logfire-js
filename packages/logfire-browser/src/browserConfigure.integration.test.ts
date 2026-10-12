@@ -1,13 +1,15 @@
 /**
  * @vitest-environment jsdom
  */
+import { gunzipSync } from 'node:zlib'
+
 import { diag } from '@opentelemetry/api'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-web'
-import { startSessionReplay } from '@pydantic/logfire-session-replay'
+import { CustomTag, startSessionReplay } from '@pydantic/logfire-session-replay'
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
 
 import { clearConfiguredBrowserSessionForTests } from './browserSession'
-import { configure, startSpan } from './index'
+import { configure, reportError, startSpan } from './index'
 
 const originalFetch = globalThis.fetch
 const originalPerformanceObserver = globalThis.PerformanceObserver
@@ -127,94 +129,124 @@ afterEach(() => {
 })
 
 describe('public browser configure startup ordering', () => {
-  it.each(['replay-first', 'auto-first'] as const)(
-    'suppresses every SDK endpoint with installed auto-instrumentation when %s',
-    async (order) => {
-      const rawFetch = vi.fn<typeof fetch>(async () =>
-        Promise.resolve(new Response('{}', { headers: { 'content-length': '2' }, status: 200 }))
-      )
-      Object.defineProperty(globalThis, 'fetch', { configurable: true, value: rawFetch, writable: true })
-      const exporter = new InMemorySpanExporter()
-      const events: string[] = []
-      let replayRuntime: ReturnType<typeof startSessionReplay> | undefined
-      let releaseReplayModule: (() => void) | undefined
-      const replayModuleGate = new Promise<void>((resolve) => {
-        releaseReplayModule = resolve
-      })
-      const replayModule = {
-        startSessionReplay(config: Parameters<typeof startSessionReplay>[0]) {
-          replayRuntime = startSessionReplay(config)
-          events.push('replay-ready')
-          return replayRuntime
-        },
-      }
-
-      const cleanup = configure({
-        autoInstrumentations: {
-          '@opentelemetry/instrumentation-document-load': { enabled: false },
-          '@opentelemetry/instrumentation-fetch': { enabled: true },
-          '@opentelemetry/instrumentation-user-interaction': { enabled: false },
-          '@opentelemetry/instrumentation-xml-http-request': { enabled: false },
-        },
-        metrics: {
-          metricReaderConfig: { exportIntervalMillis: 60_000, exportTimeoutMillis: 1_000 },
-          metricUrl: '/client-metrics',
-        },
-        sessionReplay: {
-          captureConsole: false,
-          captureNavigation: false,
-          captureNetwork: true,
-          flushIntervalMs: 60_000,
-          minSessionDurationMs: 0,
-          load: async () => {
-            if (order === 'auto-first') {
-              await replayModuleGate
-            }
-            return replayModule
-          },
-          replayUrl: '/client-replay',
-          sessionSampleRate: 1,
-        },
-        spanProcessors: [new SimpleSpanProcessor(exporter)],
-        traceUrl: '/client-traces',
-      })
-
-      try {
-        if (order === 'auto-first') {
-          await waitUntil(() => globalThis.fetch !== rawFetch)
-          events.push('auto-ready')
-          releaseReplayModule?.()
-          await waitUntil(() => replayRuntime !== undefined)
-        } else {
-          await waitUntil(() => replayRuntime !== undefined)
-          const replayFetch = globalThis.fetch
-          await waitUntil(() => globalThis.fetch !== replayFetch)
-          events.push('auto-ready')
-        }
-
-        expect(events).toEqual(order === 'auto-first' ? ['auto-ready', 'replay-ready'] : ['replay-ready', 'auto-ready'])
-        await globalThis.fetch('/api/application')
-        const exporterBypass = Reflect.get(globalThis.fetch, '__original') as typeof fetch
-        await exporterBypass('/client-traces')
-        await globalThis.fetch('/client-metrics')
-        await replayRuntime?.flush()
-        await delay(350)
-
-        const spans = exporter.getFinishedSpans()
-        expect(spans).toHaveLength(1)
-        expect(JSON.stringify(spans[0]?.attributes)).toContain('/api/application')
-        for (const endpoint of ['client-traces', 'client-metrics', 'client-replay']) {
-          expect(spans.some((span) => JSON.stringify(span.attributes).includes(endpoint))).toBe(false)
-        }
-        const issuedUrls = rawFetch.mock.calls.map(([input]) => fetchInputUrl(input))
-        expect(issuedUrls).toEqual(expect.arrayContaining(['http://localhost:3000/api/application', '/client-traces', '/client-metrics']))
-        expect(issuedUrls.some((url) => /^\/client-replay\/[^/?#]+\?seq=0$/u.test(url))).toBe(true)
-      } finally {
-        Object.defineProperty(globalThis, 'fetch', { configurable: true, value: rawFetch, writable: true })
-        await cleanup()
-      }
+  it('installs auto-instrumentation before configure returns and suppresses every SDK endpoint', async () => {
+    const rawFetch = vi.fn<typeof fetch>(async () =>
+      Promise.resolve(new Response('{}', { headers: { 'content-length': '2' }, status: 200 }))
+    )
+    Object.defineProperty(globalThis, 'fetch', { configurable: true, value: rawFetch, writable: true })
+    const exporter = new InMemorySpanExporter()
+    const events: string[] = []
+    let replayRuntime: ReturnType<typeof startSessionReplay> | undefined
+    const replayModule = {
+      startSessionReplay(config: Parameters<typeof startSessionReplay>[0]) {
+        replayRuntime = startSessionReplay(config)
+        events.push('replay-ready')
+        return replayRuntime
+      },
     }
-  )
+
+    const cleanup = configure({
+      autoInstrumentations: {
+        '@opentelemetry/instrumentation-document-load': { enabled: false },
+        '@opentelemetry/instrumentation-fetch': { enabled: true },
+        '@opentelemetry/instrumentation-user-interaction': { enabled: false },
+        '@opentelemetry/instrumentation-xml-http-request': { enabled: false },
+      },
+      metrics: {
+        metricReaderConfig: { exportIntervalMillis: 60_000, exportTimeoutMillis: 1_000 },
+        metricUrl: '/client-metrics',
+      },
+      sessionReplay: {
+        captureConsole: false,
+        captureNavigation: false,
+        captureNetwork: true,
+        flushIntervalMs: 60_000,
+        minSessionDurationMs: 0,
+        load: () => replayModule,
+        replayUrl: '/client-replay',
+        sessionSampleRate: 1,
+      },
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      expect(globalThis.fetch).not.toBe(rawFetch)
+      events.push('auto-ready')
+      await waitUntil(() => replayRuntime !== undefined)
+
+      expect(events).toEqual(['auto-ready', 'replay-ready'])
+      await globalThis.fetch('/api/application')
+      const exporterBypass = Reflect.get(globalThis.fetch, '__original') as typeof fetch
+      await exporterBypass('/client-traces')
+      await globalThis.fetch('/client-metrics')
+      await replayRuntime?.flush()
+      await delay(350)
+
+      const spans = exporter.getFinishedSpans()
+      expect(spans).toHaveLength(1)
+      expect(JSON.stringify(spans[0]?.attributes)).toContain('/api/application')
+      for (const endpoint of ['client-traces', 'client-metrics', 'client-replay']) {
+        expect(spans.some((span) => JSON.stringify(span.attributes).includes(endpoint))).toBe(false)
+      }
+      const issuedUrls = rawFetch.mock.calls.map(([input]) => fetchInputUrl(input))
+      expect(issuedUrls).toEqual(expect.arrayContaining(['http://localhost:3000/api/application', '/client-traces', '/client-metrics']))
+      expect(issuedUrls.some((url) => /^\/client-replay\/[^/?#]+\?seq=0$/u.test(url))).toBe(true)
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', { configurable: true, value: rawFetch, writable: true })
+      await cleanup()
+    }
+  })
+
+  it.each(['handled', 'uncaught'] as const)('promotes an error-buffered replay once for a %s error', async (kind) => {
+    const replayFetch = vi.fn<typeof fetch>(async () => Promise.resolve(new Response(null, { status: 202 })))
+    let replayRuntime: ReturnType<typeof startSessionReplay> | undefined
+    const replayModule = {
+      startSessionReplay(config: Parameters<typeof startSessionReplay>[0]) {
+        replayRuntime = startSessionReplay(config)
+        return replayRuntime
+      },
+    }
+    const cleanup = configure({
+      sessionReplay: {
+        captureConsole: false,
+        captureNavigation: false,
+        captureNetwork: false,
+        fetchImpl: replayFetch,
+        flushIntervalMs: 60_000,
+        load: () => replayModule,
+        minSessionDurationMs: 0,
+        onErrorSampleRate: 1,
+        replayUrl: '/client-replay',
+        sessionSampleRate: 0,
+      },
+      spanProcessors: [new SimpleSpanProcessor(new InMemorySpanExporter())],
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      await waitUntil(() => replayRuntime !== undefined)
+      expect(replayRuntime?.mode).toBe('buffer')
+      const error = new Error(kind)
+      if (kind === 'handled') {
+        reportError('Handled error', error)
+      } else {
+        window.dispatchEvent(new ErrorEvent('error', { error, message: error.message }))
+      }
+      // The browser SDK reports an uncaught error after the dispatch, so the replay's own listener must not promote it first.
+      const modeAfterDispatch = replayRuntime?.mode
+      await delay(0)
+
+      expect(modeAfterDispatch).toBe(kind === 'handled' ? 'full' : 'buffer')
+      expect(replayRuntime?.mode).toBe('full')
+    } finally {
+      await cleanup()
+    }
+    // Shutdown uploads the promoted buffer.
+    const events = replayFetch.mock.calls.flatMap(([, init]) => decodeReplayEvents(init?.body))
+    const errorEvents = events.filter((event) => event.type === 5 && event.data?.tag === CustomTag.Error)
+    expect(errorEvents.map((event) => event.data?.payload?.message)).toEqual([kind])
+  })
 
   it('keeps real span creation safe when the lazy replay runtime getters throw', async () => {
     const replayError = new Error('replay reporter failed')
@@ -414,6 +446,16 @@ async function waitUntilDeadline(predicate: () => boolean, deadline: number): Pr
   }
   await delay(0)
   return waitUntilDeadline(predicate, deadline)
+}
+
+interface ReplayEvent {
+  data?: { payload?: { message?: string }; tag?: string }
+  type: number
+}
+
+function decodeReplayEvents(body: BodyInit | null | undefined): ReplayEvent[] {
+  const envelope = JSON.parse(gunzipSync(body as Uint8Array).toString('utf8')) as { events: ReplayEvent[] }
+  return envelope.events
 }
 
 async function delay(milliseconds: number): Promise<void> {

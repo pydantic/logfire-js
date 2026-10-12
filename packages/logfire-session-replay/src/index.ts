@@ -30,6 +30,11 @@ export interface SessionReplay {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
   getSessionId(): string
+  /**
+   * Add an error to the replay and promote an error-sampled buffer, as an uncaught error does.
+   * The same error object is added once, however many times it is captured.
+   */
+  captureError(error: unknown): void
   flush(): Promise<void>
   stop(): Promise<void>
 }
@@ -38,6 +43,7 @@ const NOOP: SessionReplay = {
   mode: 'off',
   recording: false,
   getSessionId: () => '',
+  captureError: () => undefined,
   flush: async () => Promise.resolve(),
   stop: async () => Promise.resolve(),
 }
@@ -49,6 +55,7 @@ const SESSION_MONITOR_INTERVAL_MS = 1_000
 interface ActiveRuntime {
   readonly sessionId: string
   readonly transport: ReplayTransport
+  captureError(error: unknown): void
   deactivate(): Promise<void>
   discard(): void
 }
@@ -160,6 +167,13 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
         }
       },
       getSessionId: () => getSessionId(false),
+      captureError: (error) => {
+        try {
+          runtime?.captureError(error)
+        } catch (reportingError) {
+          safeReportError(resolvedConfig.onError, reportingError)
+        }
+      },
       flush: async () => {
         try {
           await transition
@@ -285,6 +299,24 @@ function createActiveRuntime(options: {
         ignorePromise(transport.triggerFlush(), config.onError)
       }
     }
+    // The browser SDK can forward an error that this runtime's own listener already added, such as
+    // an error that the application reports and then rethrows.
+    const capturedErrors = new WeakSet()
+    const isNewError = (error: unknown): boolean => {
+      if (typeof error !== 'object' || error === null) {
+        return true
+      }
+      if (capturedErrors.has(error)) {
+        return false
+      }
+      capturedErrors.add(error)
+      return true
+    }
+    const captureError = (error: unknown) => {
+      if (isNewError(error)) {
+        handleError(createErrorPayload(errorMessage(error), undefined, errorStack(error)))
+      }
+    }
     const onWindowError = (event: Event) => {
       // Resource load failures also dispatch non-bubbling `error` events that
       // reach Window capture listeners. They are not unhandled JavaScript
@@ -292,12 +324,12 @@ function createActiveRuntime(options: {
       if (!(event instanceof ErrorEvent)) {
         return
       }
-      handleError(createErrorPayload(event.message, event.filename, errorStack(event.error)))
+      if (isNewError(event.error)) {
+        handleError(createErrorPayload(event.message, event.filename, errorStack(event.error)))
+      }
     }
     const onRejection = (event: PromiseRejectionEvent) => {
-      const reason = event.reason as { message?: unknown; stack?: unknown } | undefined
-      const message = coerceRejectionMessage(reason?.message ?? event.reason)
-      handleError(createErrorPayload(message, undefined, typeof reason?.stack === 'string' ? reason.stack : undefined))
+      captureError(event.reason)
     }
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
@@ -307,14 +339,16 @@ function createActiveRuntime(options: {
     const onPageHide = () => {
       ignorePromise(transport.flush({ keepalive: true }), config.onError)
     }
-    window.addEventListener('error', onWindowError, true)
-    cleanup.push(() => {
-      window.removeEventListener('error', onWindowError, true)
-    })
-    window.addEventListener('unhandledrejection', onRejection, true)
-    cleanup.push(() => {
-      window.removeEventListener('unhandledrejection', onRejection, true)
-    })
+    if (config.captureGlobalErrors) {
+      window.addEventListener('error', onWindowError, true)
+      cleanup.push(() => {
+        window.removeEventListener('error', onWindowError, true)
+      })
+      window.addEventListener('unhandledrejection', onRejection, true)
+      cleanup.push(() => {
+        window.removeEventListener('unhandledrejection', onRejection, true)
+      })
+    }
     document.addEventListener('visibilitychange', onVisibilityChange)
     cleanup.push(() => {
       document.removeEventListener('visibilitychange', onVisibilityChange)
@@ -350,6 +384,7 @@ function createActiveRuntime(options: {
     return {
       sessionId,
       transport,
+      captureError,
       deactivate: async () => {
         deactivation ??= (async () => {
           // shutdown() admits the buffered tail synchronously, so the recorder
@@ -411,6 +446,7 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     captureConsole: config.captureConsole ?? DEFAULTS.captureConsole,
     captureNetwork: config.captureNetwork ?? DEFAULTS.captureNetwork,
     captureNavigation: config.captureNavigation ?? DEFAULTS.captureNavigation,
+    captureGlobalErrors: config.captureGlobalErrors ?? DEFAULTS.captureGlobalErrors,
     ignoreUrlPatterns: config.ignoreUrlPatterns ?? [],
     redactUrlPatterns: config.redactUrlPatterns ?? [...DEFAULTS.redactUrlPatterns],
     onError: config.onError,
@@ -473,6 +509,11 @@ function saveSamplingMode(storage: Storage | null, sessionId: string, mode: Samp
 
 function isSamplingMode(value: unknown): value is SamplingMode {
   return value === 'full' || value === 'buffer' || value === 'off'
+}
+
+function errorMessage(error: unknown): string {
+  const message = typeof error === 'object' && error !== null && 'message' in error ? (error as { message?: unknown }).message : undefined
+  return coerceRejectionMessage(message ?? error)
 }
 
 function errorStack(error: unknown): string | undefined {
