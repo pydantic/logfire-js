@@ -60,7 +60,7 @@ import type { RUMOptions } from './browserSession'
 import type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
 import { startBrowserLongAnimationFrames } from './longAnimationFrames'
 import type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
-import { BrowserSessionReplayState, startBrowserSessionReplay } from './sessionReplay'
+import { BrowserSessionReplayState, snapshotErrorForReplay, startBrowserSessionReplay } from './sessionReplay'
 import type { BrowserSessionReplayControl, BrowserSessionReplayOptions } from './sessionReplay'
 import { startBrowserWebVitals } from './webVitals'
 import type { BrowserWebVitalsOptions } from './webVitals'
@@ -401,6 +401,9 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
     traceUrl: endpoint('/v1/traces'),
   })
 }
+
+// Startup errors only need to promote the replay; the cap bounds what a failing startup loop can hold.
+const MAX_PENDING_REPLAY_ERRORS = 10
 
 function defaultTraceExporterHeaders() {
   return {}
@@ -826,6 +829,19 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   })
 
   let readySessionReplay: BrowserSessionReplayControl | undefined
+  // Errors reported while replay loads, forwarded once it starts so that a startup error still
+  // promotes an error-sampled replay. Undefined once replay has settled or when it is not configured.
+  let pendingReplayErrors: { error: unknown; timestamp: number }[] | undefined =
+    sessionReplayOptions === undefined || browserSessionManager === undefined ? undefined : []
+  const forwardPendingReplayErrors = (sessionReplay: BrowserSessionReplayControl | undefined) => {
+    const pending = pendingReplayErrors ?? []
+    pendingReplayErrors = undefined
+    if (sessionReplay !== undefined) {
+      for (const { error, timestamp } of pending) {
+        forwardToReplay(sessionReplay, error, timestamp)
+      }
+    }
+  }
   const sessionReplayStartupPromise =
     sessionReplayOptions === undefined || browserSessionManager === undefined
       ? undefined
@@ -835,6 +851,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
           traceUrl: options.traceUrl,
         }).then((sessionReplay) => {
           readySessionReplay = sessionReplay
+          forwardPendingReplayErrors(sessionReplay)
           return sessionReplay
         })
 
@@ -870,6 +887,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
               return replayStopPromise
             }
             replayStopped = true
+            pendingReplayErrors = undefined
             browserSessionReplayState.clear()
             replayStopPromise = replayOperationTail.then(async () => {
               const sessionReplay = await sessionReplayStartupPromise
@@ -883,16 +901,27 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   const reportedErrors = new ReportedErrors()
   // An application can call reportError() from sessionReplay.onError, which a failing capture calls.
   let forwardingToReplay = false
-  const onReportError = (reported: unknown) => {
-    reportedErrors.add(reported)
+  const forwardToReplay = (replay: BrowserSessionReplayControl, reported: unknown, timestamp?: number) => {
     if (replayStopped || forwardingToReplay) {
       return
     }
     forwardingToReplay = true
     try {
-      readySessionReplay?.captureError(reported)
+      if (timestamp === undefined) {
+        replay.captureError(reported)
+      } else {
+        replay.captureError(reported, { timestamp })
+      }
     } finally {
       forwardingToReplay = false
+    }
+  }
+  const onReportError = (reported: unknown) => {
+    reportedErrors.add(reported)
+    if (readySessionReplay !== undefined) {
+      forwardToReplay(readySessionReplay, reported)
+    } else if (pendingReplayErrors !== undefined && !replayStopped && pendingReplayErrors.length < MAX_PENDING_REPLAY_ERRORS) {
+      pendingReplayErrors.push({ error: snapshotErrorForReplay(reported), timestamp: Date.now() })
     }
   }
   logfireApiConfig.onReportError = onReportError

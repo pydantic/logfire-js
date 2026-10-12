@@ -248,6 +248,55 @@ describe('public browser configure startup ordering', () => {
     expect(errorEvents.map((event) => event.data?.payload?.message)).toEqual([kind])
   })
 
+  it('promotes an error-buffered replay for an error reported before replay started', async () => {
+    const replayFetch = vi.fn<typeof fetch>(async () => Promise.resolve(new Response(null, { status: 202 })))
+    let replayRuntime: ReturnType<typeof startSessionReplay> | undefined
+    let releaseLoad!: () => void
+    const loadGate = new Promise<void>((resolve) => {
+      releaseLoad = resolve
+    })
+    const cleanup = configure({
+      sessionReplay: {
+        captureConsole: false,
+        captureNavigation: false,
+        captureNetwork: false,
+        fetchImpl: replayFetch,
+        flushIntervalMs: 60_000,
+        load: async () => {
+          await loadGate
+          return {
+            startSessionReplay(config: Parameters<typeof startSessionReplay>[0]) {
+              replayRuntime = startSessionReplay(config)
+              return replayRuntime
+            },
+          }
+        },
+        minSessionDurationMs: 0,
+        onErrorSampleRate: 1,
+        replayUrl: '/client-replay',
+        sessionSampleRate: 0,
+      },
+      spanProcessors: [new SimpleSpanProcessor(new InMemorySpanExporter())],
+      traceUrl: '/client-traces',
+    })
+    const reportedAt = Date.now()
+
+    try {
+      reportError('Startup failed', new Error('startup'))
+      releaseLoad()
+      await waitUntil(() => replayRuntime !== undefined)
+
+      expect(replayRuntime?.mode).toBe('full')
+    } finally {
+      await cleanup()
+    }
+    const events = replayFetch.mock.calls.flatMap(([, init]) => decodeReplayEvents(init?.body))
+    const errorEvents = events.filter((event) => event.type === 5 && event.data?.tag === CustomTag.Error)
+    expect(errorEvents.map((event) => event.data?.payload?.message)).toEqual(['startup'])
+    expect(errorEvents[0]?.data?.payload?.timestamp).toBeGreaterThanOrEqual(reportedAt)
+    expect(errorEvents[0]?.data?.payload?.timestamp).toBeLessThanOrEqual(errorEvents[0]?.timestamp ?? 0)
+  })
+
   it('keeps real span creation safe when the lazy replay runtime getters throw', async () => {
     const replayError = new Error('replay reporter failed')
     const cleanup = configure({
@@ -449,7 +498,8 @@ async function waitUntilDeadline(predicate: () => boolean, deadline: number): Pr
 }
 
 interface ReplayEvent {
-  data?: { payload?: { message?: string }; tag?: string }
+  data?: { payload?: { message?: string; timestamp?: number }; tag?: string }
+  timestamp?: number
   type: number
 }
 

@@ -293,7 +293,8 @@ it does not start rrweb or patch console, network, or navigation globals, and a
 later sampled session can begin recording without reloading the page.
 
 Pass a caught error to `replay.captureError(error)` to add it to the replay and
-promote the buffer, as an uncaught error does. An error object is added once,
+promote the buffer, as an uncaught error does. For an error that occurred
+earlier, pass `{ timestamp }` in epoch milliseconds; the error event records it. An error object is added once,
 even when it is also uncaught later. `console.error` does not promote the buffer.
 
 Set `captureGlobalErrors: false` when another layer listens for uncaught errors

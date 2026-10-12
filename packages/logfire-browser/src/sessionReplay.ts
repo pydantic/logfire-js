@@ -13,7 +13,7 @@ export interface BrowserSessionReplayRuntime {
   readonly mode: 'full' | 'buffer' | 'off'
   getSessionId(): string
   /** Absent from replay packages older than 0.6. */
-  captureError?(error: unknown): void
+  captureError?(error: unknown, options?: { timestamp?: number }): void
   /** Present in replay packages that separate a DOM recording from its RUM session. */
   getRecordingId?(): string
   flush(): Promise<void>
@@ -23,7 +23,7 @@ export interface BrowserSessionReplayRuntime {
 export interface BrowserSessionReplayControl {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
-  captureError(error: unknown): void
+  captureError(error: unknown, options?: { timestamp?: number }): void
   getRecordingId?(): string
   flush(): Promise<void>
   stop(): Promise<void>
@@ -286,6 +286,25 @@ function createReplayConfig(
   return config
 }
 
+/**
+ * Keeps only the message and stack that replay records, so an error held until replay starts does
+ * not retain the reported value.
+ */
+export function snapshotErrorForReplay(error: unknown): unknown {
+  if (typeof error !== 'object' || error === null) {
+    return error
+  }
+  try {
+    const { message, stack } = error as { message?: unknown; stack?: unknown }
+    return {
+      ...(typeof message === 'string' ? { message } : {}),
+      ...(typeof stack === 'string' ? { stack } : {}),
+    }
+  } catch {
+    return {}
+  }
+}
+
 function safeReportError(onError: ((error: unknown) => void) | undefined, error: unknown): void {
   try {
     const result = onError?.(error)
@@ -337,9 +356,13 @@ function wrapReplayRuntime(
         return false
       }
     },
-    captureError: (error) => {
+    captureError: (error, options) => {
       try {
-        replay.captureError?.(error)
+        if (options === undefined) {
+          replay.captureError?.(error)
+        } else {
+          replay.captureError?.(error, options)
+        }
       } catch (captureError) {
         safeReportError(onError, captureError)
       }

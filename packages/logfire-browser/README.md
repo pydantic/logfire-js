@@ -837,6 +837,10 @@ With session replay, every `reportError()` call, including the calls that
 global capture makes, adds the error to the replay and promotes an
 error-buffered replay to a recorded one. The replay package's own global error
 listeners are turned off, so an uncaught error appears in the replay once.
+Replay loads after `configure()` returns. The SDK holds up to 10 errors reported
+in the meantime and adds them when replay starts, with the time each error
+occurred as `timestamp` in the error event. Such an error still promotes the
+replay, but the recording starts after it.
 
 ## Errors and replay profile
 

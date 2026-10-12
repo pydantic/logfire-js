@@ -33,13 +33,19 @@ export interface SessionReplay {
   getSessionId(): string
   /**
    * Add an error to the replay and promote an error-sampled buffer, as an uncaught error does.
-   * The same error object is added once, however many times it is captured.
+   * The same error object is added once, however many times it is captured. Pass the time the
+   * error occurred, in epoch milliseconds, when it is captured later; the error event records it
+   * as `timestamp`.
    */
-  captureError(error: unknown): void
+  captureError(error: unknown, options?: CaptureErrorOptions): void
   /** The current DOM recording's upload/playback id; distinct from the RUM session id. */
   getRecordingId(): string
   flush(): Promise<void>
   stop(): Promise<void>
+}
+
+export interface CaptureErrorOptions {
+  timestamp?: number
 }
 
 const NOOP: SessionReplay = {
@@ -60,7 +66,7 @@ interface ActiveRuntime {
   readonly sessionId: string
   readonly recordingId: string
   readonly transport: ReplayTransport
-  captureError(error: unknown): void
+  captureError(error: unknown, options?: CaptureErrorOptions): void
   deactivate(keepalive?: boolean): Promise<void>
   discard(): void
 }
@@ -235,9 +241,9 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
         }
       },
       getSessionId: () => getSessionId(false),
-      captureError: (error) => {
+      captureError: (error, options) => {
         try {
-          runtime?.captureError(error)
+          runtime?.captureError(error, options)
         } catch (reportingError) {
           safeReportError(resolvedConfig.onError, reportingError)
         }
@@ -374,7 +380,7 @@ function createActiveRuntime(options: {
       }
     }
 
-    const handleError = (payload: { message: string; source?: string; stack?: string }) => {
+    const handleError = (payload: { message: string; source?: string; stack?: string; timestamp?: number }) => {
       if (!isRuntimeActive()) {
         return
       }
@@ -403,9 +409,10 @@ function createActiveRuntime(options: {
       capturedErrors.add(error)
       return true
     }
-    const captureError = (error: unknown) => {
+    const captureError = (error: unknown, options?: CaptureErrorOptions) => {
       if (isNewError(error)) {
-        handleError(createErrorPayload(errorMessage(error), undefined, errorStack(error)))
+        const payload = createErrorPayload(errorMessage(error), undefined, errorStack(error))
+        handleError(typeof options?.timestamp === 'number' ? { ...payload, timestamp: options.timestamp } : payload)
       }
     }
     const onWindowError = (event: Event) => {

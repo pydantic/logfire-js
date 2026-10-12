@@ -1001,6 +1001,17 @@ describe('startSessionReplay buffer mode', () => {
     expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${recordingId}?seq=0`])
   })
 
+  it('records when a later captured error occurred', async () => {
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 1, random: rng([0.9, 0.1]) }))
+
+    replay.captureError('startup failed', { timestamp: 500 })
+
+    expect(replay.mode).toBe('full')
+    expect(handle.addCustomEvent).toHaveBeenCalledWith(CustomTag.Error, { message: 'startup failed', timestamp: 500 })
+    await replay.stop()
+  })
+
   it('adds an error object once when it is both captured and uncaught', async () => {
     const { fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 1, random: rng([0.9, 0.1]) }))

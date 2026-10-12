@@ -679,6 +679,83 @@ describe('browser configureFrontend', () => {
     expect(logfireApiConfig.onReportError).toBeUndefined()
   })
 
+  it('forwards up to ten errors reported while replay loads, with the time they occurred', async () => {
+    const captureError = vi.fn<(error: unknown, options?: { timestamp?: number }) => void>()
+    let releaseLoad!: () => void
+    const loadGate = new Promise<void>((resolve) => {
+      releaseLoad = resolve
+    })
+    const startSessionReplay = vi.fn<(options: unknown) => BrowserSessionReplayRuntime>(() => ({
+      mode: 'buffer' as const,
+      recording: true,
+      captureError,
+      flush: async () => Promise.resolve(),
+      stop: async () => Promise.resolve(),
+      getSessionId: () => 'session',
+    }))
+    cleanup = configureFrontend({
+      ...frontend,
+      sessionReplay: {
+        load: async () => {
+          await loadGate
+          return { startSessionReplay }
+        },
+      },
+    })
+    vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const startupError = new Error('startup failed')
+    startupError.stack = 'STACK'
+    logfireApiConfig.onReportError?.(startupError)
+    for (let index = 0; index < 10; index++) {
+      logfireApiConfig.onReportError?.(`later ${String(index)}`)
+    }
+    expect(captureError).not.toHaveBeenCalled()
+
+    releaseLoad()
+    await waitForConfigureMicrotasks()
+
+    expect(captureError.mock.calls).toEqual([
+      [{ message: 'startup failed', stack: 'STACK' }, { timestamp: 1_000 }],
+      ...Array.from({ length: 9 }, (_, index) => [`later ${String(index)}`, { timestamp: 1_000 }]),
+    ])
+    const afterStart = new Error('after start')
+    logfireApiConfig.onReportError?.(afterStart)
+    expect(captureError.mock.lastCall).toEqual([afterStart])
+  })
+
+  it('discards errors held for replay when replay stops or fails to start', async () => {
+    const captureError = vi.fn<(error: unknown) => void>()
+    let releaseLoad!: () => void
+    const loadGate = new Promise<void>((resolve) => {
+      releaseLoad = resolve
+    })
+    cleanup = configureFrontend({
+      ...frontend,
+      sessionReplay: {
+        load: async () => {
+          await loadGate
+          return {
+            startSessionReplay: () => ({
+              mode: 'buffer' as const,
+              recording: true,
+              captureError,
+              flush: async () => Promise.resolve(),
+              stop: async () => Promise.resolve(),
+              getSessionId: () => 'session',
+            }),
+          }
+        },
+      },
+    })
+
+    logfireApiConfig.onReportError?.(new Error('before stop'))
+    const stopped = cleanup.sessionReplay?.stop()
+    releaseLoad()
+    await stopped
+
+    expect(captureError).not.toHaveBeenCalled()
+  })
+
   it('does not forward an error reported while replay handles another one', async () => {
     const captureError = vi.fn<(error: unknown) => void>((error) => {
       // An application that reports replay failures from sessionReplay.onError re-enters the hook.
