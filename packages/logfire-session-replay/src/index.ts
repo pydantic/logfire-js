@@ -611,10 +611,7 @@ function coerceRejectionMessage(value: unknown): string {
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint' || typeof value === 'symbol') {
     return String(value)
   }
-  try {
-    const serialized = JSON.stringify(value)
-    return typeof serialized === 'string' ? serialized : Object.prototype.toString.call(value)
-  } catch {
-    return Object.prototype.toString.call(value)
-  }
+  // Replay custom events are not masked, and a rejected or reported object can hold credentials,
+  // so only its type is recorded. The span for the same error carries the scrubbed details.
+  return Object.prototype.toString.call(value)
 }

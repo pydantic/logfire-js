@@ -624,6 +624,21 @@ describe('startSessionReplay errors', () => {
     await replay.stop()
   })
 
+  it('records only the type of an object value, never its fields', async () => {
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl))
+
+    replay.captureError({ api_key: 'secret-key', password: 'secret-password' })
+    dispatchRejection({ message: { token: 'secret-token' } })
+    dispatchRejection(['secret-entry'])
+
+    const messages = handle.addCustomEvent.mock.calls
+      .filter(([tag]) => tag === CustomTag.Error)
+      .map(([, payload]) => (payload as { message: string }).message)
+    expect(messages).toEqual(['[object Object]', '[object Object]', '[object Array]'])
+    await replay.stop()
+  })
+
   it('coerces non-string rejection messages', async () => {
     const { fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl))
