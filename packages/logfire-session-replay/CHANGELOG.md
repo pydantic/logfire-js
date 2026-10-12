@@ -1,5 +1,18 @@
 # @pydantic/logfire-session-replay
 
+## 0.6.0
+
+### Minor Changes
+
+- cc4c206: Take full-DOM checkpoints every five minutes during normal recording, or at the configured minimum session duration when longer. Start each checkpoint in a new upload chunk so replay viewers can load and seek through smaller playback windows. Error-buffered recording keeps its existing two-minute checkpoint interval.
+- f2e4bc5: Give each tab replay an upload/playback ID distinct from its RUM session ID. Preserve it across same-tab reloads and navigations, but start a new replay for another tab or after two hours. Add `getRecordingId()` to the standalone recorder and `logfire.session_replay.id` to browser spans. Start a new replay when its saved sequence cannot be safely resumed.
+  
+  Requires Platform compatibility readers before upgrading. New tabs produce separate billable replays; same-tab reloads continue the existing replay. The RUM `session.id` attribute and `getSessionId()` remain unchanged; standalone callers linking to playback must use `getRecordingId()`.
+- 9b493c5: Let a handled error promote an error-buffered replay. `replay.captureError(error)` adds the error to the replay and promotes the buffer, as an uncaught error does. An error object is added once, even when it is captured and later also uncaught. `captureError(error, { timestamp })` records when an error that is captured later occurred. `captureGlobalErrors: false` removes the replay's own `error` and `unhandledrejection` listeners for integrations that capture global errors themselves, as `@pydantic/logfire-browser` now does. An error event in the replay no longer serializes an object value, such as an object passed to `captureError()` or a rejected object, because replay custom events are not masked; it records only the value's type, such as `[object Object]`.
+- 1c7f0e7: Rotate browser and standalone replay session IDs after two hours of active recording by default, instead of four hours. Browser telemetry and integrated replay keep the same session ID when they rotate.
+  
+  Applications that configure a custom maximum duration retain that setting.
+
 ## 0.5.0
 
 ### Minor Changes
