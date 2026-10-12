@@ -84,10 +84,13 @@ function startSpan(processor: BrowserSessionSpanProcessor, span: TestSpan): void
   processor.onStart(span as unknown as Span, {} as Context)
 }
 
-function createReplayRuntime(mode: BrowserSessionReplayRuntime['mode']): BrowserSessionReplayRuntime {
+function createReplayRuntime(
+  mode: BrowserSessionReplayRuntime['mode']
+): BrowserSessionReplayRuntime & Pick<Required<BrowserSessionReplayRuntime>, 'captureError'> {
   return {
     mode,
     recording: true,
+    captureError: () => undefined,
     flush: async () => Promise.resolve(),
     getSessionId: () => 'session-1',
     stop: async () => Promise.resolve(),
@@ -507,6 +510,7 @@ describe('BrowserSessionSpanProcessor', () => {
         return mode
       },
       recording: true,
+      captureError: () => undefined,
       flush: async () => Promise.resolve(),
       stop: async () => Promise.resolve(),
     })
@@ -563,6 +567,7 @@ describe('BrowserSessionSpanProcessor', () => {
       get recording(): boolean {
         throw new Error('recording unavailable')
       },
+      captureError: () => undefined,
       flush: async () => Promise.resolve(),
       stop: async () => Promise.resolve(),
     })

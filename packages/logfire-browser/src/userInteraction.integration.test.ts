@@ -1,6 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
+import { hrTimeToMilliseconds } from '@opentelemetry/core'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-web'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
@@ -21,11 +22,9 @@ vi.mock('@opentelemetry/exporter-trace-otlp-http', () => ({
 const exporter = new InMemorySpanExporter()
 let preventSpanCreation = false
 let cleanup: (() => Promise<void>) | undefined
+const startupListener = (): void => undefined
 
-beforeAll(async () => {
-  // The test compares the method identity and never calls it.
-  // eslint-disable-next-line @typescript-eslint/unbound-method
-  const unpatchedAddEventListener = EventTarget.prototype.addEventListener
+beforeAll(() => {
   cleanup = configure({
     autoInstrumentations: {
       '@opentelemetry/instrumentation-document-load': { enabled: false },
@@ -39,12 +38,13 @@ beforeAll(async () => {
     spanProcessors: [new SimpleSpanProcessor(exporter)],
     traceUrl: '/client-traces',
   })
-  // The auto-instrumentations load through a dynamic import. A listener added before the
-  // instrumentation wraps `addEventListener` never gets a span, so a test would pass for the wrong reason.
-  await waitUntil(() => EventTarget.prototype.addEventListener !== unpatchedAddEventListener)
+  // Registered in the same task as configure(), as a framework root registers its delegated listeners
+  // during application startup. The instrumentation never wraps a listener added before its patch.
+  document.addEventListener('click', startupListener)
 })
 
 afterAll(async () => {
+  document.removeEventListener('click', startupListener)
   await cleanup?.()
 })
 
@@ -55,24 +55,36 @@ beforeEach(() => {
 })
 
 describe('browser user interaction spans', () => {
-  it('exports one click span when one click reaches several listeners', () => {
+  it('exports a click span for a listener registered right after configure', async () => {
+    const button = document.createElement('button')
+    document.body.append(button)
+
+    button.click()
+    await nextTask()
+
+    expect(clickSpans()).toHaveLength(1)
+  })
+
+  it('exports one click span when one click reaches several listeners', async () => {
     const { button, removeListeners } = mountButtonWithListeners()
 
     button.click()
     removeListeners()
+    await nextTask()
 
     const clicks = clickSpans()
     expect(clicks).toHaveLength(1)
     expect(clicks[0]?.parentSpanContext).toBeUndefined()
   })
 
-  it('parents work that a later listener starts to the click span', () => {
+  it('parents work that a later listener starts to the click span', async () => {
     const { button, removeListeners } = mountButtonWithListeners(() => {
       startSpan('work started by a later listener').end()
     })
 
     button.click()
     removeListeners()
+    await nextTask()
 
     const clicks = clickSpans()
     const work = exporter.getFinishedSpans().find(({ name }) => name === 'work started by a later listener')
@@ -81,12 +93,14 @@ describe('browser user interaction spans', () => {
     expect(work?.parentSpanContext?.spanId).toBe(clicks[0]?.spanContext().spanId)
   })
 
-  it('starts a separate trace for each consecutive click', () => {
+  it('starts a separate trace for each consecutive click', async () => {
     const { button, removeListeners } = mountButtonWithListeners()
 
     button.click()
     button.click()
     removeListeners()
+    await nextTask()
+    await nextTask()
 
     const clicks = clickSpans()
     expect(clicks).toHaveLength(2)
@@ -94,7 +108,7 @@ describe('browser user interaction spans', () => {
     expect(clicks[0]?.spanContext().traceId).not.toBe(clicks[1]?.spanContext().traceId)
   })
 
-  it('keeps a configured shouldPreventSpanCreation hook in effect', () => {
+  it('keeps a configured shouldPreventSpanCreation hook in effect', async () => {
     preventSpanCreation = true
     const calls: string[] = []
     const { button, removeListeners } = mountButtonWithListeners(() => {
@@ -103,9 +117,47 @@ describe('browser user interaction spans', () => {
 
     button.click()
     removeListeners()
+    await nextTask()
 
     expect(clickSpans()).toEqual([])
     expect(calls).toEqual(['app'])
+  })
+
+  it('keeps the click span open until the last listener returns', async () => {
+    const lastListenerMs = 30
+    const { button, removeListeners } = mountButtonWithListeners(() => {
+      const start = performance.now()
+      while (performance.now() - start < lastListenerMs) {
+        // Busy work in the last listener, which a span that ends with the first listener excludes.
+      }
+    })
+
+    button.click()
+    removeListeners()
+    await nextTask()
+
+    const clicks = clickSpans()
+    expect(clicks).toHaveLength(1)
+    // The span clock converts between wall and performance time, so allow a few milliseconds.
+    expect(hrTimeToMilliseconds(clicks[0]?.duration ?? [0, 0])).toBeGreaterThanOrEqual(lastListenerMs - 5)
+  })
+
+  it('ends the click span when a listener throws', async () => {
+    const button = document.createElement('button')
+    document.body.append(button)
+    button.addEventListener('click', () => {
+      throw new Error('listener failed')
+    })
+    const ignoreReportedError = (event: Event) => {
+      event.preventDefault()
+    }
+    window.addEventListener('error', ignoreReportedError)
+
+    button.click()
+    await nextTask()
+    window.removeEventListener('error', ignoreReportedError)
+
+    expect(clickSpans()).toHaveLength(1)
   })
 })
 
@@ -133,23 +185,12 @@ function mountButtonWithListeners(appListener: () => void = () => undefined): {
   }
 }
 
-function clickSpans(): ReturnType<InMemorySpanExporter['getFinishedSpans']> {
-  return exporter.getFinishedSpans().filter(({ name }) => name === 'click' || name.startsWith('click '))
-}
-
-async function waitUntil(predicate: () => boolean): Promise<void> {
-  return waitUntilDeadline(predicate, Date.now() + 5_000)
-}
-
-async function waitUntilDeadline(predicate: () => boolean, deadline: number): Promise<void> {
-  if (predicate()) {
-    return
-  }
-  if (Date.now() >= deadline) {
-    throw new Error('timed out waiting for the user interaction instrumentation')
-  }
+async function nextTask(): Promise<void> {
   await new Promise((resolve) => {
     setTimeout(resolve, 0)
   })
-  return waitUntilDeadline(predicate, deadline)
+}
+
+function clickSpans(): ReturnType<InMemorySpanExporter['getFinishedSpans']> {
+  return exporter.getFinishedSpans().filter(({ name }) => name === 'click' || name.startsWith('click '))
 }

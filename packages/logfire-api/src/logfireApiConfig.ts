@@ -78,6 +78,11 @@ export interface LogfireApiConfig {
   enableErrorFingerprinting: boolean
   jsonSchema: JsonSchemaMode
   minLevel: LogFireLevel | undefined
+  /**
+   * Called with the original error value after every `reportError()` call, whether or not the span
+   * was sampled or filtered. Runtime packages use it to react to explicitly reported errors.
+   */
+  onReportError: ((error: unknown) => void) | undefined
   otelScope: string
   scrubber: BaseScrubber
   tracer: Tracer
@@ -93,6 +98,7 @@ const DEFAULT_LOGFIRE_API_CONFIG: LogfireApiConfig = {
   enableErrorFingerprinting: true,
   jsonSchema: 'rich',
   minLevel: undefined,
+  onReportError: undefined,
   otelScope: DEFAULT_OTEL_SCOPE,
   scrubber: new LogfireAttributeScrubber(),
   tracer: TraceAPI.getTracer(DEFAULT_OTEL_SCOPE),

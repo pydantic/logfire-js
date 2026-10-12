@@ -470,7 +470,7 @@ describe('startBrowserSessionReplay', () => {
     const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
     const onError = vi.fn<(error: unknown) => void>()
     const replayState = new BrowserSessionReplayState()
-    replayState.setReplay(createReplayRuntime())
+    replayState.setReplay({ captureError: () => undefined, ...createReplayRuntime() })
     const error = new Error('missing peer')
 
     const replay = await startBrowserSessionReplay(

@@ -31,16 +31,28 @@ export interface SessionReplay {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
   getSessionId(): string
+  /**
+   * Add an error to the replay and promote an error-sampled buffer, as an uncaught error does.
+   * The same error object is added once, however many times it is captured. Pass the time the
+   * error occurred, in epoch milliseconds, when it is captured later; the error event records it
+   * as `timestamp`.
+   */
+  captureError(error: unknown, options?: CaptureErrorOptions): void
   /** The current DOM recording's upload/playback id; distinct from the RUM session id. */
   getRecordingId(): string
   flush(): Promise<void>
   stop(): Promise<void>
 }
 
+export interface CaptureErrorOptions {
+  timestamp?: number
+}
+
 const NOOP: SessionReplay = {
   mode: 'off',
   recording: false,
   getSessionId: () => '',
+  captureError: () => undefined,
   getRecordingId: () => '',
   flush: async () => Promise.resolve(),
   stop: async () => Promise.resolve(),
@@ -54,6 +66,7 @@ interface ActiveRuntime {
   readonly sessionId: string
   readonly recordingId: string
   readonly transport: ReplayTransport
+  captureError(error: unknown, options?: CaptureErrorOptions): void
   deactivate(keepalive?: boolean): Promise<void>
   discard(): void
 }
@@ -228,6 +241,13 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
         }
       },
       getSessionId: () => getSessionId(false),
+      captureError: (error, options) => {
+        try {
+          runtime?.captureError(error, options)
+        } catch (reportingError) {
+          safeReportError(resolvedConfig.onError, reportingError)
+        }
+      },
       getRecordingId: () =>
         runtime !== undefined && recordingIdentity.isCurrent(runtime.recordingId, getSessionId(false)) ? runtime.recordingId : '',
       flush: async () => {
@@ -360,7 +380,7 @@ function createActiveRuntime(options: {
       }
     }
 
-    const handleError = (payload: { message: string; source?: string; stack?: string }) => {
+    const handleError = (payload: { message: string; source?: string; stack?: string; timestamp?: number }) => {
       if (!isRuntimeActive()) {
         return
       }
@@ -376,6 +396,25 @@ function createActiveRuntime(options: {
         ignorePromise(transport.triggerFlush(), config.onError)
       }
     }
+    // The browser SDK can forward an error that this runtime's own listener already added, such as
+    // an error that the application reports and then rethrows.
+    const capturedErrors = new WeakSet()
+    const isNewError = (error: unknown): boolean => {
+      if (typeof error !== 'object' || error === null) {
+        return true
+      }
+      if (capturedErrors.has(error)) {
+        return false
+      }
+      capturedErrors.add(error)
+      return true
+    }
+    const captureError = (error: unknown, options?: CaptureErrorOptions) => {
+      if (isNewError(error)) {
+        const payload = createErrorPayload(errorMessage(error), undefined, errorStack(error))
+        handleError(typeof options?.timestamp === 'number' ? { ...payload, timestamp: options.timestamp } : payload)
+      }
+    }
     const onWindowError = (event: Event) => {
       // Resource load failures also dispatch non-bubbling `error` events that
       // reach Window capture listeners. They are not unhandled JavaScript
@@ -383,12 +422,12 @@ function createActiveRuntime(options: {
       if (!(event instanceof ErrorEvent)) {
         return
       }
-      handleError(createErrorPayload(event.message, event.filename, errorStack(event.error)))
+      if (isNewError(event.error)) {
+        handleError(createErrorPayload(event.message, event.filename, errorStack(event.error)))
+      }
     }
     const onRejection = (event: PromiseRejectionEvent) => {
-      const reason = event.reason as { message?: unknown; stack?: unknown } | undefined
-      const message = coerceRejectionMessage(reason?.message ?? event.reason)
-      handleError(createErrorPayload(message, undefined, typeof reason?.stack === 'string' ? reason.stack : undefined))
+      captureError(event.reason)
     }
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
@@ -398,14 +437,16 @@ function createActiveRuntime(options: {
     const onPageHide = () => {
       ignorePromise(transport.flush({ keepalive: true }), config.onError)
     }
-    window.addEventListener('error', onWindowError, true)
-    cleanup.push(() => {
-      window.removeEventListener('error', onWindowError, true)
-    })
-    window.addEventListener('unhandledrejection', onRejection, true)
-    cleanup.push(() => {
-      window.removeEventListener('unhandledrejection', onRejection, true)
-    })
+    if (config.captureGlobalErrors) {
+      window.addEventListener('error', onWindowError, true)
+      cleanup.push(() => {
+        window.removeEventListener('error', onWindowError, true)
+      })
+      window.addEventListener('unhandledrejection', onRejection, true)
+      cleanup.push(() => {
+        window.removeEventListener('unhandledrejection', onRejection, true)
+      })
+    }
     document.addEventListener('visibilitychange', onVisibilityChange)
     cleanup.push(() => {
       document.removeEventListener('visibilitychange', onVisibilityChange)
@@ -442,6 +483,7 @@ function createActiveRuntime(options: {
       sessionId,
       recordingId,
       transport,
+      captureError,
       deactivate: async (keepalive = false) => {
         deactivation ??= (async () => {
           // shutdown() admits the buffered tail synchronously, so the recorder
@@ -503,6 +545,7 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     captureConsole: config.captureConsole ?? DEFAULTS.captureConsole,
     captureNetwork: config.captureNetwork ?? DEFAULTS.captureNetwork,
     captureNavigation: config.captureNavigation ?? DEFAULTS.captureNavigation,
+    captureGlobalErrors: config.captureGlobalErrors ?? DEFAULTS.captureGlobalErrors,
     ignoreUrlPatterns: config.ignoreUrlPatterns ?? [],
     redactUrlPatterns: config.redactUrlPatterns ?? [...DEFAULTS.redactUrlPatterns],
     onError: config.onError,
@@ -567,9 +610,22 @@ function isSamplingMode(value: unknown): value is SamplingMode {
   return value === 'full' || value === 'buffer' || value === 'off'
 }
 
+function errorMessage(error: unknown): string {
+  return coerceRejectionMessage(readErrorProperty(error, 'message') ?? error)
+}
+
 function errorStack(error: unknown): string | undefined {
-  const stack = typeof error === 'object' && error !== null && 'stack' in error ? (error as { stack?: unknown }).stack : undefined
+  const stack = readErrorProperty(error, 'stack')
   return typeof stack === 'string' ? stack : undefined
+}
+
+// A rejected or reported value can have throwing getters, which must not stop the error event.
+function readErrorProperty(error: unknown, key: 'message' | 'stack'): unknown {
+  try {
+    return typeof error === 'object' && error !== null && key in error ? (error as Record<string, unknown>)[key] : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function ignorePromise(promise: Promise<void>, onError: ((error: unknown) => void) | undefined): void {
@@ -662,10 +718,12 @@ function coerceRejectionMessage(value: unknown): string {
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint' || typeof value === 'symbol') {
     return String(value)
   }
+  // Replay custom events are not masked, and a rejected or reported object can hold credentials,
+  // so only its type is recorded. The span for the same error carries the scrubbed details.
   try {
-    const serialized = JSON.stringify(value)
-    return typeof serialized === 'string' ? serialized : Object.prototype.toString.call(value)
-  } catch {
     return Object.prototype.toString.call(value)
+  } catch {
+    // A throwing Symbol.toStringTag getter.
+    return '[object Object]'
   }
 }

@@ -270,14 +270,21 @@ test.describe('session replay delivery in Chromium', () => {
     await page.locator('#leave').click()
     await expect(page).toHaveURL('http://127.0.0.1:4177/after-unload.html')
 
-    const response = await request.get('http://127.0.0.1:4177/fixture/status?scenario=unload')
-    expect(response.ok()).toBe(true)
-    const events = replayEvents(await response.text())
-    const checkpoints = events.flatMap((event, index) => {
-      const nextEvent = events[index + 1]
-      return isRecord(event) && event['type'] === 4 && isRecord(nextEvent) && nextEvent['type'] === 2 ? [index] : []
-    })
-    expect(checkpoints).toHaveLength(2)
+    // The unload chunk is a keepalive request that can reach the fixture after the navigation completes.
+    let events: unknown[] = []
+    let checkpoints: number[] = []
+    await expect
+      .poll(async () => {
+        const response = await request.get('http://127.0.0.1:4177/fixture/status?scenario=unload')
+        expect(response.ok()).toBe(true)
+        events = replayEvents(await response.text())
+        checkpoints = events.flatMap((event, index) => {
+          const nextEvent = events[index + 1]
+          return isRecord(event) && event['type'] === 4 && isRecord(nextEvent) && nextEvent['type'] === 2 ? [index] : []
+        })
+        return checkpoints.length
+      })
+      .toBe(2)
     const checkpoint = checkpoints[1]
     if (checkpoint === undefined) {
       throw new Error('five-minute checkpoint was not recorded')

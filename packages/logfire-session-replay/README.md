@@ -275,8 +275,8 @@ The recorder uses a Sentry-style two-rate model:
 
 - `sessionSampleRate`: records the current browser session continuously
 - `onErrorSampleRate`: for sessions not selected by `sessionSampleRate`, keeps
-  an in-memory replay buffer and promotes it only for an uncaught `window.error`
-  or `unhandledrejection`
+  an in-memory replay buffer and promotes it for an uncaught `window.error` or
+  `unhandledrejection`, or for an error passed to `captureError()`
 
 Buffer mode is bounded by `maxBufferBytes`, measured as the UTF-8 byte sum of
 event JSON before envelope metadata and compression. It keeps the latest full
@@ -292,8 +292,14 @@ properties. A sampled-off session keeps only a lightweight session-id monitor;
 it does not start rrweb or patch console, network, or navigation globals, and a
 later sampled session can begin recording without reloading the page.
 
-Caught exceptions, `console.error`, and errors reported through another API do
-not automatically promote the replay buffer.
+Pass a caught error to `replay.captureError(error)` to add it to the replay and
+promote the buffer, as an uncaught error does. For an error that occurred
+earlier, pass `{ timestamp }` in epoch milliseconds; the error event records it. An error object is added once,
+even when it is also uncaught later. `console.error` does not promote the buffer.
+
+Set `captureGlobalErrors: false` when another layer listens for uncaught errors
+and forwards them through `captureError()`. The replay then installs no `error`
+or `unhandledrejection` listeners.
 
 `stop()` is awaitable and flushes the final chunk before resolving.
 
@@ -325,7 +331,9 @@ logfire.configure({
 ```
 
 The browser package owns RUM session identity, span correlation attributes, and
-cleanup ordering. Call `startSessionReplay()` directly only for standalone or
+cleanup ordering. It also reports uncaught errors as spans and passes every
+`reportError()` call to `captureError()`, so a handled error that the
+application reports promotes an error-buffered replay. Call `startSessionReplay()` directly only for standalone or
 advanced integrations that do not use `@pydantic/logfire-browser`.
 
 ## Local Development Notes

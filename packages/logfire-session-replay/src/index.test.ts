@@ -923,6 +923,41 @@ describe('startSessionReplay errors', () => {
     await replay.stop()
   })
 
+  it('records only the type of an object value, never its fields', async () => {
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl))
+
+    replay.captureError({ api_key: 'secret-key', password: 'secret-password' })
+    dispatchRejection({ message: { token: 'secret-token' } })
+    dispatchRejection(['secret-entry'])
+
+    const messages = handle.addCustomEvent.mock.calls
+      .filter(([tag]) => tag === CustomTag.Error)
+      .map(([, payload]) => (payload as { message: string }).message)
+    expect(messages).toEqual(['[object Object]', '[object Object]', '[object Array]'])
+    await replay.stop()
+  })
+
+  it('records an error event for a value whose getters throw', async () => {
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl))
+    const hostile = Object.defineProperties(
+      {},
+      {
+        message: { get: () => raise() },
+        stack: { get: () => raise() },
+        [Symbol.toStringTag]: { get: () => raise() },
+      }
+    )
+
+    replay.captureError(hostile)
+    dispatchRejection(Object.defineProperty({}, Symbol.toStringTag, { get: () => raise() }))
+
+    const payloads = handle.addCustomEvent.mock.calls.filter(([tag]) => tag === CustomTag.Error).map(([, payload]) => payload)
+    expect(payloads).toEqual([{ message: '[object Object]' }, { message: '[object Object]' }])
+    await replay.stop()
+  })
+
   it('coerces non-string rejection messages', async () => {
     const { fetchImpl } = recordingFetch()
     const replay = startSessionReplay(baseConfig(fetchImpl))
@@ -948,6 +983,62 @@ describe('startSessionReplay buffer mode', () => {
     const recordingId = replay.getRecordingId()
     await replay.stop()
     expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${recordingId}?seq=0`])
+  })
+
+  it('promotes a buffered replay for an error passed to captureError', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 1, random: rng([0.9, 0.1]) }))
+    emit(fullSnapshot)
+    const error = new Error('handled')
+    error.stack = 'STACK'
+
+    replay.captureError(error)
+
+    expect(replay.mode).toBe('full')
+    expect(handle.addCustomEvent).toHaveBeenCalledWith(CustomTag.Error, { message: 'handled', stack: 'STACK' })
+    const recordingId = replay.getRecordingId()
+    await replay.stop()
+    expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${recordingId}?seq=0`])
+  })
+
+  it('records when a later captured error occurred', async () => {
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 1, random: rng([0.9, 0.1]) }))
+
+    replay.captureError('startup failed', { timestamp: 500 })
+
+    expect(replay.mode).toBe('full')
+    expect(handle.addCustomEvent).toHaveBeenCalledWith(CustomTag.Error, { message: 'startup failed', timestamp: 500 })
+    await replay.stop()
+  })
+
+  it('adds an error object once when it is both captured and uncaught', async () => {
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 1, random: rng([0.9, 0.1]) }))
+    const error = new Error('reported, then rethrown')
+
+    replay.captureError(error)
+    window.dispatchEvent(new ErrorEvent('error', { error, message: error.message }))
+    replay.captureError(error)
+
+    expect(handle.addCustomEvent.mock.calls.filter(([tag]) => tag === CustomTag.Error)).toHaveLength(1)
+    await replay.stop()
+  })
+
+  it('leaves global errors to the caller when captureGlobalErrors is false', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, { captureGlobalErrors: false, sessionSampleRate: 0, onErrorSampleRate: 1, random: rng([0.9, 0.1]) })
+    )
+    emit(fullSnapshot)
+
+    window.dispatchEvent(new ErrorEvent('error', { message: 'uncaught' }))
+    dispatchRejection(new Error('rejected'))
+
+    expect(replay.mode).toBe('buffer')
+    expect(handle.addCustomEvent).not.toHaveBeenCalledWith(CustomTag.Error, expect.anything())
+    await replay.stop()
+    expect(calls).toHaveLength(0)
   })
 
   it('does not treat resource load failures as unhandled JavaScript errors', async () => {
@@ -1429,6 +1520,10 @@ async function drainMicrotasks(): Promise<void> {
 function rng(values: number[]): () => number {
   let index = 0
   return () => values[index++] ?? 1
+}
+
+function raise(): never {
+  throw new Error('hostile getter')
 }
 
 function dispatchRejection(reason: unknown): void {

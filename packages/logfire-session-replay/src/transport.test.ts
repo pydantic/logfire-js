@@ -50,6 +50,7 @@ function makeConfig(fetchImpl: typeof fetch): ResolvedSessionReplayConfig {
     captureConsole: true,
     captureNetwork: true,
     captureNavigation: true,
+    captureGlobalErrors: true,
     ignoreUrlPatterns: [],
     redactUrlPatterns: [],
     onError: undefined,

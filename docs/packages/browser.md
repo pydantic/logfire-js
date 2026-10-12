@@ -31,11 +31,11 @@ const frontendOptions = {
 logfire.configureFrontend(frontendOptions)
 ```
 
-Logfire associates the token with the frontend application's service name, so it cannot report data for another application. `configureFrontend()` derives ingest endpoints and authentication headers from the application's regional URL and restricted token. It enables auto-instrumentation and Web Vitals metrics by default and returns the same callable cleanup handle as `configure()`. Replay remains opt-in and uses the same destination unless configured otherwise.
+Logfire associates the token with the frontend application's service name, so it cannot report data for another application. `configureFrontend()` derives ingest endpoints and authentication headers from the application's regional URL and restricted token. It enables auto-instrumentation, global error capture, and Web Vitals metrics by default and returns the same callable cleanup handle as `configure()`. Use `profile: 'errors'` for an errors-and-replay setup without performance data; see [Errors and Replay Profile](#errors-and-replay-profile). Replay remains opt-in and uses the same destination unless configured otherwise.
 
-`autoInstrumentations` is enabled by default with `configureFrontend()` and lazily loads OpenTelemetry browser auto-instrumentations after the Logfire browser provider is ready. For advanced integrations, `instrumentations` also accepts factories, so custom instrumentation construction can be deferred until `configure()` has registered the provider.
+`autoInstrumentations` is enabled by default with `configureFrontend()`. The OpenTelemetry browser auto-instrumentations are registered before `configure()` or `configureFrontend()` returns, so event listeners, `fetch` calls, and XHR requests that the application sets up right after configuration are traced. Call it before the application registers listeners or makes requests. For advanced integrations, `instrumentations` also accepts factories, so custom instrumentation construction can be deferred until `configure()` has registered the provider.
 
-When the page does not load Zone.js, the automatic user interaction instrumentation records one span for each event, such as a click, even when the event reaches several listeners. Every listener runs in the context of that span, so the spans and requests a listener starts are its children. A user interaction instrumentation that you pass through `instrumentations` keeps the upstream behavior of one span for each listener.
+When the page does not load Zone.js, the automatic user interaction instrumentation records one span for each event, such as a click, even when the event reaches several listeners. Every listener runs in the context of that span, so the spans and requests a listener starts are its children. The span ends when the last listener returns, or throws, so tail sampling sees the work of every listener. A user interaction instrumentation that you pass through `instrumentations` keeps the upstream behavior of one span for each listener.
 
 Set `autoInstrumentations: false` to disable automatic instrumentation, or
 `rum: { webVitals: false }` to disable Web Vitals capture. To keep Web Vitals
@@ -46,7 +46,8 @@ options preserve unrelated defaults: for example, setting `rum.session` or
 features, such as replay.
 
 Use the lower-level `configure()` for custom endpoints, authentication, or a
-telemetry proxy. It retains its opt-in instrumentation and RUM behavior.
+telemetry proxy. It retains its opt-in instrumentation and RUM behavior. Global
+error capture is on in both; see [Errors](#errors).
 `configureFrontend()` accepts capture options, resource attributes, and exporter
 tuning, while the frontend application owns transport and service identity.
 
@@ -840,13 +841,93 @@ document.querySelector('button')?.addEventListener('click', () => {
 })
 ```
 
+## Errors
+
+`configure()` and `configureFrontend()` report uncaught errors and unhandled
+promise rejections as error-level spans named `Uncaught error` and
+`Unhandled promise rejection`. The application does not need its own `error` or
+`unhandledrejection` listener. Resource load failures, such as a broken image,
+are not reported. Pass `captureGlobalErrors: false` to turn global capture off.
+
 Report caught errors with `reportError()`:
 
 ```ts
-window.addEventListener('error', (event) => {
-  logfire.reportError('uncaught browser error', event.error, { filename: event.filename }, { tags: ['browser'] })
+try {
+  await saveOrder()
+} catch (error) {
+  logfire.reportError('Order save failed', error, { route: '/checkout' })
+}
+```
+
+An error object is reported once. When the application reports an error and
+then rethrows it, or reports it from its own `window` `error` listener, global
+capture skips it. Global capture waits for the rest of the event dispatch before
+it reports, so a listener registered after `configure()` still takes precedence.
+
+With session replay, every `reportError()` call, including the calls that
+global capture makes, adds the error to the replay and promotes an
+error-buffered replay to a recorded one. The replay package's own global error
+listeners are turned off, so an uncaught error appears in the replay once.
+Replay loads after `configure()` returns. The SDK holds up to 10 errors reported
+in the meantime and adds them when replay starts, with the time each error
+occurred as `timestamp` in the error event. Such an error still promotes the
+replay, but the recording starts after it.
+
+## Errors and Replay Profile
+
+Use `profile: 'errors'` when the application needs errors and the replays around
+them, not performance data:
+
+```ts
+import * as logfire from '@pydantic/logfire-browser'
+import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
+
+logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  profile: 'errors',
+  sessionReplay: sessionReplayIntegration(),
 })
 ```
+
+The profile keeps direct ingest, the restricted frontend application token, and
+the default privacy settings. It changes these defaults:
+
+- Tail sampling exports a trace only when one of its spans has an error level,
+  an error status, or an HTTP 5xx response. The whole trace is kept, so the
+  click and the request around a failure stay together. Healthy traces are
+  dropped in the browser.
+- Web Vitals spans and metrics, and document-load spans, are off. Long Animation
+  Frames stay off.
+- Session replay records only sessions with an error: `sessionSampleRate`
+  defaults to `0` and `onErrorSampleRate` to `1`. Replay keeps a bounded buffer
+  in memory and uploads it when an error is reported.
+
+Options that you pass explicitly take precedence. For example,
+`rum: { webVitals: true }` keeps Web Vitals, `sampling: { head: 0.5 }` adds head
+sampling to the profile's tail rule, and `sessionReplay: { ...sessionReplayIntegration(), sessionSampleRate: 0.05 }`
+records 5% of sessions in full.
+
+### Verify the setup
+
+You can check the setup in the Logfire UI. You do not need CLI access or SQL
+queries.
+
+1. Trigger a handled error, for example a button handler that calls
+   `logfire.reportError('Checkout failed', new Error('verification'))`.
+2. Trigger an unhandled error, for example
+   `setTimeout(() => { throw new Error('verification uncaught') })`.
+3. Use the application normally for a few clicks without errors.
+4. In the frontend application's Live view, find the two error-level spans:
+   `Checkout failed` with the click span that started it in the same trace, and
+   `Uncaught error`. The healthy clicks from step 3 do not appear.
+5. The error spans carry `logfire.session_replay.id`. Open that replay. It
+   contains both errors as error events, and it starts before the first one,
+   because the buffer covers the time before the error.
+
+A replay needs at least 10 seconds of recording before it uploads
+(`minSessionDurationMs`), so keep the page open until at least 10 seconds of
+recording have elapsed.
 
 ## Minimum Level Filtering
 

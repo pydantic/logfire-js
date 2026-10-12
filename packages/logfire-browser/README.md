@@ -30,11 +30,14 @@ const cleanup = logfire.configureFrontend({
 })
 ```
 
-`configureFrontend()` enables auto-instrumentation and Web Vitals metrics by
-default. Set `autoInstrumentations: false` or `rum: { webVitals: false }` to
-disable them. Nested capture options preserve unrelated defaults. Replay is
-opt-in, and the returned handle stops the SDK when called. Use `configure()`
-for custom transports and proxies; its capture features remain opt-in.
+`configureFrontend()` enables auto-instrumentation, global error capture, and
+Web Vitals metrics by default. Set `autoInstrumentations: false`,
+`captureGlobalErrors: false`, or `rum: { webVitals: false }` to disable them.
+Nested capture options preserve unrelated defaults. Replay is opt-in, and the
+returned handle stops the SDK when called. Use `profile: 'errors'` for an
+errors-and-replay setup without performance data. Use `configure()` for custom
+transports and proxies; its capture features remain opt-in, except global error
+capture.
 
 `configureFrontend()` removes query strings, fragments, and URL credentials from
 standard page/request URL attributes (`http.url`, `url.full`, `http.target`, and
@@ -806,6 +809,94 @@ or disable the extension for the local app. Vite workspace examples may also
 need to load `@rrweb/record`'s browser ESM build
 (`@rrweb/record/dist/record.js`) rather than its CommonJS build when importing
 unpublished workspace output directly.
+
+## Errors
+
+`configure()` and `configureFrontend()` report uncaught errors and unhandled
+promise rejections as error-level spans named `Uncaught error` and
+`Unhandled promise rejection`. The application does not need its own `error` or
+`unhandledrejection` listener. Resource load failures, such as a broken image,
+are not reported. Pass `captureGlobalErrors: false` to turn global capture off.
+
+Report caught errors with `reportError()`:
+
+```ts
+try {
+  await saveOrder()
+} catch (error) {
+  logfire.reportError('Order save failed', error, { route: '/checkout' })
+}
+```
+
+An error object is reported once. When the application reports an error and
+then rethrows it, or reports it from its own `window` `error` listener, global
+capture skips it. Global capture waits for the rest of the event dispatch before
+it reports, so a listener registered after `configure()` still takes precedence.
+
+With session replay, every `reportError()` call, including the calls that
+global capture makes, adds the error to the replay and promotes an
+error-buffered replay to a recorded one. The replay package's own global error
+listeners are turned off, so an uncaught error appears in the replay once.
+Replay loads after `configure()` returns. The SDK holds up to 10 errors reported
+in the meantime and adds them when replay starts, with the time each error
+occurred as `timestamp` in the error event. Such an error still promotes the
+replay, but the recording starts after it.
+
+## Errors and replay profile
+
+Use `profile: 'errors'` when the application needs errors and the replays around
+them, not performance data:
+
+```ts
+import * as logfire from '@pydantic/logfire-browser'
+import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
+
+logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  profile: 'errors',
+  sessionReplay: sessionReplayIntegration(),
+})
+```
+
+The profile keeps direct ingest, the restricted frontend application token, and
+the default privacy settings. It changes these defaults:
+
+- Tail sampling exports a trace only when one of its spans has an error level,
+  an error status, or an HTTP 5xx response. The whole trace is kept, so the
+  click and the request around a failure stay together. Healthy traces are
+  dropped in the browser.
+- Web Vitals spans and metrics, and document-load spans, are off. Long Animation
+  Frames stay off.
+- Session replay records only sessions with an error: `sessionSampleRate`
+  defaults to `0` and `onErrorSampleRate` to `1`. Replay keeps a bounded buffer
+  in memory and uploads it when an error is reported.
+
+Options that you pass explicitly take precedence. For example,
+`rum: { webVitals: true }` keeps Web Vitals, `sampling: { head: 0.5 }` adds head
+sampling to the profile's tail rule, and `sessionReplay: { ...sessionReplayIntegration(), sessionSampleRate: 0.05 }`
+records 5% of sessions in full.
+
+### Verify the setup
+
+You can check the setup in the Logfire UI. You do not need CLI access or SQL
+queries.
+
+1. Trigger a handled error, for example a button handler that calls
+   `logfire.reportError('Checkout failed', new Error('verification'))`.
+2. Trigger an unhandled error, for example
+   `setTimeout(() => { throw new Error('verification uncaught') })`.
+3. Use the application normally for a few clicks without errors.
+4. In the frontend application's Live view, find the two error-level spans:
+   `Checkout failed` with the click span that started it in the same trace, and
+   `Uncaught error`. The healthy clicks from step 3 do not appear.
+5. The error spans carry `logfire.session_replay.id`. Open that replay. It
+   contains both errors as error events, and it starts before the first one,
+   because the buffer covers the time before the error.
+
+A replay needs at least 10 seconds of recording before it uploads
+(`minSessionDurationMs`), so keep the page open until at least 10 seconds of
+recording have elapsed.
 
 ## Custom span processors
 

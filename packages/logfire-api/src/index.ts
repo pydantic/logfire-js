@@ -1023,6 +1023,12 @@ function reportErrorWithSettings(
   span.recordException(normalized.recordExceptionValue)
   span.setStatus({ code: SpanStatusCode.ERROR, message: normalized.statusMessage })
   span.end()
+
+  try {
+    logfireApiConfig.onReportError?.(error)
+  } catch {
+    // A runtime package's error hook must not break error reporting.
+  }
 }
 
 export function reportError(

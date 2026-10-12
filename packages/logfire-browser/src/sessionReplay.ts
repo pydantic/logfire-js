@@ -12,6 +12,8 @@ export interface BrowserSessionReplayRuntime {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
   getSessionId(): string
+  /** Absent from replay packages older than 0.6. */
+  captureError?(error: unknown, options?: { timestamp?: number }): void
   /** Present in replay packages that separate a DOM recording from its RUM session. */
   getRecordingId?(): string
   flush(): Promise<void>
@@ -21,6 +23,7 @@ export interface BrowserSessionReplayRuntime {
 export interface BrowserSessionReplayControl {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
+  captureError(error: unknown, options?: { timestamp?: number }): void
   getRecordingId?(): string
   flush(): Promise<void>
   stop(): Promise<void>
@@ -51,6 +54,7 @@ export interface BrowserSessionReplayPackageConfig {
   captureConsole?: boolean
   captureNetwork?: boolean
   captureNavigation?: boolean
+  captureGlobalErrors?: boolean
   ignoreUrlPatterns?: RegExp[]
   redactUrlPatterns?: RegExp[]
   onError?: (error: unknown) => void
@@ -152,6 +156,8 @@ export class BrowserSessionReplayState {
 }
 
 interface BrowserSessionReplayTelemetryOptions {
+  /** The browser SDK captures global errors and forwards them through `captureError()`. */
+  capturesGlobalErrors?: boolean
   metricUrl?: BrowserMetricsOptions['metricUrl'] | undefined
   traceUrl: string
 }
@@ -262,6 +268,9 @@ function createReplayConfig(
   if (options.captureNavigation !== undefined) {
     config.captureNavigation = options.captureNavigation
   }
+  if (telemetryOptions.capturesGlobalErrors === true) {
+    config.captureGlobalErrors = false
+  }
   if (options.redactUrlPatterns !== undefined) {
     config.redactUrlPatterns = options.redactUrlPatterns
   }
@@ -275,6 +284,25 @@ function createReplayConfig(
   }
 
   return config
+}
+
+/**
+ * Keeps only the message and stack that replay records, so an error held until replay starts does
+ * not retain the reported value.
+ */
+export function snapshotErrorForReplay(error: unknown): unknown {
+  if (typeof error !== 'object' || error === null) {
+    return error
+  }
+  try {
+    const { message, stack } = error as { message?: unknown; stack?: unknown }
+    return {
+      ...(typeof message === 'string' ? { message } : {}),
+      ...(typeof stack === 'string' ? { stack } : {}),
+    }
+  } catch {
+    return {}
+  }
 }
 
 function safeReportError(onError: ((error: unknown) => void) | undefined, error: unknown): void {
@@ -326,6 +354,17 @@ function wrapReplayRuntime(
       } catch (error) {
         safeReportError(onError, error)
         return false
+      }
+    },
+    captureError: (error, options) => {
+      try {
+        if (options === undefined) {
+          replay.captureError?.(error)
+        } else {
+          replay.captureError?.(error, options)
+        }
+      } catch (captureError) {
+        safeReportError(onError, captureError)
       }
     },
     flush: async () => {

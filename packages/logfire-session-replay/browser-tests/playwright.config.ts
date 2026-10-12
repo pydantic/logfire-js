@@ -20,6 +20,10 @@ const fixtureServers = [
     command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/soft-navigation-web-vitals/vite.config.ts',
     url: 'http://127.0.0.1:4182/',
   },
+  {
+    command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/errors-profile/vite.config.ts',
+    url: 'http://127.0.0.1:4184/receipts',
+  },
 ]
 
 export default defineConfig({
