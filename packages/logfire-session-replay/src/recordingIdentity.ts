@@ -14,6 +14,8 @@ export interface RecordingState {
 /** Tab-scoped replay identity, independent of RUM identity and its sampling decision. */
 export class RecordingIdentity {
   private state: RecordingState | undefined
+  /** Whether `state` was resumed from storage that an earlier document wrote. */
+  private resumed = false
   private storage: Storage | null
   private readonly owner: string
   private readonly now: () => number
@@ -41,13 +43,26 @@ export class RecordingIdentity {
       this.storage = null
       this.state = undefined
     }
+    this.resumed = this.state !== undefined
   }
 
   get(rumSessionId: string): string {
     if (this.state !== undefined && this.isCurrent(this.state.id, rumSessionId)) {
       return this.state.id
     }
+    return this.replace(rumSessionId)
+  }
+
+  /** The current recording ID, and whether it continues a recording that an earlier document started. */
+  candidate(rumSessionId: string): { id: string; resumed: boolean } {
+    const id = this.get(rumSessionId)
+    return { id, resumed: this.resumed }
+  }
+
+  /** Start a new recording, even when the current one is still valid. */
+  replace(rumSessionId: string): string {
     this.state = { id: uuidv7(this.now), rumSessionId, startedAt: this.now() }
+    this.resumed = false
     try {
       this.storage?.setItem(RECORDING_STORAGE_KEY, JSON.stringify(this.state))
     } catch {
@@ -92,6 +107,7 @@ export class RecordingIdentity {
       this.state = undefined
       this.storage = null
     }
+    this.resumed = this.state !== undefined
   }
 
   private readResumableState(): RecordingState | undefined {

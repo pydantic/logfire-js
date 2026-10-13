@@ -43,50 +43,51 @@ export async function claimRecordingLock(
   if (lifecycle.aborted) {
     return { kind: 'aborted' }
   }
-  // The attempt has its own controller, so the wait bound never aborts the lifecycle.
-  const attempt = new AbortController()
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    attempt.abort()
-  }, waitMs)
-  const onLifecycleAbort = (): void => {
-    attempt.abort()
-  }
-  lifecycle.addEventListener('abort', onLifecycleAbort)
-  const stopWaiting = (): void => {
-    clearTimeout(timer)
-    lifecycle.removeEventListener('abort', onLifecycleAbort)
-  }
-
   return new Promise<RecordingLockClaim>((resolve) => {
-    let granted = false
-    const notGranted = (): void => {
-      stopWaiting()
-      resolve(timedOut ? { kind: 'timeout' } : { kind: 'aborted' })
+    // The claim settles at the wait bound or the lifecycle abort without waiting for the browser to
+    // reject the request, and a grant that arrives after the claim settled is released at once.
+    let settled = false
+    const settle = (claim: RecordingLockClaim): void => {
+      if (!settled) {
+        settled = true
+        clearTimeout(timer)
+        lifecycle.removeEventListener('abort', onLifecycleAbort)
+        resolve(claim)
+      }
     }
+    // The attempt has its own controller, so the wait bound never aborts the lifecycle.
+    const attempt = new AbortController()
+    const timer = setTimeout(() => {
+      attempt.abort()
+      settle({ kind: 'timeout' })
+    }, waitMs)
+    const onLifecycleAbort = (): void => {
+      attempt.abort()
+      settle({ kind: 'aborted' })
+    }
+    lifecycle.addEventListener('abort', onLifecycleAbort)
+    let granted = false
     try {
       locks
         .request(`${RECORDING_LOCK_PREFIX}${recordingId}`, { mode: 'exclusive', signal: attempt.signal }, async () => {
           granted = true
-          stopWaiting()
-          if (lifecycle.aborted) {
-            resolve({ kind: 'aborted' })
+          if (settled || lifecycle.aborted) {
+            settle({ kind: 'aborted' })
             return
           }
           await new Promise<void>((release) => {
-            resolve({ kind: 'held', lock: { release } })
+            settle({ kind: 'held', lock: { release } })
           })
         })
         .catch(() => {
           // After a grant, a rejection means the browser dropped the held lock, as Safari does when
           // the page enters the back-forward cache. The pagehide path has already released it.
           if (!granted) {
-            notGranted()
+            settle({ kind: 'aborted' })
           }
         })
     } catch {
-      notGranted()
+      settle({ kind: 'aborted' })
     }
   })
 }
