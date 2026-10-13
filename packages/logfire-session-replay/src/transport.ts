@@ -62,6 +62,23 @@ interface UploadFailure {
 interface ReplayTransportOptions {
   holdUntilActivity?: boolean
   takeFullSnapshot?: () => void
+  sequenceRecord?: SequenceRecordBinding
+  /**
+   * Buffer events but reserve no sequence and send nothing until `bind()` attaches the recording's
+   * shared sequence record. The recording starts at once, while its lock is still pending.
+   */
+  awaitBinding?: boolean
+}
+
+/**
+ * The shared sequence record of the recording that this transport writes. The transport starts at
+ * `initialSeq`, and it queues a chunk only after `write` confirms the chunk's next sequence.
+ */
+export interface SequenceRecordBinding {
+  initialSeq: number
+  write(seq: number): boolean
+  /** Called once, after the first failed write. The transport sends nothing more. */
+  onFailure(): void
 }
 
 const DEFAULT_COMPRESSION: Compression = { gzip, gzipSync }
@@ -105,6 +122,10 @@ export class ReplayTransport {
   private readonly sessionId: string
   private readonly sessionAttributes: SessionAttributes
   private readonly takeFullSnapshot: (() => void) | undefined
+  private sequenceRecord: SequenceRecordBinding | undefined
+  private sequenceRecordFailed = false
+  private awaitingBinding: boolean
+  private bindingBufferIncomplete = false
 
   constructor(
     config: ResolvedSessionReplayConfig,
@@ -123,8 +144,10 @@ export class ReplayTransport {
     this.compression = compression
     this.held = options.holdUntilActivity === true && mode === 'full'
     this.takeFullSnapshot = options.takeFullSnapshot
+    this.sequenceRecord = options.sequenceRecord
+    this.awaitingBinding = options.awaitBinding === true
     this.minimumDurationSatisfied = config.minSessionDurationMs === 0
-    this.seq = this.readPersistedSequence() ?? 0
+    this.seq = options.sequenceRecord?.initialSeq ?? this.readPersistedSequence() ?? 0
     this.startedAt = this.config.now()
     this.lastUserActivityAt = this.startedAt
   }
@@ -158,7 +181,7 @@ export class ReplayTransport {
       return
     }
     const enforcingMinimum = !this.minimumDurationSatisfied
-    if (this.mode === 'buffer' || this.held || enforcingMinimum) {
+    if (this.mode === 'buffer' || this.held || enforcingMinimum || this.awaitingBinding) {
       if (event.type === EventType.Meta) {
         this.buffer = [event]
         this.bufferHasFullSnapshot = false
@@ -193,6 +216,7 @@ export class ReplayTransport {
       // state transition that was trimmed from the buffer.
       if (!this.bufferHasFullSnapshot || eventBytes > this.config.maxBufferBytes) {
         this.heldBufferIncomplete ||= this.held
+        this.bindingBufferIncomplete ||= this.awaitingBinding
         this.minimumBufferIncomplete ||= enforcingMinimum
         if (enforcingMinimum) {
           this.finishMinimumBufferingEvent()
@@ -201,6 +225,7 @@ export class ReplayTransport {
       }
       if (this.pendingBytes + eventBytes > this.config.maxBufferBytes) {
         this.heldBufferIncomplete ||= this.held
+        this.bindingBufferIncomplete ||= this.awaitingBinding
         this.minimumBufferIncomplete ||= enforcingMinimum
         if (enforcingMinimum) {
           this.finishMinimumBufferingEvent()
@@ -267,7 +292,7 @@ export class ReplayTransport {
   }
 
   private async flushInternal(options: { keepalive?: boolean } = {}): Promise<void> {
-    if (this.closed || this.mode === 'buffer' || this.held || this.buffer.length === 0) {
+    if (this.closed || this.mode === 'buffer' || this.held || this.awaitingBinding || this.buffer.length === 0) {
       return
     }
     if (!this.minimumDurationReached()) {
@@ -297,6 +322,9 @@ export class ReplayTransport {
       // page, even when an ordinary upload is still awaiting its response.
       const eventChunks = splitKeepaliveEventChunks(events)
       const seq = this.allocateSeq(eventChunks.length)
+      if (seq === undefined) {
+        return
+      }
       const run = this.deliverLifecycle(eventChunks, seq, sessionId, identity)
       this.lifecycleFlights.add(run)
       const forget = (): void => {
@@ -314,7 +342,8 @@ export class ReplayTransport {
   async shutdown(options: { keepalive?: boolean } = {}): Promise<void> {
     this.started = false
     this.clearScheduledFlush()
-    if (this.held || !this.minimumDurationReached()) {
+    // A transport that is still awaiting its binding reserved no sequence, so it owes nothing.
+    if (this.held || this.awaitingBinding || !this.minimumDurationReached()) {
       this.discard()
       await this.settleWithinDeadline([])
       return
@@ -489,8 +518,27 @@ export class ReplayTransport {
     }
   }
 
-  private allocateSeq(count: number): number {
+  /** Returns undefined when the shared sequence record cannot confirm the reservation. */
+  private allocateSeq(count: number): number | undefined {
     const seq = this.seq
+    const record = this.sequenceRecord
+    if (record !== undefined) {
+      if (this.sequenceRecordFailed) {
+        return undefined
+      }
+      if (!record.write(seq + count)) {
+        // Another document could take over this recording from the stale record and reuse the
+        // sequence, so nothing more is uploaded under this recording ID.
+        this.sequenceRecordFailed = true
+        this.discard()
+        try {
+          record.onFailure()
+        } catch (error) {
+          safeReportError(this.config.onError, error)
+        }
+        return undefined
+      }
+    }
     this.seq += count
     this.saveSeq(this.sessionId, this.seq)
     return seq
@@ -509,6 +557,10 @@ export class ReplayTransport {
       this.beginResync()
       return undefined
     }
+    const seq = this.allocateSeq(1)
+    if (seq === undefined) {
+      return undefined
+    }
     let resolve: () => void = () => undefined
     const done = new Promise<void>((settle) => {
       resolve = settle
@@ -522,7 +574,7 @@ export class ReplayTransport {
       reachedFetch: false,
       resolve,
       retainedBytes: eventBytes,
-      seq: this.allocateSeq(1),
+      seq,
       sessionId,
       settled: false,
     }
@@ -938,9 +990,43 @@ export class ReplayTransport {
   }
 
   canResumeSequence(): boolean {
+    if (this.awaitingBinding) {
+      // This document never reserved a sequence, so the stored one is still the latest.
+      return true
+    }
     // A failed write leaves the previous value in storage. Do not hand that
     // stale sequence to a new document, even if setItem silently discarded it.
     return this.readPersistedSequence() === this.seq
+  }
+
+  isAwaitingBinding(): boolean {
+    return this.awaitingBinding
+  }
+
+  /** Attach the recording's shared sequence record and start sending the buffered events. */
+  bind(binding: SequenceRecordBinding): void {
+    if (!this.awaitingBinding || this.closed) {
+      return
+    }
+    this.sequenceRecord = binding
+    this.seq = binding.initialSeq
+    this.awaitingBinding = false
+    if (this.bindingBufferIncomplete) {
+      // Events were dropped to keep the pending buffer bounded. A fresh anchor keeps node ids valid.
+      this.bindingBufferIncomplete = false
+      this.buffer = []
+      this.bufferHasFullSnapshot = false
+      this.pendingBytes = 0
+      this.takeFullSnapshot?.()
+    }
+    if (this.mode !== 'full' || this.held || this.buffer.length === 0) {
+      return
+    }
+    if (this.pendingBytes >= this.config.maxBufferBytes) {
+      this.flushAndReport()
+    } else {
+      this.scheduleFlush()
+    }
   }
 
   private readPersistedSequence(): number | undefined {

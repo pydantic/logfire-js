@@ -138,6 +138,9 @@ async function run(): Promise<void> {
 
   state.phase = 'after-reload'
   setStatus('after-reload')
+  // A reloaded page resumes the tab's recording only after it holds the recording's lock. Spans
+  // created before that carry no recording link, because another tab could own the recording.
+  await replayRuntime?.flush()
   logfire.info('normal-after-reload')
   routeName = '/settings'
   await delay(2_100)

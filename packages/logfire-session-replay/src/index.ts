@@ -1,11 +1,15 @@
 import { isUserActivityEvent } from './activity'
 import { captureConsole, captureNavigation, captureNetwork } from './capture'
 import { startRecording } from './recorder'
-import { RECORDING_STORAGE_KEY, RecordingIdentity } from './recordingIdentity'
+import { MAX_RECORDING_DURATION_MS, RECORDING_STORAGE_KEY, RecordingIdentity } from './recordingIdentity'
+import { claimRecordingLock, recordingLockManager } from './recordingLock'
+import type { RecordingLock } from './recordingLock'
 import { decideSamplingMode } from './sampling'
+import { SequenceRecords, writableLocalStorage } from './sequenceRecord'
 import { snapshotSessionAttributes } from './sessionAttributes'
 import { safeSessionStorage, SessionManager } from './session'
 import { ReplayTransport } from './transport'
+import type { SequenceRecordBinding } from './transport'
 import { CustomTag, DEFAULTS } from './types'
 import type { ResolvedSessionReplayConfig, SamplingMode, SessionReplayConfig } from './types'
 
@@ -62,6 +66,17 @@ const SAMPLING_MODE_STORAGE_KEY = 'lf_session_replay_mode'
 const CONTROLLER_LEASE_KEY = Symbol.for('@pydantic/logfire-session-replay/controller')
 const SESSION_MONITOR_INTERVAL_MS = 1_000
 
+/** Web Locks and a shared sequence record, which together let one document at a time write a recording. */
+interface Coordination {
+  locks: LockManager
+  records: SequenceRecords
+}
+
+interface ClaimedRecording {
+  recordingId: string
+  sequenceRecord: SequenceRecordBinding
+}
+
 interface ActiveRuntime {
   readonly sessionId: string
   readonly recordingId: string
@@ -106,6 +121,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       const opener = window.opener as Window | null
       return opener?.sessionStorage.getItem(RECORDING_STORAGE_KEY) ?? null
     })
+    const coordination = resolveCoordination(resolvedConfig.now)
     let currentSessionId = getSessionId(false)
     let currentRecordingId = recordingIdentity.get(currentSessionId)
     let runtime: ActiveRuntime | undefined
@@ -116,13 +132,26 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
     let transition = Promise.resolve()
     let pageShutdowns = Promise.resolve()
     let stopPromise: Promise<void> | undefined
+    let heldLock: { recordingId: string; lock: RecordingLock } | undefined
+    let claimAbort: AbortController | undefined
+    // Whether the runtime records a resumed recording whose lock is still pending. Another document
+    // can hold that recording, so spans are not linked to it until the lock is granted.
+    let runtimeResumed = false
 
-    const activate = (sessionId: string, initial: boolean, holdUntilActivity = !initial): void => {
+    const releaseLock = (recordingId?: string): void => {
+      if (heldLock !== undefined && (recordingId === undefined || heldLock.recordingId === recordingId)) {
+        heldLock.lock.release()
+        heldLock = undefined
+      }
+    }
+
+    const activate = (sessionId: string, initial: boolean, holdUntilActivity = !initial, awaitBinding = false): void => {
       const mode = resolveSamplingMode(resolvedConfig, sessionId, samplingModeStorage)
       if (mode === 'off' || stopped || suspended || runtime !== undefined || sessionId !== currentSessionId) {
         return
       }
       try {
+        runtimeResumed = awaitBinding && recordingIdentity.candidate(sessionId).resumed
         const recordingId = currentRecordingId
         runtime = createActiveRuntime({
           config: resolvedConfig,
@@ -134,6 +163,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           recordingId,
           isCurrentRecording: () => recordingIdentity.isCurrent(recordingId, getSessionId(false)),
           holdUntilActivity,
+          awaitBinding,
         })
       } catch (error) {
         runtime = undefined
@@ -141,6 +171,118 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           throw error
         }
         safeReportError(resolvedConfig.onError, error)
+      }
+    }
+
+    const bindSequenceRecord = (lockCoordination: Coordination, recordingId: string, initialSeq: number): SequenceRecordBinding => ({
+      initialSeq,
+      write: (seq) => lockCoordination.records.write(recordingId, seq),
+      onFailure: () => {
+        // The transport reports the failure inside its own reservation, so switch afterwards.
+        queueMicrotask(() => {
+          if (!stopped && currentRecordingId === recordingId) {
+            recordingIdentity.replace(currentSessionId)
+            // The page was recording, so the new recording starts without waiting for activity.
+            observeSession(currentSessionId, false)
+          }
+        })
+      },
+    })
+
+    /** Hold the lock of the session's recording, starting a new recording when that is not safe. */
+    const claim = async (lockCoordination: Coordination, sessionId: string, generation: number): Promise<ClaimedRecording | undefined> => {
+      claimAbort?.abort()
+      const lifecycle = new AbortController()
+      claimAbort = lifecycle
+      const isStale = (): boolean =>
+        lifecycle.signal.aborted || stopped || suspended || lifecycleGeneration !== generation || currentSessionId !== sessionId
+      let candidate = recordingIdentity.candidate(sessionId)
+      currentRecordingId = candidate.id
+      const startNewRecording = (): void => {
+        candidate = { id: recordingIdentity.replace(sessionId), resumed: false }
+        currentRecordingId = candidate.id
+      }
+      // A candidate can need one replacement, which is always a new recording.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        // eslint-disable-next-line no-await-in-loop -- a replacement is claimed only after the first claim fails.
+        const result = await claimRecordingLock(lockCoordination.locks, candidate.id, lifecycle.signal)
+        if (result.kind === 'aborted') {
+          return undefined
+        }
+        if (result.kind === 'timeout') {
+          // Another live document writes this recording.
+          startNewRecording()
+          continue
+        }
+        if (isStale() || currentRecordingId !== candidate.id) {
+          result.lock.release()
+          return undefined
+        }
+        let initialSeq: number | undefined
+        if (candidate.resumed) {
+          initialSeq = lockCoordination.records.read(candidate.id)
+        } else if (lockCoordination.records.write(candidate.id, 0)) {
+          initialSeq = 0
+        }
+        if (initialSeq === undefined) {
+          // A resumed recording has no shared record of where the earlier writer stopped. A new
+          // recording's first write can fail for a moment, for example when another tab fills the quota.
+          // Nothing retries later in this session, so try once more under a new recording.
+          result.lock.release()
+          startNewRecording()
+          continue
+        }
+        heldLock = { recordingId: candidate.id, lock: result.lock }
+        return { recordingId: candidate.id, sequenceRecord: bindSequenceRecord(lockCoordination, candidate.id, initialSeq) }
+      }
+      safeReportError(resolvedConfig.onError, new Error('logfire session replay: could not claim a replay recording'))
+      return undefined
+    }
+
+    /** Claim the runtime's recording, then let its transport reserve sequences and send. */
+    const bindClaim = async (
+      lockCoordination: Coordination,
+      sessionId: string,
+      generation: number,
+      holdUntilActivity: boolean
+    ): Promise<void> => {
+      try {
+        const claimed = await claim(lockCoordination, sessionId, generation)
+        const isCurrent = !stopped && !suspended && lifecycleGeneration === generation && currentSessionId === sessionId
+        if (claimed === undefined) {
+          if (isCurrent && runtime?.transport.isAwaitingBinding() === true) {
+            // The recording cannot be written safely, so its buffered events are dropped.
+            runtime.discard()
+            runtime = undefined
+          }
+          return
+        }
+        if (!isCurrent) {
+          releaseLock(claimed.recordingId)
+          return
+        }
+        if (runtime !== undefined && runtime.recordingId !== claimed.recordingId) {
+          // The claim replaced the candidate. The buffered events belong to a recording this document
+          // does not own, so recording restarts under the new ID.
+          runtime.discard()
+          runtime = undefined
+          activate(sessionId, false, holdUntilActivity, true)
+        }
+        if (runtime === undefined || runtime.recordingId !== claimed.recordingId) {
+          releaseLock(claimed.recordingId)
+          return
+        }
+        runtimeResumed = false
+        runtime.transport.bind(claimed.sequenceRecord)
+      } catch (error) {
+        safeReportError(resolvedConfig.onError, error)
+      }
+    }
+
+    const activateAndClaim = async (sessionId: string, generation: number, holdUntilActivity: boolean): Promise<void> => {
+      activate(sessionId, false, holdUntilActivity, coordination !== undefined)
+      if (coordination !== undefined && runtime !== undefined) {
+        await bindClaim(coordination, sessionId, generation, holdUntilActivity)
       }
     }
 
@@ -152,29 +294,46 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       if (sessionId === currentSessionId && recordingId === currentRecordingId) {
         return
       }
+      const oldRecordingId = currentRecordingId
       currentSessionId = sessionId
       currentRecordingId = recordingId
+      claimAbort?.abort()
       const oldRuntime = runtime
       runtime = undefined
       const oldShutdown = oldRuntime?.deactivate() ?? Promise.resolve()
       const generation = lifecycleGeneration
       transition = transition.then(async () => {
         await reportPromise(oldShutdown, resolvedConfig.onError)
+        // The old recording's final uploads were reserved under its lock.
+        releaseLock(oldRecordingId)
         if (!stopped && lifecycleGeneration === generation && currentSessionId === sessionId && currentRecordingId === recordingId) {
-          activate(sessionId, false, holdUntilActivity)
+          await activateAndClaim(sessionId, generation, holdUntilActivity)
         }
       })
     }
 
     let sessionTimer: ReturnType<typeof setInterval>
     try {
-      activate(currentSessionId, true)
+      if (coordination === undefined) {
+        activate(currentSessionId, true)
+      } else {
+        coordination.records.prune(MAX_RECORDING_DURATION_MS)
+        // Recording starts at once, as without coordination. Only sequence reservation waits for the lock.
+        activate(currentSessionId, true, false, true)
+        if (runtime !== undefined) {
+          const sessionId = currentSessionId
+          const generation = lifecycleGeneration
+          transition = transition.then(async () => bindClaim(coordination, sessionId, generation, false))
+        }
+      }
       sessionTimer = setInterval(() => {
         observeSession(getSessionId(false))
       }, SESSION_MONITOR_INTERVAL_MS)
     } catch (error) {
       runtime?.discard()
       runtime = undefined
+      claimAbort?.abort()
+      releaseLock()
       recordingIdentity.release()
       throw error
     }
@@ -182,9 +341,13 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
     const onPageHide = () => {
       suspended = true
       lifecycleGeneration += 1
+      claimAbort?.abort()
       const oldRuntime = runtime
       runtime = undefined
       const shutdown = oldRuntime?.deactivate(true) ?? Promise.resolve()
+      // deactivate() reserved the final sequences synchronously. Releasing the lock now keeps the page
+      // eligible for the back-forward cache, and lets the next document of this tab take the recording.
+      releaseLock()
       // Sequences are reserved synchronously. Keep upload completion for stop(),
       // but let a restored document record while the old requests are pending.
       pageShutdowns = Promise.all([pageShutdowns, transition, reportPromise(shutdown, resolvedConfig.onError)]).then(() => undefined)
@@ -217,7 +380,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
         currentSessionId = getSessionId(false)
         currentRecordingId = recordingIdentity.get(currentSessionId)
         sequenceIsResumable = true
-        activate(currentSessionId, false, false)
+        await activateAndClaim(currentSessionId, generation, false)
       })
     }
     window.addEventListener('pagehide', onPageHide)
@@ -248,8 +411,12 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           safeReportError(resolvedConfig.onError, reportingError)
         }
       },
-      getRecordingId: () =>
-        runtime !== undefined && recordingIdentity.isCurrent(runtime.recordingId, getSessionId(false)) ? runtime.recordingId : '',
+      getRecordingId: () => {
+        if (runtime === undefined || (runtimeResumed && runtime.transport.isAwaitingBinding())) {
+          return ''
+        }
+        return recordingIdentity.isCurrent(runtime.recordingId, getSessionId(false)) ? runtime.recordingId : ''
+      },
       flush: async () => {
         try {
           await transition
@@ -262,6 +429,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
         stopPromise ??= (async () => {
           stopped = true
           lifecycleGeneration += 1
+          claimAbort?.abort()
           clearInterval(sessionTimer)
           window.removeEventListener('pagehide', onPageHide)
           window.removeEventListener('pageshow', onPageShow)
@@ -276,6 +444,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           if (sequenceIsResumable) {
             recordingIdentity.release()
           }
+          releaseLock()
           releaseLease()
         })()
         return stopPromise
@@ -297,6 +466,7 @@ function createActiveRuntime(options: {
   recordingId: string
   isCurrentRecording: () => boolean
   holdUntilActivity: boolean
+  awaitBinding: boolean
 }): ActiveRuntime {
   const {
     config,
@@ -308,6 +478,7 @@ function createActiveRuntime(options: {
     sessionId,
     recordingId,
     isCurrentRecording,
+    awaitBinding,
   } = options
   const sessionAttributes = snapshotSessionAttributes(config.getSessionAttributes, (error) => {
     safeReportError(config.onError, error)
@@ -318,6 +489,7 @@ function createActiveRuntime(options: {
     takeFullSnapshot: () => {
       recorder.takeFullSnapshot()
     },
+    awaitBinding,
   })
   const cleanup: (() => void)[] = []
   let active = true
@@ -553,6 +725,19 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     now: config.now ?? Date.now,
     random: config.random ?? Math.random,
   }
+}
+
+/**
+ * Coordinated mode needs both Web Locks and a writable `localStorage`. Without either, the replay keeps
+ * the uncoordinated identity of earlier releases, where two copied documents can still collide.
+ */
+function resolveCoordination(now: () => number): Coordination | undefined {
+  const locks = recordingLockManager()
+  if (locks === undefined) {
+    return undefined
+  }
+  const storage = writableLocalStorage()
+  return storage === null ? undefined : { locks, records: new SequenceRecords(storage, now) }
 }
 
 function resolveSamplingMode(config: ResolvedSessionReplayConfig, sessionId: string, storage: Storage | null): SamplingMode {

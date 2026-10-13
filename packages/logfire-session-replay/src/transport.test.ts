@@ -1582,6 +1582,223 @@ describe('ReplayTransport sequence persistence', () => {
   })
 })
 
+describe('ReplayTransport shared sequence record', () => {
+  function sequenceRecord(log: string[], initialSeq: number, accept: (seq: number) => boolean = () => true) {
+    const onFailure = vi.fn()
+    return {
+      binding: {
+        initialSeq,
+        write: (seq: number) => {
+          log.push(`write:${String(seq)}`)
+          return accept(seq)
+        },
+        onFailure,
+      },
+      onFailure,
+    }
+  }
+
+  function loggingFetch(log: string[]) {
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      log.push(`fetch:${new URL(String(url)).search}`)
+      return { ok: true, status: 202 } as Response
+    }) as unknown as typeof fetch
+    return fetchImpl
+  }
+
+  it('starts at the shared sequence and confirms each reservation before the chunk is sent', async () => {
+    const log: string[] = []
+    const { binding, onFailure } = sequenceRecord(log, 5)
+    const transport = new ReplayTransport(
+      makeConfig(loggingFetch(log)),
+      'R',
+      'full',
+      memoryStorage(),
+      immediateCompression(),
+      {},
+      {
+        sequenceRecord: binding,
+      }
+    )
+
+    transport.add(fullSnapshot)
+    await transport.flush()
+    transport.add(click)
+    await transport.flush()
+
+    expect(log).toEqual(['write:6', 'fetch:?seq=5', 'write:7', 'fetch:?seq=6'])
+    expect(onFailure).not.toHaveBeenCalled()
+  })
+
+  it('sends nothing more under the recording after the record rejects a reservation', async () => {
+    const log: string[] = []
+    const { binding, onFailure } = sequenceRecord(log, 0, (seq) => seq < 2)
+    const transport = new ReplayTransport(
+      makeConfig(loggingFetch(log)),
+      'R',
+      'full',
+      memoryStorage(),
+      immediateCompression(),
+      {},
+      {
+        sequenceRecord: binding,
+      }
+    )
+
+    transport.add(fullSnapshot)
+    await transport.flush()
+    transport.add(click)
+    await transport.flush()
+    transport.add(mutation)
+    await transport.flush()
+
+    expect(log).toEqual(['write:1', 'fetch:?seq=0', 'write:2'])
+    expect(onFailure).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends no keepalive chunk when the record rejects its reservation', async () => {
+    const log: string[] = []
+    const { binding, onFailure } = sequenceRecord(log, 3, () => false)
+    const transport = new ReplayTransport(
+      makeConfig(loggingFetch(log)),
+      'R',
+      'full',
+      memoryStorage(),
+      immediateCompression(),
+      {},
+      {
+        sequenceRecord: binding,
+      }
+    )
+
+    transport.add(fullSnapshot)
+    await transport.flush({ keepalive: true })
+
+    expect(log).toEqual(['write:4'])
+    expect(onFailure).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ReplayTransport awaiting its sequence binding', () => {
+  function binding(log: string[], initialSeq: number) {
+    return {
+      initialSeq,
+      write: (seq: number) => {
+        log.push(`write:${String(seq)}`)
+        return true
+      },
+      onFailure: vi.fn(),
+    }
+  }
+
+  it('reserves and sends nothing before bind, then sends the buffered events at the bound sequence', async () => {
+    const log: string[] = []
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport(
+      makeConfig(fetchImpl),
+      'R',
+      'full',
+      memoryStorage(),
+      immediateCompression(),
+      {},
+      {
+        awaitBinding: true,
+      }
+    )
+
+    transport.add(meta)
+    transport.add(fullSnapshot)
+    transport.add(click)
+    await transport.flush()
+    expect(calls).toEqual([])
+    expect(log).toEqual([])
+    expect(transport.canResumeSequence()).toBe(true)
+
+    transport.bind(binding(log, 4))
+    await transport.flush()
+
+    expect(log).toEqual(['write:5'])
+    expect(calls.map((call) => call.url)).toEqual(['https://app.example.com/replay-proxy/R?seq=4'])
+    expect(decodeBody(calls[0]?.init.body).events.map((event) => event.type)).toEqual([
+      EventType.Meta,
+      EventType.FullSnapshot,
+      EventType.IncrementalSnapshot,
+    ])
+  })
+
+  it('sends nothing when a user-activity release happens before bind', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const takeFullSnapshot = vi.fn()
+    const transport = new ReplayTransport(
+      makeConfig(fetchImpl),
+      'R',
+      'full',
+      memoryStorage(),
+      immediateCompression(),
+      {},
+      {
+        awaitBinding: true,
+        holdUntilActivity: true,
+        takeFullSnapshot,
+      }
+    )
+
+    transport.add(fullSnapshot)
+    transport.releaseHeld(takeFullSnapshot)
+    transport.add(click)
+    await transport.flush()
+
+    expect(calls).toEqual([])
+  })
+
+  it('owes nothing at shutdown before bind', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport(
+      makeConfig(fetchImpl),
+      'R',
+      'full',
+      memoryStorage(),
+      immediateCompression(),
+      {},
+      {
+        awaitBinding: true,
+      }
+    )
+
+    transport.add(fullSnapshot)
+    await transport.shutdown({ keepalive: true })
+    transport.bind(binding([], 0))
+    await transport.flush()
+
+    expect(calls).toEqual([])
+  })
+
+  it('takes a fresh snapshot at bind when the pending buffer dropped events', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const takeFullSnapshot = vi.fn()
+    const config = { ...makeConfig(fetchImpl), maxBufferBytes: 200 }
+    const transport = new ReplayTransport(
+      config,
+      'R',
+      'full',
+      memoryStorage(),
+      immediateCompression(),
+      {},
+      {
+        awaitBinding: true,
+        takeFullSnapshot,
+      }
+    )
+
+    transport.add(fullSnapshot)
+    transport.add({ ...mutation, data: { source: IncrementalSource.Mutation, text: 'x'.repeat(500) } })
+    transport.bind(binding([], 0))
+
+    expect(takeFullSnapshot).toHaveBeenCalledTimes(1)
+    expect(calls).toEqual([])
+  })
+})
+
 function memoryStorage(): Storage {
   const values = new Map<string, string>()
   return {
