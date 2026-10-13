@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 
 import { expect, test } from '@playwright/test'
+import type { APIRequestContext, BrowserContext, Page } from '@playwright/test'
 
 import { repositoryRoot, runVerifier } from './runVerifier'
 
@@ -195,7 +196,143 @@ test.describe('recording identity', () => {
       await page.evaluate(async () => window.logfireReplayIdentity.stop())
     }
   })
+
+  test('a copy of a live tab starts its own recording instead of writing the live one', async ({ page, context, request }) => {
+    await request.post('http://127.0.0.1:4177/fixture/reset?scenario=identity')
+    await page.goto('http://127.0.0.1:4177/identity.html')
+    await expect(page.getByRole('status')).toHaveText('ready')
+    const liveRecordingId = await page.evaluate(() => window.logfireReplayIdentity.recordingId)
+    const copy = await openWithCopiedStorage(context, await releasedStorageCopy(page))
+    try {
+      await expect(copy.getByRole('status')).toHaveText('ready')
+      const copyRecordingId = await copy.evaluate(() => window.logfireReplayIdentity.recordingId)
+      expect(copyRecordingId).not.toBe(liveRecordingId)
+      await mutateAndFlush(page, 'live-after-copy')
+      await mutateAndFlush(copy, 'copy-after-copy')
+      expect(await page.evaluate(() => window.logfireReplayIdentity.recordingId)).toBe(liveRecordingId)
+      const receipts = await identityReceipts(request)
+      expectOneBodyPerSequence(receipts)
+      expect(receipts.filter((receipt) => receipt.recordingId === copyRecordingId).map((receipt) => receipt.seq)[0]).toBe(0)
+    } finally {
+      await copy.evaluate(async () => window.logfireReplayIdentity.stop())
+      await copy.close()
+      await page.evaluate(async () => window.logfireReplayIdentity.stop())
+    }
+  })
+
+  test('a stale copy continues a released recording after the last sequence its writer reserved', async ({ page, context, request }) => {
+    await request.post('http://127.0.0.1:4177/fixture/reset?scenario=identity')
+    await page.goto('http://127.0.0.1:4177/identity.html')
+    await expect(page.getByRole('status')).toHaveText('ready')
+    const recordingId = await page.evaluate(() => window.logfireReplayIdentity.recordingId)
+    const staleCopy = await releasedStorageCopy(page)
+    await mutateAndFlush(page, 'writer-after-copy-one')
+    await mutateAndFlush(page, 'writer-after-copy-two')
+    await page.goto('http://127.0.0.1:4177/after-unload.html')
+    const copy = await openWithCopiedStorage(context, staleCopy)
+    try {
+      await expect(copy.getByRole('status')).toHaveText('ready')
+      expect(await copy.evaluate(() => window.logfireReplayIdentity.recordingId)).toBe(recordingId)
+      await mutateAndFlush(copy, 'copy-continues')
+      const receipts = (await identityReceipts(request)).filter((receipt) => receipt.recordingId === recordingId)
+      expectOneBodyPerSequence(receipts)
+      const sequences = receipts.map((receipt) => receipt.seq)
+      expect(new Set(sequences).size).toBe(sequences.length)
+      expect(sequences).toEqual([...sequences].sort((left, right) => left - right))
+    } finally {
+      await copy.evaluate(async () => window.logfireReplayIdentity.stop())
+      await copy.close()
+    }
+  })
+
+  test('ten consecutive reloads keep one recording', async ({ page, request }) => {
+    await request.post('http://127.0.0.1:4177/fixture/reset?scenario=identity')
+    await page.goto('http://127.0.0.1:4177/identity.html')
+    await expect(page.getByRole('status')).toHaveText('ready')
+    const recordingId = await page.evaluate(() => window.logfireReplayIdentity.recordingId)
+    try {
+      for (let reload = 0; reload < 10; reload += 1) {
+        // eslint-disable-next-line no-await-in-loop -- each reload must follow the previous document.
+        await page.reload()
+        // eslint-disable-next-line no-await-in-loop -- each reload must follow the previous document.
+        await expect(page.getByRole('status')).toHaveText('ready')
+        // eslint-disable-next-line no-await-in-loop -- each reload must follow the previous document.
+        expect(await page.evaluate(() => window.logfireReplayIdentity.recordingId)).toBe(recordingId)
+      }
+      const receipts = await identityReceipts(request)
+      expectOneBodyPerSequence(receipts)
+      expect(new Set(receipts.map((receipt) => receipt.recordingId))).toEqual(new Set([recordingId]))
+    } finally {
+      await page.evaluate(async () => window.logfireReplayIdentity.stop())
+    }
+  })
 })
+
+interface IdentityReceipt {
+  body: string
+  recordingId: string
+  seq: number
+}
+
+/** The tab's sessionStorage as a duplicate tab would copy it while the source page navigates away. */
+async function releasedStorageCopy(page: Page): Promise<[string, string][]> {
+  const entries = await page.evaluate(() => Object.entries(sessionStorage))
+  return entries.filter(([key]) => key !== 'lf_session_replay_recording_owner')
+}
+
+async function openWithCopiedStorage(context: BrowserContext, entries: [string, string][]): Promise<Page> {
+  const copy = await context.newPage()
+  await copy.addInitScript((copied) => {
+    if (sessionStorage.length === 0) {
+      for (const [key, value] of copied) {
+        sessionStorage.setItem(key, value)
+      }
+    }
+  }, entries)
+  await copy.goto('http://127.0.0.1:4177/identity.html')
+  return copy
+}
+
+async function mutateAndFlush(page: Page, text: string): Promise<void> {
+  await page.evaluate(async (payload) => {
+    const element = document.querySelector('#payload')
+    if (element !== null) {
+      element.textContent = payload
+    }
+    await window.logfireReplayIdentity.flush()
+  }, text)
+}
+
+async function identityReceipts(request: APIRequestContext): Promise<IdentityReceipt[]> {
+  const response = await request.get('http://127.0.0.1:4177/fixture/status?scenario=identity')
+  expect(response.ok()).toBe(true)
+  const receipts = parseRecord(await response.text(), 'identity evidence')['receipts']
+  if (!Array.isArray(receipts)) {
+    throw new Error('identity evidence has no receipts')
+  }
+  return receipts.map((receipt: unknown) => {
+    if (
+      !isRecord(receipt) ||
+      typeof receipt['url'] !== 'string' ||
+      typeof receipt['seq'] !== 'number' ||
+      typeof receipt['body'] !== 'string'
+    ) {
+      throw new Error('identity evidence has a malformed receipt')
+    }
+    const pathname = new URL(receipt['url'], 'http://127.0.0.1:4177').pathname
+    return { body: receipt['body'], recordingId: pathname.replace('/replay/identity/', ''), seq: receipt['seq'] }
+  })
+}
+
+/** The platform rejects a second, different body for one recording sequence. */
+function expectOneBodyPerSequence(receipts: IdentityReceipt[]): void {
+  const bodies = new Map<string, Set<string>>()
+  for (const receipt of receipts) {
+    const key = `${receipt.recordingId}:${String(receipt.seq)}`
+    bodies.set(key, (bodies.get(key) ?? new Set()).add(receipt.body))
+  }
+  expect([...bodies].filter(([, distinct]) => distinct.size > 1).map(([key]) => key)).toEqual([])
+}
 
 declare global {
   interface Window {

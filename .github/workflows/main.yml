@@ -37,11 +37,13 @@ jobs:
       - name: Test
         run: vp run --filter "./packages/*" test
 
-      - name: Install Chromium
-        run: vp exec --filter @pydantic/logfire-session-replay -- playwright install --with-deps chromium
+      - name: Install browsers
+        run: vp exec --filter @pydantic/logfire-session-replay -- playwright install --with-deps chromium firefox webkit
 
       - name: Browser acceptance
         id: browser-acceptance
+        env:
+          REPLAY_BROWSER_MATRIX: all
         run: vp run @pydantic/logfire-session-replay#test:browser
 
       - name: Upload browser failure artifacts

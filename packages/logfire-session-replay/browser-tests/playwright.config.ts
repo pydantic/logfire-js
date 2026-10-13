@@ -26,6 +26,10 @@ const fixtureServers = [
   },
 ]
 
+// The recording identity flows also run in Firefox and WebKit when the environment asks for the
+// full matrix. CI installs those browsers. A developer machine may not run them.
+const identityBrowsers = process.env['REPLAY_BROWSER_MATRIX'] === 'all' ? (['firefox', 'webkit'] as const) : []
+
 export default defineConfig({
   expect: {
     timeout: 10_000,
@@ -38,9 +42,17 @@ export default defineConfig({
   testMatch: '*.pw.ts',
   timeout: 30_000,
   use: {
-    browserName: 'chromium',
     trace: 'retain-on-failure',
   },
+  projects: [
+    { name: 'chromium', use: { browserName: 'chromium' } },
+    ...identityBrowsers.map((browserName) => ({
+      name: browserName,
+      use: { browserName },
+      testMatch: 'session-replay.pw.ts',
+      grep: /recording identity/u,
+    })),
+  ],
   webServer: fixtureServers.map(({ command, url }) => ({
     command,
     cwd: repositoryRoot,
