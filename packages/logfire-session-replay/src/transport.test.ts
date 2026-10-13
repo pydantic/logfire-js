@@ -1679,6 +1679,126 @@ describe('ReplayTransport shared sequence record', () => {
   })
 })
 
+describe('ReplayTransport awaiting its sequence binding', () => {
+  function binding(log: string[], initialSeq: number) {
+    return {
+      initialSeq,
+      write: (seq: number) => {
+        log.push(`write:${String(seq)}`)
+        return true
+      },
+      onFailure: vi.fn(),
+    }
+  }
+
+  it('reserves and sends nothing before bind, then sends the buffered events at the bound sequence', async () => {
+    const log: string[] = []
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport(
+      makeConfig(fetchImpl),
+      'R',
+      'full',
+      memoryStorage(),
+      immediateCompression(),
+      {},
+      {
+        awaitBinding: true,
+      }
+    )
+
+    transport.add(meta)
+    transport.add(fullSnapshot)
+    transport.add(click)
+    await transport.flush()
+    expect(calls).toEqual([])
+    expect(log).toEqual([])
+    expect(transport.canResumeSequence()).toBe(true)
+
+    transport.bind(binding(log, 4))
+    await transport.flush()
+
+    expect(log).toEqual(['write:5'])
+    expect(calls.map((call) => call.url)).toEqual(['https://app.example.com/replay-proxy/R?seq=4'])
+    expect(decodeBody(calls[0]?.init.body).events.map((event) => event.type)).toEqual([
+      EventType.Meta,
+      EventType.FullSnapshot,
+      EventType.IncrementalSnapshot,
+    ])
+  })
+
+  it('sends nothing when a user-activity release happens before bind', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const takeFullSnapshot = vi.fn()
+    const transport = new ReplayTransport(
+      makeConfig(fetchImpl),
+      'R',
+      'full',
+      memoryStorage(),
+      immediateCompression(),
+      {},
+      {
+        awaitBinding: true,
+        holdUntilActivity: true,
+        takeFullSnapshot,
+      }
+    )
+
+    transport.add(fullSnapshot)
+    transport.releaseHeld(takeFullSnapshot)
+    transport.add(click)
+    await transport.flush()
+
+    expect(calls).toEqual([])
+  })
+
+  it('owes nothing at shutdown before bind', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport(
+      makeConfig(fetchImpl),
+      'R',
+      'full',
+      memoryStorage(),
+      immediateCompression(),
+      {},
+      {
+        awaitBinding: true,
+      }
+    )
+
+    transport.add(fullSnapshot)
+    await transport.shutdown({ keepalive: true })
+    transport.bind(binding([], 0))
+    await transport.flush()
+
+    expect(calls).toEqual([])
+  })
+
+  it('takes a fresh snapshot at bind when the pending buffer dropped events', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const takeFullSnapshot = vi.fn()
+    const config = { ...makeConfig(fetchImpl), maxBufferBytes: 200 }
+    const transport = new ReplayTransport(
+      config,
+      'R',
+      'full',
+      memoryStorage(),
+      immediateCompression(),
+      {},
+      {
+        awaitBinding: true,
+        takeFullSnapshot,
+      }
+    )
+
+    transport.add(fullSnapshot)
+    transport.add({ ...mutation, data: { source: IncrementalSource.Mutation, text: 'x'.repeat(500) } })
+    transport.bind(binding([], 0))
+
+    expect(takeFullSnapshot).toHaveBeenCalledTimes(1)
+    expect(calls).toEqual([])
+  })
+})
+
 function memoryStorage(): Storage {
   const values = new Map<string, string>()
   return {

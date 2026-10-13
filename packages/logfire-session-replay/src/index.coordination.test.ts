@@ -2,6 +2,7 @@
  * @vitest-environment jsdom
  */
 /* eslint-disable @typescript-eslint/require-await, vitest/require-mock-type-parameters */
+import { gunzipSync, strFromU8 } from 'fflate'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Mock } from 'vitest'
 
@@ -12,7 +13,7 @@ import { RECORDING_OWNER_STORAGE_KEY, RECORDING_STORAGE_KEY } from './recordingI
 import { claimRecordingLock } from './recordingLock'
 import { SEQ_STORAGE_KEY } from './transport'
 import { CustomTag, EventType, IncrementalSource, MouseInteractions } from './types'
-import type { RrwebEvent, SessionReplayConfig } from './types'
+import type { ChunkEnvelope, RrwebEvent, SessionReplayConfig } from './types'
 
 let captured: recorderMod.RecorderOptions
 let handle: { stop: Mock<() => void>; addCustomEvent: Mock<(tag: string, payload: unknown) => void>; takeFullSnapshot: Mock<() => void> }
@@ -54,49 +55,44 @@ afterEach(async () => {
 })
 
 describe('coordinated replay recording', () => {
-  it('records nothing before the lock is granted, then starts at sequence 0 of a new recording', async () => {
+  it('records at once, and reserves and sends nothing until the lock is granted', async () => {
     const gate = deferred()
     vi.stubGlobal('navigator', { locks: gatedLocks(locks, gate.promise) })
     const { calls, fetchImpl } = recordingFetch()
     const replay = start(config(fetchImpl))
 
+    expect(recorderMod.startRecording).toHaveBeenCalledTimes(1)
+    expect(replay.recording).toBe(true)
+    const recordingId = replay.getRecordingId()
+    expect(recordingId).not.toBe('')
+    captured.emit(fullSnapshot)
+    captured.emit(click)
     await drainMicrotasks()
-    expect(recorderMod.startRecording).not.toHaveBeenCalled()
-    expect(replay.recording).toBe(false)
-    expect(replay.mode).toBe('off')
-    expect(replay.getRecordingId()).toBe('')
+    expect(calls).toEqual([])
+    expect(localStorage.getItem(`lf_session_replay_seq:${recordingId}`)).toBeNull()
 
     gate.resolve()
-    await vi.waitFor(() => {
-      expect(replay.recording).toBe(true)
-    })
-    const recordingId = replay.getRecordingId()
-    expect(locks.isHeld(lockName(recordingId))).toBe(true)
-    captured.emit(fullSnapshot)
     await replay.flush()
 
     expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${recordingId}?seq=0`])
+    expect(decodeEventTypes(calls[0]?.body)).toEqual([EventType.FullSnapshot, EventType.IncrementalSnapshot])
     expect(localStorage.getItem(`lf_session_replay_seq:${recordingId}`)).toBe(JSON.stringify({ seq: 1, at: 1_000 }))
-    await replay.stop()
+    expect(locks.isHeld(lockName(recordingId))).toBe(true)
   })
 
-  it('adds errors captured while the lock is pending, with the time they occurred', async () => {
+  it('captures an error while the lock is pending', async () => {
     const gate = deferred()
     vi.stubGlobal('navigator', { locks: gatedLocks(locks, gate.promise) })
     const { fetchImpl } = recordingFetch()
     const replay = start(config(fetchImpl))
 
     replay.captureError(new Error('early failure'), { timestamp: 500 })
-    gate.resolve()
-    await vi.waitFor(() => {
-      expect(replay.recording).toBe(true)
-    })
 
     expect(handle.addCustomEvent).toHaveBeenCalledWith(
       CustomTag.Error,
       expect.objectContaining({ message: 'early failure', timestamp: 500 })
     )
-    await replay.stop()
+    gate.resolve()
   })
 
   it('starts a new recording when another document holds the resumed recording', async () => {
@@ -106,6 +102,9 @@ describe('coordinated replay recording', () => {
     expect(other.kind).toBe('held')
     const { calls, fetchImpl } = recordingFetch()
     const replay = start(config(fetchImpl))
+    expect(replay.recording).toBe(true)
+    // Another document can own the resumed recording, so spans are not linked to it yet.
+    expect(replay.getRecordingId()).toBe('')
 
     await vi.advanceTimersByTimeAsync(1_000)
     await vi.waitFor(() => {
@@ -116,6 +115,7 @@ describe('coordinated replay recording', () => {
     await replay.flush()
 
     expect(recordingId).not.toBe('recording-r')
+    expect(recordingId).not.toBe('')
     expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${recordingId}?seq=0`])
     expect(locks.isHeld(lockName('recording-r'))).toBe(true)
     await replay.stop()
@@ -127,12 +127,11 @@ describe('coordinated replay recording', () => {
     const replay = start(config(fetchImpl))
 
     await vi.waitFor(() => {
-      expect(replay.recording).toBe(true)
+      expect(replay.getRecordingId()).toBe('recording-r')
     })
     captured.emit(fullSnapshot)
     await replay.flush()
 
-    expect(replay.getRecordingId()).toBe('recording-r')
     expect(calls.map((call) => call.url)).toEqual(['https://app.example.com/replay/recording-r?seq=9'])
     await replay.stop()
   })
@@ -143,7 +142,7 @@ describe('coordinated replay recording', () => {
     const replay = start(config(fetchImpl))
 
     await vi.waitFor(() => {
-      expect(replay.recording).toBe(true)
+      expect(replay.getRecordingId()).not.toBe('')
     })
     const recordingId = replay.getRecordingId()
     captured.emit(fullSnapshot)
@@ -158,9 +157,8 @@ describe('coordinated replay recording', () => {
   it('releases the lock at pagehide after reserving the final sequence, and claims it again at pageshow', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const replay = start(config(fetchImpl))
-    await vi.waitFor(() => {
-      expect(replay.recording).toBe(true)
-    })
+    // flush() waits for the lock claim, and sends nothing while the buffer is empty.
+    await replay.flush()
     const recordingId = replay.getRecordingId()
     captured.emit(fullSnapshot)
     captured.emit(click)
@@ -245,18 +243,20 @@ describe('coordinated replay recording', () => {
     expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${firstRecordingId}?seq=0`])
   })
 
-  it('aborts a pending lock request when replay stops, and activates nothing on a late grant', async () => {
+  it('aborts a pending lock request when replay stops, and sends nothing on a late grant', async () => {
     const gate = deferred()
     vi.stubGlobal('navigator', { locks: gatedLocks(locks, gate.promise) })
-    const { fetchImpl } = recordingFetch()
+    const { calls, fetchImpl } = recordingFetch()
     const replay = start(config(fetchImpl))
+    captured.emit(fullSnapshot)
     await drainMicrotasks()
 
     await replay.stop()
     gate.resolve()
     await drainMicrotasks()
 
-    expect(recorderMod.startRecording).not.toHaveBeenCalled()
+    expect(calls).toEqual([])
+    expect(handle.stop).toHaveBeenCalled()
     expect(locks.requested.every((name) => !locks.isHeld(name))).toBe(true)
     const next = start(config(fetchImpl))
     await next.stop()
@@ -265,15 +265,16 @@ describe('coordinated replay recording', () => {
   it('aborts a pending lock request at pagehide', async () => {
     const gate = deferred()
     vi.stubGlobal('navigator', { locks: gatedLocks(locks, gate.promise) })
-    const { fetchImpl } = recordingFetch()
+    const { calls, fetchImpl } = recordingFetch()
     const replay = start(config(fetchImpl))
+    captured.emit(fullSnapshot)
     await drainMicrotasks()
 
     window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
     gate.resolve()
     await drainMicrotasks()
 
-    expect(recorderMod.startRecording).not.toHaveBeenCalled()
+    expect(calls).toEqual([])
     expect(locks.requested.every((name) => !locks.isHeld(name))).toBe(true)
     await replay.stop()
   })
@@ -393,12 +394,17 @@ function config(fetchImpl: typeof fetch, overrides: Partial<SessionReplayConfig>
 }
 
 function recordingFetch() {
-  const calls: { url: string }[] = []
-  const fetchImpl = vi.fn(async (url: string | URL) => {
-    calls.push({ url: String(url) })
+  const calls: { url: string; body: BodyInit | null | undefined }[] = []
+  const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+    calls.push({ url: String(url), body: init?.body })
     return { ok: true, status: 202 } as Response
   }) as unknown as typeof fetch
   return { calls, fetchImpl }
+}
+
+function decodeEventTypes(body: BodyInit | null | undefined): number[] {
+  const envelope = JSON.parse(strFromU8(gunzipSync(body as Uint8Array))) as ChunkEnvelope
+  return envelope.events.map((event) => event.type)
 }
 
 /** Make the earlier document of this tab look released, with a copied sequence and an optional shared record. */
