@@ -62,6 +62,18 @@ interface UploadFailure {
 interface ReplayTransportOptions {
   holdUntilActivity?: boolean
   takeFullSnapshot?: () => void
+  sequenceRecord?: SequenceRecordBinding
+}
+
+/**
+ * The shared sequence record of the recording that this transport writes. The transport starts at
+ * `initialSeq`, and it queues a chunk only after `write` confirms the chunk's next sequence.
+ */
+export interface SequenceRecordBinding {
+  initialSeq: number
+  write(seq: number): boolean
+  /** Called once, after the first failed write. The transport sends nothing more. */
+  onFailure(): void
 }
 
 const DEFAULT_COMPRESSION: Compression = { gzip, gzipSync }
@@ -105,6 +117,8 @@ export class ReplayTransport {
   private readonly sessionId: string
   private readonly sessionAttributes: SessionAttributes
   private readonly takeFullSnapshot: (() => void) | undefined
+  private readonly sequenceRecord: SequenceRecordBinding | undefined
+  private sequenceRecordFailed = false
 
   constructor(
     config: ResolvedSessionReplayConfig,
@@ -123,8 +137,9 @@ export class ReplayTransport {
     this.compression = compression
     this.held = options.holdUntilActivity === true && mode === 'full'
     this.takeFullSnapshot = options.takeFullSnapshot
+    this.sequenceRecord = options.sequenceRecord
     this.minimumDurationSatisfied = config.minSessionDurationMs === 0
-    this.seq = this.readPersistedSequence() ?? 0
+    this.seq = options.sequenceRecord?.initialSeq ?? this.readPersistedSequence() ?? 0
     this.startedAt = this.config.now()
     this.lastUserActivityAt = this.startedAt
   }
@@ -297,6 +312,9 @@ export class ReplayTransport {
       // page, even when an ordinary upload is still awaiting its response.
       const eventChunks = splitKeepaliveEventChunks(events)
       const seq = this.allocateSeq(eventChunks.length)
+      if (seq === undefined) {
+        return
+      }
       const run = this.deliverLifecycle(eventChunks, seq, sessionId, identity)
       this.lifecycleFlights.add(run)
       const forget = (): void => {
@@ -489,8 +507,27 @@ export class ReplayTransport {
     }
   }
 
-  private allocateSeq(count: number): number {
+  /** Returns undefined when the shared sequence record cannot confirm the reservation. */
+  private allocateSeq(count: number): number | undefined {
     const seq = this.seq
+    const record = this.sequenceRecord
+    if (record !== undefined) {
+      if (this.sequenceRecordFailed) {
+        return undefined
+      }
+      if (!record.write(seq + count)) {
+        // Another document could take over this recording from the stale record and reuse the
+        // sequence, so nothing more is uploaded under this recording ID.
+        this.sequenceRecordFailed = true
+        this.discard()
+        try {
+          record.onFailure()
+        } catch (error) {
+          safeReportError(this.config.onError, error)
+        }
+        return undefined
+      }
+    }
     this.seq += count
     this.saveSeq(this.sessionId, this.seq)
     return seq
@@ -509,6 +546,10 @@ export class ReplayTransport {
       this.beginResync()
       return undefined
     }
+    const seq = this.allocateSeq(1)
+    if (seq === undefined) {
+      return undefined
+    }
     let resolve: () => void = () => undefined
     const done = new Promise<void>((settle) => {
       resolve = settle
@@ -522,7 +563,7 @@ export class ReplayTransport {
       reachedFetch: false,
       resolve,
       retainedBytes: eventBytes,
-      seq: this.allocateSeq(1),
+      seq,
       sessionId,
       settled: false,
     }
