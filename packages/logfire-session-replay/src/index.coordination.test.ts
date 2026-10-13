@@ -320,6 +320,66 @@ describe('coordinated replay recording', () => {
     await replay.stop()
   })
 
+  it('starts another recording when the first write of a new recording fails', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const originalSetItem = Object.getOwnPropertyDescriptor(Storage.prototype, 'setItem')?.value as (
+      this: Storage,
+      key: string,
+      value: string
+    ) => void
+    let failedKey: string | undefined
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (failedKey === undefined && key.startsWith('lf_session_replay_seq:')) {
+        failedKey = key
+        throw new DOMException('quota exceeded', 'QuotaExceededError')
+      }
+      Reflect.apply(originalSetItem, this, [key, value])
+    })
+    const replay = start(config(fetchImpl))
+    const firstRecordingId = replay.getRecordingId()
+
+    await vi.waitFor(() => {
+      expect(replay.getRecordingId()).not.toBe(firstRecordingId)
+      expect(replay.recording).toBe(true)
+    })
+    const recordingId = replay.getRecordingId()
+    captured.emit(fullSnapshot)
+    await replay.flush()
+
+    expect(failedKey).toBe(`lf_session_replay_seq:${firstRecordingId}`)
+    expect(calls.map((call) => call.url)).toEqual([`https://app.example.com/replay/${recordingId}?seq=0`])
+    expect(locks.isHeld(lockName(firstRecordingId))).toBe(false)
+    expect(locks.isHeld(lockName(recordingId))).toBe(true)
+  })
+
+  it('stops recording and reports the error when no new recording can write its record', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const onError = vi.fn<(error: unknown) => void>()
+    const originalSetItem = Object.getOwnPropertyDescriptor(Storage.prototype, 'setItem')?.value as (
+      this: Storage,
+      key: string,
+      value: string
+    ) => void
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key.startsWith('lf_session_replay_seq:')) {
+        throw new DOMException('quota exceeded', 'QuotaExceededError')
+      }
+      Reflect.apply(originalSetItem, this, [key, value])
+    })
+    const replay = start(config(fetchImpl, { onError }))
+    captured.emit(fullSnapshot)
+
+    await vi.waitFor(() => {
+      expect(replay.recording).toBe(false)
+    })
+    await replay.flush()
+
+    expect(onError).toHaveBeenCalledWith(new Error('logfire session replay: could not claim a replay recording'))
+    expect(calls).toEqual([])
+    expect(locks.requested).toHaveLength(2)
+    expect(locks.requested.every((name) => !locks.isHeld(name))).toBe(true)
+  })
+
   it('releases the lock when replay stops', async () => {
     const { fetchImpl } = recordingFetch()
     const replay = start(config(fetchImpl))

@@ -202,7 +202,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
         candidate = { id: recordingIdentity.replace(sessionId), resumed: false }
         currentRecordingId = candidate.id
       }
-      // A resumed candidate can need one replacement, which is always a new recording.
+      // A candidate can need one replacement, which is always a new recording.
       for (let attempt = 0; attempt < 2; attempt += 1) {
         // eslint-disable-next-line no-await-in-loop -- a replacement is claimed only after the first claim fails.
         const result = await claimRecordingLock(lockCoordination.locks, candidate.id, lifecycle.signal)
@@ -225,14 +225,12 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           initialSeq = 0
         }
         if (initialSeq === undefined) {
+          // A resumed recording has no shared record of where the earlier writer stopped. A new
+          // recording's first write can fail for a moment, for example when another tab fills the quota.
+          // Nothing retries later in this session, so try once more under a new recording.
           result.lock.release()
-          if (candidate.resumed) {
-            // No shared record shows where the earlier writer stopped, so its sequence cannot continue.
-            startNewRecording()
-            continue
-          }
-          safeReportError(resolvedConfig.onError, new Error('logfire session replay: could not write the shared replay sequence record'))
-          return undefined
+          startNewRecording()
+          continue
         }
         heldLock = { recordingId: candidate.id, lock: result.lock }
         return { recordingId: candidate.id, sequenceRecord: bindSequenceRecord(lockCoordination, candidate.id, initialSeq) }
