@@ -716,6 +716,22 @@ Use `getRecordingId()` for its current upload/playback ID; it returns an empty
 string when no recorder is active or during a session transition. Deploy Platform
 support for this attribute before upgrading the SDK.
 
+One document at a time writes a recording. In a secure context with Web Locks
+and writable `localStorage`, a document holds a Web Lock named after its
+recording ID, and a record in `localStorage` holds the recording's next upload
+sequence. Recording starts at once, but the document uploads nothing until it
+holds the lock. A copied tab, such as a duplicated tab, whose recording another
+document holds starts a new recording after waiting up to one second. A
+document that continues a recording starts from the sequence in the shared
+record, so it never reuses a sequence that another document uploaded. Until a
+continued recording's lock is granted, `getRecordingId()` returns an empty
+string, so the first spans of a reloaded page can lack a recording link. A new
+recording's ID is available at once. The document releases the lock at
+`pagehide`, so the page stays eligible for the back-forward cache. Do not call
+`navigator.locks.query()` in the application: Chromium then evicts cached pages
+that hold a lock. Without Web Locks or writable `localStorage`, two copied tabs
+can still write one recording, as in earlier releases.
+
 New tabs count as separate billable replays; same-tab reloads do not. If browser
 storage is unavailable or its saved sequence cannot be safely resumed, the SDK
 starts a new replay rather than risking a sequence collision. Upgrade both
