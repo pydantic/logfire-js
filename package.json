@@ -13,10 +13,11 @@
     "lint": "vp lint",
     "format": "vp fmt . --write",
     "format-check": "vp fmt --check",
-    "check": "pnpm run build && vp check && pnpm run typecheck && pnpm run test && pnpm run test:release-tooling",
+    "check": "pnpm run build && vp check && pnpm run typecheck && pnpm run test && pnpm run test:release-tooling && pnpm run test:docs-preview",
     "release": "pnpm run build && pnpm changeset publish",
     "changeset-add": "pnpm changeset add",
-    "test:release-tooling": "node scripts/create-npm-token.test.mjs"
+    "test:release-tooling": "node scripts/create-npm-token.test.mjs",
+    "test:docs-preview": "node --test scripts/docs-preview.test.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.1",

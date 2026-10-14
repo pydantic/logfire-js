@@ -57,6 +57,9 @@ jobs:
       - name: Test release tooling
         run: node scripts/create-npm-token.test.mjs
 
+      - name: Test docs preview dispatcher
+        run: pnpm run test:docs-preview
+
   release:
     needs: [build]
     runs-on: ubuntu-latest

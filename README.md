@@ -798,6 +798,21 @@ try {
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development instructions.
 
+### Documentation previews
+
+Maintainers can add the `trigger:docs` label to a PR to request a preview from
+`pydantic/unified-docs`. The workflow removes the label after dispatch; re-add it
+after pushing changes to preview the new head. The docs app posts navigation
+results and, for same-repository branches, a rendered preview link. Fork PRs
+receive navigation validation only.
+
+Repository setup: land the JavaScript-source receiver support in `unified-docs`
+first, then merge this dispatcher to `main`. Configure `DOCS_CLIENT_ID` (Actions
+variable), `DOCS_APP_PRIVATE_KEY` (Actions secret), and the `trigger:docs` label.
+The docs GitHub App needs access to both repositories: Contents write in
+`unified-docs` for dispatch, and Issues/Pull requests write here for results.
+No production docs deployment or package release is triggered by this label.
+
 ## Part of the Pydantic Stack
 
 The Pydantic Stack is everything you need to ship production-grade AI agents:
