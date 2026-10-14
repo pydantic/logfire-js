@@ -1,15 +1,14 @@
 ---
-title: Browser Package
-description: Configure @pydantic/logfire-browser for browser tracing, RUM, metrics, and session replay.
+title: Browser SDK
+description: Set up browser error capture, request tracing, Web Vitals, and optional session replay with Logfire.
 ---
 
-# `@pydantic/logfire-browser`
+# Browser SDK
 
-`@pydantic/logfire-browser` configures OpenTelemetry browser tracing and re-exports the manual `logfire` API for client-side spans and logs.
+<span id="overview"></span>
 
-Create a frontend application under **Frontend > Applications**, then paste its generated setup into your browser code. Its token can only write telemetry for that frontend application and cannot read project data.
-
-Follow the [Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) for setup and verification. Never put a normal Logfire write token in browser code.
+Use `@pydantic/logfire-browser` to send browser errors, request traces, and
+performance measurements to Logfire. Session replay is an optional integration.
 
 ## Install
 
@@ -18,6 +17,9 @@ npm install @pydantic/logfire-browser
 ```
 
 ## Configure
+
+Create a frontend application in your project's settings. Copy its generated
+base URL and token into your browser setup:
 
 ```ts
 import * as logfire from '@pydantic/logfire-browser'
@@ -31,63 +33,58 @@ const frontendOptions = {
 logfire.configureFrontend(frontendOptions)
 ```
 
-Logfire associates the token with the frontend application's service name, so it cannot report data for another application. `configureFrontend()` derives ingest endpoints and authentication headers from the application's regional URL and restricted token. It enables auto-instrumentation, global error capture, and Web Vitals metrics by default and returns the same callable cleanup handle as `configure()`. Use `profile: 'errors'` for an errors-and-replay setup without performance data; see [Errors and Replay Profile](#errors-and-replay-profile). Replay remains opt-in and uses the same destination unless configured otherwise.
+The restricted frontend application token can send data only for that application.
+It cannot read project data or report as another service. Never put a normal
+Logfire write token in browser code. A backend proxy is not required for this setup.
 
-`autoInstrumentations` is enabled by default with `configureFrontend()`. The OpenTelemetry browser auto-instrumentations are registered before `configure()` or `configureFrontend()` returns, so event listeners, `fetch` calls, and XHR requests that the application sets up right after configuration are traced. Call it before the application registers listeners or makes requests. For advanced integrations, `instrumentations` also accepts factories, so custom instrumentation construction can be deferred until `configure()` has registered the provider.
+Call `configureFrontend()` once, before the application registers event listeners
+or makes requests. The package is ESM for modern browsers. For SSR or SSG applications,
+run it only in browser runtime code.
+See the [Next.js guide](../frameworks/nextjs.md) for client-side initialization.
 
-When the page does not load Zone.js, the automatic user interaction instrumentation records one span for each event, such as a click, even when the event reaches several listeners. Every listener runs in the context of that span, so the spans and requests a listener starts are its children. The span ends when the last listener returns, or throws, so tail sampling sees the work of every listener. A user interaction instrumentation that you pass through `instrumentations` keeps the upstream behavior of one span for each listener.
+### Choose what to collect
 
-Set `autoInstrumentations: false` to disable automatic instrumentation, or
-`rum: { webVitals: false }` to disable Web Vitals capture. To keep Web Vitals
-spans without metrics, use `rum: { webVitals: { metrics: false } }`. Nested
-options preserve unrelated defaults: for example, setting `rum.session` or
-`rum.webVitals.reportAllChanges` keeps Web Vitals metrics enabled. Disabling
-`rum.session` also requires disabling Web Vitals and any other session-dependent
-features, such as replay.
+The default setup enables automatic request and interaction tracing, uncaught
+error and unhandled rejection capture, and Web Vitals spans and metrics.
+Replay remains off until you add the optional integration.
 
-Use the lower-level `configure()` for custom endpoints, authentication, or a
-telemetry proxy. It retains its opt-in instrumentation and RUM behavior. Global
-error capture is on in both; see [Errors](#errors).
-`configureFrontend()` accepts capture options, resource attributes, and exporter
-tuning, while the frontend application owns transport and service identity.
+For **errors and replay without performance data**, use
+[`profile: 'errors'`](browser/errors.md#errors-and-replay-profile).
+It keeps failed traces with their surrounding context and uploads replays when
+an error occurs. Install the replay package and use the complete example in
+that guide.
 
-`configureFrontend()` removes query strings, fragments, and URL credentials from
-standard page/request URL attributes (`http.url`, `url.full`, `http.target`, and
-`http.referrer`) before downstream span processors export them. It also removes
-`url.query` and `url.fragment`, including on resource timing events. Set
-`captureUrlQueryAndFragment: true` only when full URL capture is intended; URLs
-can contain authentication tokens. RUM page URL attributes and replay URLs have
-separate capture options. The lower-level `configure()` keeps its existing URL
-behavior.
+For **performance data**, keep the default profile. Use
+[Browser performance](browser/performance.md) to adjust Web Vitals, resource timing,
+or main-thread diagnostics.
 
-### Resource timing detail
+If your app uses a router, [set a route name](browser/identity.md#route-names)
+so pages such as `/projects/123` and `/projects/456` share a page group.
 
-Use compact resource timing to keep the `documentLoad`, `documentFetch`, and
-per-asset `resourceFetch` spans while omitting their DNS, connection, TLS,
-request, response, and DOM timing events:
+### Review captured data
 
-```ts
-logfire.configureFrontend({
-  ...frontendOptions,
-  resourceTiming: { detail: 'summary' },
-})
-```
+Standard request URL attributes exclude credentials, query strings, and fragments
+by default. [Page URL attributes](browser/identity.md#browser-sessions) and
+[replay capture](browser/replay.md#privacy-controls) have their own controls.
+Review those settings and any attributes your application adds before sending
+sensitive data. Replay text masking does not redact every part of the document.
 
-`summary` is the default when `resourceTiming` is configured, so
-`resourceTiming: {}` is equivalent. Use `detail: 'full'` when you need the
-phase events for detailed diagnostics. Full detail increases telemetry volume,
-especially on pages with many static assets.
+## Verify browser data
 
-`resourceTiming` controls only the document-load instrumentation created by
-`autoInstrumentations`; it does not enable auto-instrumentation or override an
-explicitly disabled document-load instrumentation. When the raw
-`@opentelemetry/instrumentation-document-load.ignoreNetworkEvents` option is
-also present, `resourceTiming.detail` takes precedence. Other raw document-load
-options remain unchanged. Summary mode does not remove `firstPaint` or
-`firstContentfulPaint`; use the upstream `ignorePerformancePaintEvents` option
-if you also want to omit paint events.
+Reload the instrumented page and interact with it. In Logfire, select the frontend
+application and a time range that includes the page load. The
+[Frontend guide](https://pydantic.dev/docs/logfire/observe/frontend/) shows where
+to find page loads, requests, errors, and Web Vitals.
 
-Use `diagLogLevel` while troubleshooting local browser instrumentation:
+If you chose the errors profile, [trigger a test error](browser/errors.md#verify-the-setup).
+Healthy requests and clicks are intentionally absent from that profile's exports.
+
+If data is missing, check the browser's network panel for authentication, CSP,
+or content-blocker failures. Confirm that configuration runs in the browser
+and uses the selected frontend application's token.
+
+While troubleshooting locally, add `diagLogLevel` to the original configuration
+call. Do not configure the SDK a second time while it is active:
 
 ```ts
 logfire.configureFrontend({
@@ -98,1100 +95,48 @@ logfire.configureFrontend({
 
 Only enable verbose diagnostic logging in development.
 
-`@pydantic/logfire-browser` is published as an ESM package for modern browsers and frameworks. If your app uses SSR or SSG, run `configureFrontend()` or `configure()` only in browser runtime code.
+## Browser guides
 
-## RUM Session Identity
+<span id="errors"></span>
+<span id="errors-and-replay-profile"></span>
+<span id="verify-the-setup"></span>
+<span id="manual-client-events"></span>
+<span id="minimum-level-filtering"></span>
 
-`configureFrontend()` enables browser session identity through its default Web Vitals
-capture. Customize `rum.session` to control the SDK-owned session id attached to spans:
+[Errors and data volume](browser/errors.md) — Capture errors, record error-triggered replays, and choose sampling or manual log levels.
 
-```ts
-logfire.configureFrontend({
-  ...frontendOptions,
-  rum: { session: true },
-})
-```
+<span id="rum-session-identity"></span>
+<span id="route-names"></span>
+<span id="react-router"></span>
+<span id="tanstack-router"></span>
+<span id="vue-router"></span>
+<span id="nextjs-pages-router"></span>
+<span id="nextjs-app-router"></span>
+<span id="sveltekit"></span>
 
-The session is stored in `sessionStorage`, so it is scoped to the current tab
-and survives page reloads. It rotates after 30 minutes of inactivity or 2 hours
-of total duration by default. Each span gets the OpenTelemetry `session.id`
-semantic attribute.
+[Routes, users, and sessions](browser/identity.md) — Set route templates, identify users, and add session context.
 
-Use `getRouteName` for the application's normalized route template and
-`getSessionAttributes` for low-cardinality dimensions that should remain stable
-for a browser session. Use `getUser` for the application's current user:
+<span id="resource-timing-detail"></span>
+<span id="rum-web-vitals"></span>
+<span id="rum-long-animation-frames"></span>
 
-```ts
-logfire.configureFrontend({
-  ...frontendOptions,
-  rum: {
-    session: {
-      getRouteName: () => router.currentRoute.value.matched.at(-1)?.path,
-      getSessionAttributes: () => ({
-        account_tier: currentAccount.tier,
-        beta_user: currentUser?.isBeta,
-      }),
-      getUser: () =>
-        currentUser === undefined
-          ? undefined
-          : {
-              id: currentUser.id,
-              name: currentUser.name,
-              email: currentUser.email,
-            },
-    },
-  },
-})
-```
+[Browser performance](browser/performance.md) — Configure Web Vitals, resource timing detail, and Long Animation Frame reporting.
 
-`getRouteName` is evaluated for each span and becomes `logfire.page.route`. See
-[Route names](#route-names) for the contract and router recipes.
-`getUser` is also evaluated for each span. A non-empty `id` becomes `user.id`;
-non-empty `name` and `email` values become `user.name` and `user.email`.
-Use an opaque application id. Name and email are opt-in PII. The SDK emits
-accepted strings unchanged, does not persist them, does not add them to Web
-Vitals metric labels, and does not rotate the browser session when the current
-user changes or logs out. Returning `undefined` represents an anonymous user or
-logout. These client-asserted values are observational context, not
-authentication, authorization, billing, or audit evidence.
+<span id="session-replay"></span>
 
-`getSessionAttributes` is evaluated once per browser session, persisted across
-same-tab reloads, and refreshed when the session rotates. Accepted values
-become span attributes prefixed with `logfire.session.` and are copied into
-replay chunk metadata when replay is enabled. Keys must match
-`^[a-z][a-z0-9_]{0,63}$`; at most 20 entries are retained. Values must be
-booleans, finite numbers, or strings no longer than 200 Unicode code points.
-Invalid entries are omitted. Treat these dimensions as low-cardinality,
-non-PII data because they are stored in `sessionStorage`.
+[Session replay](browser/replay.md) — Record sessions, review privacy controls, and understand recording lifetime and upload limits.
 
-Session-enabled spans also get `logfire.page.url.full` and
-`logfire.page.url.path` by default for current page context. The full value is
-`location.origin + location.pathname`, while the path value is
-`location.pathname`; query strings and fragments are excluded. Network spans
-may independently use OpenTelemetry `url.*` attributes for their request
-target. Provide a callback to customize page attributes, explicitly restore the
-raw page URL, or suppress them:
+<span id="custom-span-processors"></span>
+<span id="baggage-span-attributes"></span>
+<span id="optional-backend-proxy"></span>
+<span id="first-party-ingest-domain"></span>
+<span id="authenticated-application-proxy"></span>
+<span id="runtime-lifecycle"></span>
+<span id="pending-spans"></span>
 
-```ts
-logfire.configureFrontend({
-  ...frontendOptions,
-  rum: {
-    session: {
-      urlAttributes: (url) => ({ full: url.href, path: url.pathname }),
-    },
-  },
-})
+[Advanced configuration](browser/advanced.md) — Customize instrumentation and transport, add processors, or manage SDK cleanup.
 
-logfire.configureFrontend({
-  ...frontendOptions,
-  rum: {
-    session: {
-      urlAttributes: false,
-    },
-  },
-})
-```
+<span id="python-backend-proxy-telemetry-only"></span>
 
-Call `getBrowserSessionId()` after configuring `rum.session` when another
-browser integration needs the SDK-owned session id before the first span.
-
-### Route names
-
-Set `getRouteName` in every single-page application. Without it, the only page
-dimension is `logfire.page.url.path`, so each id in a URL makes a separate page.
-`/projects/123` and `/projects/456` become two pages, and page tables, filters,
-and Web Vitals breakdowns split one screen into many rows. The route gives
-every view of one screen the same value, so page-level analysis can group by
-screen instead of by URL.
-
-The callback has this contract:
-
-- Return the matched route template, such as `/projects/:id`. Never return the
-  concrete path.
-- Return a fixed name for catch-all and not-found routes, such as `/*`. Do not
-  fall back to the URL.
-- Do not put ids, slugs, or user data in the value.
-- The SDK calls the callback for every new span. With Web Vitals it also calls
-  it in `configure()`, and with `reportSoftNavs` one task after each URL change.
-  Keep it synchronous and cheap. Read router state, or a variable that the
-  application updates on navigation.
-- Change the value together with the URL. A span that starts after the URL
-  changes but before the value changes gets the previous route.
-- Return `undefined` until the router resolves the first route. The SDK then
-  omits the attribute.
-
-Each recipe below returns one value for both `/acme/shop/agents` and
-`/globex/web/agents`.
-
-#### React Router
-
-In data mode (`createBrowserRouter`), the router changes the URL and
-`router.state.matches` together. Join the matched route paths:
-
-```ts
-function routeTemplate(matches: readonly { route: { path?: string } }[]): string {
-  let template = ''
-  for (const { route } of matches) {
-    if (route.path === undefined || route.path === '') {
-      continue
-    }
-    template = route.path.startsWith('/') ? route.path : `${template.replace(/\/$/, '')}/${route.path}`
-  }
-  return template === '' ? '/' : template
-}
-
-const router = createBrowserRouter(routes)
-
-logfire.configureFrontend({
-  ...frontendOptions,
-  rum: {
-    session: {
-      getRouteName: () => routeTemplate(router.state.matches),
-    },
-  },
-})
-```
-
-Pathless layout and index routes add nothing to the template, and a `*` route
-returns `/*`. Add a `*` route. Without one, React Router matches only the root
-route for an unknown URL, and the recipe returns `/`, the same value as the home
-page. In declarative mode, match the current location against the same route
-objects. If the routes are `<Route>` elements, build the objects with
-`createRoutesFromElements`:
-
-```ts
-import { createRoutesFromElements, matchRoutes } from 'react-router'
-
-const routeObjects = createRoutesFromElements(routeElements)
-
-const getRouteName = () => {
-  const matches = matchRoutes(routeObjects, window.location.pathname)
-  return matches === null ? '/*' : routeTemplate(matches)
-}
-```
-
-If the router has a `basename`, pass it as the third argument of `matchRoutes`.
-
-#### TanStack Router
-
-Use the `fullPath` of the deepest match. Do not use `routeId`, because it
-contains the ids of pathless layout routes. TanStack Router changes the URL
-before its loaders finish, while `router.state.matches` still holds the
-previous route. Match the current path instead, and cache the result for each
-path:
-
-```ts
-let lastPathname: string | undefined
-let lastRoute: string | undefined
-
-const getRouteName = () => {
-  const { pathname } = router.history.location
-  if (pathname !== lastPathname) {
-    lastPathname = pathname
-    lastRoute = router.matchRoutes(pathname).at(-1)?.fullPath
-  }
-  return lastRoute
-}
-```
-
-#### Vue Router
-
-```ts
-const getRouteName = () => router.currentRoute.value.matched.at(-1)?.path
-```
-
-The deepest matched record holds the full path, for example
-`/:org/:project/agents`.
-
-#### Next.js Pages Router
-
-`router.pathname` is the page file path, for example `/blog/[slug]`. Store it
-in `pages/_app.tsx`:
-
-```tsx
-import type { AppProps } from 'next/app'
-import { useRouter } from 'next/router'
-
-import { setRouteName } from '../lib/logfire-route'
-
-export default function App({ Component, pageProps }: AppProps) {
-  setRouteName(useRouter().pathname)
-  return <Component {...pageProps} />
-}
-```
-
-```ts
-// lib/logfire-route.ts
-let routeName: string | undefined
-
-export function setRouteName(value: string | undefined): void {
-  routeName = value
-}
-
-export function getRouteName(): string | undefined {
-  return routeName
-}
-```
-
-Pass `getRouteName` from this module to `rum.session.getRouteName`.
-
-#### Next.js App Router
-
-The App Router has no public API that returns the matched route template.
-Rebuild it from `usePathname()` and `useParams()` in a client component that
-the root layout renders. The function replaces each parameter value with its
-`[name]` segment. It starts from the end of the path, because Next.js lists the
-parameters in segment order and a catch-all is always last:
-
-```tsx
-'use client'
-
-import { useParams, usePathname } from 'next/navigation'
-import { Suspense, useEffect } from 'react'
-
-import { setRouteName } from '../lib/logfire-route'
-
-function decodeSegment(segment: string): string {
-  try {
-    return decodeURIComponent(segment)
-  } catch {
-    return segment
-  }
-}
-
-function routeTemplate(pathname: string, params: Record<string, string | string[] | undefined>): string {
-  const segments = pathname.split('/')
-  let end = segments.length - 1
-  for (const [name, value] of Object.entries(params).reverse()) {
-    if (value === undefined) {
-      continue
-    }
-    if (Array.isArray(value)) {
-      const start = segments.length - value.length
-      segments.splice(start, value.length, `[...${name}]`)
-      end = start - 1
-      continue
-    }
-    let index = end
-    while (index > 0 && decodeSegment(segments[index] ?? '') !== value) {
-      index--
-    }
-    if (index > 0) {
-      segments[index] = `[${name}]`
-      end = index - 1
-    }
-  }
-  return segments.join('/') || '/'
-}
-
-function RouteName() {
-  const pathname = usePathname()
-  const params = useParams()
-  useEffect(() => {
-    setRouteName(routeTemplate(pathname, params))
-  }, [pathname, params])
-  return null
-}
-
-export function LogfireRouteName() {
-  return (
-    <Suspense fallback={null}>
-      <RouteName />
-    </Suspense>
-  )
-}
-```
-
-With `cacheComponents` enabled, `useParams()` suspends during prerendering on a
-route whose parameters `generateStaticParams` does not cover. The `Suspense`
-boundary keeps that from failing the build.
-
-This is an approximation, and it has these limits:
-
-- The template does not show route groups.
-- A static segment after a parameter with the same text can take the
-  parameter's place.
-- An optional catch-all (`[[...slug]]`) gives two values. Next.js omits the
-  parameter when it is empty, so `/shop` stays `/shop` while `/shop/a` becomes
-  `/shop/[...slug]`. Map such routes to one name in the application.
-- A not-found page has no parameters, so the helper returns its raw path. No
-  public API tells the component that the page is not found. Set a fixed name,
-  such as `/*`, from the `not-found` page instead.
-- The effect runs after the new page renders, so spans that start during that
-  render get the previous route.
-
-#### SvelteKit
-
-`route.id` is the route directory, for example `/blog/[slug]`. Store it from the
-root `+layout.svelte`, and pass the same `getRouteName` to
-`rum.session.getRouteName`:
-
-```svelte
-<script lang="ts">
-  import { afterNavigate } from '$app/navigation'
-
-  import { setRouteName } from '$lib/logfire-route'
-
-  afterNavigate(({ to }) => {
-    if (to !== null) {
-      setRouteName(to.route.id ?? '/*')
-    }
-  })
-</script>
-```
-
-SvelteKit sets `route.id` to `null` when no route matches, so the recipe uses
-`/*` for not-found pages. `afterNavigate` runs after the new page renders, so spans that start during
-that render get the previous route. `$lib/logfire-route` is the same module as
-in the Next.js Pages Router recipe.
-
-## RUM Web Vitals
-
-`configureFrontend()` records Core Web Vitals from real browser sessions by default:
-
-```ts
-logfire.configureFrontend({
-  ...frontendOptions,
-  rum: { webVitals: true },
-})
-```
-
-The browser SDK dynamically loads `web-vitals/attribution` only when
-`rum.webVitals` is enabled. It records LCP, INP, CLS, FCP, and TTFB as short
-OpenTelemetry spans named `web_vital.lcp`, `web_vital.inp`, `web_vital.cls`,
-`web_vital.fcp`, and `web_vital.ttfb`. These point events carry exact
-`logfire.span_type = 'log'`.
-
-Every Web Vital span includes `web_vital.name`, `web_vital.value`,
-`web_vital.delta`, `web_vital.id`, `web_vital.rating`, and
-`web_vital.navigation_type`. It also includes available navigation identity,
-interaction, and start-time fields as `web_vital.navigation_*`. Attribution fields include values such as
-`web_vital.lcp.target`, `web_vital.inp.target`, and
-`web_vital.cls.largest_shift_target`.
-When INP attribution identifies a culprit Long Animation Frame script, the INP
-span also includes its normalized source URL, bounded function name, invoker,
-and duration as `web_vital.inp.script.*` attributes. These diagnostic fields
-remain span-only and are not added to Web Vitals metrics.
-
-`rum.webVitals` implies default `rum.session` behavior so Web Vital spans get
-session and URL attributes. To sanitize URLs while reporting Web Vitals, pass
-session options alongside Web Vitals:
-
-```ts
-logfire.configureFrontend({
-  ...frontendOptions,
-  rum: {
-    session: {
-      urlAttributes: (url) => ({
-        full: `${url.origin}${url.pathname}`,
-        path: url.pathname,
-      }),
-    },
-    webVitals: {
-      reportAllChanges: true,
-    },
-  },
-})
-```
-
-Web Vitals observers live for the page lifetime. The first successful startup
-fixes `reportAllChanges`, `generateTarget`,
-`includeProcessedEventEntries`, and `reportSoftNavs`; later `configure()` calls can update the tracer
-and metric destination but ignore changed observer options with a diagnostic
-warning. If the initial lazy load or observer startup fails, a later
-`configure()` call retries it.
-
-`configureFrontend()` enables Web Vitals histogram metrics by default. To keep
-Web Vitals spans while disabling histogram emission:
-
-```ts
-logfire.configureFrontend({
-  ...frontendOptions,
-  rum: {
-    webVitals: {
-      metrics: false,
-    },
-  },
-})
-```
-
-`configureFrontend()` derives the metrics endpoint from `baseUrl` automatically.
-With the lower-level `configure()`, metric export is disabled unless top-level
-`metrics.metricUrl` is configured, and `rum.webVitals.metrics` requires that
-transport. The SDK uses a local
-OpenTelemetry `MeterProvider`; it does not replace the application's global
-meter provider. If that metrics runtime fails to start, the SDK emits an
-explicit diagnostic and continues Web Vitals span reporting without a metric
-recorder. It never retries configured authentication with empty headers.
-
-Web Vitals metrics are histograms named
-`logfire.browser.web_vital.lcp`, `logfire.browser.web_vital.inp`,
-`logfire.browser.web_vital.cls`, `logfire.browser.web_vital.fcp`, and
-`logfire.browser.web_vital.ttfb`. LCP, INP, FCP, and TTFB use unit `ms`; CLS
-uses unit `1`.
-
-Metric data point attributes are intentionally low-cardinality:
-`web_vital.name` and `web_vital.rating` by default. When soft-navigation
-reporting is enabled, they also include `web_vital.navigation_type`. They do not include
-`session.id`, `logfire.page.url.full`, `logfire.page.url.path`,
-`logfire.page.route`, `logfire.session.*`, Web Vital
-ids/deltas, DOM selectors, attribution fields, or raw PerformanceEntry data. Use
-spans for raw-sample drilldown, session/replay correlation, exact page context,
-and attribution selectors. When metrics are configured, Logfire Platform should
-treat these histograms as the aggregate Web Vitals surface.
-
-By default, Web Vitals use the standard document-level measurement method. Web
-Vital span URL attributes describe the navigation that produced the measurement,
-even when its callback runs after the browser URL changes. The span's
-`logfire.page.route` is the route of that same navigation. The SDK remembers the
-first route that `getRouteName` returned while each navigation's URL was
-current, and it uses that route for a late report, even after the application
-changes its route state or returns to the same URL. If the SDK never observed a
-route for that navigation, the span omits `logfire.page.route` instead of using
-the current route. If the browser does not supply a valid navigation URL for a
-document report, the span falls back to the current sanitized URL and route.
-
-Chromium 151 and newer can also report metrics separately for browser-detected
-soft navigations in single-page applications:
-
-```ts
-logfire.configure({
-  ...frontendApplicationConfig,
-  rum: {
-    webVitals: {
-      reportSoftNavs: true,
-    },
-  },
-})
-```
-
-This option remains document-level in Firefox, Safari, and older Chromium. A
-soft navigation requires a user interaction, URL change, and resulting paint,
-so browser detection can differ from application router events. Enabling it
-also finalizes the initial navigation when the first soft navigation occurs.
-Soft-navigation LCP considers newly painted content, which can differ from a
-cold load of the same URL, and soft-navigation TTFB is reported as `0` rather
-than as request latency.
-
-Soft-navigation spans use the metric's sanitized navigation URL. They carry
-`logfire.page.route` when the SDK observed a route for that navigation, and omit
-it otherwise. Web Vitals metrics do not carry the route. To add a
-low-cardinality route dimension to metrics, derive it from the metric's
-`navigationURL` in `rum.webVitals.metrics.attributes`.
-
-## RUM Long Animation Frames
-
-Enable `rum.longAnimationFrames` to detect and diagnose severe main-thread
-congestion in supported Chromium browsers:
-
-```ts
-logfire.configureFrontend({
-  ...frontendOptions,
-  rum: {
-    longAnimationFrames: true,
-  },
-})
-```
-
-The Long Animation Frames API observes frames over 50 ms. It is available in
-Chromium-based browsers, but not in Firefox or Safari at the time of writing.
-It does not cover all main-thread work and cannot attribute cross-origin
-frames, workers, or extension isolated worlds. Treat it as a high-coverage
-sentinel for severe congestion, complementary to INP, request volume, journey
-timing, and synthetic monitoring.
-
-The feature is off by default. When enabled, the SDK feature-detects
-`long-animation-frame`, samples 10% of browser sessions, and observes with
-`buffered: true`. Sampled-out and unsupported sessions do not install an
-observer, timer, or lifecycle listeners.
-
-For sampled sessions, the SDK emits two log-type span shapes:
-
-- `browser.long_animation_frame` diagnoses frames whose `blockingDuration` is
-  at least 100 ms. Frames are ranked within each foreground window, and the
-  worst frames are emitted up to a fixed cap of 20 per browser session.
-- `browser.main_thread_window` summarizes each foreground window with its real
-  foreground duration, total blocking duration, LoAF count, dropped diagnostic
-  count, and the top three scripts by summed duration. Hidden time is excluded,
-  and a partial window is emitted on document hide or `pagehide`.
-
-The default ranking and summary window is 60 seconds. You can tune collection
-without changing the SDK-owned event and script caps:
-
-```ts
-logfire.configureFrontend({
-  ...frontendOptions,
-  rum: {
-    longAnimationFrames: {
-      blockingDurationThresholdMs: 150,
-      sessionSampleRate: 0.25,
-      windowDurationMs: 30_000,
-    },
-  },
-})
-```
-
-`sessionSampleRate` is clamped to `0..1`. The window has a 10-second minimum to
-prevent accidental span floods. HTTP(S) script source URLs have credentials,
-query strings, and fragments removed and are capped at 2,048 Unicode code
-points. Payload-bearing and per-load URL schemes use stable scheme or origin
-placeholders. Function names are capped at 200 Unicode code points. Periodic
-window summaries do not extend the browser session idle timeout, but diagnostic
-frame spans count as session activity. LoAF data is emitted only as spans, never
-as OpenTelemetry metrics. The existing browser session processor adds session
-id, route, sanitized page URL, replay state, and service-version context to both
-span shapes.
-
-## Session Replay
-
-Session replay is available to Logfire Early Access organizations. Keep replay
-behind your own application flag and expect minor API, ingest, and UI behavior
-changes before Beta.
-
-> **Early Access pricing:** Session replay is free during Early Access. Pricing
-> has not been announced and will be published before General Availability
-> (GA). Session replay will become a paid feature in a later release.
-
-Install the optional replay package:
-
-```bash
-npm install @pydantic/logfire-session-replay
-```
-
-Pass the replay integration to `configureFrontend()`. The integration
-keeps the recorder out of the initial application bundle:
-
-```ts
-import * as logfire from '@pydantic/logfire-browser'
-import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
-
-const cleanup = logfire.configureFrontend({
-  baseUrl: 'https://logfire-us.pydantic.dev',
-  token: '<frontend-application-token>',
-  sessionReplay: sessionReplayIntegration(),
-})
-
-// The property exists synchronously whenever sessionReplay is configured.
-await cleanup.sessionReplay?.flush()
-await cleanup.sessionReplay?.stop() // replay only; tracing remains active
-await cleanup() // full SDK cleanup
-```
-
-To store replays in a different Logfire deployment, pass a second restricted
-frontend application destination. Traces and metrics still use the top-level
-`baseUrl` and `token`; the browser sends each signal to one destination.
-
-```ts
-logfire.configureFrontend({
-  baseUrl: 'https://rum.example.com',
-  token: '<rum-frontend-application-token>',
-  sessionReplay: {
-    ...sessionReplayIntegration(),
-    destination: {
-      baseUrl: 'https://replay.example.com',
-      token: '<replay-frontend-application-token>',
-    },
-  },
-})
-```
-
-Both tokens must be restricted frontend application tokens, since the browser
-can read them. The two deployments need the same application identity and
-access to matching RUM session data to navigate from traces to replay.
-
-`sessionReplay` implies default RUM session behavior. Browser spans keep their
-RUM `session.id`. Each tab replay has a separate upload/playback identifier in
-`logfire.session_replay.id`. Same-tab reloads and navigations continue that replay;
-new tabs start separate replays, even when they share a RUM session. Replays
-roll over after at most two hours. Spans started after replay has
-loaded and sampled into `full` or `buffer` mode include
-`logfire.session_replay.active` and `logfire.session_replay.mode`. Those active
-attributes are truthful best-effort annotations. Link a marked span to its
-recording using `logfire.session_replay.id`, falling back to `session.id` for
-older SDK recordings. Spans emitted before replay startup do not have a recording
-link. Replay chunks do not include per-trace correlation metadata.
-
-The standalone recorder's `getSessionId()` still returns its RUM session.
-Use `getRecordingId()` for its current upload/playback ID; it returns an empty
-string when no recorder is active or during a session transition. Deploy Platform
-support for this attribute before upgrading the SDK.
-
-One document at a time writes a recording. In a secure context with Web Locks
-and writable `localStorage`, a document holds a Web Lock named after its
-recording ID, and a record in `localStorage` holds the recording's next upload
-sequence. Recording starts at once, but the document uploads nothing until it
-holds the lock. A copied tab, such as a duplicated tab, whose recording another
-document holds starts a new recording after waiting up to one second. A
-document that continues a recording starts from the sequence in the shared
-record, so it never reuses a sequence that another document uploaded. Until a
-continued recording's lock is granted, `getRecordingId()` returns an empty
-string, so the first spans of a reloaded page can lack a recording link. A new
-recording's ID is available at once. The document releases the lock at
-`pagehide`, so the page stays eligible for the back-forward cache. Do not call
-`navigator.locks.query()` in the application: Chromium then evicts cached pages
-that hold a lock. Without Web Locks or writable `localStorage`, two copied tabs
-can still write one recording, as in earlier releases.
-
-New tabs count as separate billable replays; same-tab reloads do not. If browser
-storage is unavailable or its saved sequence cannot be safely resumed, the SDK
-starts a new replay rather than risking a sequence collision. Upgrade both
-`@pydantic/logfire-browser` and `@pydantic/logfire-session-replay` together so
-browser spans carry the new recording link.
-
-Before lazy replay startup completes, after startup failure, and after replay is
-stopped, the facade reports `mode: 'off'` and `recording: false`. Its `stop()`
-method is idempotent and generation-scoped. Session identity remains available
-through `getBrowserSessionId()`, not the replay facade.
-
-Replays shorter than `minSessionDurationMs` are not uploaded (10 seconds by
-default). An earlier flush remains buffered until the minimum is reached, and
-stopping earlier discards the replay. Set `minSessionDurationMs: 0` only when
-shorter replays must be delivered.
-
-Browser-session inactivity currently means span inactivity: replay startup
-initializes and touches the session once before loading the recorder, but
-subsequent replay events only peek at the session id and do not refresh the
-timeout. Span starts are the ongoing automatic activity;
-`getBrowserSessionId()` also explicitly touches the session.
-
-Each replay chunk snapshots `rum.session.getUser()` once and reports its `id`,
-`name`, and `email` as `meta.user`, so recordings can be displayed and searched
-by the same user as spans. Name and email are optional personal data; omit
-them from `getUser` unless replay viewers need them. Other fields of the
-returned object are not sent, and the user is never written to rrweb events or
-`sessionStorage`. `meta.user` is omitted when `getUser` is not configured,
-returns no user, or throws, and later chunks follow login, logout, and user
-switches.
-
-When `sessionReplay.getDistinctId` is not configured, replay uses the same
-snapshot's `id` as `meta.distinctId`, so replay rows and span `user.id` agree.
-An explicit `getDistinctId` remains authoritative, and `distinctId` and
-`user.id` are then reported independently. A static `sessionReplay.distinctId`
-remains the fallback while the selected live getter returns `undefined`.
-
-After a replay reaches the minimum duration, hiding the document or receiving
-`pagehide` makes a bounded best-effort start of the earliest compressed chunks.
-Its 48,000-byte aggregate
-budget is shared across its own unfinished keepalive requests, while the
-browser's keepalive quota is also shared with unrelated page traffic. Delivery
-after page freeze or termination is therefore not guaranteed. Functional
-`headers` and `token` values are resolved for every upload; an asynchronous
-resolver can finish too late for a lifecycle request. The generated frontend
-application headers are synchronous and work for these uploads.
-
-Ordinary replay uploads automatically fall back to synchronous gzip if a
-restrictive Content Security Policy blocks the compressor worker. The fallback
-preserves the batch and is remembered for the active replay controller, but it
-may briefly use the main thread.
-
-Ordinary replay uploads are retried with the same sequence number and bytes for
-up to 30 seconds per chunk after network errors, timeouts, `408`, `425`, `429`,
-and `5xx` responses. The in-memory queue holds at most about 2 MB. When a chunk
-is still lost, `sessionReplay.onError` receives a `ReplayUploadError` with the
-lost `seq`, the dependent `droppedSeqs`, and a `reason` of `unconfirmed`,
-`rejected`, or `not-sent`. Replay then takes a fresh full snapshot so playback
-resumes correctly after the gap. Queued chunks do not survive a page close or
-reload.
-
-A backend proxy can add application-specific authentication, origin checks, or
-rate limits. Keep its replay headers synchronous so lifecycle uploads do not
-wait on asynchronous work:
-
-```ts
-import * as logfire from '@pydantic/logfire-browser'
-import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
-
-logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
-  sessionReplay: {
-    ...sessionReplayIntegration(),
-    replayUrl: '/logfire-proxy/v1/replay',
-    headers: () => ({
-      'X-CSRF': getCsrfToken(),
-    }),
-  },
-})
-```
-
-Replay masks all rendered text and input values by default, leaves console
-capture off, and removes query strings and fragments from captured page,
-fetch/XHR, and navigation URLs. Network and navigation capture remain enabled.
-These replay-package defaults are inherited when browser options are omitted.
-
-Use `blockSelector` to omit a subtree. Set `maskAllText: false` only when
-visible text recording is acceptable; `maskTextSelector` can then selectively
-mask sensitive regions. `captureConsole: true` is an explicit opt-in, and
-`redactUrlPatterns: []` explicitly restores raw replay URLs. Text masking does
-not scrub DOM attributes, CSS content, resource URLs, or arbitrary custom-event
-payloads, so those values still require application-side care.
-
-When testing replay locally, browser privacy extensions or ad blockers may block
-requests or dynamic imports whose URLs contain terms such as `session-replay`.
-If replay fails to start with `ERR_BLOCKED_BY_CLIENT`, test in a clean profile
-or disable the extension for the local app. Vite workspace examples may also
-need to load `@rrweb/record`'s browser ESM build
-(`@rrweb/record/dist/record.js`) rather than its CommonJS build when importing
-unpublished workspace output directly.
-
-## Custom Span Processors
-
-Use `spanProcessors` to register additional OpenTelemetry span processors with
-the browser tracer provider:
-
-```ts
-logfire.configureFrontend({
-  ...frontendOptions,
-  spanProcessors: [customProcessor],
-})
-```
-
-Custom processors are advanced extension points. They are registered before
-Logfire's built-in exporting processor and before Logfire tail sampling, so use
-them for enrichment or integration hooks rather than duplicate exporting unless
-that is intentional.
-
-## Manual Client Events
-
-```ts
-document.querySelector('button')?.addEventListener('click', () => {
-  logfire.info('checkout button clicked')
-})
-```
-
-## Errors
-
-`configure()` and `configureFrontend()` report uncaught errors and unhandled
-promise rejections as error-level spans named `Uncaught error` and
-`Unhandled promise rejection`. The application does not need its own `error` or
-`unhandledrejection` listener. Resource load failures, such as a broken image,
-are not reported. Pass `captureGlobalErrors: false` to turn global capture off.
-
-Report caught errors with `reportError()`:
-
-```ts
-try {
-  await saveOrder()
-} catch (error) {
-  logfire.reportError('Order save failed', error, { route: '/checkout' })
-}
-```
-
-An error object is reported once. When the application reports an error and
-then rethrows it, or reports it from its own `window` `error` listener, global
-capture skips it. Global capture waits for the rest of the event dispatch before
-it reports, so a listener registered after `configure()` still takes precedence.
-
-With session replay, every `reportError()` call, including the calls that
-global capture makes, adds the error to the replay and promotes an
-error-buffered replay to a recorded one. The replay package's own global error
-listeners are turned off, so an uncaught error appears in the replay once.
-Replay loads after `configure()` returns. The SDK holds up to 10 errors reported
-in the meantime and adds them when replay starts, with the time each error
-occurred as `timestamp` in the error event. Such an error still promotes the
-replay, but the recording starts after it.
-
-## Errors and Replay Profile
-
-Use `profile: 'errors'` when the application needs errors and the replays around
-them, not performance data:
-
-```ts
-import * as logfire from '@pydantic/logfire-browser'
-import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
-
-logfire.configureFrontend({
-  baseUrl: 'https://logfire-us.pydantic.dev',
-  token: '<frontend-application-token>',
-  profile: 'errors',
-  sessionReplay: sessionReplayIntegration(),
-})
-```
-
-The profile keeps direct ingest, the restricted frontend application token, and
-the default privacy settings. It changes these defaults:
-
-- Tail sampling exports a trace only when one of its spans has an error level,
-  an error status, or an HTTP 5xx response. The whole trace is kept, so the
-  click and the request around a failure stay together. Healthy traces are
-  dropped in the browser.
-- Web Vitals spans and metrics, and document-load spans, are off. Long Animation
-  Frames stay off.
-- Session replay records only sessions with an error: `sessionSampleRate`
-  defaults to `0` and `onErrorSampleRate` to `1`. Replay keeps a bounded buffer
-  in memory and uploads it when an error is reported.
-
-Options that you pass explicitly take precedence. For example,
-`rum: { webVitals: true }` keeps Web Vitals, `sampling: { head: 0.5 }` adds head
-sampling to the profile's tail rule, and `sessionReplay: { ...sessionReplayIntegration(), sessionSampleRate: 0.05 }`
-records 5% of sessions in full.
-
-### Verify the setup
-
-You can check the setup in the Logfire UI. You do not need CLI access or SQL
-queries.
-
-1. Trigger a handled error, for example a button handler that calls
-   `logfire.reportError('Checkout failed', new Error('verification'))`.
-2. Trigger an unhandled error, for example
-   `setTimeout(() => { throw new Error('verification uncaught') })`.
-3. Use the application normally for a few clicks without errors.
-4. In the frontend application's Live view, find the two error-level spans:
-   `Checkout failed` with the click span that started it in the same trace, and
-   `Uncaught error`. The healthy clicks from step 3 do not appear.
-5. The error spans carry `logfire.session_replay.id`. Open that replay. It
-   contains both errors as error events, and it starts before the first one,
-   because the buffer covers the time before the error.
-
-A replay needs at least 10 seconds of recording before it uploads
-(`minSessionDurationMs`), so keep the page open until at least 10 seconds of
-recording have elapsed.
-
-## Minimum Level Filtering
-
-Use `minLevel` to suppress low-severity manual Logfire telemetry before spans
-are created:
-
-```ts
-logfire.configureFrontend({
-  ...frontendOptions,
-  minLevel: 'warning',
-})
-```
-
-Browser configuration does not read Logfire environment variables. Pass
-`minLevel` in code, or pass `minLevel: null` to clear a previous setting. The
-filter applies to manual Logfire APIs. Log helpers and `reportError()` are
-filtered by their level; `span()`, `startSpan()`, `startPendingSpan()`, and
-`instrument()` are filtered only when the call or scoped client sets an
-explicit level.
-
-## Baggage Span Attributes
-
-Use `baggage.spanAttributes` to copy selected active OpenTelemetry baggage
-values onto Logfire manual spans and logs:
-
-```ts
-logfire.configureFrontend({
-  ...frontendOptions,
-  baggage: {
-    spanAttributes: ['tenant', 'region'],
-  },
-})
-```
-
-Projection is disabled by default and allowlisted. Configured key `tenant` is
-emitted as `baggage.tenant` on manual spans/logs, including `span()`,
-`startSpan()`, `startPendingSpan()`, log helpers, `reportError()`, scoped
-clients, and `instrument()` spans. Explicit attributes win on conflict, missing
-keys are ignored, and values are truncated to 1000 characters.
-
-Baggage propagates across service boundaries. Do not store secrets,
-credentials, session cookies, raw emails, or other sensitive user data in
-baggage.
-
-## Optional Backend Proxy
-
-The restricted frontend application token is designed to be public, so a proxy
-is not required to keep it secret. A proxy is useful for a first-party ingest
-domain, application authentication, origin restrictions, or rate limits.
-
-### First-party ingest domain
-
-To reduce false-positive blocking by content blockers, route frontend
-observability and session replay uploads through a neutral subdomain you
-control. Follow the [frontend custom domain guide](../frontend-custom-domain.md)
-for the SDK configuration, path mappings, Cloudflare Worker example, security
-requirements, CORS, CSP, and verification steps.
-
-### Authenticated application proxy
-
-Use an authenticated backend proxy when you need to verify application sessions
-or keep a normal project write token on the server. A browser proxy should:
-
-- authenticate browser requests and restrict their origins
-- add `Authorization: <write-token>` server-side
-- forward traces, metrics, and session replays to the corresponding Logfire
-  ingest endpoints
-- apply application-specific rate limits
-
-For Next.js, see [Next.js](../frameworks/nextjs.md). For a standalone browser example, see the `examples/browser` project in this repository.
-
-## Python Backend Proxy (Telemetry Only)
-
-Python backends can use the `logfire.forward_export_request_starlette` and
-`logfire.forward_export_request` helpers to create a trace, log, and metric
-telemetry ingress endpoint without exposing the write token.
-
-For FastAPI/Starlette, use `logfire.forward_export_request_starlette` in an endpoint, for example:
-
-```py title="main.py"
-from fastapi import Depends, FastAPI, Request
-
-import logfire
-
-logfire.configure()
-app = FastAPI()
-
-
-async def verify_user_session():
-    # Add authentication, session, rate limiting, or origin checks here.
-    pass
-
-
-@app.post('/logfire-proxy/{path:path}', dependencies=[Depends(verify_user_session)])
-async def proxy_browser_telemetry(request: Request):
-    return await logfire.forward_export_request_starlette(request)
-```
-
-The `{path:path}` route parameter is required. `forward_export_request_starlette` rejects paths other than `/v1/traces`, `/v1/logs`, and `/v1/metrics` so that it can forward to the appropriate Logfire backend endpoint.
-
-These Python helpers cannot forward session replay. Replay is a separate
-capability and must not be routed through this telemetry-only endpoint. A replay
-proxy needs its own authenticated route that:
-
-- accepts `POST /v1/replay/{session_id}?seq={sequence}`
-- percent-encodes the session id as one path segment and the sequence as one
-  query value
-- forwards the request bytes and their `Content-Type` and
-  `Content-Encoding` unchanged
-- adds the Logfire write token only on the server
-- applies the application's authentication, exact origin policy, rate limits,
-  and request-size limit
-
-This repository's
-[`examples/browser`](https://github.com/pydantic/logfire-js/tree/main/examples/browser)
-and
-[`examples/browser-rum-replay`](https://github.com/pydantic/logfire-js/tree/main/examples/browser-rum-replay)
-projects contain runnable JavaScript development proxies for traces, metrics,
-and replay. They bind to loopback and are reference helpers for local
-development, not a production proxy deployment design.
-
-For Django, Flask, Litestar, or a custom HTTP server, use `forward_export_request` directly, e.g:
-
-```py title="main.py"
-import logfire
-
-logfire.configure()
-
-
-def my_custom_proxy_route(request):
-    response = logfire.forward_export_request(
-        path=request.path.removeprefix('/logfire-proxy'),
-        headers=request.headers,
-        body=request.read(),
-    )
-    # Replace CustomFrameworkResponse with your framework's response class.
-    return CustomFrameworkResponse(
-        content=response.content,
-        status_code=response.status_code,
-        headers=response.headers,
-    )
-```
-
-Protect this endpoint in production. Treat browser telemetry ingress like any other externally reachable write endpoint: clients can be numerous, retry requests, duplicate payloads, or send malicious data. Use your normal authentication, session, CORS, and rate-limiting controls. Configure CORS for the exact app origins that should send telemetry; do not use wildcard credentialed CORS.
-
-Caveats:
-
-- These functions only forward requests directly to Logfire. If you have alternative backends configured, you will need to proxy to them manually.
-- These functions merely forward the data as is. They do not perform any validation, sanitization, or transformation.
-- Requests are placed in a queue and forwarded in a background thread. The queue is limited to 1000 requests and 64MB of memory. If the queue is full, new requests will be dropped. This is to prevent overwhelming your backend with large volumes of telemetry data, which could be used in a DoS attack.
-
-## Runtime Lifecycle
-
-`configure()` returns an async cleanup function. Call it when your application
-is tearing down the configured browser provider, such as in tests, previews, or
-single-page app shells that replace the whole telemetry setup. Cleanup is
-idempotent: repeated or concurrent calls share one promise and run the lifecycle
-once in this order:
-
-1. await session replay startup and stop replay when enabled
-2. close and shut down Long Animation Frame reporting when enabled
-3. unregister configured instrumentations
-4. await Web Vitals startup and shutdown when enabled
-5. force-flush and shut down metrics when configured
-6. force-flush spans
-7. shut down the tracer provider
-8. clear SDK-owned browser session state
-
-If any cleanup step fails, Logfire still attempts the later steps before
-returning the first failure. Later calls return the same settled cleanup promise
-rather than starting another cleanup cycle.
-
-Await cleanup before configuring a replacement generation:
-
-```ts
-const cleanupA = logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces-a',
-  serviceName: 'web-app-a',
-})
-
-await cleanupA()
-
-const cleanupB = logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces-b',
-  serviceName: 'web-app-b',
-})
-```
-
-An active or still-cleaning configuration rejects another `configure()` call.
-Between generations, retained tracers create non-recording spans. A span remains
-owned by the generation under which it started, so finish A spans before cleanup
-A when their export must be guaranteed. A rejected cleanup makes the browser
-runtime terminal until the page reloads.
-
-The browser runtime keeps its OpenTelemetry tracer provider, context manager,
-and default propagator page-stable and does not disable them during ordinary
-cleanup. Application-owned globals are preserved independently. Register an
-application context manager before Logfire and omit `contextManager` from
-Logfire configuration; a context manager cannot be swapped between Logfire
-generations. Ensure the bundler deduplicates both `@pydantic/logfire-browser`
-and `logfire`, because reconfiguration across duplicate physical copies is not
-supported.
-
-Browser pages also get a batch-processor flush when the document hides. Logfire
-force-flushes the OpenTelemetry batch span processor when the document becomes
-hidden or emits `pagehide`, and the trace exporter then sends the newest spans
-of that flush first, in one small request that the browser lets outlive a
-navigation, before the rest of the batch. `batchSpanProcessorConfig.documentHideKeepaliveBytes` sets the
-estimated size of that first request. The default of 12 000 bytes leaves room
-for the session replay upload, which shares the browser's keepalive quota on the
-same events. The flush listens on `window`, so a span that your own `document`
-`visibilitychange` listener ends is included whenever that listener registered.
-A span ended in your own `pagehide` listener is included when the browser fires
-`visibilitychange` afterwards, which Chromium does on navigation. You can disable
-the flush with `batchSpanProcessorConfig.disableAutoFlushOnDocumentHide`, but
-doing so means only explicit cleanup or normal batch timing will flush spans.
-
-```ts
-const cleanup = logfire.configure({
-  traceUrl: '/logfire-proxy/v1/traces',
-  serviceName: 'web-app',
-})
-
-await cleanup()
-```
-
-## Pending Spans
-
-Browser `configure()` does not install automatic pending-span processing.
-Browser apps often produce many short-lived fetch and interaction spans, so
-automatic pending spans can significantly increase span volume, network
-pressure, and ingestion cost in a user-facing environment.
-
-For long-running browser operations where an immediate placeholder is useful,
-call `startPendingSpan()` explicitly:
-
-```ts
-const span = logfire.startPendingSpan('load dashboard', { route: '/dashboard' })
-
-try {
-  await loadDashboard()
-} finally {
-  span.end()
-}
-```
-
-Manual pending spans still add one placeholder span for each call. Node.js
-applications get automatic pending spans from `@pydantic/logfire-node`; Browser
-keeps this behavior explicit.
+[Python telemetry proxy](../python-telemetry-proxy.md) — Forward traces, logs, and
+metrics through an authenticated Python backend. These helpers do not forward replay.
