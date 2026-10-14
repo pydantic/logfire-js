@@ -99,3 +99,24 @@ function numberAttribute(span: OtlpSpan | undefined, key: string): number | unde
 function parentName(spans: OtlpSpan[], span: OtlpSpan | undefined): string | undefined {
   return spans.find(({ spanId, traceId }) => traceId === span?.traceId && spanId === span.parentSpanId)?.name
 }
+
+test('a failed HTTP request keeps its trace but does not promote error-buffered replay', async ({ page, request }) => {
+  expect((await request.post(`${fixtureOrigin}/receipts/reset`)).ok()).toBe(true)
+  await page.goto(`${fixtureOrigin}/`)
+  await expect(page.locator('#status')).toHaveText('ready')
+  await page.locator('#failed-request').click()
+  await page.waitForTimeout(1_000)
+  await page.locator('#finish').click()
+  await expect(page.locator('#status')).toHaveText('complete')
+  const { receipts } = (await (await request.get(`${fixtureOrigin}/receipts`)).json()) as { receipts: Receipt[] }
+  const spans = receipts
+    .filter(({ kind }) => kind === 'trace')
+    .flatMap(({ body }) => {
+      const payload = JSON.parse(Buffer.from(body, 'base64').toString('utf8')) as {
+        resourceSpans?: { scopeSpans?: { spans?: OtlpSpan[] }[] }[]
+      }
+      return (payload.resourceSpans ?? []).flatMap(({ scopeSpans }) => (scopeSpans ?? []).flatMap(({ spans }) => spans ?? []))
+    })
+  expect(spans.filter((span) => numberAttribute(span, 'http.status_code') === 500)).toHaveLength(1)
+  expect(receipts.filter(({ kind }) => kind === 'replay')).toEqual([])
+})
