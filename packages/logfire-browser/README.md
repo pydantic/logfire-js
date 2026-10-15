@@ -143,12 +143,14 @@ Use `getRouteName` for the application's normalized route template and
 for a browser session. Use `getUser` for the application's current user:
 
 ```js
+import { vueRouterRouteName } from '@pydantic/logfire-browser/vue-router'
+
 logfire.configure({
   traceUrl: '/client-traces',
   serviceName: 'browser-app',
   rum: {
     session: {
-      getRouteName: () => router.currentRoute.value.matched.at(-1)?.path,
+      getRouteName: vueRouterRouteName(router),
       getSessionAttributes: () => ({
         account_tier: currentAccount.tier,
         beta_user: currentUser?.isBeta,
@@ -251,20 +253,13 @@ Each recipe below returns one value for both `/acme/shop/agents` and
 
 #### React Router
 
-In data mode (`createBrowserRouter`), the router changes the URL and
-`router.state.matches` together. Join the matched route paths:
+Pass the route objects and React Router's `matchRoutes` to
+`reactRouterRouteName`. It reports the route template of the current URL, for
+example `/projects/:id`, and adds no dependency on a React Router version:
 
 ```ts
-function routeTemplate(matches: readonly { route: { path?: string } }[]): string {
-  let template = ''
-  for (const { route } of matches) {
-    if (route.path === undefined || route.path === '') {
-      continue
-    }
-    template = route.path.startsWith('/') ? route.path : `${template.replace(/\/$/, '')}/${route.path}`
-  }
-  return template === '' ? '/' : template
-}
+import { reactRouterRouteName } from '@pydantic/logfire-browser/react-router'
+import { createBrowserRouter, matchRoutes } from 'react-router'
 
 const router = createBrowserRouter(routes)
 
@@ -272,62 +267,116 @@ logfire.configureFrontend({
   ...frontendOptions,
   rum: {
     session: {
-      getRouteName: () => routeTemplate(router.state.matches),
+      getRouteName: reactRouterRouteName({ matchRoutes, routes }),
     },
   },
 })
 ```
 
-Pathless layout and index routes add nothing to the template, and a `*` route
-returns `/*`. Add a `*` route. Without one, React Router matches only the root
-route for an unknown URL, and the recipe returns `/`, the same value as the home
-page. In declarative mode, match the current location against the same route
-objects. If the routes are `<Route>` elements, build the objects with
-`createRoutesFromElements`:
+Pass the same `routes` as the router, and its `basename` as `basename` when it
+has one. In declarative mode, build the route objects from the `<Route>`
+elements with `createRoutesFromElements`. In React Router 6, import
+`matchRoutes` from `react-router-dom`.
 
-```ts
-import { createRoutesFromElements, matchRoutes } from 'react-router'
+The helper matches the URL path, not `router.state.matches`. A back or forward
+navigation changes the URL before its loaders finish, so a span that starts
+while they run gets the new route. Other navigations change the URL after
+their loaders finish, so spans that start while those loaders run belong to
+the previous page, with its URL and route. Pathless layout and index routes add
+nothing to the template. A splat route keeps its `*`, for example `/files/*`.
+A URL that no route matches reports `/*`. The helper supports routers that
+keep the route in the URL path, such as `createBrowserRouter` and
+`<BrowserRouter>`. It does not support hash or memory routers, or routes that
+the application adds at runtime with `patchRoutesOnNavigation`.
 
-const routeObjects = createRoutesFromElements(routeElements)
-
-const getRouteName = () => {
-  const matches = matchRoutes(routeObjects, window.location.pathname)
-  return matches === null ? '/*' : routeTemplate(matches)
-}
-```
-
-If the router has a `basename`, pass it as the third argument of `matchRoutes`.
+The helper is tested with React Router 7 and 8. React Router 6 has the same
+`matchRoutes` API and is expected to work, but it is not tested. The
+[React Router example](https://github.com/pydantic/logfire-js/tree/main/examples/react-router)
+is a runnable app that uses it.
 
 #### TanStack Router
 
-Use the `fullPath` of the deepest match. Do not use `routeId`, because it
-contains the ids of pathless layout routes. TanStack Router changes the URL
-before its loaders finish, while `router.state.matches` still holds the
-previous route. Match the current path instead, and cache the result for each
-path:
+Pass the router to `tanStackRouterRouteName`. It reports the route template
+that the router matches for the current URL, for example
+`/projects/$projectId`. It reads only the router core that the React, Solid,
+and Vue routers share, and adds no dependency:
 
 ```ts
-let lastPathname: string | undefined
-let lastRoute: string | undefined
+import { tanStackRouterRouteName } from '@pydantic/logfire-browser/tanstack-router'
+import { createRouter } from '@tanstack/react-router'
 
-const getRouteName = () => {
-  const { pathname } = router.history.location
-  if (pathname !== lastPathname) {
-    lastPathname = pathname
-    lastRoute = router.matchRoutes(pathname).at(-1)?.fullPath
-  }
-  return lastRoute
-}
+const router = createRouter({ routeTree })
+
+logfire.configureFrontend({
+  ...frontendOptions,
+  rum: {
+    session: {
+      getRouteName: tanStackRouterRouteName(router),
+    },
+  },
+})
 ```
+
+If the application creates the router after it configures Logfire, pass a
+function that returns the router, such as `tanStackRouterRouteName(() => router)`.
+Until the function returns a router, the SDK omits the route.
+
+The helper matches the current URL, not `router.state.matches`. TanStack
+Router changes the URL before its loaders finish, so a span that starts while a
+loader runs gets the new route. The helper removes the router's `basepath`,
+applies its URL rewrites, and reports the deepest match's `fullPath`. Pathless
+layout routes add nothing to the template. Index routes end with a slash, for
+example `/projects/`. An unknown URL matches only the root route and reports
+`/*`. TanStack Router also matches the longest known prefix of a path. If no
+route matches all of `/projects/1/extra`, the helper reports
+`/projects/$projectId`. A loader that revalidates cached data in the
+background reports the route of the page that is current when it runs, which
+can be a later page.
+
+The helper is tested with TanStack's React router 1.170. The Solid and Vue
+routers share its router core and are expected to work, but they are not
+tested. The
+[TanStack Router example](https://github.com/pydantic/logfire-js/tree/main/examples/tanstack-router)
+is a runnable app that uses it.
 
 #### Vue Router
 
+Pass the router to `vueRouterRouteName`. It reports the route template of the
+current URL, for example `/:org/:project/agents`, and adds no dependency:
+
 ```ts
-const getRouteName = () => router.currentRoute.value.matched.at(-1)?.path
+import { vueRouterRouteName } from '@pydantic/logfire-browser/vue-router'
+import { createRouter, createWebHistory } from 'vue-router'
+
+const router = createRouter({ history: createWebHistory(), routes })
+
+logfire.configureFrontend({
+  ...frontendOptions,
+  rum: {
+    session: {
+      getRouteName: vueRouterRouteName(router),
+    },
+  },
+})
 ```
 
-The deepest matched record holds the full path, for example
-`/:org/:project/agents`.
+If the application creates the router after it configures Logfire, pass a
+function that returns the router, such as `vueRouterRouteName(() => router)`.
+
+The helper resolves the current history location, not `router.currentRoute`.
+A back or forward navigation changes the URL before its guards finish, so a
+span that starts while they run gets the new route. The history base is not
+part of the template. An alias reports the path of the route that it aliases.
+A URL that no route matches reports `/*`, and a catch-all route reports its own
+path, for example `/:pathMatch(.*)*`. The development build of Vue Router logs
+a warning when the helper resolves a URL that no route matches. A route's
+`beforeEnter` guard does not run when only its params change, such as from
+`/projects/1` to `/projects/2`, so load per-page data in a global
+`router.beforeResolve` guard or in the component.
+
+The helper is tested with Vue Router 4 and 5. The
+[Vue Router example](https://github.com/pydantic/logfire-js/tree/main/examples/vue-router)
+is a runnable app that uses it.
 
 #### Next.js Pages Router
 

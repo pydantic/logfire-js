@@ -32,7 +32,7 @@ jobs:
         run: vp check
 
       - name: TypeScript comparison
-        run: vp run --filter "./packages/*" typecheck
+        run: pnpm run typecheck
 
       - name: Documentation examples
         run: node --test scripts/browser-docs*.test.mjs
