@@ -695,14 +695,20 @@ async function waitForServer(url, process_, output) {
 }
 
 async function stopProcessTree(process_) {
-  if (process_.exitCode !== null) {
+  if (hasExited(process_)) {
     return
   }
   signalProcessTree(process_, 'SIGTERM')
   await Promise.race([new Promise((resolve_) => process_.once('exit', resolve_)), new Promise((resolve_) => setTimeout(resolve_, 5_000))])
-  if (process_.exitCode === null) {
+  if (!hasExited(process_)) {
     signalProcessTree(process_, 'SIGKILL')
   }
+}
+
+// A process that a signal ends keeps a null exitCode. Signalling its empty
+// process group again fails with EPERM on macOS.
+function hasExited(process_) {
+  return process_.exitCode !== null || process_.signalCode !== null
 }
 
 function signalProcessTree(process_, signal) {
