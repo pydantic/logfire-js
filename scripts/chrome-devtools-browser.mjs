@@ -56,7 +56,8 @@ export async function startChromeDevTools() {
       async function evaluate(fn) {
         const output = await call('evaluate_script', { function: fn, pageId, waitForStableDom: false })
         const json = /```json\n([\s\S]*)\n```/u.exec(output)?.[1]
-        return json === undefined ? undefined : JSON.parse(json)
+        // A function that returns nothing is reported as the text `undefined`.
+        return json === undefined || json === 'undefined' ? undefined : JSON.parse(json)
       }
 
       return {
