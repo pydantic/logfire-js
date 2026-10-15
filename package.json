@@ -9,7 +9,7 @@
     "dev": "vp run --filter \"./packages/*\" --parallel dev",
     "test": "vp run --filter \"./packages/*\" test",
     "test:browser": "vp run @pydantic/logfire-session-replay#test:browser",
-    "typecheck": "vp run --filter \"./packages/*\" typecheck",
+    "typecheck": "vp run --filter \"./packages/*\" typecheck && vp run --filter \"./examples/*-router\" typecheck",
     "lint": "vp lint",
     "format": "vp fmt . --write",
     "format-check": "vp fmt --check",

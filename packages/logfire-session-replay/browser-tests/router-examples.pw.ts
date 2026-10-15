@@ -46,6 +46,8 @@ async function captureSpans(page: Page): Promise<ExportedSpan[]> {
         }
       }
     }
+    // The OTLP export is cross-origin and sends an Authorization header. These
+    // CORS headers let Chromium accept it; recheck them before adding browsers.
     await route.fulfill({
       body: '{}',
       headers: {

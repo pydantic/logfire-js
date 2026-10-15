@@ -328,7 +328,9 @@ layout routes add nothing to the template. Index routes end with a slash, for
 example `/projects/`. An unknown URL matches only the root route and reports
 `/*`. TanStack Router also matches the longest known prefix of a path. If no
 route matches all of `/projects/1/extra`, the helper reports
-`/projects/$projectId`.
+`/projects/$projectId`. A loader that revalidates cached data in the
+background reports the route of the page that is current when it runs, which
+can be a later page.
 
 The helper is tested with TanStack Router 1.170. The
 [TanStack Router example](https://github.com/pydantic/logfire-js/tree/main/examples/tanstack-router)
@@ -364,7 +366,10 @@ span that starts while they run gets the new route. The history base is not
 part of the template. An alias reports the path of the route that it aliases.
 A URL that no route matches reports `/*`, and a catch-all route reports its own
 path, for example `/:pathMatch(.*)*`. The development build of Vue Router logs
-a warning when the helper resolves a URL that no route matches.
+a warning when the helper resolves a URL that no route matches. A route's
+`beforeEnter` guard does not run when only its params change, such as from
+`/projects/1` to `/projects/2`, so load per-page data in a global
+`router.beforeResolve` guard or in the component.
 
 The helper is tested with Vue Router 5, and checked with 4. The
 [Vue Router example](https://github.com/pydantic/logfire-js/tree/main/examples/vue-router)
