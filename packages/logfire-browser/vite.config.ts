@@ -12,11 +12,14 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
     deps: {
       neverBundle: [/^@opentelemetry/u, /^node:/u, 'logfire'],
     },
-    entry: 'src/index.ts',
+    entry: {
+      index: 'src/index.ts',
+      'tanstack-router': 'src/tanstackRouter.ts',
+    },
     format: ['esm', 'cjs'],
     hooks: {
       'build:done': () => {
-        copyCjsDeclarations(['index'])
+        copyCjsDeclarations(['index', 'tanstack-router'])
       },
     },
     minify: true,

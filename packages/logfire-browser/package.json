@@ -40,6 +40,16 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./tanstack-router": {
+      "import": {
+        "types": "./dist/tanstack-router.d.ts",
+        "default": "./dist/tanstack-router.js"
+      },
+      "require": {
+        "types": "./dist/tanstack-router.d.cts",
+        "default": "./dist/tanstack-router.cjs"
+      }
     }
   },
   "scripts": {
@@ -82,6 +92,9 @@
     "@opentelemetry/sdk-trace-web": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
     "@pydantic/logfire-session-replay": "workspace:*",
+    "@tanstack/react-router": "^1.170.44",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
     "user-agent-data-types": "^0.4.2",
     "zone.js": "^0.15.1"
   },
