@@ -143,12 +143,14 @@ Use `getRouteName` for the application's normalized route template and
 for a browser session. Use `getUser` for the application's current user:
 
 ```js
+import { vueRouterRouteName } from '@pydantic/logfire-browser/vue-router'
+
 logfire.configure({
   traceUrl: '/client-traces',
   serviceName: 'browser-app',
   rum: {
     session: {
-      getRouteName: () => router.currentRoute.value.matched.at(-1)?.path,
+      getRouteName: vueRouterRouteName(router),
       getSessionAttributes: () => ({
         account_tier: currentAccount.tier,
         beta_user: currentUser?.isBeta,
@@ -251,20 +253,13 @@ Each recipe below returns one value for both `/acme/shop/agents` and
 
 #### React Router
 
-In data mode (`createBrowserRouter`), the router changes the URL and
-`router.state.matches` together. Join the matched route paths:
+Pass the route objects and React Router's `matchRoutes` to
+`reactRouterRouteName`. It reports the route template of the current URL, for
+example `/projects/:id`, and adds no dependency on a React Router version:
 
 ```ts
-function routeTemplate(matches: readonly { route: { path?: string } }[]): string {
-  let template = ''
-  for (const { route } of matches) {
-    if (route.path === undefined || route.path === '') {
-      continue
-    }
-    template = route.path.startsWith('/') ? route.path : `${template.replace(/\/$/, '')}/${route.path}`
-  }
-  return template === '' ? '/' : template
-}
+import { reactRouterRouteName } from '@pydantic/logfire-browser/react-router'
+import { createBrowserRouter, matchRoutes } from 'react-router'
 
 const router = createBrowserRouter(routes)
 
@@ -272,31 +267,27 @@ logfire.configureFrontend({
   ...frontendOptions,
   rum: {
     session: {
-      getRouteName: () => routeTemplate(router.state.matches),
+      getRouteName: reactRouterRouteName({ matchRoutes, routes }),
     },
   },
 })
 ```
 
-Pathless layout and index routes add nothing to the template, and a `*` route
-returns `/*`. Add a `*` route. Without one, React Router matches only the root
-route for an unknown URL, and the recipe returns `/`, the same value as the home
-page. In declarative mode, match the current location against the same route
-objects. If the routes are `<Route>` elements, build the objects with
-`createRoutesFromElements`:
+Pass the same `routes` as the router, and its `basename` as `basename` when it
+has one. In declarative mode, build the route objects from the `<Route>`
+elements with `createRoutesFromElements`. In React Router 6, import
+`matchRoutes` from `react-router-dom`.
 
-```ts
-import { createRoutesFromElements, matchRoutes } from 'react-router'
+The helper matches the URL path, not `router.state.matches`. A back or forward
+navigation changes the URL before its loaders finish, so a span that starts
+while they run gets the new route. Pathless layout and index routes add
+nothing to the template. A splat route keeps its `*`, for example `/files/*`.
+A URL that no route matches reports `/*`. The helper supports routers that
+keep the route in the URL path, such as `createBrowserRouter` and
+`<BrowserRouter>`. It does not support hash or memory routers, or routes that
+the application adds at runtime with `patchRoutesOnNavigation`.
 
-const routeObjects = createRoutesFromElements(routeElements)
-
-const getRouteName = () => {
-  const matches = matchRoutes(routeObjects, window.location.pathname)
-  return matches === null ? '/*' : routeTemplate(matches)
-}
-```
-
-If the router has a `basename`, pass it as the third argument of `matchRoutes`.
+The helper is tested with React Router 8, and checked with 6 and 7.
 
 #### TanStack Router
 
@@ -339,12 +330,37 @@ The helper is tested with TanStack Router 1.170.
 
 #### Vue Router
 
+Pass the router to `vueRouterRouteName`. It reports the route template of the
+current URL, for example `/:org/:project/agents`, and adds no dependency:
+
 ```ts
-const getRouteName = () => router.currentRoute.value.matched.at(-1)?.path
+import { vueRouterRouteName } from '@pydantic/logfire-browser/vue-router'
+import { createRouter, createWebHistory } from 'vue-router'
+
+const router = createRouter({ history: createWebHistory(), routes })
+
+logfire.configureFrontend({
+  ...frontendOptions,
+  rum: {
+    session: {
+      getRouteName: vueRouterRouteName(router),
+    },
+  },
+})
 ```
 
-The deepest matched record holds the full path, for example
-`/:org/:project/agents`.
+If the application creates the router after it configures Logfire, pass a
+function that returns the router, such as `vueRouterRouteName(() => router)`.
+
+The helper resolves the current history location, not `router.currentRoute`.
+A back or forward navigation changes the URL before its guards finish, so a
+span that starts while they run gets the new route. The history base is not
+part of the template. An alias reports the path of the route that it aliases.
+A URL that no route matches reports `/*`, and a catch-all route reports its own
+path, for example `/:pathMatch(.*)*`. The development build of Vue Router logs
+a warning when the helper resolves a URL that no route matches.
+
+The helper is tested with Vue Router 5, and checked with 4.
 
 #### Next.js Pages Router
 

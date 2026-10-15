@@ -41,6 +41,16 @@
         "default": "./dist/index.cjs"
       }
     },
+    "./react-router": {
+      "import": {
+        "types": "./dist/react-router.d.ts",
+        "default": "./dist/react-router.js"
+      },
+      "require": {
+        "types": "./dist/react-router.d.cts",
+        "default": "./dist/react-router.cjs"
+      }
+    },
     "./tanstack-router": {
       "import": {
         "types": "./dist/tanstack-router.d.ts",
@@ -49,6 +59,16 @@
       "require": {
         "types": "./dist/tanstack-router.d.cts",
         "default": "./dist/tanstack-router.cjs"
+      }
+    },
+    "./vue-router": {
+      "import": {
+        "types": "./dist/vue-router.d.ts",
+        "default": "./dist/vue-router.js"
+      },
+      "require": {
+        "types": "./dist/vue-router.d.cts",
+        "default": "./dist/vue-router.cjs"
       }
     }
   },
@@ -93,9 +113,13 @@
     "@opentelemetry/semantic-conventions": "catalog:",
     "@pydantic/logfire-session-replay": "workspace:*",
     "@tanstack/react-router": "^1.170.44",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
+    "@types/react": "^19.3.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router": "^8.4.0",
     "user-agent-data-types": "^0.4.2",
+    "vue": "^3.5.44",
+    "vue-router": "^5.4.0",
     "zone.js": "^0.15.1"
   },
   "files": [

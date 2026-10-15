@@ -28,15 +28,17 @@ test('browser guide SDK snippets typecheck against the built public API', () => 
   try {
     for (const page of pages) {
       for (const { language, code } of samples(page)) {
-        // Router/component recipes need their framework's compiler and application
-        // routes. Only SDK snippets are typechecked here; route helpers run below.
-        if (language === 'tsx' || /'react-router'|router\.state|router\.history|export function (?:setRouteName|getRouteName)/u.test(code))
-          continue
+        // Component recipes need their framework's compiler, and handwritten route
+        // recipes need application routes. Route helpers run below.
+        if (language === 'tsx' || /router\.state|router\.history|export function (?:setRouteName|getRouteName)/u.test(code)) continue
         const filename = resolve(scratch, `${page.replace(/[/.]/g, '-')}-sample-${checked}.ts`)
         const context = `
         ${code.includes('import * as logfire') ? '' : "import * as logfire from '@pydantic/logfire-browser'"}
         ${code.includes('const frontendOptions =') ? '' : 'declare const frontendOptions: { baseUrl: string; token: string }'}
-        ${code.includes('const router =') ? 'declare const routeTree: import("@tanstack/react-router").AnyRoute' : 'declare const router: { currentRoute: { value: { matched: { path: string }[] } } }'}
+        ${code.includes('const router =') ? '' : 'declare const router: import("vue-router").Router'}
+        ${code.includes("from '@tanstack/react-router'") ? 'declare const routeTree: import("@tanstack/react-router").AnyRoute' : ''}
+        ${code.includes("from 'react-router'") ? 'declare const routes: import("react-router").RouteObject[]' : ''}
+        ${code.includes("from 'vue-router'") ? 'declare const routes: import("vue-router").RouteRecordRaw[]' : ''}
         declare const currentAccount: { tier: string }
         declare const currentUser: { id: string; name: string; email: string; isBeta: boolean } | undefined
         declare const customProcessor: NonNullable<Parameters<typeof logfire.configureFrontend>[0]['spanProcessors']>[number]
@@ -60,8 +62,12 @@ test('browser guide SDK snippets typecheck against the built public API', () => 
         moduleResolution: 'Bundler',
         paths: {
           '@pydantic/logfire-browser': [resolve(root, 'packages/logfire-browser/dist/index.d.ts')],
+          '@pydantic/logfire-browser/react-router': [resolve(root, 'packages/logfire-browser/dist/react-router.d.ts')],
           '@pydantic/logfire-browser/tanstack-router': [resolve(root, 'packages/logfire-browser/dist/tanstack-router.d.ts')],
+          '@pydantic/logfire-browser/vue-router': [resolve(root, 'packages/logfire-browser/dist/vue-router.d.ts')],
           '@tanstack/react-router': [resolve(root, 'packages/logfire-browser/node_modules/@tanstack/react-router')],
+          'react-router': [resolve(root, 'packages/logfire-browser/node_modules/react-router/dist/production/index.d.ts')],
+          'vue-router': [resolve(root, 'packages/logfire-browser/node_modules/vue-router')],
           '@pydantic/logfire-session-replay/integration': [resolve(root, 'packages/logfire-session-replay/dist/integration.d.ts')],
         },
       },
@@ -75,7 +81,7 @@ test('browser guide SDK snippets typecheck against the built public API', () => 
     } catch (error) {
       assert.fail(error.stdout || error.message)
     }
-    assert.equal(checked, 27, 'Account for added or removed SDK samples explicitly')
+    assert.equal(checked, 28, 'Account for added or removed SDK samples explicitly')
   } finally {
     rmSync(scratch, { recursive: true, force: true })
   }
@@ -90,21 +96,6 @@ function routeHelper(code) {
   const outputText = stripTypeScriptTypes(source)
   return runInNewContext(outputText + '\nrouteTemplate')
 }
-
-test('React Router route recipe groups dynamic paths and handles layouts, index and catch-all routes', () => {
-  const code = samples('browser/identity.md').find(({ code }) => code.includes('router.state.matches'))?.code
-  assert.ok(code)
-  const template = routeHelper(code)
-  for (const [paths, expected] of [
-    [[], '/'],
-    [['/', undefined, ''], '/'],
-    [['/', ':org', ':project', 'agents'], '/:org/:project/agents'],
-    [['/', '*'], '/*'],
-    [['/', 'projects', '/settings'], '/settings'],
-  ]) {
-    assert.equal(template(paths.map((path) => ({ route: { path } }))), expected)
-  }
-})
 
 test('Next.js route recipe handles dynamic, encoded and catch-all segments with its documented limits', () => {
   const code = samples('browser/identity.md').find(({ code }) => code.includes('decodeSegment'))?.code
