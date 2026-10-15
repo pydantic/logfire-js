@@ -30,12 +30,29 @@ navigation:
             aliases:
               - typescript-sdk/packages/node
               - integrations/javascript/node
-          - page: Browser
-            path: packages/browser.md
-            slug: instrument/typescript/packages/browser
-            aliases:
-              - typescript-sdk/packages/browser
-              - integrations/javascript/browser
+          - section: Browser
+            contents:
+              - page: Get started
+                path: packages/browser.md
+                slug: instrument/typescript/packages/browser
+                aliases:
+                  - typescript-sdk/packages/browser
+                  - integrations/javascript/browser
+              - page: Errors and data volume
+                path: packages/browser/errors.md
+                slug: instrument/typescript/packages/browser/errors
+              - page: Routes, users, and sessions
+                path: packages/browser/identity.md
+                slug: instrument/typescript/packages/browser/identity
+              - page: Browser performance
+                path: packages/browser/performance.md
+                slug: instrument/typescript/packages/browser/performance
+              - page: Session replay
+                path: packages/browser/replay.md
+                slug: instrument/typescript/packages/browser/replay
+              - page: Advanced configuration
+                path: packages/browser/advanced.md
+                slug: instrument/typescript/packages/browser/advanced
           - page: Cloudflare Workers
             path: packages/cloudflare.md
             slug: instrument/typescript/packages/cloudflare
@@ -47,6 +64,10 @@ navigation:
         slug: instrument/typescript/frontend-custom-domain
         aliases:
           - typescript-sdk/frontend-custom-domain
+      - page: Python telemetry proxy
+        path: python-telemetry-proxy.md
+        slug: instrument/typescript/python-telemetry-proxy
+        hidden: true
       - section: Frameworks & Runtimes
         contents:
           - page: Express
