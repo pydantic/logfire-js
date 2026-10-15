@@ -252,6 +252,24 @@ describe('tanStackRouterRouteName', () => {
     expect(matched).toEqual(['/', '/projects/1', '/projects/1'])
   })
 
+  it.each(['/', '/app'])('reports the home page of a root route without an index route under basepath %s', async (basepath) => {
+    const root = createRootRoute({})
+    const about = createRoute({ getParentRoute: () => root, path: 'about' })
+    const prefix = basepath === '/' ? '' : basepath
+    const router = createRouter({
+      basepath,
+      history: createMemoryHistory({ initialEntries: [`${prefix}/`] }),
+      routeTree: root.addChildren([about]),
+    })
+    const getRouteName = tanStackRouterRouteName(router)
+
+    expect(getRouteName()).toBe('/')
+    await router.navigate({ href: '/about' })
+    expect(getRouteName()).toBe('/about')
+    await router.navigate({ href: '/unknown' })
+    expect(getRouteName()).toBe('/*')
+  })
+
   it('reports no route until a lazily created router exists', () => {
     const app: { router?: ReturnType<typeof createTestRouter>['router'] } = {}
     const getRouteName = tanStackRouterRouteName(() => app.router)

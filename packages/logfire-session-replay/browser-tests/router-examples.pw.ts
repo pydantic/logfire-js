@@ -122,10 +122,11 @@ for (const example of examples) {
     )
     expect(backNavigationFetch && page(backNavigationFetch)).toEqual(['/projects/2', example.project])
 
+    // A span without a page path or route also counts, so a regression that
+    // drops either attribute fails here.
     const mismatches = spans
-      .filter((span) => span.attributes['logfire.page.route'] !== undefined && span.attributes['logfire.page.url.path'] !== undefined)
       .map((span) => ({ name: span.name, page: page(span) }))
-      .filter(({ page: [path, route] }) => path !== undefined && route !== expectedRoute(path))
+      .filter(({ page: [path, route] }) => path === undefined || route !== expectedRoute(path))
     expect(mismatches).toEqual([])
   })
 }

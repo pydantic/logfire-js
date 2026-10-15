@@ -200,7 +200,8 @@ keep the route in the URL path, such as `createBrowserRouter` and
 `<BrowserRouter>`. It does not support hash or memory routers, or routes that
 the application adds at runtime with `patchRoutesOnNavigation`.
 
-The helper is tested with React Router 8, and checked with 6 and 7. The
+The helper is tested with React Router 7 and 8. React Router 6 has the same
+`matchRoutes` API and is expected to work, but it is not tested. The
 [React Router example](https://github.com/pydantic/logfire-js/tree/main/examples/react-router)
 is a runnable app that uses it.
 
@@ -208,8 +209,8 @@ is a runnable app that uses it.
 
 Pass the router to `tanStackRouterRouteName`. It reports the route template
 that the router matches for the current URL, for example
-`/projects/$projectId`. It works with the React, Solid, and Vue routers, and
-adds no dependency:
+`/projects/$projectId`. It reads only the router core that the React, Solid,
+and Vue routers share, and adds no dependency:
 
 ```ts
 import { tanStackRouterRouteName } from '@pydantic/logfire-browser/tanstack-router'
@@ -243,7 +244,9 @@ route matches all of `/projects/1/extra`, the helper reports
 background reports the route of the page that is current when it runs, which
 can be a later page.
 
-The helper is tested with TanStack Router 1.170. The
+The helper is tested with TanStack's React router 1.170. The Solid and Vue
+routers share its router core and are expected to work, but they are not
+tested. The
 [TanStack Router example](https://github.com/pydantic/logfire-js/tree/main/examples/tanstack-router)
 is a runnable app that uses it.
 
@@ -282,7 +285,7 @@ a warning when the helper resolves a URL that no route matches. A route's
 `/projects/1` to `/projects/2`, so load per-page data in a global
 `router.beforeResolve` guard or in the component.
 
-The helper is tested with Vue Router 5, and checked with 4. The
+The helper is tested with Vue Router 4 and 5. The
 [Vue Router example](https://github.com/pydantic/logfire-js/tree/main/examples/vue-router)
 is a runnable app that uses it.
 

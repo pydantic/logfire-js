@@ -117,9 +117,11 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router": "^8.4.0",
+    "react-router-7": "npm:react-router@^7.18.4",
     "user-agent-data-types": "^0.4.2",
     "vue": "^3.5.44",
     "vue-router": "^5.4.0",
+    "vue-router-4": "npm:vue-router@^4.6.4",
     "zone.js": "^0.15.1"
   },
   "files": [

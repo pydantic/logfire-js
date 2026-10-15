@@ -9,6 +9,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const browserPackageName = '@pydantic/logfire-browser'
 const replayPackageName = '@pydantic/logfire-session-replay'
+// Subpath exports of the browser package and the function each one exports.
+const browserSubpaths = [
+  ['react-router', 'reactRouterRouteName'],
+  ['tanstack-router', 'tanStackRouterRouteName'],
+  ['vue-router', 'vueRouterRouteName'],
+]
 const toolVersions = {
   '@types/node': '22.19.5',
   typescript: '6.0.3',
@@ -239,6 +245,11 @@ function assertTarEntries(entries, name) {
     'package/dist/index.js',
     'package/package.json',
   ]
+  if (name === browserPackageName) {
+    for (const [subpath] of browserSubpaths) {
+      required.push(...['cjs', 'd.cts', 'd.ts', 'js'].map((extension) => `package/dist/${subpath}.${extension}`))
+    }
+  }
   for (const entry of required) {
     check(entries.includes(entry), `${name} tarball is missing ${entry}`)
   }
@@ -271,6 +282,13 @@ function assertManifest(manifest, name, expectedVersion, replayVersion) {
       `browser optional replay peer is ${String(replayPeer)}, expected ${[...acceptedReplayPeers].join(' or ')}`
     )
     check(manifest.peerDependenciesMeta?.[replayPackageName]?.optional === true, 'browser replay peer is not optional')
+    for (const [subpath] of browserSubpaths) {
+      const entry = manifest.exports?.[`./${subpath}`]
+      check(entry?.import?.default === `./dist/${subpath}.js`, `${name} ./${subpath} import export is incorrect`)
+      check(entry?.import?.types === `./dist/${subpath}.d.ts`, `${name} ./${subpath} import types export is incorrect`)
+      check(entry?.require?.default === `./dist/${subpath}.cjs`, `${name} ./${subpath} require export is incorrect`)
+      check(entry?.require?.types === `./dist/${subpath}.d.cts`, `${name} ./${subpath} require types export is incorrect`)
+    }
   }
 }
 
@@ -336,6 +354,14 @@ async function createConsumer(directory, dependencies, includeTooling) {
 
 async function writeNodeSmokeFiles(directory, includeReplay) {
   const rootLiteral = JSON.stringify(directory)
+  const consumerLiteral = JSON.stringify(includeReplay ? 'with-replay' : 'without-replay')
+  const subpathAssertions = browserSubpaths
+    .map(([subpath, exportName]) => {
+      const specifier = JSON.stringify(`${browserPackageName}/${subpath}`)
+      return `assert.equal(typeof (await import(${specifier})).${exportName}, 'function')
+resolutions.push({ consumer: ${consumerLiteral}, path: import.meta.resolve(${specifier}) })`
+    })
+    .join('\n')
   const replayAssertions = includeReplay
     ? `
 const replay = await import(${JSON.stringify(replayPackageName)})
@@ -352,7 +378,8 @@ import { realpath } from 'node:fs/promises'
 const browser = await import(${JSON.stringify(browserPackageName)})
 assert.equal(typeof browser.configure, 'function')
 assert.equal(typeof browser.getBrowserSessionId, 'function')
-const resolutions = [{ consumer: ${JSON.stringify(includeReplay ? 'with-replay' : 'without-replay')}, path: import.meta.resolve(${JSON.stringify(browserPackageName)}) }]
+const resolutions = [{ consumer: ${consumerLiteral}, path: import.meta.resolve(${JSON.stringify(browserPackageName)}) }]
+${subpathAssertions}
 ${replayAssertions}
 for (const item of resolutions) item.path = await realpath(new URL(item.path))
 console.log(JSON.stringify({ consumerRoot: ${rootLiteral}, resolutions }))
@@ -369,9 +396,21 @@ const browser = require(${JSON.stringify(browserPackageName)})
 const replay = require(${JSON.stringify(replayPackageName)})
 assert.equal(typeof browser.configure, 'function')
 assert.equal(typeof replay.startSessionReplay, 'function')
+${browserSubpaths
+  .map(
+    ([subpath, exportName]) =>
+      `assert.equal(typeof require(${JSON.stringify(`${browserPackageName}/${subpath}`)}).${exportName}, 'function')`
+  )
+  .join('\n')}
 console.log(JSON.stringify({ resolutions: [
   { consumer: 'with-replay', path: fs.realpathSync(require.resolve(${JSON.stringify(browserPackageName)})) },
-  { consumer: 'with-replay', path: fs.realpathSync(require.resolve(${JSON.stringify(replayPackageName)})) }
+  { consumer: 'with-replay', path: fs.realpathSync(require.resolve(${JSON.stringify(replayPackageName)})) },
+${browserSubpaths
+  .map(
+    ([subpath]) =>
+      `  { consumer: 'with-replay', path: fs.realpathSync(require.resolve(${JSON.stringify(`${browserPackageName}/${subpath}`)})) },`
+  )
+  .join('\n')}
 ] }))
 `
   )
@@ -385,6 +424,25 @@ const cleanup: () => Promise<void> = configure({ traceUrl: '/traces' })
 void cleanup
 void replay
 void startSessionReplay
+${browserSubpaths.map(([subpath, exportName]) => `import { ${exportName} } from ${JSON.stringify(`${browserPackageName}/${subpath}`)}`).join('\n')}
+const routeNames: (() => string | undefined)[] = [
+  reactRouterRouteName({ matchRoutes: () => null, routes: [] }),
+  tanStackRouterRouteName(() => undefined),
+  vueRouterRouteName(() => undefined),
+]
+void routeNames
+`
+  )
+  // A .cts file resolves the require condition, so it checks the .d.cts types.
+  await writeFile(
+    join(directory, 'types.cts'),
+    `${browserSubpaths.map(([subpath, exportName]) => `import ${exportName}Module = require(${JSON.stringify(`${browserPackageName}/${subpath}`)})`).join('\n')}
+const cjsRouteNames: (() => string | undefined)[] = [
+  reactRouterRouteNameModule.reactRouterRouteName({ matchRoutes: () => null, routes: [] }),
+  tanStackRouterRouteNameModule.tanStackRouterRouteName(() => undefined),
+  vueRouterRouteNameModule.vueRouterRouteName(() => undefined),
+]
+void cjsRouteNames
 `
   )
   await writeFile(
@@ -399,7 +457,7 @@ void startSessionReplay
           strict: true,
           target: 'ES2024',
         },
-        include: ['types.ts'],
+        include: ['types.ts', 'types.cts'],
       },
       null,
       2

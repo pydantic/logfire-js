@@ -9,7 +9,8 @@ export interface TanStackRouterLike<TLocation = unknown> {
   matchRoutes(pathname: string, search?: unknown): readonly { fullPath: string; routeId: string }[]
 }
 
-// TanStack's `rootRouteId`. A URL that no route matches matches only the root.
+// TanStack's `rootRouteId`. A URL that no route matches matches only the root,
+// and so does `/` when the root route renders the home page itself.
 const ROOT_ROUTE_ID = '__root__'
 // The fixed name the route name contract asks for, so not-found pages group
 // together without reporting their URL.
@@ -43,7 +44,8 @@ export function tanStackRouterRouteName<TLocation>(
       lastRouter = current
       lastPathname = pathname
       const match = current.matchRoutes(pathname, search).at(-1)
-      lastRoute = match === undefined || match.routeId === ROOT_ROUTE_ID ? NOT_FOUND_ROUTE : match.fullPath
+      const unmatched = match === undefined || (match.routeId === ROOT_ROUTE_ID && pathname !== '/')
+      lastRoute = unmatched ? NOT_FOUND_ROUTE : match.fullPath
     }
     return lastRoute
   }
