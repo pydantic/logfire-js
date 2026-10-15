@@ -8,6 +8,7 @@ import { USER_AGENT } from './userAgent'
 import { LogfireConsoleSpanExporter } from './LogfireConsoleSpanExporter'
 import type { ConsoleConfig } from './consoleOptions'
 import { resolveConsoleOptions } from './consoleOptions'
+import { RemovePendingSpansExporter } from './RemovePendingSpansExporter'
 import { VoidTraceExporter } from './VoidTraceExporter'
 
 export function logfireSpanProcessor(consoleConfig: ConsoleConfig | undefined): SpanProcessor {
@@ -30,11 +31,13 @@ export function traceExporter(): SpanExporter {
     throw new Error('Logfire token is required')
   }
 
-  return new OTLPTraceExporter({
-    headers: logfireConfig.authorizationHeaders,
-    url: logfireConfig.traceExporterUrl,
-    userAgent: USER_AGENT,
-  })
+  return new RemovePendingSpansExporter(
+    new OTLPTraceExporter({
+      headers: logfireConfig.authorizationHeaders,
+      url: logfireConfig.traceExporterUrl,
+      userAgent: USER_AGENT,
+    })
+  )
 }
 
 export class LogfireSpanProcessor implements SpanProcessor {
