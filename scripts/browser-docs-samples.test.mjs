@@ -30,13 +30,13 @@ test('browser guide SDK snippets typecheck against the built public API', () => 
       for (const { language, code } of samples(page)) {
         // Router/component recipes need their framework's compiler and application
         // routes. Only SDK snippets are typechecked here; route helpers run below.
-        if (language === 'tsx' || /react-router|router\.state|router\.history|export function (?:setRouteName|getRouteName)/u.test(code))
+        if (language === 'tsx' || /'react-router'|router\.state|router\.history|export function (?:setRouteName|getRouteName)/u.test(code))
           continue
         const filename = resolve(scratch, `${page.replace(/[/.]/g, '-')}-sample-${checked}.ts`)
         const context = `
         ${code.includes('import * as logfire') ? '' : "import * as logfire from '@pydantic/logfire-browser'"}
         ${code.includes('const frontendOptions =') ? '' : 'declare const frontendOptions: { baseUrl: string; token: string }'}
-        declare const router: { currentRoute: { value: { matched: { path: string }[] } } }
+        ${code.includes('const router =') ? 'declare const routeTree: import("@tanstack/react-router").AnyRoute' : 'declare const router: { currentRoute: { value: { matched: { path: string }[] } } }'}
         declare const currentAccount: { tier: string }
         declare const currentUser: { id: string; name: string; email: string; isBeta: boolean } | undefined
         declare const customProcessor: NonNullable<Parameters<typeof logfire.configureFrontend>[0]['spanProcessors']>[number]
@@ -60,6 +60,8 @@ test('browser guide SDK snippets typecheck against the built public API', () => 
         moduleResolution: 'Bundler',
         paths: {
           '@pydantic/logfire-browser': [resolve(root, 'packages/logfire-browser/dist/index.d.ts')],
+          '@pydantic/logfire-browser/tanstack-router': [resolve(root, 'packages/logfire-browser/dist/tanstack-router.d.ts')],
+          '@tanstack/react-router': [resolve(root, 'packages/logfire-browser/node_modules/@tanstack/react-router')],
           '@pydantic/logfire-session-replay/integration': [resolve(root, 'packages/logfire-session-replay/dist/integration.d.ts')],
         },
       },
@@ -73,7 +75,7 @@ test('browser guide SDK snippets typecheck against the built public API', () => 
     } catch (error) {
       assert.fail(error.stdout || error.message)
     }
-    assert.equal(checked, 26, 'Account for added or removed SDK samples explicitly')
+    assert.equal(checked, 27, 'Account for added or removed SDK samples explicitly')
   } finally {
     rmSync(scratch, { recursive: true, force: true })
   }
