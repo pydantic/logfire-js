@@ -215,22 +215,33 @@ If the router has a `basename`, pass it as the third argument of `matchRoutes`.
 Use the `fullPath` of the deepest match. Do not use `routeId`, because it
 contains the ids of pathless layout routes. TanStack Router changes the URL
 before its loaders finish, while `router.state.matches` still holds the
-previous route. Match the current path instead, and cache the result for each
-path:
+previous route. Match the current location instead, and cache the result for
+each path. `router.parseLocation` removes the router's `basepath` and applies
+its URL rewrites, so the path matches the route tree:
 
 ```ts
+import { rootRouteId } from '@tanstack/react-router'
+
 let lastPathname: string | undefined
 let lastRoute: string | undefined
 
 const getRouteName = () => {
-  const { pathname } = router.history.location
+  const { pathname, search } = router.parseLocation(router.history.location)
   if (pathname !== lastPathname) {
     lastPathname = pathname
-    lastRoute = router.matchRoutes(pathname).at(-1)?.fullPath
+    const match = router.matchRoutes(pathname, search).at(-1)
+    lastRoute = match === undefined || match.routeId === rootRouteId ? undefined : match.fullPath
   }
   return lastRoute
 }
 ```
+
+For Vue or Solid, import `rootRouteId` from `@tanstack/vue-router` or
+`@tanstack/solid-router`. An unknown URL matches only the root route, so the
+recipe returns no route instead of `/`, the same value as the home page.
+TanStack Router also matches the longest known prefix of a path. If no route
+matches all of `/projects/1/extra`, the recipe returns `/projects/$projectId`.
+Index routes end with a slash, for example `/projects/`.
 
 ### Vue Router
 
