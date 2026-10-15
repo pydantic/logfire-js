@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { defineConfig } from '@playwright/test'
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
-const fixtureServers = [
+const fixtureServers: { command: string; env?: Record<string, string>; url: string }[] = [
   {
     command: 'pnpm exec vp dev --config packages/logfire-session-replay/test-fixtures/delivery/vite.config.ts',
     url: 'http://127.0.0.1:4177/',
@@ -24,6 +24,12 @@ const fixtureServers = [
     command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/errors-profile/vite.config.ts',
     url: 'http://127.0.0.1:4184/receipts',
   },
+  ...['react-router', 'tanstack-router', 'vue-router'].map((example, index) => ({
+    command: `pnpm exec vp dev --config examples/${example}/vite.config.ts`,
+    // router-examples.pw.ts answers for this origin, so the examples export locally.
+    env: { VITE_LOGFIRE_BASE_URL: 'http://logfire.test', VITE_LOGFIRE_TOKEN: 'router-example-token' },
+    url: `http://127.0.0.1:${String(4186 + index)}/`,
+  })),
 ]
 
 // The recording identity flows also run in Firefox and WebKit when the environment asks for the
@@ -53,8 +59,9 @@ export default defineConfig({
       grep: /recording identity/u,
     })),
   ],
-  webServer: fixtureServers.map(({ command, url }) => ({
+  webServer: fixtureServers.map(({ command, env, url }) => ({
     command,
+    ...(env === undefined ? {} : { env }),
     cwd: repositoryRoot,
     reuseExistingServer: false,
     timeout: 30_000,

@@ -34,6 +34,9 @@ jobs:
       - name: TypeScript comparison
         run: vp run --filter "./packages/*" typecheck
 
+      - name: Router examples typecheck
+        run: vp run --filter "./examples/*-router" typecheck
+
       - name: Documentation examples
         run: node --test scripts/browser-docs*.test.mjs
 

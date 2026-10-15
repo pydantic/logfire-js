@@ -289,7 +289,9 @@ keep the route in the URL path, such as `createBrowserRouter` and
 `<BrowserRouter>`. It does not support hash or memory routers, or routes that
 the application adds at runtime with `patchRoutesOnNavigation`.
 
-The helper is tested with React Router 8, and checked with 6 and 7.
+The helper is tested with React Router 8, and checked with 6 and 7. The
+[React Router example](https://github.com/pydantic/logfire-js/tree/main/examples/react-router)
+is a runnable app that uses it.
 
 #### TanStack Router
 
@@ -328,7 +330,9 @@ example `/projects/`. An unknown URL matches only the root route and reports
 route matches all of `/projects/1/extra`, the helper reports
 `/projects/$projectId`.
 
-The helper is tested with TanStack Router 1.170.
+The helper is tested with TanStack Router 1.170. The
+[TanStack Router example](https://github.com/pydantic/logfire-js/tree/main/examples/tanstack-router)
+is a runnable app that uses it.
 
 #### Vue Router
 
@@ -362,7 +366,9 @@ A URL that no route matches reports `/*`, and a catch-all route reports its own
 path, for example `/:pathMatch(.*)*`. The development build of Vue Router logs
 a warning when the helper resolves a URL that no route matches.
 
-The helper is tested with Vue Router 5, and checked with 4.
+The helper is tested with Vue Router 5, and checked with 4. The
+[Vue Router example](https://github.com/pydantic/logfire-js/tree/main/examples/vue-router)
+is a runnable app that uses it.
 
 #### Next.js Pages Router
 
