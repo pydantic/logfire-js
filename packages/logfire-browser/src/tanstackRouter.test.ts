@@ -2,7 +2,16 @@
  * @vitest-environment jsdom
  */
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-web'
-import { createRootRoute, createRoute, createRouter, notFound, redirect } from '@tanstack/react-router'
+import {
+  createHashHistory,
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  notFound,
+  redirect,
+} from '@tanstack/react-router'
+import type { RouterHistory } from '@tanstack/react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
 import { clearConfiguredBrowserSessionForTests } from './browserSession'
@@ -25,7 +34,7 @@ vi.mock('@opentelemetry/exporter-trace-otlp-http', () => ({
 // Each browser history patches window.history, so remove them after each test.
 const histories: { destroy: () => void }[] = []
 
-function createTestRouter(basepath = '/') {
+function createTestRouter(basepath = '/', history?: RouterHistory) {
   let releaseLoader: (() => void) | undefined
   const root = createRootRoute({})
   const home = createRoute({ getParentRoute: () => root, path: '/' })
@@ -75,7 +84,7 @@ function createTestRouter(basepath = '/') {
     legacy,
     search,
   ])
-  const router = createRouter({ basepath, routeTree })
+  const router = createRouter({ basepath, routeTree, ...(history === undefined ? {} : { history }) })
   histories.push(router.history)
   // The framework's router provider loads the router on every history change.
   router.history.subscribe(() => {
@@ -200,6 +209,20 @@ describe('tanStackRouterRouteName', () => {
       expect(window.location.pathname).toBe('/settings')
     })
 
+    expect(getRouteName()).toBe('/settings')
+  })
+
+  it.each([
+    ['hash', () => createHashHistory()],
+    ['memory', () => createMemoryHistory({ initialEntries: ['/projects/1'] })],
+  ])('reports routes with %s history', async (_name, createHistory) => {
+    window.history.replaceState(null, '', '/#/projects/1')
+    const { router } = createTestRouter('/', createHistory())
+    const getRouteName = tanStackRouterRouteName(router)
+
+    expect(getRouteName()).toBe('/projects/$projectId')
+    await router.load()
+    await router.navigate({ href: '/settings' })
     expect(getRouteName()).toBe('/settings')
   })
 
