@@ -191,7 +191,9 @@ elements with `createRoutesFromElements`. In React Router 6, import
 
 The helper matches the URL path, not `router.state.matches`. A back or forward
 navigation changes the URL before its loaders finish, so a span that starts
-while they run gets the new route. Pathless layout and index routes add
+while they run gets the new route. Other navigations change the URL after
+their loaders finish, so spans that start while those loaders run belong to
+the previous page, with its URL and route. Pathless layout and index routes add
 nothing to the template. A splat route keeps its `*`, for example `/files/*`.
 A URL that no route matches reports `/*`. The helper supports routers that
 keep the route in the URL path, such as `createBrowserRouter` and
