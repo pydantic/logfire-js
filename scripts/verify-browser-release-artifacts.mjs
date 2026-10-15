@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { startChromeDevTools } from './chrome-devtools-browser.mjs'
+
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const browserPackageName = '@pydantic/logfire-browser'
 const replayPackageName = '@pydantic/logfire-session-replay'
@@ -478,43 +480,51 @@ async function verifyBrowserConsumers(fixtureSourceRoot, artifacts, options, roo
 
   const vp = join(consumerRoot, 'node_modules/.bin/vp')
   const receipts = {}
-  receipts.selfObservation = await runFixture({
-    commands,
-    config: join(fixtureRoot, 'self-observation/vite.config.ts'),
-    cwd: consumerRoot,
-    openUrl: 'http://127.0.0.1:4175/nested/page/',
-    port: 4175,
-    session: sessionName('self', options),
-    verify: [process.execPath, [join(fixtureRoot, 'self-observation/verify.mjs')]],
-    vp,
-    waitExpression: "['observing', 'failed'].includes(window.__logfireSelfObservation?.phase)",
-    cleanupExpression: '(async () => { await window.__logfireSelfObservation.cleanup() })()',
-  })
-  const privacy = await runPrivacyFixtures({
-    commands,
-    config: join(fixtureRoot, 'privacy-defaults/vite.config.ts'),
-    cwd: consumerRoot,
-    options,
-    verifyPath: join(fixtureRoot, 'privacy-defaults/verify.mjs'),
-    vp,
-  })
-  receipts.privacyDefault = privacy.default
-  receipts.privacyOptIn = privacy.optIn
-  commands.push(
-    run(join(consumerRoot, 'node_modules/.bin/tsc'), ['--project', join(fixtureRoot, 'optional-feature-api/tsconfig.json')], consumerRoot)
-      .record
-  )
-  receipts.optionalFeatureApi = await runFixture({
-    commands,
-    config: join(fixtureRoot, 'optional-feature-api/vite.config.ts'),
-    cwd: consumerRoot,
-    openUrl: 'http://127.0.0.1:4179/',
-    port: 4179,
-    session: sessionName('optional', options),
-    verify: [process.execPath, [join(fixtureRoot, 'optional-feature-api/verify.mjs')]],
-    vp,
-    waitExpression: "['complete', 'failed'].includes(window.__logfireOptionalFeatureApi?.phase)",
-  })
+  const browser = await startChromeDevTools()
+  try {
+    receipts.selfObservation = await runFixture({
+      browser,
+      commands,
+      config: join(fixtureRoot, 'self-observation/vite.config.ts'),
+      cwd: consumerRoot,
+      openUrl: 'http://127.0.0.1:4175/nested/page/',
+      port: 4175,
+      session: sessionName('self', options),
+      verify: [process.execPath, [join(fixtureRoot, 'self-observation/verify.mjs')]],
+      vp,
+      waitExpression: "['observing', 'failed'].includes(window.__logfireSelfObservation?.phase)",
+      cleanupExpression: '(async () => { await window.__logfireSelfObservation.cleanup() })()',
+    })
+    const privacy = await runPrivacyFixtures({
+      browser,
+      commands,
+      config: join(fixtureRoot, 'privacy-defaults/vite.config.ts'),
+      cwd: consumerRoot,
+      options,
+      verifyPath: join(fixtureRoot, 'privacy-defaults/verify.mjs'),
+      vp,
+    })
+    receipts.privacyDefault = privacy.default
+    receipts.privacyOptIn = privacy.optIn
+    commands.push(
+      run(join(consumerRoot, 'node_modules/.bin/tsc'), ['--project', join(fixtureRoot, 'optional-feature-api/tsconfig.json')], consumerRoot)
+        .record
+    )
+    receipts.optionalFeatureApi = await runFixture({
+      browser,
+      commands,
+      config: join(fixtureRoot, 'optional-feature-api/vite.config.ts'),
+      cwd: consumerRoot,
+      openUrl: 'http://127.0.0.1:4179/',
+      port: 4179,
+      session: sessionName('optional', options),
+      verify: [process.execPath, [join(fixtureRoot, 'optional-feature-api/verify.mjs')]],
+      vp,
+      waitExpression: "['complete', 'failed'].includes(window.__logfireOptionalFeatureApi?.phase)",
+    })
+  } finally {
+    await browser.close()
+  }
   return { commands, receipts }
 }
 
@@ -578,7 +588,7 @@ async function copyFixture(sourceRoot, destinationRoot, name) {
   }
 }
 
-async function runFixture({ cleanupExpression, commands, config, cwd, openUrl, port, session, verify, vp, waitExpression }) {
+async function runFixture({ browser, cleanupExpression, commands, config, cwd, openUrl, port, session, verify, vp, waitExpression }) {
   const server = startFixtureServer(vp, config, port, cwd)
   let output = ''
   server.stdout.on('data', (chunk) => {
@@ -589,21 +599,13 @@ async function runFixture({ cleanupExpression, commands, config, cwd, openUrl, p
   })
   try {
     await waitForServer(`http://127.0.0.1:${String(port)}/`, server, () => output)
-    commands.push(run('agent-browser', ['--session', session, 'open', openUrl], cwd).record)
-    commands.push(run('agent-browser', ['--session', session, 'wait', '--fn', waitExpression], cwd).record)
-    const verified = run(verify[0], verify[1], cwd)
-    commands.push(verified.record)
-    if (cleanupExpression !== undefined) {
-      commands.push(run('agent-browser', ['--session', session, 'eval', cleanupExpression], cwd).record)
-    }
-    return parseJsonOutput(verified.stdout, `${session} verifier`)
+    return await runBrowserScenario({ browser, cleanupExpression, commands, cwd, openUrl, session, verify, waitExpression })
   } finally {
-    runAllowFailure('agent-browser', ['--session', session, 'close'], cwd)
     await stopProcessTree(server)
   }
 }
 
-async function runPrivacyFixtures({ commands, config, cwd, options, verifyPath, vp }) {
+async function runPrivacyFixtures({ browser, commands, config, cwd, options, verifyPath, vp }) {
   const port = 4178
   const server = startFixtureServer(vp, config, port, cwd)
   let output = ''
@@ -615,7 +617,8 @@ async function runPrivacyFixtures({ commands, config, cwd, options, verifyPath, 
   })
   try {
     await waitForServer(`http://127.0.0.1:${String(port)}/`, server, () => output)
-    const defaultReceipt = runBrowserScenario({
+    const defaultReceipt = await runBrowserScenario({
+      browser,
       commands,
       cwd,
       openUrl: 'http://127.0.0.1:4178/default/?page_secret=default-page-secret#default-fragment-secret',
@@ -624,7 +627,8 @@ async function runPrivacyFixtures({ commands, config, cwd, options, verifyPath, 
       waitExpression: "['complete', 'failed'].includes(window.__logfirePrivacyDefaults?.phase)",
     })
     await new Promise((resolve_) => setTimeout(resolve_, 1_000))
-    const optInReceipt = runBrowserScenario({
+    const optInReceipt = await runBrowserScenario({
+      browser,
       commands,
       cwd,
       openUrl: 'http://127.0.0.1:4178/opt-in/?page_secret=opt-in-page-secret#opt-in-fragment-secret',
@@ -638,19 +642,28 @@ async function runPrivacyFixtures({ commands, config, cwd, options, verifyPath, 
   }
 }
 
-function runBrowserScenario({ cleanupExpression, commands, cwd, openUrl, session, verify, waitExpression }) {
+async function runBrowserScenario({ browser, cleanupExpression, commands, cwd, openUrl, session, verify, waitExpression }) {
+  const page = await browser.openPage(session, openUrl)
+  commands.push(browserRecord(cwd, 'new_page', session, openUrl))
   try {
-    commands.push(run('agent-browser', ['--session', session, 'open', openUrl], cwd).record)
-    commands.push(run('agent-browser', ['--session', session, 'wait', '--fn', waitExpression], cwd).record)
+    await page.waitFor(waitExpression)
+    commands.push(browserRecord(cwd, 'evaluate_script', session, `wait for ${waitExpression}`))
     const verified = run(verify[0], verify[1], cwd)
     commands.push(verified.record)
     if (cleanupExpression !== undefined) {
-      commands.push(run('agent-browser', ['--session', session, 'eval', cleanupExpression], cwd).record)
+      await page.evaluate(`async () => await (${cleanupExpression})`)
+      commands.push(browserRecord(cwd, 'evaluate_script', session, cleanupExpression))
     }
     return parseJsonOutput(verified.stdout, `${session} verifier`)
   } finally {
-    commands.push(run('agent-browser', ['--session', session, 'close'], cwd).record)
+    await page.close()
+    commands.push(browserRecord(cwd, 'close_page', session))
   }
+}
+
+// Evidence records keep the shape of the command records that run() returns.
+function browserRecord(cwd, tool, ...arguments_) {
+  return { args: [tool, ...arguments_], command: 'chrome-devtools-mcp', cwd: relative(repositoryRoot, cwd) || '.', status: 0 }
 }
 
 function startFixtureServer(vp, config, port, cwd) {
@@ -772,13 +785,12 @@ function equalSourceStates(left, right) {
 }
 
 function run(executable, arguments_, cwd, options = {}) {
-  const timeout = basenameForError(executable) === 'agent-browser' ? 60_000 : 10 * 60_000
   const result = spawnSync(executable, arguments_, {
     cwd,
     encoding: 'utf8',
     env: options.env ?? { ...process.env, CI: 'true' },
     maxBuffer: 32 * 1024 * 1024,
-    timeout,
+    timeout: 10 * 60_000,
   })
   if (result.error !== undefined || result.status !== 0) {
     throw new Error(
@@ -807,10 +819,6 @@ async function runNodeSmoke(filename, cwd) {
       env: { CI: 'true' },
     }
   )
-}
-
-function runAllowFailure(executable, arguments_, cwd) {
-  return spawnSync(executable, arguments_, { cwd, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 })
 }
 
 function runBytes(executable, arguments_, cwd) {
