@@ -15,6 +15,8 @@ const pages = [
   'browser/performance.md',
   'browser/replay.md',
   'browser/advanced.md',
+  '../../packages/logfire-browser/.agents/skills/logfire-frontend/references/setup.md',
+  '../../packages/logfire-browser/.agents/skills/logfire-frontend/references/capture-profiles.md',
 ]
 
 function samples(page) {
@@ -34,6 +36,7 @@ test('browser guide SDK snippets typecheck against the built public API', () => 
         const filename = resolve(scratch, `${page.replace(/[/.]/g, '-')}-sample-${checked}.ts`)
         const context = `
         ${code.includes('import * as logfire') ? '' : "import * as logfire from '@pydantic/logfire-browser'"}
+        ${code.includes('import { sessionReplayIntegration }') ? '' : "import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'"}
         ${code.includes('const frontendOptions =') ? '' : 'declare const frontendOptions: { baseUrl: string; token: string }'}
         ${code.includes('const router =') ? '' : 'declare const router: import("vue-router").Router'}
         ${code.includes("from '@tanstack/react-router'") ? 'declare const routeTree: import("@tanstack/react-router").AnyRoute' : ''}
@@ -61,6 +64,7 @@ test('browser guide SDK snippets typecheck against the built public API', () => 
         module: 'ESNext',
         moduleResolution: 'Bundler',
         paths: {
+          '@opentelemetry/api': [resolve(root, 'packages/logfire-browser/node_modules/@opentelemetry/api')],
           '@pydantic/logfire-browser': [resolve(root, 'packages/logfire-browser/dist/index.d.ts')],
           '@pydantic/logfire-browser/react-router': [resolve(root, 'packages/logfire-browser/dist/react-router.d.ts')],
           '@pydantic/logfire-browser/tanstack-router': [resolve(root, 'packages/logfire-browser/dist/tanstack-router.d.ts')],
@@ -81,7 +85,7 @@ test('browser guide SDK snippets typecheck against the built public API', () => 
     } catch (error) {
       assert.fail(error.stdout || error.message)
     }
-    assert.equal(checked, 28, 'Account for added or removed SDK samples explicitly')
+    assert.equal(checked, 32, 'Account for added or removed SDK samples explicitly')
   } finally {
     rmSync(scratch, { recursive: true, force: true })
   }
