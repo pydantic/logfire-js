@@ -109,10 +109,10 @@ ID lasts for the whole page or login session.
 Preserve the existing replay policy unless changing it is part of the request.
 `sessionSampleRate` controls continuous recording. `onErrorSampleRate` keeps an
 in-memory buffer for other eligible sessions and promotes it on uncaught
-`window.error` or `unhandledrejection` events. Caught errors, `reportError()`, and
-`console.error` do not automatically promote that buffer. Do not recommend
-error-triggered recording alone when the application's errors are handled by
-framework boundaries or catch blocks.
+`window.error` or `unhandledrejection` events. `logfire.reportError()` also
+promotes the buffer through the browser SDK's replay integration. Caught errors
+and `console.error` alone do not promote it: report handled failures explicitly
+from framework boundaries or catch blocks when they should preserve a replay.
 
 For a deterministic **local verification** recording, use `sessionSampleRate: 1`
 and `onErrorSampleRate: 0`. That is a test override, not a production rate to
