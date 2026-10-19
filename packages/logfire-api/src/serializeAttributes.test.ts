@@ -388,4 +388,30 @@ describe('serializeAttributes', () => {
       type: 'object',
     })
   })
+
+  test('scrubs the OAuth and Logfire token names and values the Python SDK scrubs', () => {
+    const result = serializeAttributes({
+      access_token: 'ya29.a0Af',
+      bearer_token: 'abc123',
+      error: 'invalid token',
+      header: 'Bearer pylf_v1_us_abc123',
+      id_token: 'eyJhbGciOi',
+      logfire_token: 'abc',
+      max_tokens: '100',
+      refreshToken: '1//0gLk',
+      token: 'kept',
+    })
+
+    expect(result).toMatchObject({
+      access_token: "[Scrubbed due to 'access_token']",
+      bearer_token: "[Scrubbed due to 'bearer_token']",
+      error: 'invalid token',
+      header: "[Scrubbed due to 'pylf_v1_']",
+      id_token: "[Scrubbed due to 'id_token']",
+      logfire_token: "[Scrubbed due to 'logfire_token']",
+      max_tokens: '100',
+      refreshToken: "[Scrubbed due to 'refreshToken']",
+      token: 'kept',
+    })
+  })
 })

@@ -63,6 +63,9 @@ const DEFAULT_PATTERNS = [
   'ssn',
   'social[._ -]?security',
   'credit[._ -]?card',
+  'logfire[._ -]?token',
+  '(?:access|refresh|bearer|(?:\\b|_)id)[._ -]?token',
+  'pylf_v\\d+_',
 ]
 
 // Should be kept roughly in sync with `logfire._internal.scrubbing.BaseScrubber.SAFE_KEYS`
