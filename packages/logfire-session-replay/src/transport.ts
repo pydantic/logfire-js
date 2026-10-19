@@ -51,6 +51,7 @@ interface QueuedUpload {
   hasFullSnapshot: boolean
   identity: ChunkIdentity
   reachedFetch: boolean
+  attempting: boolean
   background: boolean
   pagehide: boolean
   resolve: () => void
@@ -309,17 +310,18 @@ export class ReplayTransport {
     if (this.activeUpload !== undefined) {
       this.activeUpload.background = true
       this.activeUpload.pagehide = true
-      // A response already in flight is not duplicated. A sleeping retry gets
-      // one final keepalive attempt while this document can still execute.
-      this.wakeRetry?.()
     }
-    const pending = this.queue.filter((upload) => upload !== this.activeUpload && !this.pagehideUploads.has(upload))
+    const pending = this.queue.filter((upload) => (upload !== this.activeUpload || !upload.attempting) && !this.pagehideUploads.has(upload))
     for (const upload of pending) {
       this.pagehideUploads.add(upload)
       upload.background = true
     }
-    const finalAttempts = pending.map(async (upload) => this.finalAttempt(upload))
-    await Promise.all([this.flushInternal(options), ...finalAttempts])
+    // Transfer preparation and sleeping retries to the final pass. Their drain
+    // waits for completion rather than racing a duplicate attempt. Reserve bodies
+    // synchronously in sequence order, before the buffered tail claims capacity.
+    this.wakeRetry?.()
+    const finalAttempts = this.trackLifecycle(Promise.all(pending.map(async (upload) => this.finalAttempt(upload))).then(() => undefined))
+    await Promise.all([this.flushInternal(options), finalAttempts])
   }
 
   private async flushInternal(options: { keepalive?: boolean; background?: boolean } = {}): Promise<void> {
@@ -356,13 +358,7 @@ export class ReplayTransport {
       if (seq === undefined) {
         return
       }
-      const run = this.deliverLifecycle(eventChunks, seq, sessionId, identity)
-      this.lifecycleFlights.add(run)
-      const forget = (): void => {
-        this.lifecycleFlights.delete(run)
-      }
-      run.then(forget, forget)
-      await run
+      await this.trackLifecycle(this.deliverLifecycle(eventChunks, seq, sessionId, identity))
       return
     }
 
@@ -611,6 +607,7 @@ export class ReplayTransport {
       hasFullSnapshot: events.some((event) => event.type === EventType.FullSnapshot),
       identity,
       reachedFetch: false,
+      attempting: false,
       background,
       pagehide: false,
       resolve,
@@ -656,6 +653,9 @@ export class ReplayTransport {
     const firstAttemptAt = Date.now()
     let previousError: unknown
     for (let attempt = 1; ; attempt++) {
+      if (this.pagehideUploads.has(upload)) {
+        return upload.done.then(() => undefined)
+      }
       // The budget covers each attempt's request time, not only the waits between them.
       const remaining = RETRY_BUDGET_MS - (Date.now() - firstAttemptAt)
       // A background tab can fire the backoff timer after the budget has already run out.
@@ -677,23 +677,43 @@ export class ReplayTransport {
     }
   }
 
+  private retainCompressedBody(upload: QueuedUpload, body: Uint8Array): void {
+    this.retainedBytes += body.byteLength - upload.retainedBytes
+    upload.retainedBytes = body.byteLength
+    upload.body = body
+    upload.events = undefined
+  }
+
+  private compressQueuedSync(upload: QueuedUpload): UploadFailure | undefined {
+    if (upload.body !== undefined || upload.events === undefined || upload.settled) {
+      return undefined
+    }
+    try {
+      const input = strToU8(JSON.stringify(this.createEnvelope(upload.events, upload.seq, upload.identity)))
+      this.retainCompressedBody(upload, this.compression.gzipSync(input))
+      return undefined
+    } catch (error) {
+      return { cause: error, reason: 'not-sent' }
+    }
+  }
+
   private async compressQueued(upload: QueuedUpload): Promise<UploadFailure | undefined> {
+    if (this.shuttingDown || upload.background) {
+      return this.compressQueuedSync(upload)
+    }
     if (upload.body !== undefined || upload.events === undefined) {
       return undefined
     }
     const events = upload.events
     try {
       const input = strToU8(JSON.stringify(this.createEnvelope(events, upload.seq, upload.identity)))
-      const body = this.shuttingDown || upload.background ? this.compression.gzipSync(input) : await this.compressOrdinary(input)
+      const body = await this.compressOrdinary(input)
       // A loss handled during compression can trim the events; the body must match them.
       if (upload.events !== events) {
         return await this.compressQueued(upload)
       }
       if (!upload.settled) {
-        this.retainedBytes += body.byteLength - upload.retainedBytes
-        upload.retainedBytes = body.byteLength
-        upload.body = body
-        upload.events = undefined
+        this.retainCompressedBody(upload, body)
       }
       return undefined
     } catch (error) {
@@ -706,6 +726,7 @@ export class ReplayTransport {
     if (body === undefined) {
       return undefined
     }
+    upload.attempting = true
     try {
       await this.send(
         this.prepareUpload(body, upload.seq, upload.sessionId, upload.background),
@@ -717,17 +738,28 @@ export class ReplayTransport {
       return undefined
     } catch (error) {
       return error
+    } finally {
+      upload.attempting = false
     }
   }
 
   private async finalAttempt(upload: QueuedUpload): Promise<void> {
-    const compressionFailure = await this.compressQueued(upload)
+    const compressionFailure = upload.background ? this.compressQueuedSync(upload) : await this.compressQueued(upload)
     if (compressionFailure !== undefined) {
       this.settle(upload, compressionFailure)
       return
     }
     const error = await this.attemptQueued(upload)
     this.settle(upload, error === undefined ? undefined : toUploadFailure(error, upload.reachedFetch))
+  }
+
+  private async trackLifecycle(run: Promise<void>): Promise<void> {
+    this.lifecycleFlights.add(run)
+    const forget = (): void => {
+      this.lifecycleFlights.delete(run)
+    }
+    run.then(forget, forget)
+    return run
   }
 
   private async settleWithinDeadline(pending: Promise<unknown>[]): Promise<void> {

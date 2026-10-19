@@ -2505,3 +2505,150 @@ describe('ReplayTransport background delivery', () => {
     expect(calls.every((call) => (call.init.body as Uint8Array).byteLength < 48_000)).toBe(true)
   })
 })
+
+it('reserves pagehide keepalive capacity for queued sequences before the buffered tail', async () => {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) => {
+    await gate
+    return new Response(null, { status: 202 })
+  })
+  const transport = new ReplayTransport(
+    makeConfig(fetchMock as unknown as typeof fetch),
+    'prefix-priority',
+    'full',
+    null,
+    immediateCompression()
+  )
+  transport.add(fullSnapshot)
+  const first = transport.flush({ background: true })
+  await vi.waitFor(() => {
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+  transport.add(largeEvent(10, 1, 50_000))
+  const queued = transport.flush({ background: true })
+  transport.add(largeEvent(20, 2, 50_000))
+  const pagehide = transport.flush({ keepalive: true })
+  try {
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    })
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'https://app.example.com/replay-proxy/prefix-priority?seq=0',
+      'https://app.example.com/replay-proxy/prefix-priority?seq=1',
+      'https://app.example.com/replay-proxy/prefix-priority?seq=2',
+    ])
+    expect(fetchMock.mock.calls.map(([, init]) => init?.keepalive)).toEqual([true, true, false])
+  } finally {
+    release()
+    await Promise.all([first, queued, pagehide])
+  }
+})
+
+it('sends a pagehide prefix without waiting for its compression worker', async () => {
+  let finishCompression!: () => void
+  const compression = {
+    gzip: ((input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
+      finishCompression = () => {
+        callback(null, gzipSync(input))
+      }
+    }) as typeof gzip,
+    gzipSync,
+  }
+  const { calls, fetchImpl } = recordingFetch()
+  const transport = new ReplayTransport(makeConfig(fetchImpl), 'compression-prefix', 'full', null, compression)
+  transport.add(fullSnapshot)
+  const ordinary = transport.flush()
+  transport.add(mutation)
+  await transport.flush({ keepalive: true })
+  await ordinary
+  expect(calls.map((call) => call.url)).toEqual([
+    'https://app.example.com/replay-proxy/compression-prefix?seq=0',
+    'https://app.example.com/replay-proxy/compression-prefix?seq=1',
+  ])
+  expect(calls.map((call) => call.init.keepalive)).toEqual([true, true])
+  finishCompression()
+  await transport.shutdown()
+  expect(calls).toHaveLength(2)
+})
+
+it('reserves keepalive for a sleeping retry before a newer pagehide chunk', async () => {
+  vi.useFakeTimers()
+  try {
+    const fetchMock = vi.fn(
+      async (_url: string | URL, _init?: RequestInit) =>
+        new Response(null, { status: fetchMock.mock.calls.length === 1 ? 503 : 202, headers: { 'retry-after': '2' } })
+    )
+    const transport = timedTransport(fetchMock as unknown as typeof fetch, 'retry-priority')
+    transport.add(fullSnapshot)
+    transport.add(largeEvent(10, 1, 50_000))
+    const hidden = transport.flush({ background: true })
+    await vi.advanceTimersByTimeAsync(0)
+    transport.add(largeEvent(20, 2, 50_000))
+    const pagehide = transport.flush({ keepalive: true })
+    await vi.advanceTimersByTimeAsync(0)
+    await Promise.all([hidden, pagehide])
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'https://app.example.com/replay-proxy/retry-priority?seq=0',
+      'https://app.example.com/replay-proxy/retry-priority?seq=0',
+      'https://app.example.com/replay-proxy/retry-priority?seq=1',
+    ])
+    expect(fetchMock.mock.calls.map(([, init]) => init?.keepalive)).toEqual([true, true, false])
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('waits for promoted pagehide uploads during shutdown instead of aborting them immediately', async () => {
+  vi.useFakeTimers()
+  try {
+    let releaseFirst!: () => void
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      if (fetchMock.mock.calls.length === 1) {
+        await gate
+      } else {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 1_000)
+          init?.signal?.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer)
+              reject(new Error('upload aborted'))
+            },
+            { once: true }
+          )
+        })
+      }
+      return new Response(null, { status: 202 })
+    })
+    const onError = vi.fn()
+    const transport = timedTransport(fetchMock as unknown as typeof fetch, 'shutdown-pagehide', { onError })
+    transport.add(fullSnapshot)
+    const first = transport.flush({ background: true })
+    await vi.advanceTimersByTimeAsync(0)
+    transport.add(mutation)
+    const queued = transport.flush({ background: true })
+    const pagehide = transport.flush({ keepalive: true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    releaseFirst()
+    await vi.advanceTimersByTimeAsync(0)
+    let stopped = false
+    const stop = transport.shutdown().then(() => {
+      stopped = true
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(stopped).toBe(false)
+    expect(fetchMock.mock.calls[1]?.[1]?.signal?.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await Promise.all([first, queued, pagehide, stop])
+    expect(onError).not.toHaveBeenCalled()
+  } finally {
+    vi.useRealTimers()
+  }
+})

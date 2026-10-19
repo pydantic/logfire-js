@@ -278,8 +278,8 @@ function createReplayConfig(
   config.onError = (error) => {
     // Keep the recorder optional: inspect its public error shape without a runtime
     // import that would eagerly bundle rrweb. Do not include the payload or cause.
-    if (error instanceof Error && error.name === 'ReplayUploadError' && 'reason' in error && 'sessionId' in error && 'seq' in error) {
-      try {
+    try {
+      if (error instanceof Error && error.name === 'ReplayUploadError' && 'reason' in error && 'sessionId' in error && 'seq' in error) {
         warning('Session replay upload was not confirmed', {
           'replay.upload.reason': error.reason,
           'replay.recording_id': error.sessionId,
@@ -288,9 +288,9 @@ function createReplayConfig(
           'replay.upload.dropped_seqs': 'droppedSeqs' in error ? error.droppedSeqs : [],
           'replay.upload.dependent_drop_count': 'droppedSeqs' in error && Array.isArray(error.droppedSeqs) ? error.droppedSeqs.length : 0,
         })
-      } catch {
-        // Telemetry failures must not prevent the application's callback.
       }
+    } catch {
+      // Telemetry and hostile error getters must not prevent the application's callback.
     }
     safeReportError(options.onError, error)
   }
