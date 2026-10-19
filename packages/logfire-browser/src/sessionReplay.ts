@@ -1,4 +1,5 @@
 import { diag } from '@opentelemetry/api'
+import { warning } from 'logfire'
 
 import type { BrowserSessionManager, BrowserUser } from './browserSession'
 import type { BrowserMetricsOptions } from './browserMetrics'
@@ -274,10 +275,24 @@ function createReplayConfig(
   if (options.redactUrlPatterns !== undefined) {
     config.redactUrlPatterns = options.redactUrlPatterns
   }
-  if (options.onError !== undefined) {
-    config.onError = (error) => {
-      safeReportError(options.onError, error)
+  config.onError = (error) => {
+    // Keep the recorder optional: inspect its public error shape without a runtime
+    // import that would eagerly bundle rrweb. Do not include the payload or cause.
+    if (error instanceof Error && error.name === 'ReplayUploadError' && 'reason' in error && 'sessionId' in error && 'seq' in error) {
+      try {
+        warning('Session replay upload was not confirmed', {
+          'replay.upload.reason': error.reason,
+          'replay.recording_id': error.sessionId,
+          'replay.chunk.seq': error.seq,
+          'replay.upload.status_code': 'status' in error ? error.status : undefined,
+          'replay.upload.dropped_seqs': 'droppedSeqs' in error ? error.droppedSeqs : [],
+          'replay.upload.dependent_drop_count': 'droppedSeqs' in error && Array.isArray(error.droppedSeqs) ? error.droppedSeqs.length : 0,
+        })
+      } catch {
+        // Telemetry failures must not prevent the application's callback.
+      }
     }
+    safeReportError(options.onError, error)
   }
   if (options.fetchImpl !== undefined) {
     config.fetchImpl = options.fetchImpl

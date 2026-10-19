@@ -958,7 +958,7 @@ describe('ReplayTransport retries', () => {
     await Promise.all([ordinaryFlush, keepaliveFlush])
   })
 
-  it('splits large keepalive flushes into ordered chunks', async () => {
+  it('batches highly compressible events using their encoded size', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const sessionAttributes = { account_tier: 'pro', beta_user: true }
     const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-large', 'full', null, undefined, sessionAttributes)
@@ -973,18 +973,10 @@ describe('ReplayTransport retries', () => {
 
     await transport.flush({ keepalive: true })
 
-    expect(calls.map((call) => call.url)).toEqual([
-      'https://app.example.com/replay-proxy/sess-large?seq=0',
-      'https://app.example.com/replay-proxy/sess-large?seq=1',
-      'https://app.example.com/replay-proxy/sess-large?seq=2',
-    ])
-    expect(calls.map((call) => call.init.keepalive)).toEqual([true, true, true])
-    expect(calls.map((call) => decodeBody(call.init.body).events.map((event) => event.timestamp))).toEqual([[10], [20], [30]])
-    expect(calls.map((call) => decodeBody(call.init.body).meta.sessionAttributes)).toEqual([
-      sessionAttributes,
-      sessionAttributes,
-      sessionAttributes,
-    ])
+    expect(calls.map((call) => call.url)).toEqual(['https://app.example.com/replay-proxy/sess-large?seq=0'])
+    expect(calls.map((call) => call.init.keepalive)).toEqual([true])
+    expect(calls.map((call) => decodeBody(call.init.body).events.map((event) => event.timestamp))).toEqual([[10, 20, 30]])
+    expect(decodeBody(calls[0]!.init.body).meta.sessionAttributes).toEqual(sessionAttributes)
   })
 })
 
@@ -1090,24 +1082,23 @@ describe('ReplayTransport lifecycle keepalive budget', () => {
 
     const flush = transport.flush({ keepalive: true })
     await vi.waitFor(() => {
-      expect(calls).toHaveLength(3)
+      expect(calls).toHaveLength(2)
     })
     const sizes = calls.map((call) => (call.init.body as Uint8Array).byteLength)
-    expect(calls.map((call) => call.init.keepalive)).toEqual([true, true, false])
-    expect(sizes[0]! + sizes[1]!).toBeLessThanOrEqual(48_000)
-    expect(sizes[0]! + sizes[1]! + sizes[2]!).toBeGreaterThan(48_000)
+    expect(calls.map((call) => call.init.keepalive)).toEqual([true, false])
+    expect(sizes[0]!).toBeLessThanOrEqual(48_000)
+    expect(sizes[0]! + sizes[1]!).toBeGreaterThan(48_000)
     expect(calls.map((call) => call.url)).toEqual([
       'https://app.example.com/replay-proxy/sess-budget?seq=0',
       'https://app.example.com/replay-proxy/sess-budget?seq=1',
-      'https://app.example.com/replay-proxy/sess-budget?seq=2',
     ])
-    expect(calls.map((call) => decodeBody(call.init.body).events[0]?.timestamp)).toEqual([10, 20, 30])
+    expect(calls.map((call) => decodeBody(call.init.body).events.map((event) => event.timestamp))).toEqual([[10, 20], [30]])
 
     for (const release of releases) {
       release()
     }
     await flush
-    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
   it('shares reservations across overlapping flushes and reclaims them only after response-body cancellation', async () => {
@@ -1136,20 +1127,20 @@ describe('ReplayTransport lifecycle keepalive budget', () => {
     transport.add(largeEvent(20, 2))
     const first = transport.flush({ keepalive: true })
     await vi.waitFor(() => {
-      expect(fetchImpl).toHaveBeenCalledTimes(2)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
     })
     transport.add(largeEvent(30, 3))
     const overlapping = transport.flush({ keepalive: true })
     await vi.waitFor(() => {
-      expect(fetchImpl).toHaveBeenCalledTimes(3)
+      expect(fetchImpl).toHaveBeenCalledTimes(2)
     })
-    expect(keepaliveFlags).toEqual([true, true, false])
+    expect(keepaliveFlags).toEqual([true, false])
 
     releaseCancellation()
     await Promise.all([first, overlapping])
     transport.add(largeEvent(40, 4))
     await transport.flush({ keepalive: true })
-    expect(keepaliveFlags).toEqual([true, true, false, true])
+    expect(keepaliveFlags).toEqual([true, false, true])
   })
 
   it('retains a reservation when response completion cannot be confirmed', async () => {
@@ -1171,7 +1162,7 @@ describe('ReplayTransport lifecycle keepalive budget', () => {
     await transport.flush({ keepalive: true })
     transport.add(largeEvent(30, 3))
     await transport.flush({ keepalive: true })
-    expect(keepaliveFlags).toEqual([true, true, false])
+    expect(keepaliveFlags).toEqual([true, false])
   })
 
   it.each(['credentials', 'network'] as const)('reclaims pre-completion capacity after %s failure', async (failure) => {
@@ -2395,5 +2386,122 @@ describe('ReplayTransport upload recovery', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('ReplayTransport background delivery', () => {
+  it('retries a hidden-tab 503 with identical bytes before sending the next chunk', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchMock = vi.fn(
+        async (_url: string | URL, _init?: RequestInit) =>
+          new Response(null, { status: fetchMock.mock.calls.length === 1 ? 503 : 202, headers: { 'retry-after': '2' } })
+      )
+      const onError = vi.fn()
+      const transport = timedTransport(fetchMock as unknown as typeof fetch, 'background-retry', { onError })
+      transport.add(fullSnapshot)
+      const first = transport.flush({ background: true })
+      await vi.advanceTimersByTimeAsync(0)
+      transport.add(mutation)
+      const second = transport.flush({ background: true })
+      await vi.advanceTimersByTimeAsync(1_999)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      await Promise.all([first, second])
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+        'https://app.example.com/replay-proxy/background-retry?seq=0',
+        'https://app.example.com/replay-proxy/background-retry?seq=0',
+        'https://app.example.com/replay-proxy/background-retry?seq=1',
+      ])
+      expect(fetchMock.mock.calls[0]?.[1]?.body).toEqual(fetchMock.mock.calls[1]?.[1]?.body)
+      expect(fetchMock.mock.calls.map(([, init]) => init?.keepalive)).toEqual([true, true, true])
+      expect(onError).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('wakes a sleeping hidden-tab retry for one final pagehide attempt', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchMock = vi.fn(
+        async (_url: string | URL, _init?: RequestInit) => new Response(null, { status: 503, headers: { 'retry-after': '2' } })
+      )
+      const onError = vi.fn()
+      const transport = timedTransport(fetchMock as unknown as typeof fetch, 'background-final', { onError })
+      transport.add(fullSnapshot)
+      const hidden = transport.flush({ background: true })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const pagehide = transport.flush({ keepalive: true })
+      await vi.advanceTimersByTimeAsync(0)
+      await Promise.all([hidden, pagehide])
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(fetchMock.mock.calls.map(([, init]) => init?.keepalive)).toEqual([true, true])
+      expect(fetchMock.mock.calls[0]?.[1]?.body).toEqual(fetchMock.mock.calls[1]?.[1]?.body)
+      expect(onError).toHaveBeenCalledTimes(1)
+      expect(onError.mock.calls[0]?.[0]).toMatchObject({ reason: 'unconfirmed', seq: 0, status: 503 })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('sends the queued hidden-tab tail on pagehide without duplicating active or promoted uploads', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const fetchMock = vi.fn(async (_url: string | URL, _init?: RequestInit) => {
+      await gate
+      return new Response(null, { status: 202 })
+    })
+    const transport = new ReplayTransport(
+      makeConfig(fetchMock as unknown as typeof fetch),
+      'background-tail',
+      'full',
+      null,
+      immediateCompression()
+    )
+    transport.add(fullSnapshot)
+    const first = transport.flush({ background: true })
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+    transport.add(mutation)
+    const second = transport.flush({ background: true })
+    const pagehide = transport.flush({ keepalive: true })
+    const duplicatePagehide = transport.flush({ keepalive: true })
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'https://app.example.com/replay-proxy/background-tail?seq=0',
+      'https://app.example.com/replay-proxy/background-tail?seq=1',
+    ])
+    expect(fetchMock.mock.calls.map(([, init]) => init?.keepalive)).toEqual([true, true])
+    release()
+    await Promise.all([first, second, pagehide, duplicatePagehide])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('bounds raw lifecycle batches even when they compress below the keepalive budget', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport(
+      { ...makeConfig(fetchImpl), maxBufferBytes: 2_000_000 },
+      'raw-bound',
+      'full',
+      null,
+      immediateCompression()
+    )
+    for (let timestamp = 0; timestamp < 4; timestamp++) {
+      transport.add({ type: EventType.IncrementalSnapshot, data: { text: 'x'.repeat(300_000) }, timestamp })
+    }
+    await transport.flush({ keepalive: true })
+    expect(calls).toHaveLength(2)
+    expect(calls.map((call) => decodeBody(call.init.body).events.map((event) => event.timestamp))).toEqual([
+      [0, 1],
+      [2, 3],
+    ])
+    expect(calls.every((call) => (call.init.body as Uint8Array).byteLength < 48_000)).toBe(true)
   })
 })

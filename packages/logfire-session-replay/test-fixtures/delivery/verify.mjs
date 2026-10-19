@@ -36,7 +36,7 @@ try {
 }
 
 async function pollForEvidence(deadline) {
-  const response = await fetch(`http://127.0.0.1:4177/fixture/status?scenario=${scenario}`)
+  const response = await fetch(`http://127.0.0.1:4177/fixture/status?scenario=${String(scenario)}`)
   assert(response.ok, `status request failed: ${String(response.status)}`)
   const evidence = await response.json()
   const decoded = evidence.receipts.map((receipt) => ({
@@ -59,7 +59,7 @@ function unloadMarkersPresent(decoded) {
 
 function verifyUnload(evidence, decoded) {
   assert(evidence.unloadReleasedAt === undefined, 'unload responses were released before verification')
-  assert(decoded.length >= 2, `expected at least two lifecycle receipts, received ${String(decoded.length)}`)
+  assert(decoded.length >= 1, 'expected a lifecycle receipt')
   const ordered = [...decoded].sort((left, right) => left.seq - right.seq)
   assert(
     ordered.every((receipt) => receipt.marker === 'unload'),
@@ -70,11 +70,11 @@ function verifyUnload(evidence, decoded) {
     'sequences are not contiguous'
   )
   assert(ordered.reduce((total, receipt) => total + receipt.byteLength, 0) <= 48_000, 'compressed lifecycle aggregate exceeds 48,000 bytes')
-  const bodies = ordered.map((receipt) => JSON.stringify(receipt.envelope))
+  const bodies = ordered.flatMap((receipt) => receipt.envelope.events.map((event) => JSON.stringify(event)))
   const firstIndex = bodies.findIndex((body) => body.includes('unload-marker-one'))
   const secondIndex = bodies.findIndex((body) => body.includes('unload-marker-two'))
   assert(firstIndex >= 0 && secondIndex >= 0, 'one or both unload markers are missing')
-  assert(firstIndex < secondIndex, `unload markers were not split into ordered chunks: ${String(firstIndex)}, ${String(secondIndex)}`)
+  assert(firstIndex < secondIndex, `unload markers were not preserved in event order: ${String(firstIndex)}, ${String(secondIndex)}`)
 }
 
 function verifyCsp(evidence, decoded) {

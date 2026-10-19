@@ -603,7 +603,7 @@ function createActiveRuntime(options: {
     }
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
-        ignorePromise(transport.flush({ keepalive: true }), config.onError)
+        ignorePromise(transport.flush({ background: true }), config.onError)
       }
     }
     const onPageHide = () => {
