@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it, vitest } from 'vitest'
 
 import { instrument } from '../src/sdk'
 import type { ResolveConfigFn } from '../src/sdk'
+import type { TraceConfig } from '../src/types'
 
 const exporters = {
   a: new InMemorySpanExporter(),
@@ -47,7 +48,7 @@ const handler = instrument(
 
 const INBOUND_TRACE_ID = '0af7651916cd43dd8448eb211c80319c'
 
-async function send(tenant: Tenant): Promise<void> {
+async function send(tenant: Tenant, target = handler): Promise<void> {
   const waitUntilPromises: Promise<unknown>[] = []
   const ctx = {
     passThroughOnException: () => undefined,
@@ -59,7 +60,7 @@ async function send(tenant: Tenant): Promise<void> {
   const request = new Request('https://example.com/', {
     headers: { 'x-tenant': tenant, traceparent: `00-${INBOUND_TRACE_ID}-b7ad6b7169203331-01` },
   })
-  const fetch = handler.fetch as unknown as (request: Request, env: unknown, ctx: ExecutionContext) => Promise<Response>
+  const fetch = target.fetch as unknown as (request: Request, env: unknown, ctx: ExecutionContext) => Promise<Response>
   await fetch(request, {}, ctx)
   await Promise.all(waitUntilPromises)
 }
@@ -89,5 +90,35 @@ describe('per-request config isolation', () => {
 
     expect(new Set(spansA.map((span) => span.spanContext().traceId))).toEqual(new Set([INBOUND_TRACE_ID]))
     expect(spansB.some((span) => span.spanContext().traceId === INBOUND_TRACE_ID)).toBe(false)
+  })
+
+  /**
+   * Applications may keep one config object and swap its exporter per tenant. Resolving that config
+   * must not write span processors back onto it, or every later request would keep exporting to the
+   * first request's exporter.
+   */
+  it("exports to each tenant's exporter when the resolver reuses one shared config object", async () => {
+    const sharedExporters = { a: new InMemorySpanExporter(), b: new InMemorySpanExporter() }
+    const shared: TraceConfig = {
+      exporter: sharedExporters.a,
+      service: { name: 'shared' },
+      instrumentation: { instrumentGlobalCache: false, instrumentGlobalFetch: false },
+    }
+    const sharedHandler = instrument(
+      {
+        fetch(): Response {
+          trace.getTracer('app').startSpan('work').end()
+          return new Response('ok')
+        },
+      },
+      (_env, trigger) => Object.assign(shared, { exporter: sharedExporters[tenantOf(trigger)] })
+    )
+
+    await send('a', sharedHandler)
+    await send('b', sharedHandler)
+
+    expect(shared).not.toHaveProperty('spanProcessors')
+    expect(sharedExporters.a.getFinishedSpans().map((span) => span.name)).toEqual(['work', 'fetchHandler GET /'])
+    expect(sharedExporters.b.getFinishedSpans().map((span) => span.name)).toEqual(['work', 'fetchHandler GET /'])
   })
 })
