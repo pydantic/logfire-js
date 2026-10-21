@@ -41,6 +41,7 @@ describe('logfire config', () => {
     delete process.env['LOGFIRE_TOKEN']
     delete process.env['LOGFIRE_CREDENTIALS_DIR']
     delete process.env['LOGFIRE_DISTRIBUTED_TRACING']
+    delete process.env['LOGFIRE_PENDING_SPANS']
     configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     await shutdownVariables()
   })
@@ -523,6 +524,32 @@ describe('logfire config', () => {
         },
       })
     }).toThrow('Remote variables require an API key')
+  })
+
+  describe('pending spans', () => {
+    it('defaults to true when neither the option nor the environment variable is set', () => {
+      configure({ sendToLogfire: false })
+      expect(logfireConfig.pendingSpans).toBe(true)
+    })
+
+    it('LOGFIRE_PENDING_SPANS=false disables pending spans when the option is omitted', () => {
+      process.env['LOGFIRE_PENDING_SPANS'] = 'false'
+      configure({ sendToLogfire: false })
+      expect(logfireConfig.pendingSpans).toBe(false)
+    })
+
+    it('an explicit option wins over LOGFIRE_PENDING_SPANS', () => {
+      process.env['LOGFIRE_PENDING_SPANS'] = 'false'
+      configure({ advanced: { pendingSpans: true }, sendToLogfire: false })
+      expect(logfireConfig.pendingSpans).toBe(true)
+    })
+
+    it('rejects a LOGFIRE_PENDING_SPANS value that is not a boolean', () => {
+      process.env['LOGFIRE_PENDING_SPANS'] = 'yes'
+      expect(() => {
+        configure()
+      }).toThrow('Expected LOGFIRE_PENDING_SPANS to be a boolean, got "yes"')
+    })
   })
 
   describe('distributed tracing', () => {

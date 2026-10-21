@@ -7,15 +7,27 @@ const LOGFIRE_SPAN_TYPE_KEY = 'logfire.span_type'
  * Drops pending spans whose final span is in the same export batch. Most spans finish within one
  * batch window, so their pending placeholder only duplicates the final span. Mirrors the Python
  * SDK's `RemovePendingSpansExporter`.
+ *
+ * With `dropAll`, every pending span is dropped, for `advanced.pendingSpans: false`.
  */
 export class RemovePendingSpansExporter implements SpanExporter {
+  private readonly dropAll: boolean
   private readonly wrapped: SpanExporter
 
-  constructor(wrapped: SpanExporter) {
+  constructor(wrapped: SpanExporter, { dropAll = false }: { dropAll?: boolean } = {}) {
+    this.dropAll = dropAll
     this.wrapped = wrapped
   }
 
   export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
+    if (this.dropAll) {
+      this.wrapped.export(
+        spans.filter((span) => !isPendingSpan(span)),
+        resultCallback
+      )
+      return
+    }
+
     // Any non-pending span can be a final span: auto-instrumentation spans carry no
     // `logfire.span_type`, yet PendingSpanProcessor still emits pending spans for them.
     const finishedSpanKeys = new Set<string>()
