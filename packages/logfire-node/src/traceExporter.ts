@@ -36,7 +36,8 @@ export function traceExporter(): SpanExporter {
       headers: logfireConfig.authorizationHeaders,
       url: logfireConfig.traceExporterUrl,
       userAgent: USER_AGENT,
-    })
+    }),
+    { dropAll: !logfireConfig.pendingSpans }
   )
 }
 
