@@ -29,10 +29,10 @@ overrides:
   'vitest': '5.0.1'
 
 catalog:
-  '@opentelemetry/api': ^1.9.1
+  '@opentelemetry/api': '>=1.9.1 <1.10.0'
   '@opentelemetry/api-logs': '>=0.219.0 <0.300.0'
-  '@opentelemetry/auto-instrumentations-node': '>=0.77.0 <0.100.0'
-  '@opentelemetry/auto-instrumentations-web': '>=0.64.0 <0.100.0'
+  '@opentelemetry/auto-instrumentations-node': '>=0.77.0 <0.82.0'
+  '@opentelemetry/auto-instrumentations-web': '>=0.64.0 <0.69.0'
   '@opentelemetry/context-async-hooks': ^2.8.0
   '@opentelemetry/context-zone': ^2.8.0
   '@opentelemetry/core': ^2.8.0
@@ -43,7 +43,7 @@ catalog:
   '@opentelemetry/exporter-trace-otlp-proto': '>=0.219.0 <0.300.0'
   '@opentelemetry/instrumentation': '>=0.219.0 <0.300.0'
   '@opentelemetry/instrumentation-fetch': '>=0.219.0 <0.300.0'
-  '@opentelemetry/instrumentation-user-interaction': '>=0.63.0 <0.100.0'
+  '@opentelemetry/instrumentation-user-interaction': '>=0.63.0 <0.68.0'
   '@opentelemetry/otlp-exporter-base': '>=0.219.0 <0.300.0'
   '@opentelemetry/otlp-transformer': '>=0.219.0 <0.300.0'
   '@opentelemetry/resources': ^2.8.0
