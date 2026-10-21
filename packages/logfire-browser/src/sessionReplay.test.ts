@@ -191,6 +191,14 @@ describe('startBrowserSessionReplay', () => {
     const reportedError = new Error('reported by replay')
     replayConfig?.onError?.(reportedError)
     expect(onError).toHaveBeenCalledWith(reportedError)
+    const hostileError = new Error('hostile replay error')
+    Object.defineProperty(hostileError, 'name', {
+      get: () => {
+        throw new Error('unreadable name')
+      },
+    })
+    expect(() => replayConfig?.onError?.(hostileError)).not.toThrow()
+    expect(onError).toHaveBeenLastCalledWith(hostileError)
     expect(replayConfig?.ignoreUrlPatterns?.some((pattern) => pattern.test('/logfire/traces'))).toBe(true)
     expect(replayConfig?.ignoreUrlPatterns?.some((pattern) => pattern.test('/logfire/metrics'))).toBe(true)
     expect(replayConfig?.ignoreUrlPatterns?.some((pattern) => pattern.test('/logfire/replay/browser-session-1?seq=0'))).toBe(true)
