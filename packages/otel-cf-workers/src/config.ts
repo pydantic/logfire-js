@@ -84,7 +84,7 @@ export function parseConfig(supplied: TraceConfig): ResolvedTraceConfig {
   } else {
     const exporter = isSpanExporter(supplied.exporter) ? supplied.exporter : new OTLPExporter(supplied.exporter)
     const spanProcessors = [new BatchTraceSpanProcessor(exporter), ...(supplied.additionalSpanProcessors ?? [])]
-    const newConfig = Object.assign(supplied, { exporter: undefined, spanProcessors }) as TraceConfig
-    return parseConfig(newConfig)
+    // Build a new object: callers may reuse one config across requests with a different exporter each time.
+    return parseConfig({ ...supplied, spanProcessors })
   }
 }
