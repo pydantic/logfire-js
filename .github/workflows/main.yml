@@ -53,6 +53,7 @@ jobs:
           retention-days: 7
 
       - name: Install browsers
+        timeout-minutes: 10
         run: vp exec --filter @pydantic/logfire-session-replay -- playwright install --with-deps chromium firefox webkit
 
       - name: Browser acceptance
