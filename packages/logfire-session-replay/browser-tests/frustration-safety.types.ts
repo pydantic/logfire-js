@@ -6,7 +6,6 @@ export interface FrustrationSafety {
   recording(): string | undefined
   stats(): { ticks: number; handled: number; uploadErrors: number }
   start(): Promise<void>
-  flush(): Promise<void>
   stop(): Promise<void>
   workload(enabled: boolean): void
 }

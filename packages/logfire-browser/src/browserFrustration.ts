@@ -200,6 +200,13 @@ export function startBrowserFrustration(options: StartOptions): () => void {
     hadSelection = hasSelection
   }
   const responseEvents = ['input', 'change', 'scroll', 'focusin'] as const
+  const resetEvents = [
+    [document, 'visibilitychange'],
+    [window, 'pagehide'],
+    [window, 'blur'],
+    [window, 'popstate'],
+    [window, 'hashchange'],
+  ] as const
   // Construct before installing listeners; observe only while clicks await a response.
   const observer = options.deadClicks === true ? new MutationObserver(response) : undefined
   function hasTimelyObservation(now: number): boolean {
@@ -324,21 +331,11 @@ export function startBrowserFrustration(options: StartOptions): () => void {
         document.removeEventListener(name, userIntent, true)
       })
     }
-    release(() => {
-      document.removeEventListener('visibilitychange', reset)
-    })
-    release(() => {
-      window.removeEventListener('pagehide', reset)
-    })
-    release(() => {
-      window.removeEventListener('blur', reset)
-    })
-    release(() => {
-      window.removeEventListener('popstate', reset)
-    })
-    release(() => {
-      window.removeEventListener('hashchange', reset)
-    })
+    for (const [target, name] of resetEvents) {
+      release(() => {
+        target.removeEventListener(name, reset)
+      })
+    }
   }
   try {
     stopNavigations = observeFrustrationNavigations(reset)
@@ -355,11 +352,9 @@ export function startBrowserFrustration(options: StartOptions): () => void {
         document.addEventListener(name, userIntent, { capture: true, passive: true })
       }
     }
-    document.addEventListener('visibilitychange', reset)
-    window.addEventListener('pagehide', reset)
-    window.addEventListener('blur', reset)
-    window.addEventListener('popstate', reset)
-    window.addEventListener('hashchange', reset)
+    for (const [target, name] of resetEvents) {
+      target.addEventListener(name, reset)
+    }
   } catch (error) {
     stop()
     throw error

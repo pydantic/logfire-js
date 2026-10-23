@@ -1,11 +1,10 @@
 import { resolve } from 'node:path'
 
 import { defineConfig } from '@playwright/test'
-import { frustrationServers } from './frustration-servers'
+import { frustrationServers, frustrationTests } from './frustration-fixtures'
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
 const fixtureServers: { command: string; env?: Record<string, string>; url: string }[] = [
-  ...frustrationServers,
   {
     command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/privacy-defaults/vite.config.ts',
     url: 'http://127.0.0.1:4178/',
@@ -59,16 +58,19 @@ export default defineConfig({
     ...identityBrowsers.map((browserName) => ({
       name: `frustration-${browserName}`,
       use: { browserName },
-      testMatch: ['frustration.pw.ts', 'frustration-export.pw.ts', 'frustration-replay.pw.ts', 'frustration-http.pw.ts'],
+      testMatch: frustrationTests,
     })),
   ],
-  webServer: fixtureServers.map(({ command, env, url }) => ({
-    command,
-    ...(env === undefined ? {} : { env }),
-    cwd: repositoryRoot,
-    reuseExistingServer: false,
-    timeout: 30_000,
-    url,
-  })),
+  webServer: [
+    ...frustrationServers,
+    ...fixtureServers.map(({ command, env, url }) => ({
+      command,
+      ...(env === undefined ? {} : { env }),
+      cwd: repositoryRoot,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      url,
+    })),
+  ],
   workers: 1,
 })

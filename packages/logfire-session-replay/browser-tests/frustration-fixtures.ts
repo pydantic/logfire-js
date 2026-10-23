@@ -2,6 +2,8 @@ import { resolve } from 'node:path'
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
 
+export const frustrationTests = ['frustration.pw.ts', 'frustration-export.pw.ts', 'frustration-replay.pw.ts', 'frustration-http.pw.ts']
+
 export const frustrationServers = [
   {
     command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/frustration/vite.config.ts',

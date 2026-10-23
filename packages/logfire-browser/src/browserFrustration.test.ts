@@ -281,14 +281,22 @@ describe('frustration observation lifecycle', () => {
     })
   }
 
-  it('discards pending observations on page exit and leaves no detector timer', async () => {
-    const { click, exporter } = start()
-    click()
-    window.dispatchEvent(new Event('pagehide'))
-    await vi.advanceTimersByTimeAsync(8000)
-    expect(exporter.getFinishedSpans()).toEqual([])
-    expect(vi.getTimerCount()).toBe(0)
-  })
+  it.each(['visibilitychange', 'pagehide', 'blur', 'popstate', 'hashchange'] as const)(
+    'discards pending observations and rage history at %s',
+    async (name) => {
+      const { click, exporter } = start()
+      const target = name === 'visibilitychange' ? document : window
+      click()
+      click()
+      target.dispatchEvent(new Event(name))
+      click()
+      expect(exporter.getFinishedSpans()).toEqual([])
+      target.dispatchEvent(new Event(name))
+      await vi.advanceTimersByTimeAsync(8000)
+      expect(exporter.getFinishedSpans()).toEqual([])
+      expect(vi.getTimerCount()).toBe(0)
+    }
+  )
 
   it('disconnects and resets immediately on session rotation', async () => {
     const { click, exporter, disconnect } = start()

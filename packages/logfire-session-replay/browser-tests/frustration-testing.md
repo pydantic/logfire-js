@@ -1,6 +1,6 @@
 # Frustration detector verification
 
-Build packages with `pnpm run build`, then run `pnpm run check`.
+Run `pnpm run check` to build packages and run repository checks.
 
 ## Unit and mutation tests
 

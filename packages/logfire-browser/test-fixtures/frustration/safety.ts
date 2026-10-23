@@ -92,7 +92,6 @@ Reflect.set(window, 'frustrationSafety', {
   recording: () => recorder?.getRecordingId(),
   stats: () => ({ ticks, handled, uploadErrors }),
   start,
-  flush: async () => cleanup?.sessionReplay?.flush(),
   stop: async () => {
     await cleanup?.()
     cleanup = undefined
