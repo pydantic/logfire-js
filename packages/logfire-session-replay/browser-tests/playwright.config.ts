@@ -5,8 +5,17 @@ import { defineConfig } from '@playwright/test'
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
 const fixtureServers: { command: string; env?: Record<string, string>; url: string }[] = [
   {
+    command: 'pnpm exec vp dev packages/logfire-browser/demo --host 127.0.0.1 --port 5189 --strictPort',
+    url: 'http://127.0.0.1:5189/',
+  },
+  {
     command: 'pnpm exec vp dev --config packages/logfire-session-replay/test-fixtures/delivery/vite.config.ts',
     url: 'http://127.0.0.1:4177/',
+  },
+  {
+    command: 'pnpm run demo:frustration',
+    env: { VITE_LOGFIRE_BASE_URL: '', VITE_LOGFIRE_TOKEN: '' },
+    url: 'http://127.0.0.1:5190/shop.html',
   },
   {
     command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/privacy-defaults/vite.config.ts',
@@ -32,8 +41,8 @@ const fixtureServers: { command: string; env?: Record<string, string>; url: stri
   })),
 ]
 
-// The recording identity flows also run in Firefox and WebKit when the environment asks for the
-// full matrix. CI installs those browsers. A developer machine may not run them.
+// CI verifies recording identity and frustration detection in all three engines.
+// A developer machine can opt into that matrix after installing those browsers.
 const identityBrowsers = process.env['REPLAY_BROWSER_MATRIX'] === 'all' ? (['firefox', 'webkit'] as const) : []
 
 export default defineConfig({
@@ -57,6 +66,11 @@ export default defineConfig({
       use: { browserName },
       testMatch: 'session-replay.pw.ts',
       grep: /recording identity/u,
+    })),
+    ...identityBrowsers.map((browserName) => ({
+      name: `frustration-${browserName}`,
+      use: { browserName },
+      testMatch: ['frustration.pw.ts', 'frustration-export.pw.ts', 'frustration-replay.pw.ts', 'frustration-shop.pw.ts'],
     })),
   ],
   webServer: fixtureServers.map(({ command, env, url }) => ({

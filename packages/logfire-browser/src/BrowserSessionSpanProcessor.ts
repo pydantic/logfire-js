@@ -1,4 +1,5 @@
-import type { Context } from '@opentelemetry/api'
+import type { Attributes, Context } from '@opentelemetry/api'
+import { INTERACTION_CONTEXT } from './interactionContext'
 import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-web'
 
 import type { BrowserSessionManager } from './browserSession'
@@ -53,7 +54,12 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
     return undefined
   }
 
-  onStart(span: Span, _parentContext: Context): void {
+  onStart(span: Span, parentContext: Context): void {
+    const interaction = parentContext.getValue(INTERACTION_CONTEXT) as Attributes | undefined
+    if (interaction !== undefined) {
+      span.setAttributes(interaction)
+      return
+    }
     const isPeriodicMainThreadWindow =
       span.instrumentationScope.name === LONG_ANIMATION_FRAME_TRACER_NAME && span.name === MAIN_THREAD_WINDOW_SPAN_NAME
     const session = isPeriodicMainThreadWindow ? this.sessionManager.getSession() : this.sessionManager.touch()

@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Interaction signals · Logfire</title>
+    <style>
+      :root {
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        color: #e7e8ef;
+        background: #111218;
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      main {
+        max-width: 1120px;
+        margin: auto;
+        padding: 40px 28px;
+      }
+      nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 70px;
+      }
+      .brand {
+        font-weight: 700;
+        letter-spacing: -0.5px;
+        font-size: 21px;
+      }
+      .brand span {
+        color: #ef9567;
+      }
+      .pill {
+        font-size: 12px;
+        border: 1px solid #393a46;
+        border-radius: 24px;
+        padding: 7px 12px;
+        color: #aeb3c6;
+      }
+      .eyebrow {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        color: #ef9567;
+      }
+      h1 {
+        font-size: clamp(30px, 5vw, 48px);
+        font-weight: 550;
+        letter-spacing: -1.7px;
+        margin: 15px 0;
+      }
+      p {
+        line-height: 1.65;
+        color: #a3a7b9;
+        font-size: 14px;
+      }
+      .intro {
+        max-width: 620px;
+        margin-bottom: 35px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+      .card {
+        padding: 25px;
+        border: 1px solid #30323e;
+        border-radius: 14px;
+        background: #181a23;
+        min-width: 0;
+      }
+      .card h2 {
+        font-size: 16px;
+        margin: 0 0 8px;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .number {
+        font-size: 12px;
+        color: #777e97;
+        font-weight: 400;
+      }
+      .card p {
+        min-height: 46px;
+        margin: 10px 0 22px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        font-weight: 550;
+        color: #eeeef6;
+        background: #2a2e3f;
+        border: 1px solid #464c65;
+        border-radius: 7px;
+        padding: 10px 16px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #353b50;
+      }
+      button:focus-visible {
+        outline: 2px solid #e9a083;
+        outline-offset: 4px;
+      }
+      .status {
+        font-size: 12px;
+        color: #91c7ad;
+      }
+      .section {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin: 42px 0 15px;
+      }
+      .section h2 {
+        font-size: 16px;
+        margin: 0;
+      }
+      .section span {
+        font-size: 12px;
+        color: #8f94a9;
+      }
+      .events {
+        border: 1px solid #30323e;
+        border-radius: 12px;
+        min-height: 140px;
+        overflow: hidden;
+      }
+      .empty {
+        padding: 42px 24px;
+        text-align: center;
+        color: #858ba3;
+        font-size: 13px;
+      }
+      .event {
+        display: flex;
+        gap: 18px;
+        align-items: center;
+        padding: 18px 22px;
+        border-bottom: 1px solid #30323e;
+      }
+      .event:last-child {
+        border: 0;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #ec9567;
+        flex-shrink: 0;
+      }
+      .event strong {
+        font-size: 13px;
+      }
+      .event small {
+        display: block;
+        color: #959bb1;
+        margin-top: 5px;
+        font-size: 12px;
+      }
+      .event time {
+        margin-left: auto;
+        color: #9da3b8;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .footnote {
+        font-size: 12px;
+        margin-top: 20px;
+        max-width: 850px;
+      }
+      code {
+        color: #c7cbe0;
+        font-size: 12px;
+      }
+      .healthy {
+        color: #96cbb0;
+      }
+      @media (max-width: 640px) {
+        main {
+          padding: 25px 18px;
+        }
+        nav {
+          margin-bottom: 45px;
+        }
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .event {
+          padding: 16px;
+          gap: 12px;
+        }
+        .card p {
+          min-height: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <nav>
+        <div class="brand"><span>↗</span> Logfire</div>
+        <span class="pill">Browser SDK · Local playground</span>
+      </nav>
+      <div class="eyebrow">Frontend observability</div>
+      <h1>Find the clicks that go nowhere.</h1>
+      <p class="intro">
+        Try a few interactions. The real browser detector below distinguishes rapid repeats, slow feedback, and clicks with no observable
+        response. Nothing is sent to a server.
+      </p>
+      <div class="grid">
+        <section class="card">
+          <h2>Rapid repeats <span class="number">01 / RAGE CLICK</span></h2>
+          <p>Click the button three times quickly. You’ll get one signal for the episode, not an event for every click.</p>
+          <button id="rage">Try again</button>
+        </section>
+        <section class="card">
+          <h2>No feedback <span class="number">02 / SUSPECTED DEAD CLICK</span></h2>
+          <p>Click once, then leave the page alone for seven seconds. This button intentionally does nothing.</p>
+          <button id="dead">Save changes</button>
+        </section>
+        <section class="card">
+          <h2>Late feedback <span class="number">03 / SLOW CLICK</span></h2>
+          <p>This action responds after 3.4 seconds. We preserve the delay rather than treating it as completely unresponsive.</p>
+          <div class="row"><button id="slow">Generate report</button><span id="slow-status" class="status"></span></div>
+        </section>
+        <section class="card">
+          <h2>Healthy interaction <span class="number">04 / NO SIGNAL</span></h2>
+          <p>A quick, visible response should stay quiet. An explicit exclusion is also available for legitimate repeat-click controls.</p>
+          <div class="row"><button id="healthy">Save draft</button><span id="healthy-status" class="status"></span></div>
+        </section>
+      </div>
+      <div class="section">
+        <h2>Observed signals</h2>
+        <span>Live · local OpenTelemetry exporter</span>
+      </div>
+      <div id="feed"></div>
+      <p class="footnote">
+        Experimental heuristics, not proof of frustration. Try one scenario at a time: unrelated page updates can suppress suspected dead
+        clicks. These events contain no DOM text, input values, or arbitrary element attributes. They follow your sampling configuration
+        when used in the SDK.
+      </p>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

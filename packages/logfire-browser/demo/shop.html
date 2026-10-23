@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Good Things · Interaction demo</title>
+    <style>
+      :root {
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        color: #e9e9ef;
+        background: #111218;
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      button,
+      input {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      main {
+        max-width: 1120px;
+        margin: auto;
+        padding: 32px 28px 64px;
+      }
+      nav {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        padding-bottom: 28px;
+        border-bottom: 1px solid #30323e;
+      }
+      .brand {
+        font-size: 20px;
+        font-weight: 650;
+        letter-spacing: -0.7px;
+      }
+      .accent {
+        color: #eea280;
+      }
+      .muted {
+        color: #969cb1;
+      }
+      .badge {
+        font-size: 12px;
+        padding: 7px 11px;
+        border: 1px solid #3c4050;
+        border-radius: 30px;
+        white-space: nowrap;
+      }
+      .intro {
+        margin: 42px 0 28px;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: #eea280;
+      }
+      h1 {
+        font-size: clamp(30px, 5vw, 45px);
+        font-weight: 550;
+        letter-spacing: -1.5px;
+        margin: 12px 0;
+      }
+      p {
+        font-size: 14px;
+        line-height: 1.65;
+        color: #a4aabd;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.15fr) minmax(300px, 1fr);
+        gap: 44px;
+      }
+      .product {
+        background: radial-gradient(ellipse at 50% 50%, #343c4a, #1b202b 70%);
+        border-radius: 16px;
+        min-height: 270px;
+        display: grid;
+        place-items: center;
+        position: relative;
+        overflow: hidden;
+      }
+      .mug {
+        width: 145px;
+        height: 145px;
+        border-radius: 14px 14px 60px 60px;
+        background: linear-gradient(110deg, #f1d2ad, #c79167);
+        box-shadow: 0 22px 35px #0004;
+        position: relative;
+        transform: rotate(-7deg);
+      }
+      .mug:before {
+        content: '';
+        position: absolute;
+        width: 67px;
+        height: 79px;
+        border: 18px solid #c4926d;
+        border-left: 0;
+        border-radius: 0 40px 40px 0;
+        right: -49px;
+        top: 13px;
+        z-index: -1;
+      }
+      .mug:after {
+        content: '';
+        position: absolute;
+        left: 7px;
+        right: 7px;
+        top: -6px;
+        height: 20px;
+        border-radius: 50%;
+        background: #76523e;
+        border: 7px solid #e3bd94;
+      }
+      .product-note {
+        position: absolute;
+        bottom: 15px;
+        font-size: 11px;
+        color: #9da6b9;
+        letter-spacing: 0.5px;
+      }
+      .product-title {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        margin-top: 18px;
+      }
+      h2 {
+        font-size: 20px;
+        font-weight: 550;
+        margin: 0;
+      }
+      .price {
+        font-size: 20px;
+      }
+      .details {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 18px 0;
+      }
+      .details span {
+        font-size: 11px;
+        padding: 6px 9px;
+        border: 1px solid #343848;
+        border-radius: 5px;
+        color: #a6adc1;
+      }
+      button {
+        border: 1px solid #454b60;
+        background: #292e40;
+        color: #eeeef6;
+        padding: 11px 14px;
+        border-radius: 7px;
+        font-size: 13px;
+        font-weight: 550;
+      }
+      button:hover {
+        background: #363e53;
+      }
+      button:focus-visible,
+      input:focus-visible {
+        outline: 2px solid #eda580;
+        outline-offset: 3px;
+      }
+      .primary {
+        background: #e6a07d;
+        border-color: #e6a07d;
+        color: #241b19;
+      }
+      .primary:hover {
+        background: #f0b495;
+      }
+      .full {
+        width: 100%;
+      }
+      .hint {
+        font-size: 12px;
+        margin: 8px 0 18px;
+      }
+      .success {
+        color: #9cd3b5;
+        min-height: 20px;
+        font-size: 13px;
+      }
+      .checkout {
+        border-top: 1px solid #333747;
+        padding-top: 24px;
+      }
+      .section-title {
+        font-size: 15px;
+        margin: 0 0 20px;
+      }
+      .field {
+        display: block;
+        font-size: 12px;
+        color: #aab0c2;
+        margin: 18px 0 8px;
+      }
+      input {
+        width: 100%;
+        min-width: 0;
+        background: #181c26;
+        color: #edf0f7;
+        border: 1px solid #393f53;
+        border-radius: 7px;
+        padding: 11px 12px;
+        font-size: 13px;
+      }
+      .inline {
+        display: flex;
+        gap: 9px;
+        align-items: center;
+      }
+      .inline input {
+        flex: 1;
+      }
+      .inline button {
+        flex-shrink: 0;
+      }
+      .total {
+        display: flex;
+        justify-content: space-between;
+        padding: 22px 0;
+        font-size: 15px;
+        margin-top: 14px;
+      }
+      .steps {
+        margin: 25px 0 0;
+        padding: 18px 0;
+        border-top: 1px solid #333747;
+        font-size: 12px;
+        line-height: 1.9;
+        color: #919bb2;
+      }
+      .steps strong {
+        font-weight: 500;
+        color: #ced3e0;
+      }
+      .diagnostics {
+        margin-top: 38px;
+        padding-top: 24px;
+        border-top: 1px solid #333747;
+      }
+      .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .toolbar h2 {
+        font-size: 15px;
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .actions button {
+        padding: 8px 12px;
+        font-size: 12px;
+      }
+      .footnote {
+        font-size: 12px;
+        max-width: 900px;
+      }
+      dialog {
+        max-width: calc(100vw - 32px);
+        width: 1050px;
+        max-height: 90vh;
+        border: 1px solid #444b60;
+        border-radius: 12px;
+        background: #171b25;
+        color: #eee;
+        padding: 18px;
+      }
+      dialog::backdrop {
+        background: #000b;
+      }
+      .dialog-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+      }
+      #playback {
+        overflow: auto;
+        background: white;
+        color: black;
+        min-height: 200px;
+      }
+      @media (max-width: 740px) {
+        main {
+          padding: 23px 18px 40px;
+        }
+        .layout {
+          grid-template-columns: 1fr;
+          gap: 28px;
+        }
+        .intro {
+          margin-top: 28px;
+        }
+        .product {
+          min-height: 230px;
+        }
+        .toolbar {
+          align-items: flex-start;
+        }
+        .badge {
+          font-size: 10px;
+        }
+        .brand {
+          font-size: 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <nav>
+        <span class="brand"><span class="accent">◒</span> Good Things</span><span class="badge" id="destination">Starting telemetry…</span>
+      </nav>
+      <header class="intro">
+        <div class="eyebrow">A small shop. A few deliberate bugs.</div>
+        <h1>Good design. Questionable checkout.</h1>
+        <p>A real browser app, instrumented with the public SDK. Nothing here charges a card or places an order.</p>
+      </header>
+      <div class="layout">
+        <section aria-label="Product">
+          <div class="product" aria-hidden="true">
+            <div class="mug"></div>
+            <span class="product-note">SMALL BATCH · BIG COFFEE ENERGY</span>
+          </div>
+          <div class="product-title">
+            <h2>The everyday mug</h2>
+            <span class="price">$24</span>
+          </div>
+          <p>Warm clay, a generous handle, and room for one more cup.</p>
+          <div class="details"><span>Hand glazed</span><span>350 ml</span><span>Sandstone</span></div>
+          <button class="full" id="add">Add to bag</button>
+          <p class="hint">Healthy: a real request with prompt feedback.</p>
+          <div class="success" id="cart-status" role="status"></div>
+        </section>
+        <section class="checkout" aria-label="Checkout">
+          <h2 class="section-title">Your bag · 1 item</h2>
+          <label class="field" for="email">Email for your receipt</label
+          ><input id="email" type="email" value="demo@example.invalid" autocomplete="off" />
+          <label class="field" for="discount">Discount code</label>
+          <div class="inline">
+            <input id="discount" placeholder="Try NOTHING20" autocomplete="off" /><button id="discount-apply">Apply code</button>
+          </div>
+          <p class="hint">Broken: apply once and wait 7 seconds without interacting.</p>
+          <button id="shipping" class="full">Get delivery estimate</button>
+          <div class="success" id="shipping-status" role="status"></div>
+          <p class="hint">Slow: real HTTP response after 3.4 seconds, with no early feedback.</p>
+          <div class="total"><span>Total</span><strong>$24.00</strong></div>
+          <button id="order" class="primary full">Place demo order</button>
+          <p class="hint">Broken: click 3 times quickly to try again.</p>
+          <div class="steps">
+            <strong>Try one scenario at a time.</strong><br />Other page feedback can suppress a suspected dead click. Signals are
+            heuristics, not proof that an action failed.
+          </div>
+        </section>
+      </div>
+      <section class="diagnostics" aria-label="Telemetry">
+        <div class="toolbar">
+          <h2>What the SDK observed</h2>
+          <div class="actions">
+            <button id="uploads" data-logfire-ignore-frustration>Review uploads</button
+            ><button id="watch" data-logfire-ignore-frustration>Watch local replay</button
+            ><button id="stop" data-logfire-ignore-frustration>Stop SDK</button>
+          </div>
+        </div>
+        <div id="signals"></div>
+        <p class="footnote">
+          Replay text and inputs stay masked. Local mode keeps uploads in server memory only; restarting clears them. Cloud mode requires a
+          restricted frontend application token. No normal write token, proxy, or payment details.
+        </p>
+      </section>
+    </main>
+    <dialog id="replay-dialog">
+      <div class="dialog-head">
+        <span>Recorded locally · text masked</span><button id="close-replay" data-logfire-ignore-frustration>Close replay</button>
+      </div>
+      <div id="playback"></div>
+    </dialog>
+    <script type="module" src="./shop.ts"></script>
+  </body>
+</html>
