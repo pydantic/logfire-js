@@ -134,8 +134,14 @@ test.describe('frustration with the real replay recorder', () => {
     await page.getByRole('button', { name: 'No response secret canary' }).click()
     await page.clock.runFor(7400)
     await page.evaluate(async () => window.frustrationReplay.flush())
+    // Replay flushing does not drain the trace exporter; its next batch may await the previous response.
+    await expect
+      .poll(async () => {
+        await page.clock.runFor(100)
+        return spans.filter((span) => span.name === 'browser.dead_click')
+      })
+      .toHaveLength(1)
     const first = spans.filter((span) => span.name === 'browser.dead_click')
-    expect(first).toHaveLength(1)
     expect(attributes(first[0] as ExportedSpan)).toMatchObject({
       'session.id': original.session,
       'logfire.session_replay.id': original.recording,
