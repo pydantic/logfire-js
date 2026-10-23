@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Frustration HTTP fixture</title>
+  </head>
+  <body>
+    <h1>Frustration HTTP fixture</h1>
+    <p role="status">starting</p>
+    <label>Email for your receipt <input type="email" /></label>
+    <button id="add">Add to bag</button>
+    <p id="cart-status"></p>
+    <button id="shipping">Get delivery estimate</button>
+    <p id="shipping-status"></p>
+    <button>Apply code</button>
+    <button>Retry action</button>
+    <button id="stop" data-logfire-ignore-frustration>Stop SDK</button>
+    <div id="signals"></div>
+    <script type="module" src="./http.ts"></script>
+  </body>
+</html>

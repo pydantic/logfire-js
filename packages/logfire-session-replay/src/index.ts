@@ -367,19 +367,44 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       runtime = undefined
       const generation = lifecycleGeneration
       transition = transition.then(async () => {
-        // Incoming pageshow can precede the outgoing document's pagehide.
-        // Yield a task before claiming its final persisted sequence.
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 0)
-        })
-        if (stopped || lifecycleGeneration !== generation) {
+        const isStale = () => stopped || lifecycleGeneration !== generation
+        if (isStale()) {
           return
         }
-        suspended = false
-        recordingIdentity.resume()
-        currentSessionId = getSessionId(false)
-        currentRecordingId = recordingIdentity.get(currentSessionId)
-        sequenceIsResumable = true
+        const lifecycle = new AbortController()
+        claimAbort = lifecycle
+        let handover: RecordingLock | undefined
+        let handoverTimedOut = false
+        if (coordination !== undefined) {
+          // Incoming pageshow can precede the outgoing pagehide by more than one task.
+          // Read ownership and the final sequence only after that writer releases its lock.
+          const claim = await claimRecordingLock(coordination.locks, currentRecordingId, lifecycle.signal)
+          if (claim.kind === 'aborted') {
+            return
+          }
+          if (claim.kind === 'held') {
+            handover = claim.lock
+          }
+          handoverTimedOut = claim.kind === 'timeout'
+        } else {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 0)
+          })
+        }
+        try {
+          if (isStale()) {
+            return
+          }
+          suspended = false
+          recordingIdentity.resume()
+          currentSessionId = getSessionId(false)
+          // Do not wait twice for a writer that already exhausted the handover budget.
+          // A fresh identity cannot collide with its still-reserved sequences.
+          currentRecordingId = handoverTimedOut ? recordingIdentity.replace(currentSessionId) : recordingIdentity.get(currentSessionId)
+          sequenceIsResumable = true
+        } finally {
+          handover?.release()
+        }
         await activateAndClaim(currentSessionId, generation, false)
       })
     }

@@ -1,4 +1,5 @@
-import type { Context } from '@opentelemetry/api'
+import { ROOT_CONTEXT } from '@opentelemetry/api'
+import { INTERACTION_CONTEXT } from './interactionContext'
 import type { Span } from '@opentelemetry/sdk-trace-web'
 import { afterEach, describe, expect, it } from 'vite-plus/test'
 
@@ -19,6 +20,11 @@ class TestSpan {
 
   setAttribute(key: string, value: unknown): this {
     this.attributes[key] = value
+    return this
+  }
+
+  setAttributes(values: Record<string, unknown>): this {
+    Object.assign(this.attributes, values)
     return this
   }
 }
@@ -81,7 +87,7 @@ function setLocation(location: { href: string } | undefined): void {
 }
 
 function startSpan(processor: BrowserSessionSpanProcessor, span: TestSpan): void {
-  processor.onStart(span as unknown as Span, {} as Context)
+  processor.onStart(span as unknown as Span, ROOT_CONTEXT)
 }
 
 function createReplayRuntime(
@@ -98,6 +104,17 @@ function createReplayRuntime(
 }
 
 describe('BrowserSessionSpanProcessor', () => {
+  it('preserves frozen interaction identity without reading current route or user context', () => {
+    const processor = createProcessor()
+    const span = createSpan()
+    const attributes = {
+      'session.id': 'original-session',
+      'logfire.page.route': '/original',
+      'logfire.session_replay.id': 'original-recording',
+    }
+    processor.onStart(span as unknown as Span, ROOT_CONTEXT.setValue(INTERACTION_CONTEXT, attributes))
+    expect(span.attributes).toEqual(attributes)
+  })
   afterEach(() => {
     if (originalLocationDescriptor === undefined) {
       Reflect.deleteProperty(globalThis, 'location')
