@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
   "extends": "../../tsconfig.base.json",
-  "include": ["src", "demo", "vite.config.ts"],
+  "include": ["src", "test-fixtures/frustration", "vite.config.ts"],
   "compilerOptions": {
     "types": ["user-agent-data-types"]
   }

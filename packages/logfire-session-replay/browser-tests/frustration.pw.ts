@@ -1,10 +1,10 @@
 import { expect, test } from '@playwright/test'
 
-test.describe('browser frustration playground', () => {
+test.describe('browser frustration interactions', () => {
   test.beforeEach(async ({ page }) => {
     await page.clock.install()
-    await page.goto('http://127.0.0.1:5189/')
-    await expect(page.getByRole('heading', { name: 'Find the clicks that go nowhere.' })).toBeVisible()
+    await page.goto('http://127.0.0.1:5190/')
+    await expect(page.getByRole('heading', { name: 'Frustration fixture' })).toBeVisible()
   })
 
   test('three trusted clicks emit one visible rage episode', async ({ page }) => {
@@ -13,7 +13,6 @@ test.describe('browser frustration playground', () => {
     await expect(page.getByText('Rapid repeated clicks', { exact: true })).toHaveCount(1)
     await button.click()
     await expect(page.getByText('Rapid repeated clicks', { exact: true })).toHaveCount(1)
-    await page.screenshot({ path: test.info().outputPath('desktop.png'), fullPage: true })
   })
 
   test('a quick successful response stays quiet', async ({ page }) => {
@@ -65,7 +64,7 @@ test.describe('browser frustration playground', () => {
     await expect(page.getByText('No signals yet.', { exact: false })).toBeVisible()
   })
 
-  test('excluded controls stay quiet and the mobile layout has no horizontal overflow', async ({ page }) => {
+  test('excluded controls stay quiet at a narrow viewport', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     const button = page.getByRole('button', { name: 'Try again' })
     await button.evaluate((node) => {
@@ -74,7 +73,5 @@ test.describe('browser frustration playground', () => {
     await button.click({ clickCount: 3, delay: 100 })
     await page.clock.runFor(7400)
     await expect(page.getByText('No signals yet.', { exact: false })).toBeVisible()
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    await page.screenshot({ path: test.info().outputPath('mobile.png'), fullPage: true })
   })
 })

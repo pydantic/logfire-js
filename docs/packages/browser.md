@@ -178,8 +178,6 @@ a genuine problem; clipboard operations, CSS-only feedback and canvas rendering 
 Pointer gestures elsewhere, keyboard input, and wheel gestures discard ambiguous pending responses
 rather than treating their resulting focus or scroll as application feedback. Pointer repeats on the
 same pending control retain its original response deadline. Repeated-click history is retained.
-Try one scenario at a time in the local demo at `packages/logfire-browser/demo`.
-Run it from the repository root with `pnpm run demo:frustration`.
 
 The detector ignores synthetic/modifier clicks, text-editing surfaces, disabled controls, downloads,
 new-window links and excluded elements or ancestors. Add `data-logfire-ignore-frustration` to repeat

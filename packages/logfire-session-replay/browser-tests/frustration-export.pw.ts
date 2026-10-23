@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
-import type { FrustrationFixture } from '../../logfire-browser/demo/acceptance.types'
+import type { FrustrationFixture } from '../../logfire-browser/test-fixtures/frustration/acceptance.types'
 
 interface ExportedSpan {
   attributes?: { key: string; value: { stringValue?: string; intValue?: string | number; doubleValue?: number } }[]
@@ -22,7 +22,7 @@ async function start(page: Page, mode = ''): Promise<ExportedSpan[]> {
     }
     await handler.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
   })
-  await page.goto(`http://127.0.0.1:5189/acceptance.html?mode=${mode}`)
+  await page.goto(`http://127.0.0.1:5190/acceptance.html?mode=${mode}`)
   await expect(page.getByText('ready', { exact: true })).toBeVisible()
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100))
   return spans

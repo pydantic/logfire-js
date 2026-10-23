@@ -598,9 +598,6 @@ importers:
       '@pydantic/logfire-session-replay':
         specifier: workspace:*
         version: link:../logfire-session-replay
-      '@rrweb/replay':
-        specifier: 2.1.1
-        version: 2.1.1
       '@tanstack/react-router':
         specifier: ^1.170.44
         version: 1.170.44(react-dom@19.3.0(react@19.3.0))(react@19.3.0)

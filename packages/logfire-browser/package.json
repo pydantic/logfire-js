@@ -112,7 +112,6 @@
     "@opentelemetry/sdk-trace-web": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
     "@pydantic/logfire-session-replay": "workspace:*",
-    "@rrweb/replay": "2.1.1",
     "@tanstack/react-router": "^1.170.44",
     "@types/react": "^19.3.0",
     "fast-check": "^4.10.2",

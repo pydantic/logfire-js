@@ -53,7 +53,7 @@ async function start(page: Page) {
     }
     await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
   })
-  await page.goto('http://127.0.0.1:5189/replay.html')
+  await page.goto('http://127.0.0.1:5190/replay.html')
   await expect(page.getByRole('status')).toHaveText('ready')
   await expect.poll(async () => page.evaluate(() => window.frustrationReplay.recording())).toBeTruthy()
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100))

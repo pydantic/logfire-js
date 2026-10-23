@@ -1,22 +1,11 @@
 import { resolve } from 'node:path'
 
 import { defineConfig } from '@playwright/test'
+import { frustrationServers } from './frustration-servers'
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
 const fixtureServers: { command: string; env?: Record<string, string>; url: string }[] = [
-  {
-    command: 'pnpm exec vp dev packages/logfire-browser/demo --host 127.0.0.1 --port 5189 --strictPort',
-    url: 'http://127.0.0.1:5189/',
-  },
-  {
-    command: 'pnpm exec vp dev --config packages/logfire-session-replay/test-fixtures/delivery/vite.config.ts',
-    url: 'http://127.0.0.1:4177/',
-  },
-  {
-    command: 'pnpm run demo:frustration',
-    env: { VITE_LOGFIRE_BASE_URL: '', VITE_LOGFIRE_TOKEN: '' },
-    url: 'http://127.0.0.1:5190/shop.html',
-  },
+  ...frustrationServers,
   {
     command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/privacy-defaults/vite.config.ts',
     url: 'http://127.0.0.1:4178/',
@@ -70,7 +59,7 @@ export default defineConfig({
     ...identityBrowsers.map((browserName) => ({
       name: `frustration-${browserName}`,
       use: { browserName },
-      testMatch: ['frustration.pw.ts', 'frustration-export.pw.ts', 'frustration-replay.pw.ts', 'frustration-shop.pw.ts'],
+      testMatch: ['frustration.pw.ts', 'frustration-export.pw.ts', 'frustration-replay.pw.ts', 'frustration-http.pw.ts'],
     })),
   ],
   webServer: fixtureServers.map(({ command, env, url }) => ({

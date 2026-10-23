@@ -1,4 +1,5 @@
-import { configureFrontend, getBrowserSessionId } from '../dist/index.js'
+import { signalFeed } from './signals'
+import { configureFrontend, getBrowserSessionId } from '../../dist/index.js'
 import type { FrustrationFixture } from './acceptance.types'
 
 const mode = new URLSearchParams(location.search).get('mode')
@@ -8,24 +9,21 @@ const cleanup = configureFrontend({
   token: 'local-fixture-frontend-token',
   autoInstrumentations: mode === 'auto',
   captureGlobalErrors: false,
-  ...(mode === 'navigation-during-report'
-    ? {
-        spanProcessors: [
-          {
-            onStart(span) {
-              if (span.name === 'browser.rage_click') {
-                const original = location.href
-                history.pushState({}, '', '/during-reporting')
-                history.replaceState({}, '', original)
-              }
-            },
-            onEnd: () => undefined,
-            forceFlush: async () => Promise.resolve(),
-            shutdown: async () => Promise.resolve(),
-          },
-        ],
-      }
-    : {}),
+  spanProcessors: [
+    signalFeed(),
+    {
+      onStart(span) {
+        if (mode === 'navigation-during-report' && span.name === 'browser.rage_click') {
+          const original = location.href
+          history.pushState({}, '', '/during-reporting')
+          history.replaceState({}, '', original)
+        }
+      },
+      onEnd: () => undefined,
+      forceFlush: async () => Promise.resolve(),
+      shutdown: async () => Promise.resolve(),
+    },
+  ],
   ...(mode === 'errors' ? { profile: 'errors' as const } : {}),
   ...(mode === 'drop' ? { sampling: { head: 0 } } : {}),
   ...(mode === 'keep' ? { profile: 'errors' as const, sampling: { tail: () => 1 } } : {}),
@@ -50,11 +48,17 @@ if (mode === 'auto') {
   })
 }
 
+document.getElementById('healthy')?.addEventListener('click', () => {
+  const feedback = document.getElementById('healthy-status')
+  if (feedback !== null) {
+    feedback.textContent = '✓ Draft saved'
+  }
+})
 document.getElementById('slow')?.addEventListener('click', () => {
   setTimeout(() => {
     const feedback = document.getElementById('feedback')
     if (feedback !== null) {
-      feedback.textContent = 'completed'
+      feedback.textContent = '✓ Report ready'
     }
   }, 3400)
 })

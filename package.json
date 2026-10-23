@@ -7,7 +7,6 @@
     "prepare": "vp config",
     "build": "vp run --filter \"./packages/*\" build",
     "dev": "vp run --filter \"./packages/*\" --parallel dev",
-    "demo:frustration": "vp dev --config packages/logfire-browser/demo/shop.config.ts",
     "test": "vp run --filter \"./packages/*\" test",
     "test:browser": "vp run @pydantic/logfire-session-replay#test:browser",
     "test:frustration-mutations": "stryker run stryker.frustration.config.mjs",

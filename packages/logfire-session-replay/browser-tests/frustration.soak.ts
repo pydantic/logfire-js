@@ -1,7 +1,7 @@
 /* eslint-disable no-await-in-loop -- Paired measurements, ordered outages, and lifecycle cycles must run sequentially. */
 import { expect, test } from '@playwright/test'
 import type { CDPSession, Page } from '@playwright/test'
-import type { DemoEvidence } from '../../logfire-browser/demo/shop.types'
+import type { FrustrationReceipts } from '../../logfire-browser/test-fixtures/frustration/receipts.types'
 import type { FrustrationSafety } from './frustration-safety.types'
 
 async function sample(cdp: CDPSession) {
@@ -44,7 +44,7 @@ test('paired CPU-throttled replay workload survives short and over-budget networ
   test.setTimeout(2 * duration + 180000)
   const results = []
   for (const enabled of [false, true]) {
-    await request.post('http://127.0.0.1:5190/__demo/reset')
+    await request.post('http://127.0.0.1:5190/fixture/reset')
     const context = await browser.newContext()
     try {
       const page = await context.newPage()
@@ -104,9 +104,9 @@ test('paired CPU-throttled replay workload survives short and over-budget networ
       expect(errors).toEqual([])
       expect(await page.evaluate(() => window.frustrationSafety.signals)).toEqual(enabled ? ['browser.rage_click'] : [])
       expect(after.heapBytes - before.heapBytes).toBeLessThan(8 * 1024 * 1024)
-      const response = await request.get('http://127.0.0.1:5190/__demo/receipts')
+      const response = await request.get('http://127.0.0.1:5190/fixture/receipts')
       expect(response.ok()).toBe(true)
-      const evidence = (await response.json()) as DemoEvidence
+      const evidence = (await response.json()) as FrustrationReceipts
       const chunks = evidence.chunks.filter(({ id }) => id === recording)
       expect(chunks.length).toBeGreaterThan(3)
       expect(new Set(chunks.map(({ seq }) => seq)).size).toBe(chunks.length)
