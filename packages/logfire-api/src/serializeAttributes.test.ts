@@ -388,4 +388,40 @@ describe('serializeAttributes', () => {
       type: 'object',
     })
   })
+
+  test('scrubs the secret names and Logfire token values the Python SDK scrubs by default', () => {
+    const result = serializeAttributes({
+      access_token: 'ya29.a0Af',
+      bearer_token: 'abc123',
+      error: 'invalid token',
+      header: 'Bearer pylf_v1_us_abc123',
+      hmac_key: 'k2',
+      id_token: 'eyJhbGciOi',
+      keyboard_layout: 'uk',
+      logfire_token: 'abc',
+      max_tokens: '100',
+      passphrase: 'correct horse',
+      refreshToken: '1//0gLk',
+      signingKey: 'k1',
+      token: 'kept',
+      webhook_hmac_key: 'k3',
+    })
+
+    expect(result).toMatchObject({
+      access_token: "[Scrubbed due to 'access_token']",
+      bearer_token: "[Scrubbed due to 'bearer_token']",
+      error: 'invalid token',
+      header: "[Scrubbed due to 'pylf_v1_']",
+      hmac_key: "[Scrubbed due to 'hmac_key']",
+      id_token: "[Scrubbed due to 'id_token']",
+      keyboard_layout: 'uk',
+      logfire_token: "[Scrubbed due to 'logfire_token']",
+      max_tokens: '100',
+      passphrase: "[Scrubbed due to 'passphrase']",
+      refreshToken: "[Scrubbed due to 'refreshToken']",
+      signingKey: "[Scrubbed due to 'signingKey']",
+      token: 'kept',
+      webhook_hmac_key: "[Scrubbed due to 'hmac_key']",
+    })
+  })
 })
