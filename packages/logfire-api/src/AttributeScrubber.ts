@@ -54,6 +54,8 @@ const DEFAULT_PATTERNS = [
   'auth(?!ors?\\b)',
   'credential',
   'private[._ -]?key',
+  'passphrase',
+  '(?:signing|hmac)[._ -]?key',
   'api[._ -]?key',
   'session',
   'cookie',
