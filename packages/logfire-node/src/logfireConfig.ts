@@ -24,6 +24,15 @@ export interface AdvancedLogfireConfigOptions {
    * The generator to use for generating trace IDs. Defaults to ULIDGenerator - https://github.com/ulid/spec.
    */
   idGenerator?: IdGenerator
+  /**
+   * Whether to send pending spans to Logfire. A pending span is a placeholder sent when a span starts,
+   * so the Logfire UI can show spans that are still running. Set to `false` to send only finished spans,
+   * which reduces the volume of data sent; spans that are still running then do not show in the Logfire UI
+   * until they finish. This does not affect console output.
+   *
+   * Defaults to the `LOGFIRE_PENDING_SPANS` environment variable, or `true`.
+   */
+  pendingSpans?: boolean
 }
 
 export interface CodeSource {
@@ -232,6 +241,7 @@ export interface LogfireConfig {
   diagLogLevel?: DiagLogLevel
   distributedTracing: boolean
   dataDir: string
+  pendingSpans: boolean
   idGenerator: IdGenerator
   instrumentations: Instrumentation[]
   jsonSchema: JsonSchemaMode
@@ -265,6 +275,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   deploymentEnvironment: undefined,
   distributedTracing: true,
   dataDir: '.logfire',
+  pendingSpans: true,
   idGenerator: new logfireApi.ULIDGenerator(),
   instrumentations: [],
   jsonSchema: 'rich',
@@ -366,6 +377,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
     diagLogLevel: cnf.diagLogLevel,
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),
     idGenerator: cnf.advanced?.idGenerator ?? new logfireApi.ULIDGenerator(),
+    pendingSpans: resolvePendingSpans(cnf.advanced?.pendingSpans),
     instrumentations: cnf.instrumentations ?? [],
     jsonSchema: jsonSchema ?? logfireConfig.jsonSchema,
     logsExporterUrl: `${baseUrl}/${LOGS_ENDPOINT_PATH}`,
@@ -485,6 +497,17 @@ function resolveDistributedTracing(option: LogfireConfigOptions['distributedTrac
   const envDistributedTracing = readNonEmptyEnv(process.env, 'LOGFIRE_DISTRIBUTED_TRACING')
   if (envDistributedTracing !== undefined) {
     return parseBooleanEnv(envDistributedTracing, 'LOGFIRE_DISTRIBUTED_TRACING')
+  }
+  return true
+}
+
+function resolvePendingSpans(option: AdvancedLogfireConfigOptions['pendingSpans']): boolean {
+  if (option !== undefined) {
+    return option
+  }
+  const envPendingSpans = readNonEmptyEnv(process.env, 'LOGFIRE_PENDING_SPANS')
+  if (envPendingSpans !== undefined) {
+    return parseBooleanEnv(envPendingSpans, 'LOGFIRE_PENDING_SPANS')
   }
   return true
 }

@@ -56,6 +56,9 @@ logfire.configure({
 When `token` is a function, set `advanced.baseUrl` or `LOGFIRE_BASE_URL`.
 Logfire cannot infer the API base URL from a token provider.
 
+Set `advanced.pendingSpans: false` or `LOGFIRE_PENDING_SPANS=false` to send
+only finished spans. See [Pending Spans](../configuration.md#pending-spans).
+
 ## Automatic Instrumentation
 
 Call `configure()` before importing instrumented libraries:
