@@ -70,6 +70,10 @@ const DEFAULT_PATTERNS = [
   'pylf_v\\d+_',
 ]
 
+// JS-only: the `(?:\b|_)id` boundary above misses camelCase keys such as `userIdToken`, and the
+// case-insensitive DEFAULT_PATTERNS cannot tell `userIdToken` from `paid_token` or `invalid_token`.
+const CAMEL_CASE_ID_TOKEN_PATTERN = /I[Dd][._ -]?[Tt]oken/u
+
 // Should be kept roughly in sync with `logfire._internal.scrubbing.BaseScrubber.SAFE_KEYS`
 const SAFE_KEYS = new Set([
   'code.filepath',
@@ -137,6 +141,10 @@ export class LogfireAttributeScrubber implements BaseScrubber {
     return [scrubbedValue as T, scrubbedNotes] as const
   }
 
+  private findMatch(text: string): RegExpMatchArray | null {
+    return text.match(this.pattern) ?? text.match(CAMEL_CASE_ID_TOKEN_PATTERN)
+  }
+
   private redact(path: JsonPath, value: unknown, match: RegExpMatchArray, notes: ScrubbedNote[]): unknown {
     // If callback is provided and returns a non-null value, use that
     if (this.callback) {
@@ -154,7 +162,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
   private scrub(path: JsonPath, value: unknown, notes: ScrubbedNote[], seen: WeakSet<object>, depth: number): unknown {
     if (typeof value === 'string') {
       // Check if the string matches the pattern
-      const match = value.match(this.pattern)
+      const match = this.findMatch(value)
       if (match) {
         // If the entire string is just the matched pattern, consider it safe.
         // e.g., if value == 'password', just leave it.
@@ -209,7 +217,7 @@ export class LogfireAttributeScrubber implements BaseScrubber {
             result.set(k, v)
           } else {
             // Check key against the pattern
-            const keyMatch = k.match(this.pattern)
+            const keyMatch = this.findMatch(k)
             if (keyMatch) {
               // Key contains sensitive substring
               const redacted = this.redact([...path, k], v, keyMatch, notes)
