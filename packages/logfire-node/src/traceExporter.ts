@@ -8,13 +8,13 @@ import { USER_AGENT } from './userAgent'
 import { LogfireConsoleSpanExporter } from './LogfireConsoleSpanExporter'
 import type { ConsoleConfig } from './consoleOptions'
 import { resolveConsoleOptions } from './consoleOptions'
-import { RemovePendingSpansExporter } from './RemovePendingSpansExporter'
+import { isPendingSpan, RemovePendingSpansExporter } from './RemovePendingSpansExporter'
 import { VoidTraceExporter } from './VoidTraceExporter'
 
 export function logfireSpanProcessor(consoleConfig: ConsoleConfig | undefined): SpanProcessor {
   const consoleOptions = resolveConsoleOptions(consoleConfig)
   const consoleProcessor = consoleOptions.enabled ? new SimpleSpanProcessor(new LogfireConsoleSpanExporter(consoleOptions)) : undefined
-  return new LogfireSpanProcessor(new BatchSpanProcessor(traceExporter()), consoleProcessor)
+  return new LogfireSpanProcessor(new BatchSpanProcessor(traceExporter()), consoleProcessor, { pendingSpans: logfireConfig.pendingSpans })
 }
 
 /**
@@ -36,17 +36,22 @@ export function traceExporter(): SpanExporter {
       headers: logfireConfig.authorizationHeaders,
       url: logfireConfig.traceExporterUrl,
       userAgent: USER_AGENT,
-    }),
-    { dropAll: !logfireConfig.pendingSpans }
+    })
   )
 }
 
 export class LogfireSpanProcessor implements SpanProcessor {
   private readonly console: SpanProcessor | undefined
+  private readonly pendingSpans: boolean
   private readonly wrapped: SpanProcessor
 
-  constructor(wrapped: SpanProcessor, consoleProcessor: SpanProcessor | undefined) {
+  constructor(
+    wrapped: SpanProcessor,
+    consoleProcessor: SpanProcessor | undefined,
+    { pendingSpans = true }: { pendingSpans?: boolean } = {}
+  ) {
     this.console = consoleProcessor
+    this.pendingSpans = pendingSpans
     this.wrapped = wrapped
   }
 
@@ -59,7 +64,11 @@ export class LogfireSpanProcessor implements SpanProcessor {
     // Note: this is too late for the regular node instrumentation. The opentelemetry API rejects the non-primitive attribute values.
     // Instead, the serialization happens at the `logfire.span, logfire.startSpan`, etc.
     // Object.assign(span.attributes, serializeAttributes(span.attributes))
-    this.wrapped.onEnd(span)
+
+    // Dropped before the batch queue, not at export, so discarded placeholders never take queue slots from real spans.
+    if (this.pendingSpans || !isPendingSpan(span)) {
+      this.wrapped.onEnd(span)
+    }
   }
 
   onStart(span: Span, parentContext: Context): void {

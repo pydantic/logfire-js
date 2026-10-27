@@ -159,6 +159,25 @@ logfire.configure({
 
 Use `sendToLogfire: 'if-token-present'` when shared code should send only in environments that provide a token.
 
+## Pending Spans
+
+When a span starts, Node.js sends a pending span placeholder so the Logfire UI
+can show spans that are still running. Set `advanced.pendingSpans: false` or
+`LOGFIRE_PENDING_SPANS=false` to send only finished spans:
+
+```ts
+logfire.configure({
+  advanced: {
+    pendingSpans: false,
+  },
+  serviceName: 'payments-api',
+})
+```
+
+This reduces the volume of data sent, but a long-running span does not show in
+the Logfire UI until it finishes. Console output still shows pending spans. The
+`configure()` option takes precedence over the environment variable.
+
 ## Advanced Base URL
 
 Use `LOGFIRE_BASE_URL` or `advanced.baseUrl` for self-hosted or local Logfire-compatible endpoints:

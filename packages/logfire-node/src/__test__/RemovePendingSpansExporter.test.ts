@@ -34,9 +34,9 @@ function setup() {
   return { log, startSpan, takeBatch }
 }
 
-function exportThrough(batch: ReadableSpan[], options?: { dropAll?: boolean }): [string, unknown][] {
+function exportThrough(batch: ReadableSpan[]): [string, unknown][] {
   const inner = new InMemorySpanExporter()
-  new RemovePendingSpansExporter(inner, options).export(batch, () => undefined)
+  new RemovePendingSpansExporter(inner).export(batch, () => undefined)
   return inner.getFinishedSpans().map((span) => [span.name, span.attributes[ATTRIBUTES_SPAN_TYPE_KEY]])
 }
 
@@ -90,20 +90,6 @@ describe('RemovePendingSpansExporter', () => {
     expect(exportThrough(takeBatch())).toEqual([
       ['work', 'pending_span'],
       ['work', 'span'],
-    ])
-    running.end()
-  })
-
-  it('drops every pending span with dropAll', () => {
-    const { log, startSpan, takeBatch } = setup()
-
-    const running = startSpan('running')
-    log('log1', running)
-    startSpan('finished').end()
-
-    expect(exportThrough(takeBatch(), { dropAll: true })).toEqual([
-      ['log1', 'log'],
-      ['finished', 'span'],
     ])
     running.end()
   })
