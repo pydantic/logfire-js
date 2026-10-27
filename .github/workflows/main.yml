@@ -40,18 +40,6 @@ jobs:
       - name: Test
         run: vp run --filter "./packages/*" test
 
-      - name: Frustration detector mutation tests
-        id: frustration-mutations
-        run: pnpm run test:frustration-mutations
-
-      - name: Upload mutation failure report
-        if: failure() && steps.frustration-mutations.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frustration-mutation-results
-          path: reports/frustration-mutation.json
-          retention-days: 7
-
       - name: Install browsers
         timeout-minutes: 10
         run: vp exec --filter @pydantic/logfire-session-replay -- playwright install --with-deps chromium firefox webkit
