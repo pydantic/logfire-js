@@ -1,5 +1,17 @@
 # logfire
 
+## 0.19.0
+
+### Minor Changes
+
+- e9e0922: Add `advanced.pendingSpans` and the `LOGFIRE_PENDING_SPANS` environment variable. Set either to `false` to stop sending pending spans to Logfire.
+
+### Patch Changes
+
+- Updated dependencies [3374365]
+- Updated dependencies [348e8d5]
+  - logfire@0.23.2
+
 ## 0.18.30
 
 ### Patch Changes

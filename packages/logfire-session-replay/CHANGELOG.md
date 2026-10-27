@@ -1,5 +1,12 @@
 # @pydantic/logfire-session-replay
 
+## 0.7.1
+
+### Patch Changes
+
+- 2ebfe0a: Serialize and retry hidden-tab replay uploads in keepalive-sized chunks, pack page-close chunks into the keepalive budget by compressed size, and export structured replay upload failures through the browser SDK.
+- 8a7e6da: Wait for the outgoing replay writer before restoring a cached page, preserving its recording ID and latest chunk sequence.
+
 ## 0.7.0
 
 ### Minor Changes

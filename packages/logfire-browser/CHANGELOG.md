@@ -1,5 +1,19 @@
 # @pydantic/logfire-browser
 
+## 0.30.0
+
+### Minor Changes
+
+- 8a7e6da: Add opt-in rage-click detection and experimental slow/dead-click heuristics, with session context and optional replay correlation.
+
+### Patch Changes
+
+- f5448dc: Add the URL path to fetch and XHR span names again with current OpenTelemetry instrumentations. Since `@opentelemetry/instrumentation-fetch` and `instrumentation-xml-http-request` 0.221, these spans have `url.full` instead of `http.url`, so a fresh install named them only by method, for example `GET` instead of `GET /api/thing`. The span processor now reads `url.full` first and falls back to `http.url`.
+- 2ebfe0a: Serialize and retry hidden-tab replay uploads in keepalive-sized chunks, pack page-close chunks into the keepalive budget by compressed size, and export structured replay upload failures through the browser SDK.
+- Updated dependencies [3374365]
+- Updated dependencies [348e8d5]
+  - logfire@0.23.2
+
 ## 0.29.0
 
 ### Minor Changes

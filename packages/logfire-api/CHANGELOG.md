@@ -1,5 +1,18 @@
 # @pydantic/logfire-api
 
+## 0.23.2
+
+### Patch Changes
+
+- 3374365: Stop a `Contains` mismatch reason from failing or flattening on a value `JSON.stringify` cannot represent.
+  
+  `truncatedRepr` read `.length` off the result outside its own try, so an output property whose
+  value is `undefined` reported an evaluator failure instead of the mismatch it had found. A `BigInt`
+  anywhere in the output threw, and the `String(value)` fallback rendered the whole object as
+  `[object Object]`, losing every other field. Both now go through `attributeJsonReplacer`, the same
+  replacer the attribute seam applies.
+- 348e8d5: Scrub OAuth-style token names (`access_token`, `refresh_token`, `id_token`, `bearer_token`), `logfire_token`, `passphrase`, `signing_key`, `hmac_key`, and Logfire token values (`pylf_v1_...`) from attributes by default, matching the Python SDK's default scrubbing patterns. camelCase keys such as `userIdToken` are scrubbed too. As in the Python SDK, string values that contain these phrases are also redacted, so a message like `'Failed to refresh access token'` is now scrubbed. A bare `token` and LLM usage fields such as `max_tokens` are still left alone.
+
 ## 0.23.1
 
 ### Patch Changes
