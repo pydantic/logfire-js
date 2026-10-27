@@ -1,4 +1,4 @@
-import { configureFrontend } from '../../dist/index.js'
+import { configureFrontend } from '@pydantic/logfire-browser'
 import { signalFeed } from './signals'
 
 function element(id: string): HTMLElement {
@@ -19,7 +19,7 @@ const cleanup = configureFrontend({
   },
   batchSpanProcessorConfig: { scheduledDelayMillis: 1000, maxExportBatchSize: 16 },
   sessionReplay: {
-    load: async () => import('../../../logfire-session-replay/dist/index.js'),
+    load: async () => import('@pydantic/logfire-session-replay'),
     sessionSampleRate: 1,
     flushIntervalMs: 5000,
     minSessionDurationMs: 0,

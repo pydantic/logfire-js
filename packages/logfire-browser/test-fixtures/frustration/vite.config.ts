@@ -2,7 +2,7 @@ import { resolve } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import { defineConfig } from 'vite-plus'
 import type { FrustrationReceipts, FrustrationSpan } from './receipts.types'
-import type { ChunkEnvelope } from '../../../logfire-session-replay/dist/index.js'
+import type { ChunkEnvelope } from '@pydantic/logfire-session-replay'
 
 const evidence: FrustrationReceipts = { spans: [], chunks: [] }
 let storedBytes = 0
@@ -15,6 +15,13 @@ const ingestCacheControl = process.env['FRUSTRATION_NO_STORE'] === '1' ? 'no-sto
 const config: ReturnType<typeof defineConfig> = defineConfig({
   root: import.meta.dirname,
   cacheDir: resolve(import.meta.dirname, '../../node_modules/.vite-frustration'),
+  // Run the built packages, as applications receive them. Typechecking maps these names to source instead.
+  resolve: {
+    alias: {
+      '@pydantic/logfire-browser': resolve(import.meta.dirname, '../../dist/index.js'),
+      '@pydantic/logfire-session-replay': resolve(import.meta.dirname, '../../../logfire-session-replay/dist/index.js'),
+    },
+  },
   // An open Vite WebSocket prevents the native BFCache safety test from restoring this document.
   server: { host: '127.0.0.1', port: 5190, strictPort: true, ws: false, forwardConsole: false },
   plugins: [

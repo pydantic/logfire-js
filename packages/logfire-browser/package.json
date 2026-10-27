@@ -77,7 +77,7 @@
     "build": "vp pack",
     "lint": "vp lint",
     "preview": "vp preview",
-    "typecheck": "tsc",
+    "typecheck": "tsc && tsc --project test-fixtures/frustration/tsconfig.json",
     "prepack": "cp ../../LICENSE .",
     "postpublish": "rm LICENSE",
     "test": "vp test --passWithNoTests"

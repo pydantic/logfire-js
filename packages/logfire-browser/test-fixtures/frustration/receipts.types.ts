@@ -1,4 +1,4 @@
-import type { RrwebEvent } from '../../../logfire-session-replay/dist/index.js'
+import type { RrwebEvent } from '@pydantic/logfire-session-replay'
 
 export interface FrustrationSpan {
   name: string

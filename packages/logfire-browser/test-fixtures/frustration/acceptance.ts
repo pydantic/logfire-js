@@ -1,5 +1,5 @@
 import { signalFeed } from './signals'
-import { configureFrontend, getBrowserSessionId } from '../../dist/index.js'
+import { configureFrontend, getBrowserSessionId } from '@pydantic/logfire-browser'
 import type { FrustrationFixture } from './acceptance.types'
 
 const mode = new URLSearchParams(location.search).get('mode')

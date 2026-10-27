@@ -1,6 +1,6 @@
-import { configureFrontend, getBrowserSessionId } from '../../dist/index.js'
-import type { BrowserConfigureHandle } from '../../dist/index.js'
-import type { SessionReplay } from '../../../logfire-session-replay/dist/index.js'
+import { configureFrontend, getBrowserSessionId } from '@pydantic/logfire-browser'
+import type { BrowserConfigureHandle } from '@pydantic/logfire-browser'
+import type { SessionReplay } from '@pydantic/logfire-session-replay'
 
 const parameters = new URLSearchParams(location.search)
 const detectorOnly = parameters.get('lifecycle') === 'detector'
@@ -45,7 +45,7 @@ async function start(): Promise<void> {
       ? false
       : {
           load: async () => {
-            const module = await import('../../../logfire-session-replay/dist/index.js')
+            const module = await import('@pydantic/logfire-session-replay')
             return {
               startSessionReplay(config) {
                 recorder = module.startSessionReplay(config)

@@ -1,5 +1,5 @@
-import { configureFrontend, getBrowserSessionId } from '../../dist/index.js'
-import type { SessionReplay } from '../../../logfire-session-replay/dist/index.js'
+import { configureFrontend, getBrowserSessionId } from '@pydantic/logfire-browser'
+import type { SessionReplay } from '@pydantic/logfire-session-replay'
 
 let recorder: SessionReplay | undefined
 const cleanup = configureFrontend({
@@ -14,7 +14,7 @@ const cleanup = configureFrontend({
   },
   sessionReplay: {
     load: async () => {
-      const module = await import('../../../logfire-session-replay/dist/index.js')
+      const module = await import('@pydantic/logfire-session-replay')
       return {
         startSessionReplay(config) {
           recorder = module.startSessionReplay(config)
