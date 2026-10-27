@@ -1,13 +1,10 @@
 import { resolve } from 'node:path'
 
 import { defineConfig } from '@playwright/test'
+import { frustrationServers, frustrationTests } from './frustration-fixtures'
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
 const fixtureServers: { command: string; env?: Record<string, string>; url: string }[] = [
-  {
-    command: 'pnpm exec vp dev --config packages/logfire-session-replay/test-fixtures/delivery/vite.config.ts',
-    url: 'http://127.0.0.1:4177/',
-  },
   {
     command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/privacy-defaults/vite.config.ts',
     url: 'http://127.0.0.1:4178/',
@@ -32,8 +29,8 @@ const fixtureServers: { command: string; env?: Record<string, string>; url: stri
   })),
 ]
 
-// The recording identity flows also run in Firefox and WebKit when the environment asks for the
-// full matrix. CI installs those browsers. A developer machine may not run them.
+// CI verifies recording identity and frustration detection in all three engines.
+// A developer machine can opt into that matrix after installing those browsers.
 const identityBrowsers = process.env['REPLAY_BROWSER_MATRIX'] === 'all' ? (['firefox', 'webkit'] as const) : []
 
 export default defineConfig({
@@ -58,14 +55,22 @@ export default defineConfig({
       testMatch: 'session-replay.pw.ts',
       grep: /recording identity/u,
     })),
+    ...identityBrowsers.map((browserName) => ({
+      name: `frustration-${browserName}`,
+      use: { browserName },
+      testMatch: frustrationTests,
+    })),
   ],
-  webServer: fixtureServers.map(({ command, env, url }) => ({
-    command,
-    ...(env === undefined ? {} : { env }),
-    cwd: repositoryRoot,
-    reuseExistingServer: false,
-    timeout: 30_000,
-    url,
-  })),
+  webServer: [
+    ...frustrationServers,
+    ...fixtureServers.map(({ command, env, url }) => ({
+      command,
+      ...(env === undefined ? {} : { env }),
+      cwd: repositoryRoot,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      url,
+    })),
+  ],
   workers: 1,
 })

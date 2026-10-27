@@ -41,6 +41,7 @@ jobs:
         run: vp run --filter "./packages/*" test
 
       - name: Install browsers
+        timeout-minutes: 10
         run: vp exec --filter @pydantic/logfire-session-replay -- playwright install --with-deps chromium firefox webkit
 
       - name: Browser acceptance

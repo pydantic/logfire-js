@@ -55,6 +55,86 @@ afterEach(async () => {
 })
 
 describe('coordinated replay recording', () => {
+  it.each([
+    ['stop', false],
+    ['stop', true],
+    ['pagehide', false],
+    ['pagehide', true],
+  ] as const)('cancels a BFCache handover at %s (already waiting: %s) without restarting on a late grant', async (boundary, waiting) => {
+    vi.useFakeTimers()
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = start(config(fetchImpl))
+    await replay.flush()
+    const recordingId = replay.getRecordingId()
+    captured.emit(fullSnapshot)
+    await replay.flush()
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+    await drainMicrotasks()
+    const outgoing = await claimRecordingLock(locks as unknown as LockManager, recordingId, new AbortController().signal)
+    expect(outgoing.kind).toBe('held')
+    if (outgoing.kind !== 'held') {
+      throw new Error('The outgoing document must hold the recording')
+    }
+    try {
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+      if (waiting) {
+        await drainMicrotasks()
+      }
+      if (boundary === 'stop') {
+        await replay.stop()
+      } else {
+        window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+      }
+      outgoing.lock.release()
+      await vi.advanceTimersByTimeAsync(1100)
+      await drainMicrotasks()
+      expect(replay.recording).toBe(false)
+      expect(recorderMod.startRecording).toHaveBeenCalledTimes(1)
+      expect(calls.map(({ url }) => url)).toEqual([`https://app.example.com/replay/${recordingId}?seq=0`])
+      expect(locks.isHeld(lockName(recordingId))).toBe(false)
+    } finally {
+      outgoing.lock.release()
+      await replay.stop()
+    }
+  })
+
+  it('waits for the outgoing writer before restoring a cached recording identity', async () => {
+    vi.useFakeTimers()
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = start(config(fetchImpl))
+    await replay.flush()
+    const recordingId = replay.getRecordingId()
+    captured.emit(fullSnapshot)
+    await replay.flush()
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+    await drainMicrotasks()
+    const outgoing = await claimRecordingLock(locks as unknown as LockManager, recordingId, new AbortController().signal)
+    expect(outgoing.kind).toBe('held')
+    if (outgoing.kind !== 'held') {
+      throw new Error('The outgoing document must hold the recording')
+    }
+    sessionStorage.setItem(RECORDING_OWNER_STORAGE_KEY, 'outgoing-document')
+    try {
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+      await vi.advanceTimersByTimeAsync(50)
+      expect(replay.recording).toBe(false)
+      expect(sessionStorage.getItem(RECORDING_OWNER_STORAGE_KEY)).toBe('outgoing-document')
+      seedResumableRecording(recordingId, 7, 7)
+      outgoing.lock.release()
+      await replay.flush()
+      expect(replay.getRecordingId()).toBe(recordingId)
+      captured.emit(fullSnapshot)
+      await replay.flush()
+      expect(calls.map(({ url }) => url)).toEqual([
+        `https://app.example.com/replay/${recordingId}?seq=0`,
+        `https://app.example.com/replay/${recordingId}?seq=7`,
+      ])
+    } finally {
+      outgoing.lock.release()
+      await replay.stop()
+    }
+  })
+
   it('records at once, and reserves and sends nothing until the lock is granted', async () => {
     const gate = deferred()
     vi.stubGlobal('navigator', { locks: gatedLocks(locks, gate.promise) })
