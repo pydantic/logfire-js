@@ -76,7 +76,7 @@ const mocks = vi.hoisted(() => {
           }
           const processors = (this.options as { spanProcessors: SpanProcessor[] }).spanProcessors
           for (const processor of processors) {
-            processor.onStart(span as never, {} as never)
+            processor.onStart(span as never, ROOT_CONTEXT)
           }
           return span
         },

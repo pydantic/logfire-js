@@ -47,6 +47,6 @@ export class RemovePendingSpansExporter implements SpanExporter {
   }
 }
 
-function isPendingSpan(span: ReadableSpan): boolean {
+export function isPendingSpan(span: ReadableSpan): boolean {
   return span.attributes[LOGFIRE_SPAN_TYPE_KEY] === 'pending_span'
 }

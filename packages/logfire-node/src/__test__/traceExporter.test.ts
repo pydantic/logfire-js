@@ -1,4 +1,4 @@
-import type { SpanProcessor } from '@opentelemetry/sdk-trace-base'
+import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
 import { describe, expect, it, vi } from 'vite-plus/test'
 
@@ -53,5 +53,27 @@ describe('LogfireSpanProcessor lifecycle', () => {
     const wrapped = processor({ forceFlush: vi.fn<() => Promise<void>>(async () => Promise.reject(batchError)) })
 
     await expect(new LogfireSpanProcessor(wrapped, undefined).forceFlush()).rejects.toBe(batchError)
+  })
+})
+
+describe('LogfireSpanProcessor pending spans', () => {
+  const pendingSpan = { attributes: { 'logfire.span_type': 'pending_span' } } as unknown as ReadableSpan
+  const finishedSpan = { attributes: { 'logfire.span_type': 'span' } } as unknown as ReadableSpan
+
+  function endBoth(options?: { pendingSpans?: boolean }) {
+    const wrappedOnEnd = vi.fn<(span: ReadableSpan) => void>()
+    const consoleOnEnd = vi.fn<(span: ReadableSpan) => void>()
+    const spanProcessor = new LogfireSpanProcessor(processor({ onEnd: wrappedOnEnd }), processor({ onEnd: consoleOnEnd }), options)
+    spanProcessor.onEnd(pendingSpan)
+    spanProcessor.onEnd(finishedSpan)
+    return { consoleSpans: consoleOnEnd.mock.calls.map(([span]) => span), wrappedSpans: wrappedOnEnd.mock.calls.map(([span]) => span) }
+  }
+
+  it('forwards pending spans to both processors by default', () => {
+    expect(endBoth()).toEqual({ consoleSpans: [pendingSpan, finishedSpan], wrappedSpans: [pendingSpan, finishedSpan] })
+  })
+
+  it('keeps pending spans out of the batch processor but not the console with pendingSpans: false', () => {
+    expect(endBoth({ pendingSpans: false })).toEqual({ consoleSpans: [pendingSpan, finishedSpan], wrappedSpans: [finishedSpan] })
   })
 })

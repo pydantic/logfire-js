@@ -1,5 +1,21 @@
 # @pydantic/logfire-browser
 
+## 0.29.0
+
+### Minor Changes
+
+- 0a3dafd: Stop losing the older spans of a page that unloads soon after it loads. The document-hide flush sends the newest spans first in a small keepalive request, and it now starts the request for the older spans in the same task. Before, it waited for the first response, which an unloading page never receives, so the older spans were never sent. On a page that redirects at once, such as a redirect to a login page, that dropped almost every span except the newest. The flush now needs two free export slots, so an exporter with `concurrencyLimit: 1` rejects the second request.
+  
+  Add `forceFlush()`, which exports the buffered spans of the active configuration at once. Call it after a record that must arrive even if the page unloads soon after, such as the start of a page-load measurement.
+
+## 0.28.1
+
+### Patch Changes
+
+- b85bf8c: Fix fresh installs failing with `ERESOLVE` since the OpenTelemetry JS 3.0 release. The OpenTelemetry dependency ranges now stop before `@opentelemetry/api` 1.10, `@opentelemetry/auto-instrumentations-node` 0.82, `@opentelemetry/auto-instrumentations-web` 0.69 and `@opentelemetry/instrumentation-user-interaction` 0.68, which require the 3.0 line. A new install resolves to the 1.9 / 2.x / 0.2xx line again. Support for OpenTelemetry JS 3.0 will follow in a later release.
+- Updated dependencies [b85bf8c]
+  - logfire@0.23.1
+
 ## 0.28.0
 
 ### Minor Changes

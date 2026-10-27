@@ -140,3 +140,61 @@ Only enable verbose diagnostic logging in development.
 
 [Python telemetry proxy](../python-telemetry-proxy.md) — Forward traces, logs, and
 metrics through an authenticated Python backend. These helpers do not forward replay.
+
+## Interaction frustration signals
+
+Enable repeated-click detection explicitly. Experimental response detection is separately opt-in:
+
+```ts
+import { configureFrontend } from '@pydantic/logfire-browser'
+
+configureFrontend({
+  // Copy these values from the frontend application page.
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  rum: {
+    frustration: {
+      rageClicks: true,
+      deadClicks: true,
+      ignoreSelectors: ['.quantity-stepper'],
+    },
+  },
+})
+```
+
+`rum.frustration: true` enables rage-click detection only. Replay recording is not required.
+Setting both `rageClicks` and `deadClicks` to `false` disables the feature without requiring session tracking.
+Events use the existing trace exporter and sampling configuration; an errors-only profile can drop
+these non-error events. No event is marked as an application error merely to retain it.
+
+- `browser.rage_click`: three clicks on the same interactive DOM element, less than one second
+  apart and within 30 CSS pixels of the first click. One event is emitted per episode.
+- `browser.slow_click`: an observable response arrives after 2.5 seconds but before seven seconds.
+- `browser.dead_click`: no response is observed during seven seconds. This is a suspected dead
+  click, not proof the action failed.
+
+Response detection uses broad DOM mutation and interaction signals. Unrelated updates can suppress
+a genuine problem; clipboard operations, CSS-only feedback and canvas rendering may be invisible.
+Pointer gestures elsewhere, keyboard input, and wheel gestures discard ambiguous pending responses
+rather than treating their resulting focus or scroll as application feedback. Pointer repeats on the
+same pending control retain its original response deadline. Repeated-click history is retained.
+
+The detector ignores synthetic/modifier clicks, text-editing surfaces, disabled controls, downloads,
+new-window links and excluded elements or ancestors. Add `data-logfire-ignore-frustration` to repeat
+controls such as quantity steppers. Frameworks replacing DOM nodes can split a rage-click episode.
+Open shadow roots on the clicked element's event path are observed before application handlers run.
+Closed shadow roots and cross-origin frame contents cannot be inspected; exclude interactive hosts
+whose only visible response happens inside a closed root.
+
+The response observer and its single deadline timer run only while candidates are pending; neither
+polls an idle page. Navigation, backgrounding, session rollover and severely delayed deadline callbacks
+discard incomplete candidates. Pending state is capped at 32 targets and 64 observed roots, and event
+emission at 50 per session per SDK configuration. Reaching the root limit discards the old observation
+window rather than retaining an unbounded number of trees.
+Initialization failures trigger rollback; teardown failures disable further detection for that SDK configuration.
+
+Events carry the session, user, page URL, route and replay attributes captured at click time, as other
+browser spans do, even when they are reported seconds later. The detector adds no DOM
+text, input values, element IDs, CSS selectors or arbitrary attributes to telemetry. Existing customer
+span processors and resource attributes still apply. Use replay correlation to inspect suspected
+problems before interpreting them as user frustration.

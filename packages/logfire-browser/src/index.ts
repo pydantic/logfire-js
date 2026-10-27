@@ -75,12 +75,16 @@ import {
   assertProviderLifecycleAvailable,
   beginProviderCleanup,
   deactivateProviderDelegate,
+  forceFlushActiveProvider,
   getStableBrowserTracer,
   initializeProviderLifecycleGlobals,
   settleProviderCleanup,
 } from './providerLifecycle'
 import { assertBrowserReplayUrl, createTelemetryUrlPatterns, isBrowserReplayUrlValid } from './telemetryUrls'
 import { collapseUserInteractionSpans } from './userInteraction'
+import { startBrowserFrustration } from './browserFrustration'
+import { resolveBrowserFrustrationOptions } from './interactionFrustration'
+export type { BrowserFrustrationOptions } from './interactionFrustration'
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from 'logfire'
 export { getBrowserSessionId } from './browserSession'
@@ -480,7 +484,8 @@ function resolveBrowserSessionOptions(
   const webVitalsOptions = resolveBrowserWebVitalsOptions(rum?.webVitals)
   const longAnimationFramesOptions = resolveBrowserLongAnimationFramesOptions(rum?.longAnimationFrames)
   const sessionReplayRequiresSession = sessionReplayOptions !== undefined
-  if (webVitalsOptions === undefined && longAnimationFramesOptions === undefined && !sessionReplayRequiresSession) {
+  const frustrationEnabled = resolveBrowserFrustrationOptions(rum?.frustration) !== undefined
+  if (webVitalsOptions === undefined && longAnimationFramesOptions === undefined && !sessionReplayRequiresSession && !frustrationEnabled) {
     return rum?.session
   }
 
@@ -490,7 +495,7 @@ function resolveBrowserSessionOptions(
         'logfire-browser: sessionReplay requires browser session attributes; remove rum.session: false or disable sessionReplay'
       )
     }
-    const feature = webVitalsOptions === undefined ? 'rum.longAnimationFrames' : 'rum.webVitals'
+    const feature = frustrationEnabled ? 'rum.frustration' : webVitalsOptions === undefined ? 'rum.longAnimationFrames' : 'rum.webVitals'
     throw new Error(`logfire-browser: ${feature} requires browser session attributes; remove rum.session: false or disable ${feature}`)
   }
 
@@ -1005,6 +1010,24 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
           }
         })()
 
+  const frustrationOptions = resolveBrowserFrustrationOptions(options.rum?.frustration)
+  const stopFrustration =
+    frustrationOptions !== undefined && browserSessionManager !== undefined
+      ? (() => {
+          try {
+            return startBrowserFrustration({
+              ...frustrationOptions,
+              sessionManager: browserSessionManager,
+              replayState: browserSessionReplayState,
+              tracer: tracerProvider.getTracer('logfire-browser-frustration'),
+            })
+          } catch (error) {
+            diag.error('logfire-browser: failed to start frustration reporting', error)
+            return undefined
+          }
+        })()
+      : undefined
+
   let cleanupPromise: Promise<void> | undefined
 
   // Return the stored promise directly so repeated cleanup calls preserve identity.
@@ -1032,6 +1055,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
       }
 
       diag.info('logfire-browser: shutting down')
+      stopFrustration?.()
       removeDocumentHideFlush()
       removeNavigatedPageObserver?.()
       removeGlobalErrorCapture?.()
@@ -1090,6 +1114,18 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   return cleanup
 }
 
+/**
+ * Exports the spans that the active configuration has buffered, without waiting for the batch
+ * delay. Call it after a record that must arrive even if the page unloads soon after, such as the
+ * start of a page-load measurement. The request leaves while the page is still alive, so the
+ * document-hide flush does not have to carry the record. The promise rejects when the export
+ * fails, so a caller that does not await it must catch the rejection. It resolves at once when no
+ * configuration is active.
+ */
+export async function forceFlush(): Promise<void> {
+  await forceFlushActiveProvider()
+}
+
 const defaultExport: {
   DiagLogLevel: typeof DiagLogLevel
   Level: typeof Level
@@ -1102,6 +1138,7 @@ const defaultExport: {
   debug: typeof debug
   error: typeof error
   fatal: typeof fatal
+  forceFlush: typeof forceFlush
   info: typeof info
   instrument: typeof instrument
   getBrowserSessionId: typeof getBrowserSessionId
@@ -1127,6 +1164,7 @@ const defaultExport: {
   DiagLogLevel,
   error,
   fatal,
+  forceFlush,
   getBrowserSessionId,
   info,
   instrument,

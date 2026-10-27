@@ -1,5 +1,6 @@
 import type { BrowserWebVitalsOptions } from './webVitals'
 import type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
+import type { BrowserFrustrationOptions } from './interactionFrustration'
 
 import { setOwn } from './ownRecord'
 import { PageRouteHistory } from './pageRoutes'
@@ -78,6 +79,8 @@ export interface BrowserSessionState {
 }
 
 export interface RUMOptions {
+  /** Opt-in frustration heuristics. Dead-click detection is experimental and disabled by default. */
+  frustration?: boolean | BrowserFrustrationOptions
   /**
    * Enable browser session identity and session/page span attributes.
    */
