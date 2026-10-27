@@ -5,7 +5,7 @@ import { gunzipSync } from 'node:zlib'
 
 import { diag } from '@opentelemetry/api'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-web'
-import { CustomTag, startSessionReplay } from '@pydantic/logfire-session-replay'
+import { CustomTag, ReplayUploadError, startSessionReplay } from '@pydantic/logfire-session-replay'
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
 
 import { clearConfiguredBrowserSessionForTests } from './browserSession'
@@ -304,6 +304,75 @@ describe('public browser configure startup ordering', () => {
     expect(errorEvents.map((event) => event.data?.payload?.message)).toEqual(['startup'])
     expect(errorEvents[0]?.data?.payload?.timestamp).toBeGreaterThanOrEqual(reportedAt)
     expect(errorEvents[0]?.data?.payload?.timestamp).toBeLessThanOrEqual(errorEvents[0]?.timestamp ?? 0)
+  })
+
+  it('exports replay upload failures and dependent sequence gaps without recording payloads', async () => {
+    const exporter = new InMemorySpanExporter()
+    const onError = vi.fn<(error: unknown) => void>()
+    let replayConfig: Parameters<typeof startSessionReplay>[0] | undefined
+    const cleanup = configure({
+      sessionReplay: {
+        load: () => ({
+          startSessionReplay(config) {
+            replayConfig = config
+            return {
+              recording: true,
+              mode: 'full',
+              getSessionId: () => 'session',
+              flush: async () => Promise.resolve(),
+              stop: async () => Promise.resolve(),
+            }
+          },
+        }),
+        onError,
+        replayUrl: '/client-replay',
+      },
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+      traceUrl: '/client-traces',
+    })
+    try {
+      await waitUntil(() => replayConfig !== undefined)
+      const failure = new ReplayUploadError({
+        cause: new Error('private payload must not be exported'),
+        droppedSeqs: [8, 9],
+        reason: 'unconfirmed',
+        seq: 7,
+        sessionId: 'recording',
+        status: 503,
+      })
+      replayConfig?.onError?.(failure)
+      expect(onError).toHaveBeenCalledExactlyOnceWith(failure)
+      const failures = exporter.getFinishedSpans().filter((span) => span.attributes['replay.upload.reason'] === 'unconfirmed')
+      expect(failures).toHaveLength(1)
+      expect(failures[0]?.attributes).toMatchObject({
+        'replay.recording_id': 'recording',
+        'replay.chunk.seq': 7,
+        'replay.upload.status_code': 503,
+        'replay.upload.dropped_seqs': '[8,9]',
+        'replay.upload.dependent_drop_count': 2,
+      })
+      expect(JSON.stringify(failures[0]?.attributes)).not.toContain('private payload')
+
+      // A full upload queue rejects the batch before it gets a sequence.
+      const rejected = new ReplayUploadError({
+        cause: new Error('replay upload queue is full'),
+        reason: 'not-sent',
+        seq: undefined,
+        sessionId: 'recording',
+      })
+      replayConfig?.onError?.(rejected)
+      expect(onError).toHaveBeenLastCalledWith(rejected)
+      const unsequenced = exporter.getFinishedSpans().filter((span) => span.attributes['replay.upload.reason'] === 'not-sent')
+      expect(unsequenced).toHaveLength(1)
+      expect(unsequenced[0]?.attributes['replay.chunk.seq']).toBeUndefined()
+      expect(unsequenced[0]?.attributes).toMatchObject({
+        'replay.recording_id': 'recording',
+        'replay.upload.dropped_seqs': '[]',
+        'replay.upload.dependent_drop_count': 0,
+      })
+    } finally {
+      await cleanup()
+    }
   })
 
   it('keeps real span creation safe when the lazy replay runtime getters throw', async () => {

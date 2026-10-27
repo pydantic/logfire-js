@@ -20,7 +20,11 @@ const MAX_QUEUED_BYTES = 2_000_000
 // A persistently failing endpoint would otherwise trigger a DOM snapshot on every flush.
 const RESYNC_MIN_INTERVAL_MS = 60_000
 const MAX_KEEPALIVE_RESERVED_BYTES = 48_000
-const MAX_KEEPALIVE_CHUNK_BYTES = 48_000
+const MAX_KEEPALIVE_RAW_BYTES = 1_000_000
+// Events compress unevenly, so a prefix sized from the batch's average ratio can still overshoot.
+const KEEPALIVE_PACKING_HEADROOM = 0.9
+// Below this, more pagehide chunks would add requests and compression passes for little data.
+const MIN_KEEPALIVE_CHUNK_BYTES = MAX_KEEPALIVE_RESERVED_BYTES / 10
 interface Compression {
   gzip: typeof gzip
   gzipSync: typeof gzipSync
@@ -39,6 +43,12 @@ interface PreparedUpload {
   sessionId: string
 }
 
+interface LifecycleChunk {
+  events: RrwebEvent[]
+  eventBytes: number
+  body?: Uint8Array
+}
+
 interface QueuedUpload {
   body: Uint8Array | undefined
   done: Promise<void>
@@ -46,6 +56,11 @@ interface QueuedUpload {
   hasFullSnapshot: boolean
   identity: ChunkIdentity
   reachedFetch: boolean
+  attempting: boolean
+  background: boolean
+  pagehide: boolean
+  // Compressed while the chunk was split. Valid only while `events` is still the same array.
+  prepared: LifecycleChunk | undefined
   resolve: () => void
   retainedBytes: number
   seq: number
@@ -106,9 +121,11 @@ export class ReplayTransport {
   private activeUpload: QueuedUpload | undefined
   private drainPromise: Promise<void> | undefined
   private draining = false
+  private readonly pagehideUploads = new Set<QueuedUpload>()
   private readonly lifecycleFlights = new Set<Promise<void>>()
   private closed = false
   private shuttingDown = false
+  private wakeRetry: (() => void) | undefined
   private readonly retryAbort = new AbortController()
   private readonly deadlineAbort = new AbortController()
   private resyncPending = false
@@ -287,11 +304,34 @@ export class ReplayTransport {
     return this.flush()
   }
 
-  async flush(options: { keepalive?: boolean } = {}): Promise<void> {
-    return this.flushInternal(options)
+  async flush(options: { keepalive?: boolean; background?: boolean } = {}): Promise<void> {
+    if (this.closed) {
+      return
+    }
+    if (options.keepalive !== true) {
+      return this.flushInternal(options)
+    }
+    // Hidden-tab work may still be queued behind a slow request. Give its
+    // unsent tail a final attempt before the document freezes, without duplicating
+    // the active upload or a previous pagehide attempt.
+    if (this.activeUpload !== undefined) {
+      this.activeUpload.background = true
+      this.activeUpload.pagehide = true
+    }
+    const pending = this.queue.filter((upload) => (upload !== this.activeUpload || !upload.attempting) && !this.pagehideUploads.has(upload))
+    for (const upload of pending) {
+      this.pagehideUploads.add(upload)
+      upload.background = true
+    }
+    // Transfer preparation and sleeping retries to the final pass. Their drain
+    // waits for completion rather than racing a duplicate attempt. Reserve bodies
+    // synchronously in sequence order, before the buffered tail claims capacity.
+    this.wakeRetry?.()
+    const finalAttempts = this.trackLifecycle(Promise.all(pending.map(async (upload) => this.finalAttempt(upload))).then(() => undefined))
+    await Promise.all([this.flushInternal(options), finalAttempts])
   }
 
-  private async flushInternal(options: { keepalive?: boolean } = {}): Promise<void> {
+  private async flushInternal(options: { keepalive?: boolean; background?: boolean } = {}): Promise<void> {
     if (this.closed || this.mode === 'buffer' || this.held || this.awaitingBinding || this.buffer.length === 0) {
       return
     }
@@ -318,20 +358,34 @@ export class ReplayTransport {
     const identity = this.snapshotIdentity()
 
     if (options.keepalive === true) {
-      // A pagehide/visibility keepalive must start before the browser freezes the
+      // A pagehide keepalive must start before the browser freezes the
       // page, even when an ordinary upload is still awaiting its response.
-      const eventChunks = splitKeepaliveEventChunks(events)
+      const eventChunks = this.splitKeepaliveEventChunks(
+        events,
+        identity,
+        Math.max(0, MAX_KEEPALIVE_RESERVED_BYTES - this.reservedKeepaliveBytes)
+      )
       const seq = this.allocateSeq(eventChunks.length)
       if (seq === undefined) {
         return
       }
-      const run = this.deliverLifecycle(eventChunks, seq, sessionId, identity)
-      this.lifecycleFlights.add(run)
-      const forget = (): void => {
-        this.lifecycleFlights.delete(run)
+      await this.trackLifecycle(this.deliverLifecycle(eventChunks, seq, sessionId, identity))
+      return
+    }
+
+    if (options.background === true) {
+      // A hidden tab can be frozen or discarded without a pagehide. Chunks that fit the
+      // keepalive budget let each request outlive the page, and the queue keeps their order
+      // and retries. Sequences are allocated in chunk order, matching the prepared envelopes.
+      const uploads: QueuedUpload[] = []
+      for (const chunk of this.splitKeepaliveEventChunks(events, identity)) {
+        const upload = this.enqueue(chunk.events, chunk.eventBytes, sessionId, identity, true, chunk)
+        if (upload === undefined) {
+          break
+        }
+        uploads.push(upload)
       }
-      run.then(forget, forget)
-      await run
+      await Promise.all(uploads.map(async (upload) => upload.done))
       return
     }
 
@@ -362,7 +416,9 @@ export class ReplayTransport {
     this.shuttingDown = true
     this.clearResyncTimer()
     this.retryAbort.abort()
-    const finalAttempts = this.queue.filter((upload) => upload !== this.activeUpload).map(async (upload) => this.finalAttempt(upload))
+    const finalAttempts = this.queue
+      .filter((upload) => upload !== this.activeUpload && !this.pagehideUploads.has(upload))
+      .map(async (upload) => this.finalAttempt(upload))
     await this.settleWithinDeadline([finalFlush, ...finalAttempts])
   }
 
@@ -544,7 +600,14 @@ export class ReplayTransport {
     return seq
   }
 
-  private enqueue(events: RrwebEvent[], eventBytes: number, sessionId: string, identity: ChunkIdentity): QueuedUpload | undefined {
+  private enqueue(
+    events: RrwebEvent[],
+    eventBytes: number,
+    sessionId: string,
+    identity: ChunkIdentity,
+    background = false,
+    prepared?: LifecycleChunk
+  ): QueuedUpload | undefined {
     // Two full batches always fit, so a large maxBufferBytes does not reject
     // the next batch while a healthy upload is still in flight.
     const maxQueuedBytes = Math.max(MAX_QUEUED_BYTES, 2 * this.config.maxBufferBytes)
@@ -572,6 +635,10 @@ export class ReplayTransport {
       hasFullSnapshot: events.some((event) => event.type === EventType.FullSnapshot),
       identity,
       reachedFetch: false,
+      attempting: false,
+      background,
+      pagehide: false,
+      prepared,
       resolve,
       retainedBytes: eventBytes,
       seq,
@@ -590,7 +657,7 @@ export class ReplayTransport {
   private async drain(): Promise<void> {
     try {
       while (!this.shuttingDown) {
-        const upload = this.queue[0]
+        const upload = this.queue.find((candidate) => !this.pagehideUploads.has(candidate))
         if (upload === undefined) {
           break
         }
@@ -615,6 +682,9 @@ export class ReplayTransport {
     const firstAttemptAt = Date.now()
     let previousError: unknown
     for (let attempt = 1; ; attempt++) {
+      if (this.pagehideUploads.has(upload)) {
+        return upload.done.then(() => undefined)
+      }
       // The budget covers each attempt's request time, not only the waits between them.
       const remaining = RETRY_BUDGET_MS - (Date.now() - firstAttemptAt)
       // A background tab can fire the backoff timer after the budget has already run out.
@@ -628,7 +698,7 @@ export class ReplayTransport {
       }
       previousError = error
       const retryDelay = getRetryDelay(error, attempt, this.config.random)
-      if (retryDelay === undefined || this.shuttingDown || Date.now() - firstAttemptAt + retryDelay >= RETRY_BUDGET_MS) {
+      if (retryDelay === undefined || this.shuttingDown || upload.pagehide || Date.now() - firstAttemptAt + retryDelay >= RETRY_BUDGET_MS) {
         return toUploadFailure(error, upload.reachedFetch)
       }
       // eslint-disable-next-line no-await-in-loop -- backoff must complete before the next retry.
@@ -636,23 +706,50 @@ export class ReplayTransport {
     }
   }
 
+  private retainCompressedBody(upload: QueuedUpload, body: Uint8Array): void {
+    this.retainedBytes += body.byteLength - upload.retainedBytes
+    upload.retainedBytes = body.byteLength
+    upload.body = body
+    upload.events = undefined
+  }
+
+  private compressQueuedSync(upload: QueuedUpload): UploadFailure | undefined {
+    const prepared = upload.prepared
+    upload.prepared = undefined
+    if (upload.body !== undefined || upload.events === undefined || upload.settled) {
+      return undefined
+    }
+    // A loss handled before this point can trim the events; the body must match them.
+    if (prepared?.body !== undefined && prepared.events === upload.events) {
+      this.retainCompressedBody(upload, prepared.body)
+      return undefined
+    }
+    try {
+      const input = strToU8(JSON.stringify(this.createEnvelope(upload.events, upload.seq, upload.identity)))
+      this.retainCompressedBody(upload, this.compression.gzipSync(input))
+      return undefined
+    } catch (error) {
+      return { cause: error, reason: 'not-sent' }
+    }
+  }
+
   private async compressQueued(upload: QueuedUpload): Promise<UploadFailure | undefined> {
+    if (this.shuttingDown || upload.background) {
+      return this.compressQueuedSync(upload)
+    }
     if (upload.body !== undefined || upload.events === undefined) {
       return undefined
     }
     const events = upload.events
     try {
       const input = strToU8(JSON.stringify(this.createEnvelope(events, upload.seq, upload.identity)))
-      const body = this.shuttingDown ? this.compression.gzipSync(input) : await this.compressOrdinary(input)
+      const body = await this.compressOrdinary(input)
       // A loss handled during compression can trim the events; the body must match them.
       if (upload.events !== events) {
         return await this.compressQueued(upload)
       }
       if (!upload.settled) {
-        this.retainedBytes += body.byteLength - upload.retainedBytes
-        upload.retainedBytes = body.byteLength
-        upload.body = body
-        upload.events = undefined
+        this.retainCompressedBody(upload, body)
       }
       return undefined
     } catch (error) {
@@ -665,9 +762,10 @@ export class ReplayTransport {
     if (body === undefined) {
       return undefined
     }
+    upload.attempting = true
     try {
       await this.send(
-        { body, requestKeepalive: false, reservedBytes: 0, seq: upload.seq, sessionId: upload.sessionId },
+        this.prepareUpload(body, upload.seq, upload.sessionId, upload.background),
         () => {
           upload.reachedFetch = true
         },
@@ -676,17 +774,28 @@ export class ReplayTransport {
       return undefined
     } catch (error) {
       return error
+    } finally {
+      upload.attempting = false
     }
   }
 
   private async finalAttempt(upload: QueuedUpload): Promise<void> {
-    const compressionFailure = await this.compressQueued(upload)
+    const compressionFailure = upload.background ? this.compressQueuedSync(upload) : await this.compressQueued(upload)
     if (compressionFailure !== undefined) {
       this.settle(upload, compressionFailure)
       return
     }
     const error = await this.attemptQueued(upload)
     this.settle(upload, error === undefined ? undefined : toUploadFailure(error, upload.reachedFetch))
+  }
+
+  private async trackLifecycle(run: Promise<void>): Promise<void> {
+    this.lifecycleFlights.add(run)
+    const forget = (): void => {
+      this.lifecycleFlights.delete(run)
+    }
+    run.then(forget, forget)
+    return run
   }
 
   private async settleWithinDeadline(pending: Promise<unknown>[]): Promise<void> {
@@ -717,6 +826,7 @@ export class ReplayTransport {
       return
     }
     upload.settled = true
+    this.pagehideUploads.delete(upload)
     this.retainedBytes -= upload.retainedBytes
     const index = this.queue.indexOf(upload)
     if (index >= 0) {
@@ -851,25 +961,100 @@ export class ReplayTransport {
       const finish = (): void => {
         clearTimeout(timer)
         signal.removeEventListener('abort', finish)
+        if (this.wakeRetry === finish) {
+          this.wakeRetry = undefined
+        }
         resolve()
       }
       const timer = setTimeout(finish, milliseconds)
       signal.addEventListener('abort', finish)
+      this.wakeRetry = finish
     })
   }
 
-  private async deliverLifecycle(eventChunks: RrwebEvent[][], seq: number, sessionId: string, identity: ChunkIdentity): Promise<void> {
+  private prepareUpload(body: Uint8Array, seq: number, sessionId: string, keepalive: boolean): PreparedUpload {
+    const reservedBytes = keepalive && this.reservedKeepaliveBytes + body.byteLength <= MAX_KEEPALIVE_RESERVED_BYTES ? body.byteLength : 0
+    this.reservedKeepaliveBytes += reservedBytes
+    return { body, seq, sessionId, reservedBytes, requestKeepalive: reservedBytes > 0 }
+  }
+
+  /**
+   * Packs event prefixes into chunks whose compressed envelopes fit the keepalive limit, using
+   * the sequences this transport allocates next. With a shared budget (pagehide), the events
+   * left once it is spent stay as one unsplit chunk: they use an ordinary request either way,
+   * so smaller pieces would only add requests and synchronous compression.
+   */
+  private splitKeepaliveEventChunks(
+    events: RrwebEvent[],
+    identity: ChunkIdentity,
+    sharedBudget = Number.POSITIVE_INFINITY
+  ): LifecycleChunk[] {
+    const sizes = events.map(estimateBytes)
+    const chunks: LifecycleChunk[] = []
+    let remaining = sharedBudget
+    let ratio: number | undefined
+    let start = 0
+    while (start < events.length) {
+      const limit = Math.min(MAX_KEEPALIVE_RESERVED_BYTES, remaining)
+      if (limit < MIN_KEEPALIVE_CHUNK_BYTES) {
+        chunks.push({ events: events.slice(start), eventBytes: sumSizes(sizes, start, events.length) })
+        break
+      }
+      const seq = this.seq + chunks.length
+      // Bound synchronous compression work: the first candidate is capped by raw size, later
+      // ones are sized from the compression ratio already observed.
+      const firstTarget =
+        ratio === undefined ? MAX_KEEPALIVE_RAW_BYTES : Math.min(MAX_KEEPALIVE_RAW_BYTES, limit * ratio * KEEPALIVE_PACKING_HEADROOM)
+      let end = prefixEnd(sizes, start, firstTarget)
+      for (;;) {
+        const batch = events.slice(start, end)
+        const eventBytes = sumSizes(sizes, start, end)
+        let body: Uint8Array
+        try {
+          body = this.compression.gzipSync(strToU8(JSON.stringify(this.createEnvelope(batch, seq, identity))))
+        } catch {
+          // Reserve this sequence and report its failure through the normal loss /
+          // resync path, just as for an ordinary compression failure. Later pagehide
+          // chunks cannot use keepalive ahead of it.
+          chunks.push({ events: batch, eventBytes })
+          remaining = Number.isFinite(sharedBudget) ? 0 : remaining
+          break
+        }
+        ratio = eventBytes / Math.max(1, body.byteLength)
+        if (body.byteLength <= limit) {
+          chunks.push({ events: batch, eventBytes, body })
+          remaining -= body.byteLength
+          break
+        }
+        if (end - start === 1) {
+          if (Number.isFinite(sharedBudget)) {
+            // Keepalive cannot carry this event now, so it leads the unsplit tail.
+            chunks.push({ events: events.slice(start), eventBytes: sumSizes(sizes, start, events.length) })
+            end = events.length
+          } else {
+            // An indivisible oversized event is sent using ordinary fetch.
+            chunks.push({ events: batch, eventBytes, body })
+          }
+          break
+        }
+        end = Math.max(start + 1, Math.min(end - 1, prefixEnd(sizes, start, limit * ratio * KEEPALIVE_PACKING_HEADROOM)))
+      }
+      start = end
+    }
+    return chunks
+  }
+
+  private async deliverLifecycle(eventChunks: LifecycleChunk[], seq: number, sessionId: string, identity: ChunkIdentity): Promise<void> {
     const prepared: (PreparedUpload | undefined)[] = []
     for (let index = 0; index < eventChunks.length; index++) {
-      const events = eventChunks[index]
-      if (events === undefined) {
+      const chunk = eventChunks[index]
+      if (chunk === undefined) {
         prepared.push(undefined)
         continue
       }
-      const envelope = this.createEnvelope(events, seq + index, identity)
       try {
         prepared.push({
-          body: this.compression.gzipSync(strToU8(JSON.stringify(envelope))),
+          body: chunk.body ?? this.compression.gzipSync(strToU8(JSON.stringify(this.createEnvelope(chunk.events, seq + index, identity)))),
           requestKeepalive: false,
           reservedBytes: 0,
           seq: seq + index,
@@ -1141,27 +1326,23 @@ function sumEventBytes(events: RrwebEvent[]): number {
   return events.reduce((total, event) => total + estimateBytes(event), 0)
 }
 
-function splitKeepaliveEventChunks(events: RrwebEvent[]): RrwebEvent[][] {
-  const chunks: RrwebEvent[][] = []
-  let chunk: RrwebEvent[] = []
-  let chunkBytes = 0
-
-  for (const event of events) {
-    const eventBytes = estimateBytes(event)
-    if (chunk.length > 0 && chunkBytes + eventBytes > MAX_KEEPALIVE_CHUNK_BYTES) {
-      chunks.push(chunk)
-      chunk = []
-      chunkBytes = 0
-    }
-    chunk.push(event)
-    chunkBytes += eventBytes
+function sumSizes(sizes: number[], start: number, end: number): number {
+  let total = 0
+  for (let index = start; index < end; index++) {
+    total += sizes[index] ?? 0
   }
+  return total
+}
 
-  if (chunk.length > 0) {
-    chunks.push(chunk)
+/** Returns the end of the longest prefix from `start` within `maxBytes`, always taking at least one event. */
+function prefixEnd(sizes: number[], start: number, maxBytes: number): number {
+  let end = start + 1
+  let total = sizes[start] ?? 0
+  while (end < sizes.length && total + (sizes[end] ?? 0) <= maxBytes) {
+    total += sizes[end] ?? 0
+    end++
   }
-
-  return chunks
+  return end
 }
 
 async function gzipAsync(compression: Compression, input: Uint8Array): Promise<Uint8Array> {

@@ -368,7 +368,7 @@ test.describe('session replay delivery in Chromium', () => {
     await page.evaluate(async (recordedEvents) => window.logfireReplayPlayback.load(recordedEvents), events)
     const replayedText = await page.frameLocator('iframe').locator('#payload').textContent()
     expect(replayedText?.slice(0, 18)).toBe('unload-marker-two:')
-    expect(replayedText?.length).toBe(26_018)
+    expect(replayedText?.length).toBe(600_018)
   })
 
   test('a lost chunk re-anchors so later changes replay', async ({ page, request }, testInfo) => {

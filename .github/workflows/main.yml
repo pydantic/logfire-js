@@ -40,9 +40,45 @@ jobs:
       - name: Test
         run: vp run --filter "./packages/*" test
 
+      - name: Resolve Playwright version
+        id: playwright
+        run: |
+          echo "version=$(node -p "require('./packages/logfire-session-replay/package.json').devDependencies['@playwright/test']")" >> "$GITHUB_OUTPUT"
+          echo "os=$(. /etc/os-release && echo "$ID-$VERSION_ID")" >> "$GITHUB_OUTPUT"
+
+      # The Ubuntu mirror can take most of an hour to serve the ~110 MB of browser system
+      # packages, so the downloaded packages are cached alongside the browsers themselves.
+      - name: Restore browser cache
+        id: browser-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/playwright-apt
+          key: playwright-${{ steps.playwright.outputs.os }}-${{ steps.playwright.outputs.version }}
+
       - name: Install browsers
-        timeout-minutes: 10
-        run: vp exec --filter @pydantic/logfire-session-replay -- playwright install --with-deps chromium firefox webkit
+        # A warm cache downloads no packages; only a cold one waits on the mirror.
+        timeout-minutes: ${{ steps.browser-cache.outputs.cache-hit == 'true' && 10 || 30 }}
+        run: |
+          echo 'Binary::apt::APT::Keep-Downloaded-Packages "true"; APT::Keep-Downloaded-Packages "true";' | sudo tee /etc/apt/apt.conf.d/99keep-downloaded-packages > /dev/null
+          sudo rm -f /etc/apt/apt.conf.d/docker-clean
+          if compgen -G "$HOME/.cache/playwright-apt/*.deb" > /dev/null; then
+            sudo cp "$HOME"/.cache/playwright-apt/*.deb /var/cache/apt/archives/
+          fi
+          vp exec --filter @pydantic/logfire-session-replay -- playwright install --with-deps chromium firefox webkit
+          mkdir -p "$HOME/.cache/playwright-apt"
+          cp /var/cache/apt/archives/*.deb "$HOME/.cache/playwright-apt/"
+
+      # Saved right after installation, so a later test failure still warms the next run.
+      - name: Save browser cache
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/playwright-apt
+          key: ${{ steps.browser-cache.outputs.cache-primary-key }}
 
       - name: Browser acceptance
         id: browser-acceptance

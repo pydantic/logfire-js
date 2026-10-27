@@ -43,7 +43,8 @@ async function run(): Promise<void> {
     headers: () => ({ 'X-Replay-Marker': scenario }),
     ignoreUrlPatterns: [/\/fixture\//u, /\/replay\//u],
     maskAllText: false,
-    maxBufferBytes: 1_000_000,
+    // The unload markers exceed the 1 MB raw packing ceiling together, so pagehide must split them.
+    maxBufferBytes: scenario === 'unload' ? 3_000_000 : 1_000_000,
     minSessionDurationMs: scenario === 'short' ? 5_000 : 0,
     onError: (error: unknown) => {
       state.errors.push(error instanceof Error ? error.message : String(error))
@@ -114,9 +115,10 @@ async function prepareUnload(): Promise<void> {
   if (payload === null) {
     throw new Error('missing payload node')
   }
-  payload.textContent = `unload-marker-one:${pseudoRandomText(26_000, 1)}`
+  // Each marker compresses far below the keepalive budget, so both chunks can use keepalive.
+  payload.textContent = `unload-marker-one:${pseudoRandomText(1_000, 1).repeat(600)}`
   await nextFrame()
-  payload.textContent = `unload-marker-two:${pseudoRandomText(26_000, 2)}`
+  payload.textContent = `unload-marker-two:${pseudoRandomText(1_000, 2).repeat(600)}`
   await nextFrame()
   await nextFrame()
 }

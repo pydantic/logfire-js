@@ -36,7 +36,9 @@ try {
 }
 
 async function pollForEvidence(deadline) {
-  const response = await fetch(`http://127.0.0.1:4177/fixture/status?scenario=${scenario}`)
+  const url = new URL('http://127.0.0.1:4177/fixture/status')
+  url.searchParams.set('scenario', scenario)
+  const response = await fetch(url)
   assert(response.ok, `status request failed: ${String(response.status)}`)
   const evidence = await response.json()
   const decoded = evidence.receipts.map((receipt) => ({
