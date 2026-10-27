@@ -1069,12 +1069,29 @@ Same-page reconfiguration requires bundler deduplication of both
 physical package copies is unsupported because their lifecycle state is not
 shared.
 
-Browser pages also get OpenTelemetry's built-in batch-processor auto-flush on
-document hide. The underlying batch span processor calls `forceFlush()` when the
-document becomes hidden or emits `pagehide`, which helps export spans during
-navigation away from the page. You can disable that OpenTelemetry behavior with
+Browser pages also flush on document hide. Logfire calls the tracer provider's
+`forceFlush()` when the document becomes hidden or the window emits `pagehide`,
+which helps export spans during navigation away from the page. The flush sends
+the newest spans first in a small keepalive request, and the older spans in a
+second request. You can disable that OpenTelemetry behavior with
 `batchSpanProcessorConfig.disableAutoFlushOnDocumentHide`, but doing so means
 only explicit cleanup or normal batch timing will flush spans.
+
+A record that must arrive even if the page unloads soon after, such as the start
+of a page-load measurement, can be exported at once with `forceFlush()`. The
+request leaves while the page is still alive, so the document-hide flush does
+not have to carry it:
+
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+logfire.info('page load started', { route: '/dashboard' })
+logfire.forceFlush().catch(() => undefined)
+```
+
+`forceFlush()` exports every span that the active configuration has buffered.
+It rejects when the export fails, and resolves at once when no configuration is
+active.
 
 ## Pending spans
 

@@ -68,7 +68,7 @@ describe('DocumentHideChunkingExporter', () => {
     expect(result).toEqual({ code: ExportResultCode.SUCCESS })
   })
 
-  it('sends the newest spans of the whole flush first, then the rest, one request after the other', async () => {
+  it('sends the newest spans of the whole flush first and the rest in the same task', async () => {
     const inner = new RecordingExporter()
     inner.deferred = true
     const exporter = new DocumentHideChunkingExporter(inner, 3_000)
@@ -85,13 +85,12 @@ describe('DocumentHideChunkingExporter', () => {
     })
     await drainMicrotasks()
 
-    expect(inner.batches).toEqual([['e', 'f']])
-    inner.callbacks[0]?.({ code: ExportResultCode.SUCCESS })
-    await drainMicrotasks()
+    // A page that unloads never receives the first response, so the second request cannot wait for it.
     expect(inner.batches).toEqual([
       ['e', 'f'],
       ['a', 'b', 'c', 'd'],
     ])
+    inner.callbacks[0]?.({ code: ExportResultCode.SUCCESS })
     expect(results).toEqual([])
     inner.callbacks[1]?.({ code: ExportResultCode.SUCCESS })
     expect(results).toEqual([{ code: ExportResultCode.SUCCESS }, { code: ExportResultCode.SUCCESS }])
@@ -112,11 +111,32 @@ describe('DocumentHideChunkingExporter', () => {
       await Promise.resolve()
     })
     await drainMicrotasks()
-    inner.callbacks[0]?.({ code: ExportResultCode.SUCCESS })
-    await drainMicrotasks()
     inner.callbacks[1]?.(failure)
+    expect(results).toEqual([])
+    inner.callbacks[0]?.({ code: ExportResultCode.SUCCESS })
 
     expect(results).toEqual([failure])
+  })
+
+  it('reports the failure of the newest request when both fail', async () => {
+    const inner = new RecordingExporter()
+    inner.deferred = true
+    const exporter = new DocumentHideChunkingExporter(inner, 3_000)
+    const results: ExportResult[] = []
+    const newestFailure: ExportResult = { code: ExportResultCode.FAILED, error: new Error('newest rejected') }
+    const olderFailure: ExportResult = { code: ExportResultCode.FAILED, error: new Error('older rejected') }
+
+    await exporter.withHideFlush(async () => {
+      exporter.export(createSpans(['a', 'b', 'c', 'd', 'e'], 700), (result) => {
+        results.push(result)
+      })
+      await Promise.resolve()
+    })
+    await drainMicrotasks()
+    inner.callbacks[1]?.(olderFailure)
+    inner.callbacks[0]?.(newestFailure)
+
+    expect(results).toEqual([newestFailure])
   })
 
   it('regroups every batch the processor hands over inside forceFlush, behind the Logfire processor', async () => {
@@ -142,24 +162,19 @@ describe('DocumentHideChunkingExporter', () => {
     expect(inner.batches).toEqual([
       ['a', 'b', 'c'],
       ['h', 'i'],
-    ])
-    inner.callbacks[0]?.({ code: ExportResultCode.SUCCESS })
-    inner.callbacks[1]?.({ code: ExportResultCode.SUCCESS })
-    await drainMicrotasks()
-    expect(inner.batches).toEqual([
-      ['a', 'b', 'c'],
-      ['h', 'i'],
       ['d', 'e', 'f', 'g'],
     ])
-    inner.callbacks[2]?.({ code: ExportResultCode.SUCCESS })
+    for (const callback of inner.callbacks) {
+      callback({ code: ExportResultCode.SUCCESS })
+    }
     await flush
     await provider.shutdown()
   })
 
-  it('sends the older request through an OTLP exporter limited to one request at a time', async () => {
+  it('starts both requests through the OTLP exporter before either response arrives', async () => {
     const sends: { bytes: number; resolve: () => void }[] = []
     const delegate = createOtlpNetworkExportDelegate(
-      { compression: 'none', concurrencyLimit: 1, timeoutMillis: 1_000 },
+      { compression: 'none', concurrencyLimit: 2, timeoutMillis: 1_000 },
       JsonTraceSerializer,
       {
         send: async (data: Uint8Array) =>
@@ -186,12 +201,11 @@ describe('DocumentHideChunkingExporter', () => {
       await Promise.resolve()
     })
     await drainMicrotasks()
-    expect(sends).toHaveLength(1)
+    expect(sends).toHaveLength(2)
+    expect(sends[1]?.bytes ?? 0).toBeGreaterThan(sends[0]?.bytes ?? 0)
 
     sends[0]?.resolve()
     await drainMicrotasks()
-    expect(sends).toHaveLength(2)
-    expect(sends[1]?.bytes ?? 0).toBeGreaterThan(sends[0]?.bytes ?? 0)
     expect(results).toEqual([])
 
     sends[1]?.resolve()

@@ -14,10 +14,12 @@ const CHANGED_CONTEXT_MANAGER_ERROR = 'logfire-browser: contextManager cannot ch
 
 export type ProviderGenerationToken = symbol
 
+type LifecycleTracerProvider = TracerProvider & { forceFlush?: () => Promise<void> }
+
 type GenerationState =
   | { status: 'idle' }
-  | { status: 'active'; provider: TracerProvider; token: ProviderGenerationToken }
-  | { delegateActive: boolean; status: 'cleaning'; provider: TracerProvider; token: ProviderGenerationToken }
+  | { status: 'active'; provider: LifecycleTracerProvider; token: ProviderGenerationToken }
+  | { delegateActive: boolean; status: 'cleaning'; provider: LifecycleTracerProvider; token: ProviderGenerationToken }
   | { error: Error; status: 'failed'; token?: ProviderGenerationToken | undefined }
 
 type TraceOwnership = { status: 'external' | 'logfire' | 'uninitialized' }
@@ -128,7 +130,7 @@ class BrowserProviderLifecycle {
     this.initializePropagation()
   }
 
-  activate(provider: TracerProvider): ProviderGenerationToken {
+  activate(provider: LifecycleTracerProvider): ProviderGenerationToken {
     this.assertAvailable()
     const token = Symbol('logfire-browser-provider-generation')
     this.generation = { provider, status: 'active', token }
@@ -181,7 +183,11 @@ class BrowserProviderLifecycle {
     return this.generation
   }
 
-  private getCurrentProvider(): TracerProvider | undefined {
+  async forceFlush(): Promise<void> {
+    await this.getCurrentProvider()?.forceFlush?.()
+  }
+
+  private getCurrentProvider(): LifecycleTracerProvider | undefined {
     if (this.generation.status === 'active') {
       return this.generation.provider
     }
@@ -271,7 +277,7 @@ export function initializeProviderLifecycleGlobals(contextManager?: ContextManag
   providerLifecycle.initializeGlobals(contextManager)
 }
 
-export function activateProviderGeneration(provider: TracerProvider): ProviderGenerationToken {
+export function activateProviderGeneration(provider: LifecycleTracerProvider): ProviderGenerationToken {
   return providerLifecycle.activate(provider)
 }
 
@@ -289,6 +295,10 @@ export function settleProviderCleanup(token: ProviderGenerationToken, error?: Er
 
 export function rollbackProviderGeneration(token: ProviderGenerationToken, error?: Error): void {
   providerLifecycle.rollbackActivation(token, error)
+}
+
+export async function forceFlushActiveProvider(): Promise<void> {
+  await providerLifecycle.forceFlush()
 }
 
 export function getStableBrowserTracer(scope: string, version?: string, options?: TracerOptions): Tracer {

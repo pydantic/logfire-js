@@ -21,18 +21,6 @@ export function splitNewestSpans(spans: ReadableSpan[], budgetBytes: number): { 
   return { newest: spans.slice(Math.max(start, 0)), older: spans.slice(0, Math.max(start, 0)) }
 }
 
-/**
- * The OTLP exporter calls the result callback from inside the `then` of its request promise and
- * frees its concurrency slot in a later `then` on the same promise. A microtask queued during the
- * callback runs before that release, so the follow-up waits one more hop. Both hops are
- * microtasks, which an unloading page still runs.
- */
-function afterExportSlotRelease(callback: () => void): void {
-  queueMicrotask(() => {
-    queueMicrotask(callback)
-  })
-}
-
 interface PendingExport {
   spans: ReadableSpan[]
   resultCallback: (result: ExportResult) => void
@@ -40,7 +28,8 @@ interface PendingExport {
 
 /**
  * Sends the newest spans of a document-hide flush first, in one request small enough to outlive
- * a navigation, and the rest afterwards. Every other export passes through unchanged.
+ * a navigation, and the rest in a second request started at the same time. Every other export
+ * passes through unchanged.
  *
  * The browser only lets a request started during unload complete when it is small enough for
  * `keepalive`, and OpenTelemetry's fetch transport turns `keepalive` off once its own in-flight
@@ -49,9 +38,13 @@ interface PendingExport {
  *
  * The batch processor hands a hide flush to `export` one batch at a time, oldest batch first.
  * The exporter collects every batch of one flush and sends them together in a microtask, so the
- * newest spans of the whole queue lead and the flush costs one keepalive request. The requests
- * are sequential and the second starts after the first releases its slot, so an exporter with
- * `concurrencyLimit: 1` still accepts both.
+ * newest spans of the whole queue lead and the flush costs one keepalive request. The second
+ * request starts in the same task, because a page that unloads never receives the first
+ * response. The transport gives it `keepalive` only when it fits the budget that the first leaves,
+ * so the unload can still cancel a large remainder, but the request has started. A remainder small
+ * enough for that budget can still exceed what session replay leaves of the browser quota, and the
+ * browser then rejects it. The flush needs two free slots, and an exporter with
+ * `concurrencyLimit: 1` rejects the second request.
  */
 export class DocumentHideChunkingExporter implements SpanExporter {
   private readonly inner: SpanExporter
@@ -116,12 +109,21 @@ export class DocumentHideChunkingExporter implements SpanExporter {
       this.inner.export(newest, settle)
       return
     }
-    this.inner.export(newest, (newestResult) => {
-      afterExportSlotRelease(() => {
-        this.inner.export(older, (olderResult) => {
-          settle(newestResult.code === ExportResultCode.SUCCESS ? olderResult : newestResult)
-        })
-      })
+    let newestResult: ExportResult | undefined
+    let olderResult: ExportResult | undefined
+    const settleWhenBoth = () => {
+      if (newestResult === undefined || olderResult === undefined) {
+        return
+      }
+      settle(newestResult.code === ExportResultCode.SUCCESS ? olderResult : newestResult)
+    }
+    this.inner.export(newest, (result) => {
+      newestResult = result
+      settleWhenBoth()
+    })
+    this.inner.export(older, (result) => {
+      olderResult = result
+      settleWhenBoth()
     })
   }
 }
