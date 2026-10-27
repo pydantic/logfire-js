@@ -9,7 +9,7 @@ import { CustomTag, startSessionReplay } from '@pydantic/logfire-session-replay'
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
 
 import { clearConfiguredBrowserSessionForTests } from './browserSession'
-import { configure, reportError, startSpan } from './index'
+import { configure, forceFlush, info, reportError, startSpan } from './index'
 
 const originalFetch = globalThis.fetch
 const originalPerformanceObserver = globalThis.PerformanceObserver
@@ -106,10 +106,14 @@ vi.mock('web-vitals/attribution', () => ({
   },
 }))
 
+const otlpExports = vi.hoisted((): string[][] => [])
+const otlpResult = vi.hoisted(() => ({ code: 0 }))
+
 vi.mock('@opentelemetry/exporter-trace-otlp-http', () => ({
   OTLPTraceExporter: class {
-    export(_spans: unknown, resultCallback: (result: { code: number }) => void): void {
-      resultCallback({ code: 0 })
+    export(spans: { name: string }[], resultCallback: (result: { code: number }) => void): void {
+      otlpExports.push(spans.map((span) => span.name))
+      resultCallback({ code: otlpResult.code })
     }
 
     async shutdown(): Promise<void> {
@@ -128,6 +132,8 @@ afterEach(() => {
   clearConfiguredBrowserSessionForTests()
   sessionStorage.clear()
   optionalFeatureMocks.reset()
+  otlpExports.length = 0
+  otlpResult.code = 0
   vi.restoreAllMocks()
 })
 
@@ -603,3 +609,47 @@ function fetchInputUrl(input: RequestInfo | URL): string {
   }
   return input instanceof URL ? input.href : input.url
 }
+
+describe('public browser forceFlush', () => {
+  it('exports a buffered record before the batch delay', async () => {
+    const cleanup = configure({
+      batchSpanProcessorConfig: { scheduledDelayMillis: 60_000 },
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      info('page load started')
+      expect(otlpExports).toEqual([])
+
+      await forceFlush()
+
+      expect(otlpExports).toEqual([['page load started']])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('rejects when the export fails', async () => {
+    const cleanup = configure({
+      batchSpanProcessorConfig: { scheduledDelayMillis: 60_000 },
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      info('page load started')
+      otlpResult.code = 1
+
+      // The tracer provider rejects with the error of each span processor that failed.
+      await expect(forceFlush()).rejects.toEqual([new Error('BatchSpanProcessor: span export failed')])
+    } finally {
+      otlpResult.code = 0
+      await cleanup()
+    }
+  })
+
+  it('resolves when no configuration is active', async () => {
+    await forceFlush()
+
+    expect(otlpExports).toEqual([])
+  })
+})

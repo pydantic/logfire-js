@@ -75,6 +75,7 @@ import {
   assertProviderLifecycleAvailable,
   beginProviderCleanup,
   deactivateProviderDelegate,
+  forceFlushActiveProvider,
   getStableBrowserTracer,
   initializeProviderLifecycleGlobals,
   settleProviderCleanup,
@@ -1090,6 +1091,18 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   return cleanup
 }
 
+/**
+ * Exports the spans that the active configuration has buffered, without waiting for the batch
+ * delay. Call it after a record that must arrive even if the page unloads soon after, such as the
+ * start of a page-load measurement. The request leaves while the page is still alive, so the
+ * document-hide flush does not have to carry the record. The promise rejects when the export
+ * fails, so a caller that does not await it must catch the rejection. It resolves at once when no
+ * configuration is active.
+ */
+export async function forceFlush(): Promise<void> {
+  await forceFlushActiveProvider()
+}
+
 const defaultExport: {
   DiagLogLevel: typeof DiagLogLevel
   Level: typeof Level
@@ -1102,6 +1115,7 @@ const defaultExport: {
   debug: typeof debug
   error: typeof error
   fatal: typeof fatal
+  forceFlush: typeof forceFlush
   info: typeof info
   instrument: typeof instrument
   getBrowserSessionId: typeof getBrowserSessionId
@@ -1127,6 +1141,7 @@ const defaultExport: {
   DiagLogLevel,
   error,
   fatal,
+  forceFlush,
   getBrowserSessionId,
   info,
   instrument,
