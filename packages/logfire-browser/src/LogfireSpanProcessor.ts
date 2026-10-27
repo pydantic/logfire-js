@@ -4,6 +4,7 @@ import type { ExportResult } from '@opentelemetry/core'
 import { ExportResultCode, hrTimeToMicroseconds } from '@opentelemetry/core'
 import type { ReadableSpan, Span, SpanExporter, SpanProcessor } from '@opentelemetry/sdk-trace-web'
 import { SimpleSpanProcessor } from '@opentelemetry/sdk-trace-web'
+import { ATTR_URL_FULL } from '@opentelemetry/semantic-conventions'
 import { ATTR_HTTP_URL } from '@opentelemetry/semantic-conventions/incubating'
 
 // not present in the semantic conventions
@@ -95,7 +96,7 @@ class LogfireConsoleSpanExporter implements SpanExporter {
 }
 
 /**
- * `onStart` runs for every span, so a `http.url` that is not an absolute URL must not throw out of
+ * `onStart` runs for every span, so a URL attribute that is not an absolute URL must not throw out of
  * it and break the caller's span creation. Anything unparseable just leaves the name as it was.
  */
 function urlPathname(value: unknown): string | undefined {
@@ -134,8 +135,9 @@ export class LogfireSpanProcessor implements SpanProcessor {
   }
 
   onStart(span: Span, parentContext: Context): void {
-    // make the fetch spans more descriptive
-    const pathname = urlPathname(span.attributes[ATTR_HTTP_URL])
+    // make the fetch spans more descriptive. The fetch and XHR instrumentations emit `url.full` since
+    // 0.221; older versions emit `http.url`.
+    const pathname = urlPathname(span.attributes[ATTR_URL_FULL] ?? span.attributes[ATTR_HTTP_URL])
     if (pathname !== undefined) {
       Reflect.set(span, 'name', `${span.name} ${pathname}`)
     }

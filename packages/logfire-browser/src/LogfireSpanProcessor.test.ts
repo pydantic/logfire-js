@@ -35,6 +35,27 @@ describe('LogfireSpanProcessor', () => {
     expect(wrapped.onStart).toHaveBeenCalledTimes(1)
   })
 
+  it('appends the path from url.full to fetch span names', () => {
+    const wrapped = makeWrapped()
+    const processor = new LogfireSpanProcessor(wrapped, false)
+    const span = makeSpan({ 'url.full': 'https://example.com/api/thing?q=1' })
+
+    processor.onStart(span, ROOT_CONTEXT)
+
+    expect(span.name).toBe('GET /api/thing')
+    expect(wrapped.onStart).toHaveBeenCalledTimes(1)
+  })
+
+  it('prefers url.full over http.url', () => {
+    const wrapped = makeWrapped()
+    const processor = new LogfireSpanProcessor(wrapped, false)
+    const span = makeSpan({ 'http.url': 'https://example.com/old', 'url.full': 'https://example.com/new' })
+
+    processor.onStart(span, ROOT_CONTEXT)
+
+    expect(span.name).toBe('GET /new')
+  })
+
   it('leaves the name alone when http.url is not an absolute url', () => {
     const wrapped = makeWrapped()
     const processor = new LogfireSpanProcessor(wrapped, false)
