@@ -96,7 +96,7 @@ const WEB_VITAL_METRIC_INSTRUMENTS: Record<WebVitalName, WebVitalMetricInstrumen
 
 const DISALLOWED_WEB_VITAL_METRIC_ATTRIBUTES = new Set([
   'browser.session.id',
-  // The pre-stable name for `url.full`, and still what the fetch and XHR instrumentations emit.
+  // The pre-stable name for `url.full`, which fetch and XHR instrumentations before 0.221 emit.
   'http.url',
   'logfire.page.route',
   'logfire.page.url.full',
