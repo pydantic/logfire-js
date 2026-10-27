@@ -193,7 +193,8 @@ emission at 50 per session per SDK configuration. Reaching the root limit discar
 window rather than retaining an unbounded number of trees.
 Initialization failures trigger rollback; teardown failures disable further detection for that SDK configuration.
 
-Click-time session, route and available recording identity are preserved. The detector adds no DOM
+Events carry the session, user, page URL, route and replay attributes captured at click time, as other
+browser spans do, even when they are reported seconds later. The detector adds no DOM
 text, input values, element IDs, CSS selectors or arbitrary attributes to telemetry. Existing customer
 span processors and resource attributes still apply. Use replay correlation to inspect suspected
 problems before interpreting them as user frustration.

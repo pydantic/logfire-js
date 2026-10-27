@@ -2,7 +2,7 @@ import type { Attributes, Context } from '@opentelemetry/api'
 import { INTERACTION_CONTEXT } from './interactionContext'
 import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-web'
 
-import type { BrowserSessionManager } from './browserSession'
+import type { BrowserSessionManager, BrowserSessionState } from './browserSession'
 import type { BrowserSessionReplayState } from './sessionReplay'
 
 const ATTR_SESSION_ID = 'session.id'
@@ -37,6 +37,79 @@ function getCurrentUrl(): URL | undefined {
   }
 }
 
+function getIdentityAttributes(
+  sessionManager: BrowserSessionManager,
+  replayState: BrowserSessionReplayState | undefined,
+  session: BrowserSessionState
+): Attributes {
+  const attributes: Attributes = { [ATTR_SESSION_ID]: session.id }
+  for (const [key, value] of Object.entries(session.sessionAttributes ?? {})) {
+    attributes[`logfire.session.${key}`] = value
+  }
+
+  let state: ReturnType<BrowserSessionReplayState['getState']>
+  try {
+    state = replayState?.getState()
+  } catch {
+    state = undefined
+  }
+  if (state !== undefined) {
+    attributes[ATTR_SESSION_REPLAY_ACTIVE] = state.active
+    attributes[ATTR_SESSION_REPLAY_MODE] = state.mode
+    if (state.recordingId !== undefined) {
+      attributes[ATTR_SESSION_REPLAY_ID] = state.recordingId
+    }
+  }
+
+  const user = sessionManager.getUser()
+  if (user !== undefined) {
+    attributes[ATTR_USER_ID] = user.id
+    if (user.name !== undefined) {
+      attributes[ATTR_USER_NAME] = user.name
+    }
+    if (user.email !== undefined) {
+      attributes[ATTR_USER_EMAIL] = user.email
+    }
+  }
+  return attributes
+}
+
+function getPageAttributes(sessionManager: BrowserSessionManager, url: URL | undefined): Attributes {
+  const attributes: Attributes = {}
+  const routeName = sessionManager.getRouteName(url)
+  if (routeName !== undefined) {
+    attributes[ATTR_LOGFIRE_PAGE_ROUTE] = routeName
+  }
+
+  if (url === undefined) {
+    return attributes
+  }
+
+  let urlAttributes: ReturnType<BrowserSessionManager['getUrlAttributes']>
+  try {
+    urlAttributes = sessionManager.getUrlAttributes(url)
+  } catch {
+    urlAttributes = undefined
+  }
+
+  if (urlAttributes?.full !== undefined) {
+    attributes[ATTR_LOGFIRE_PAGE_URL_FULL] = urlAttributes.full
+  }
+  if (urlAttributes?.path !== undefined) {
+    attributes[ATTR_LOGFIRE_PAGE_URL_PATH] = urlAttributes.path
+  }
+  return attributes
+}
+
+/** The attributes `BrowserSessionSpanProcessor` would add now, for spans that report this moment later. */
+export function snapshotBrowserSpanAttributes(
+  sessionManager: BrowserSessionManager,
+  replayState: BrowserSessionReplayState | undefined,
+  session: BrowserSessionState
+): Attributes {
+  return { ...getIdentityAttributes(sessionManager, replayState, session), ...getPageAttributes(sessionManager, getCurrentUrl()) }
+}
+
 export class BrowserSessionSpanProcessor implements SpanProcessor {
   private readonly replayState: BrowserSessionReplayState | undefined
   private readonly sessionManager: BrowserSessionManager
@@ -63,35 +136,7 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
     const isPeriodicMainThreadWindow =
       span.instrumentationScope.name === LONG_ANIMATION_FRAME_TRACER_NAME && span.name === MAIN_THREAD_WINDOW_SPAN_NAME
     const session = isPeriodicMainThreadWindow ? this.sessionManager.getSession() : this.sessionManager.touch()
-    span.setAttribute(ATTR_SESSION_ID, session.id)
-    for (const [key, value] of Object.entries(session.sessionAttributes ?? {})) {
-      span.setAttribute(`logfire.session.${key}`, value)
-    }
-
-    let replayState: ReturnType<BrowserSessionReplayState['getState']>
-    try {
-      replayState = this.replayState?.getState()
-    } catch {
-      replayState = undefined
-    }
-    if (replayState !== undefined) {
-      span.setAttribute(ATTR_SESSION_REPLAY_ACTIVE, replayState.active)
-      span.setAttribute(ATTR_SESSION_REPLAY_MODE, replayState.mode)
-      if (replayState.recordingId !== undefined) {
-        span.setAttribute(ATTR_SESSION_REPLAY_ID, replayState.recordingId)
-      }
-    }
-
-    const user = this.sessionManager.getUser()
-    if (user !== undefined) {
-      span.setAttribute(ATTR_USER_ID, user.id)
-      if (user.name !== undefined) {
-        span.setAttribute(ATTR_USER_NAME, user.name)
-      }
-      if (user.email !== undefined) {
-        span.setAttribute(ATTR_USER_EMAIL, user.email)
-      }
-    }
+    span.setAttributes(getIdentityAttributes(this.sessionManager, this.replayState, session))
 
     // Web Vital callbacks can run after a later navigation. Their reporter
     // applies the metric's navigation URL instead of callback-time page state.
@@ -99,29 +144,7 @@ export class BrowserSessionSpanProcessor implements SpanProcessor {
       return
     }
 
-    const url = getCurrentUrl()
-    const routeName = this.sessionManager.getRouteName(url)
-    if (routeName !== undefined) {
-      span.setAttribute(ATTR_LOGFIRE_PAGE_ROUTE, routeName)
-    }
-
-    if (url === undefined) {
-      return
-    }
-
-    let urlAttributes: ReturnType<BrowserSessionManager['getUrlAttributes']>
-    try {
-      urlAttributes = this.sessionManager.getUrlAttributes(url)
-    } catch {
-      urlAttributes = undefined
-    }
-
-    if (urlAttributes?.full !== undefined) {
-      span.setAttribute(ATTR_LOGFIRE_PAGE_URL_FULL, urlAttributes.full)
-    }
-    if (urlAttributes?.path !== undefined) {
-      span.setAttribute(ATTR_LOGFIRE_PAGE_URL_PATH, urlAttributes.path)
-    }
+    span.setAttributes(getPageAttributes(this.sessionManager, getCurrentUrl()))
   }
 
   async shutdown(): Promise<void> {

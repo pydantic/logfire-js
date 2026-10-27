@@ -359,6 +359,49 @@ describe('frustration observation lifecycle', () => {
     expect(spans[0]?.attributes['logfire.session_replay.id']).toBe('original-recording')
   })
 
+  it('reports the user, page and replay context of the click rather than of the detection', async () => {
+    const { click, exporter, replayState } = start()
+    const getUser = vi.spyOn(session as BrowserSessionManager, 'getUser').mockReturnValue({ id: 'user-1', name: 'Alice' })
+    replayState.setReplay({
+      mode: 'buffer',
+      recording: true,
+      getRecordingId: () => 'original-recording',
+      captureError: () => undefined,
+      flush: async () => Promise.resolve(),
+      stop: async () => Promise.resolve(),
+    })
+    const clickedAt = Date.now()
+    click()
+    getUser.mockReturnValue({ id: 'user-2' })
+    replayState.clear()
+    await vi.advanceTimersByTimeAsync(3000)
+    document.body.append(document.createElement('div'))
+    await vi.advanceTimersByTimeAsync(1)
+    const spans = exporter.getFinishedSpans()
+    expect(spans.map((span) => span.name)).toEqual(['browser.slow_click'])
+    const sessionId = session?.getSession().id ?? ''
+    expect(spans[0]?.attributes).toEqual({
+      'session.id': sessionId,
+      'logfire.session_replay.active': true,
+      'logfire.session_replay.mode': 'buffer',
+      'logfire.session_replay.id': 'original-recording',
+      'user.id': 'user-1',
+      'user.name': 'Alice',
+      'logfire.page.url.full': 'http://localhost:3000/',
+      'logfire.page.url.path': '/',
+      'logfire.interaction.target_tag': 'button',
+      'logfire.interaction.id': `${sessionId}:${String(clickedAt)}:1`,
+      'logfire.span_type': 'log',
+      'logfire.msg': 'Slow response after click',
+      'logfire.interaction.kind': 'slow_click',
+      'logfire.interaction.detector_version': 1,
+      'logfire.interaction.click_count': 1,
+      'logfire.interaction.delay_ms': 3000,
+      'logfire.interaction.detected_at': clickedAt + 3000,
+      'logfire.interaction.response': 'dom_change',
+    })
+  })
+
   it('bounds observed roots and removes old shadow listeners when starting a new observation window', async () => {
     const { click, exporter } = start()
     const paths = Array.from({ length: 64 }, () => {

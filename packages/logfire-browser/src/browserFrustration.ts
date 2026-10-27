@@ -2,6 +2,7 @@ import type { Attributes, Tracer } from '@opentelemetry/api'
 import { diag, ROOT_CONTEXT } from '@opentelemetry/api'
 import type { BrowserSessionManager } from './browserSession'
 import type { BrowserSessionReplayState } from './sessionReplay'
+import { snapshotBrowserSpanAttributes } from './BrowserSessionSpanProcessor'
 import { INTERACTION_CONTEXT } from './interactionContext'
 import { observeFrustrationNavigations } from './frustrationNavigation'
 import { InteractionFrustrationDetector } from './interactionFrustration'
@@ -15,9 +16,6 @@ interface StartOptions extends BrowserFrustrationOptions {
 
 /** Optional browser observers. No DOM content or arbitrary element attributes are exported. */
 export function startBrowserFrustration(options: StartOptions): () => void {
-  if (options.rageClicks === false && options.deadClicks !== true) {
-    return () => undefined
-  }
   const selectors = [...(options.ignoreSelectors ?? [])]
   // Validate before installing listeners.
   for (const selector of selectors) {
@@ -148,15 +146,10 @@ export function startBrowserFrustration(options: StartOptions): () => void {
         sessionId = session.id
         emitted = 0
       }
-      const attributes: Attributes = { 'session.id': session.id, 'logfire.interaction.target_tag': target.tagName.toLowerCase() }
-      attributes['logfire.interaction.id'] = `${session.id}:${String(Date.now())}:${String(++nextInteraction)}`
-      const route = options.sessionManager.getRouteName(new URL(location.href))
-      if (route !== undefined) {
-        attributes['logfire.page.route'] = route
-      }
-      const replay = options.replayState.getState()
-      if (replay?.active && replay.recordingId !== undefined) {
-        attributes['logfire.session_replay.id'] = replay.recordingId
+      const attributes: Attributes = {
+        ...snapshotBrowserSpanAttributes(options.sessionManager, options.replayState, session),
+        'logfire.interaction.target_tag': target.tagName.toLowerCase(),
+        'logfire.interaction.id': `${session.id}:${String(Date.now())}:${String(++nextInteraction)}`,
       }
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- reset and session callbacks can deactivate mid-click.
       if (!active) {
