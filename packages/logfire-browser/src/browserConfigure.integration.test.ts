@@ -346,6 +346,24 @@ describe('public browser configure startup ordering', () => {
         'replay.upload.dependent_drop_count': 2,
       })
       expect(JSON.stringify(failures[0]?.attributes)).not.toContain('private payload')
+
+      // A full upload queue rejects the batch before it gets a sequence.
+      const rejected = new ReplayUploadError({
+        cause: new Error('replay upload queue is full'),
+        reason: 'not-sent',
+        seq: undefined,
+        sessionId: 'recording',
+      })
+      replayConfig?.onError?.(rejected)
+      expect(onError).toHaveBeenLastCalledWith(rejected)
+      const unsequenced = exporter.getFinishedSpans().filter((span) => span.attributes['replay.upload.reason'] === 'not-sent')
+      expect(unsequenced).toHaveLength(1)
+      expect(unsequenced[0]?.attributes['replay.chunk.seq']).toBeUndefined()
+      expect(unsequenced[0]?.attributes).toMatchObject({
+        'replay.recording_id': 'recording',
+        'replay.upload.dropped_seqs': '[]',
+        'replay.upload.dependent_drop_count': 0,
+      })
     } finally {
       await cleanup()
     }

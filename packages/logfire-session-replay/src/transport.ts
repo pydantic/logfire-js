@@ -21,6 +21,10 @@ const MAX_QUEUED_BYTES = 2_000_000
 const RESYNC_MIN_INTERVAL_MS = 60_000
 const MAX_KEEPALIVE_RESERVED_BYTES = 48_000
 const MAX_KEEPALIVE_RAW_BYTES = 1_000_000
+// Events compress unevenly, so a prefix sized from the batch's average ratio can still overshoot.
+const KEEPALIVE_PACKING_HEADROOM = 0.9
+// Below this, more pagehide chunks would add requests and compression passes for little data.
+const MIN_KEEPALIVE_CHUNK_BYTES = MAX_KEEPALIVE_RESERVED_BYTES / 10
 interface Compression {
   gzip: typeof gzip
   gzipSync: typeof gzipSync
@@ -41,6 +45,7 @@ interface PreparedUpload {
 
 interface LifecycleChunk {
   events: RrwebEvent[]
+  eventBytes: number
   body?: Uint8Array
 }
 
@@ -54,6 +59,8 @@ interface QueuedUpload {
   attempting: boolean
   background: boolean
   pagehide: boolean
+  // Compressed while the chunk was split. Valid only while `events` is still the same array.
+  prepared: LifecycleChunk | undefined
   resolve: () => void
   retainedBytes: number
   seq: number
@@ -353,7 +360,11 @@ export class ReplayTransport {
     if (options.keepalive === true) {
       // A pagehide keepalive must start before the browser freezes the
       // page, even when an ordinary upload is still awaiting its response.
-      const eventChunks = this.splitKeepaliveEventChunks(events, identity)
+      const eventChunks = this.splitKeepaliveEventChunks(
+        events,
+        identity,
+        Math.max(0, MAX_KEEPALIVE_RESERVED_BYTES - this.reservedKeepaliveBytes)
+      )
       const seq = this.allocateSeq(eventChunks.length)
       if (seq === undefined) {
         return
@@ -362,7 +373,23 @@ export class ReplayTransport {
       return
     }
 
-    const upload = this.enqueue(events, eventBytes, sessionId, identity, options.background === true)
+    if (options.background === true) {
+      // A hidden tab can be frozen or discarded without a pagehide. Chunks that fit the
+      // keepalive budget let each request outlive the page, and the queue keeps their order
+      // and retries. Sequences are allocated in chunk order, matching the prepared envelopes.
+      const uploads: QueuedUpload[] = []
+      for (const chunk of this.splitKeepaliveEventChunks(events, identity)) {
+        const upload = this.enqueue(chunk.events, chunk.eventBytes, sessionId, identity, true, chunk)
+        if (upload === undefined) {
+          break
+        }
+        uploads.push(upload)
+      }
+      await Promise.all(uploads.map(async (upload) => upload.done))
+      return
+    }
+
+    const upload = this.enqueue(events, eventBytes, sessionId, identity)
     await upload?.done
   }
 
@@ -578,7 +605,8 @@ export class ReplayTransport {
     eventBytes: number,
     sessionId: string,
     identity: ChunkIdentity,
-    background = false
+    background = false,
+    prepared?: LifecycleChunk
   ): QueuedUpload | undefined {
     // Two full batches always fit, so a large maxBufferBytes does not reject
     // the next batch while a healthy upload is still in flight.
@@ -610,6 +638,7 @@ export class ReplayTransport {
       attempting: false,
       background,
       pagehide: false,
+      prepared,
       resolve,
       retainedBytes: eventBytes,
       seq,
@@ -685,7 +714,14 @@ export class ReplayTransport {
   }
 
   private compressQueuedSync(upload: QueuedUpload): UploadFailure | undefined {
+    const prepared = upload.prepared
+    upload.prepared = undefined
     if (upload.body !== undefined || upload.events === undefined || upload.settled) {
+      return undefined
+    }
+    // A loss handled before this point can trim the events; the body must match them.
+    if (prepared?.body !== undefined && prepared.events === upload.events) {
+      this.retainCompressedBody(upload, prepared.body)
       return undefined
     }
     try {
@@ -942,35 +978,69 @@ export class ReplayTransport {
     return { body, seq, sessionId, reservedBytes, requestKeepalive: reservedBytes > 0 }
   }
 
-  private splitKeepaliveEventChunks(events: RrwebEvent[], identity: ChunkIdentity): LifecycleChunk[] {
+  /**
+   * Packs event prefixes into chunks whose compressed envelopes fit the keepalive limit, using
+   * the sequences this transport allocates next. With a shared budget (pagehide), the events
+   * left once it is spent stay as one unsplit chunk: they use an ordinary request either way,
+   * so smaller pieces would only add requests and synchronous compression.
+   */
+  private splitKeepaliveEventChunks(
+    events: RrwebEvent[],
+    identity: ChunkIdentity,
+    sharedBudget = Number.POSITIVE_INFINITY
+  ): LifecycleChunk[] {
+    const sizes = events.map(estimateBytes)
     const chunks: LifecycleChunk[] = []
-    const split = (batch: RrwebEvent[]): void => {
-      // Bound synchronous compression work before trying a large candidate.
-      if (batch.length > 1 && sumEventBytes(batch) > MAX_KEEPALIVE_RAW_BYTES) {
-        const middle = Math.ceil(batch.length / 2)
-        split(batch.slice(0, middle))
-        split(batch.slice(middle))
-        return
+    let remaining = sharedBudget
+    let ratio: number | undefined
+    let start = 0
+    while (start < events.length) {
+      const limit = Math.min(MAX_KEEPALIVE_RESERVED_BYTES, remaining)
+      if (limit < MIN_KEEPALIVE_CHUNK_BYTES) {
+        chunks.push({ events: events.slice(start), eventBytes: sumSizes(sizes, start, events.length) })
+        break
       }
-      let body: Uint8Array
-      try {
-        body = this.compression.gzipSync(strToU8(JSON.stringify(this.createEnvelope(batch, this.seq + chunks.length, identity))))
-      } catch {
-        // Reserve this sequence and report its failure through the normal loss /
-        // resync path, just as for an ordinary compression failure.
-        chunks.push({ events: batch })
-        return
+      const seq = this.seq + chunks.length
+      // Bound synchronous compression work: the first candidate is capped by raw size, later
+      // ones are sized from the compression ratio already observed.
+      const firstTarget =
+        ratio === undefined ? MAX_KEEPALIVE_RAW_BYTES : Math.min(MAX_KEEPALIVE_RAW_BYTES, limit * ratio * KEEPALIVE_PACKING_HEADROOM)
+      let end = prefixEnd(sizes, start, firstTarget)
+      for (;;) {
+        const batch = events.slice(start, end)
+        const eventBytes = sumSizes(sizes, start, end)
+        let body: Uint8Array
+        try {
+          body = this.compression.gzipSync(strToU8(JSON.stringify(this.createEnvelope(batch, seq, identity))))
+        } catch {
+          // Reserve this sequence and report its failure through the normal loss /
+          // resync path, just as for an ordinary compression failure. Later pagehide
+          // chunks cannot use keepalive ahead of it.
+          chunks.push({ events: batch, eventBytes })
+          remaining = Number.isFinite(sharedBudget) ? 0 : remaining
+          break
+        }
+        ratio = eventBytes / Math.max(1, body.byteLength)
+        if (body.byteLength <= limit) {
+          chunks.push({ events: batch, eventBytes, body })
+          remaining -= body.byteLength
+          break
+        }
+        if (end - start === 1) {
+          if (Number.isFinite(sharedBudget)) {
+            // Keepalive cannot carry this event now, so it leads the unsplit tail.
+            chunks.push({ events: events.slice(start), eventBytes: sumSizes(sizes, start, events.length) })
+            end = events.length
+          } else {
+            // An indivisible oversized event is sent using ordinary fetch.
+            chunks.push({ events: batch, eventBytes, body })
+          }
+          break
+        }
+        end = Math.max(start + 1, Math.min(end - 1, prefixEnd(sizes, start, limit * ratio * KEEPALIVE_PACKING_HEADROOM)))
       }
-      if (batch.length > 1 && body.byteLength > MAX_KEEPALIVE_RESERVED_BYTES) {
-        const middle = Math.ceil(batch.length / 2)
-        split(batch.slice(0, middle))
-        split(batch.slice(middle))
-        return
-      }
-      // An indivisible oversized event is sent using ordinary fetch.
-      chunks.push({ events: batch, body })
+      start = end
     }
-    split(events)
     return chunks
   }
 
@@ -1254,6 +1324,25 @@ function eventsFromAnchor(events: RrwebEvent[]): RrwebEvent[] {
 
 function sumEventBytes(events: RrwebEvent[]): number {
   return events.reduce((total, event) => total + estimateBytes(event), 0)
+}
+
+function sumSizes(sizes: number[], start: number, end: number): number {
+  let total = 0
+  for (let index = start; index < end; index++) {
+    total += sizes[index] ?? 0
+  }
+  return total
+}
+
+/** Returns the end of the longest prefix from `start` within `maxBytes`, always taking at least one event. */
+function prefixEnd(sizes: number[], start: number, maxBytes: number): number {
+  let end = start + 1
+  let total = sizes[start] ?? 0
+  while (end < sizes.length && total + (sizes[end] ?? 0) <= maxBytes) {
+    total += sizes[end] ?? 0
+    end++
+  }
+  return end
 }
 
 async function gzipAsync(compression: Compression, input: Uint8Array): Promise<Uint8Array> {

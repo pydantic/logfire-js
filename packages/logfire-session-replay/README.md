@@ -352,15 +352,18 @@ package.
 ### Background delivery
 
 Hidden-tab flushes share the serial upload queue and retry budget with ordinary
-flushes, including `Retry-After` handling for 429 and 503 responses. Small
-background requests use keepalive within a 48 KB aggregate compressed-body
-budget. Oversized requests use ordinary fetch.
+flushes, including `Retry-After` handling for 429 and 503 responses. A hidden
+tab can be frozen or discarded without a `pagehide`, so its buffered events are
+split at event boundaries into chunks whose compressed envelope fits the 48 KB
+keepalive budget. Each request uses keepalive while the aggregate budget allows.
+A single event that does not fit uses ordinary fetch.
 
 On `pagehide`, the SDK gives queued, unsent chunks and buffered events immediate
-best-effort attempts. Buffered events are split at event boundaries using their
-compressed envelope size, with a 1 MB raw batching ceiling. A single oversized
-event cannot be split. Page-close attempts do not retry, and browser termination
-can still lose data.
+best-effort attempts. Buffered events are packed at event boundaries into the
+remaining keepalive budget using their compressed envelope size, with a 1 MB raw
+batching ceiling. Events left once the budget is spent go in one ordinary
+request. Page-close attempts do not retry, and browser termination can still
+lose data.
 
 The browser SDK exports `ReplayUploadError` outcomes as warning records with
 `replay.upload.reason`, `replay.upload.status_code`, `replay.recording_id`,
