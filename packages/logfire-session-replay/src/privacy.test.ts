@@ -173,6 +173,27 @@ describe('redactCssUrls', () => {
   it('leaves CSS without url() unchanged', () => {
     expect(redactCssUrls('color: red', redact)).toBe('color: red')
   })
+
+  it('reads escaped characters as part of the URL', () => {
+    expect(redactCssUrls('background: url(/image\\)?token=secret)', redact)).toBe('background: url(https://app.example.test/image\\))')
+    expect(redactCssUrls('background: url("/a\\"b.png?token=secret")', redact)).toBe(
+      'background: url("https://app.example.test/a%22b.png")'
+    )
+    expect(redactCssUrls('background: url(/\\3f token=secret)', redact)).toBe('background: url(https://app.example.test/)')
+  })
+
+  it('redacts a URL that the end of the text closes', () => {
+    expect(redactCssUrls('background: url(/a.png?token=secret', redact)).toBe('background: url(https://app.example.test/a.png')
+    expect(redactCssUrls("background: url('/a.png?token=secret", redact)).toBe("background: url('https://app.example.test/a.png'")
+  })
+
+  it('scans text with an unclosed url( in linear time', () => {
+    const value = `--label: "url(${' '.repeat(100_000)}"; ${'url('.repeat(100_000)}`
+    const started = performance.now()
+    redactCssUrls(value, redact)
+    // Generous bound: the backtracking pattern took seconds for 1,600 spaces.
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
 })
 
 describe('truncateText', () => {

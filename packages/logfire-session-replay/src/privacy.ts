@@ -131,11 +131,86 @@ export function redactSrcset(value: string, redact: (url: string) => string): st
   return result
 }
 
-const CSS_URL_PATTERN = /url\(\s*(['"]?)(.*?)\1\s*\)/giu
+const CSS_ESCAPE_PATTERN = /\\(?:([0-9a-f]{1,6})[ \t\n]?|([\s\S]))/giu
+const CSS_URL_SPECIAL_CHARACTER_PATTERN = /[\\"'()\s]/gu
 
 /** Apply `redact` to each `url()` in CSS text, such as an inline `style` attribute. */
 export function redactCssUrls(value: string, redact: (url: string) => string): string {
-  return value.replace(CSS_URL_PATTERN, (_match, quote: string, url: string) => `url(${quote}${redact(url)}${quote})`)
+  // A single forward scan rather than a regex, because text with an unclosed `url(` made a
+  // backtracking pattern take seconds on a page's main thread.
+  const lowerValue = value.toLowerCase()
+  let result = ''
+  let copied = 0
+  let position = lowerValue.indexOf('url(')
+  while (position !== -1) {
+    const token = scanCssUrl(value, position + 'url('.length)
+    if (token.url.length > 0) {
+      const redacted = escapeCssUrl(redact(unescapeCss(token.url)))
+      result += `${value.slice(copied, position)}url(${token.quote}${redacted}${token.quote}${token.closed ? ')' : ''}`
+      copied = token.end
+    }
+    position = lowerValue.indexOf('url(', Math.max(token.end, position + 1))
+  }
+  return copied === 0 ? value : result + value.slice(copied)
+}
+
+interface CssUrlToken {
+  closed: boolean
+  end: number
+  quote: string
+  url: string
+}
+
+// Follows the CSS tokenizer: a backslash escapes the next character, and a URL or string that
+// reaches the end of the text still counts, because the browser loads it.
+function scanCssUrl(value: string, start: number): CssUrlToken {
+  let position = start
+  while (position < value.length && /\s/u.test(value[position] ?? '')) {
+    position++
+  }
+  const quote = value[position] === '"' || value[position] === "'" ? (value[position] ?? '') : ''
+  if (quote !== '') {
+    position++
+  }
+  const urlStart = position
+  while (position < value.length) {
+    const character = value[position]
+    if (character === '\\') {
+      position += 2
+    } else if (quote === '' ? character === ')' : character === quote) {
+      break
+    } else {
+      position++
+    }
+  }
+  const urlEnd = Math.min(position, value.length)
+  const url = quote === '' ? value.slice(urlStart, urlEnd).trimEnd() : value.slice(urlStart, urlEnd)
+  if (quote !== '' && position < value.length) {
+    position++
+    while (position < value.length && /\s/u.test(value[position] ?? '')) {
+      position++
+    }
+  }
+  const closed = value[position] === ')'
+  return { closed, end: closed ? position + 1 : Math.min(position, value.length), quote, url }
+}
+
+function unescapeCss(value: string): string {
+  return value.replace(CSS_ESCAPE_PATTERN, (_match, hex: string | undefined, character: string | undefined) => {
+    if (hex === undefined) {
+      return character === '\n' ? '' : (character ?? '')
+    }
+    const codePoint = Number.parseInt(hex, 16)
+    return codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)
+      ? '\ufffd'
+      : String.fromCodePoint(codePoint)
+  })
+}
+
+function escapeCssUrl(value: string): string {
+  return value.replace(CSS_URL_SPECIAL_CHARACTER_PATTERN, (character) =>
+    /\s/u.test(character) ? `\\${character.codePointAt(0)?.toString(16) ?? '20'} ` : `\\${character}`
+  )
 }
 
 /**
