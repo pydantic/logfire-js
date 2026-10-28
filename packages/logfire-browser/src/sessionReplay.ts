@@ -12,6 +12,8 @@ export type MaybePromise<T> = T | Promise<T>
 export interface BrowserSessionReplayRuntime {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
+  /** Absent from replay packages older than 0.9. */
+  readonly uploading?: boolean | undefined
   getSessionId(): string
   /** Absent from replay packages older than 0.6. */
   captureError?(error: unknown, options?: { timestamp?: number }): void
@@ -24,6 +26,7 @@ export interface BrowserSessionReplayRuntime {
 export interface BrowserSessionReplayControl {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
+  readonly uploading?: boolean | undefined
   captureError(error: unknown, options?: { timestamp?: number }): void
   getRecordingId?(): string
   flush(): Promise<void>
@@ -157,6 +160,11 @@ export class BrowserSessionReplayState {
     if (this.replay?.recording !== true || (mode !== 'full' && mode !== 'buffer')) {
       return undefined
     }
+    // A full recording can end before its minimum duration and upload nothing. Only full spans
+    // link to a replay, so buffer spans stay marked.
+    if (mode === 'full' && this.replay.uploading === false) {
+      return undefined
+    }
 
     const recordingId = this.replay.getRecordingId?.()
     // A new recorder has no recording id during rotation. Do not link spans
@@ -219,7 +227,8 @@ function createReplayConfig(
   telemetryOptions: BrowserSessionReplayTelemetryOptions
 ): BrowserSessionReplayPackageConfig {
   const config: BrowserSessionReplayPackageConfig = {
-    getSessionId: () => browserSessionManager.peekSessionId(),
+    // getSession() applies the idle timeout, so an idle tab rotates its replay with its RUM session.
+    getSessionId: () => browserSessionManager.getSession().id,
     getSessionAttributes: () => browserSessionManager.peekSessionAttributes() ?? {},
     ignoreUrlPatterns: [
       ...createTelemetryUrlPatterns([
@@ -383,6 +392,14 @@ function wrapReplayRuntime(
     get recording() {
       try {
         return replay.recording
+      } catch (error) {
+        safeReportError(onError, error)
+        return false
+      }
+    },
+    get uploading() {
+      try {
+        return replay.uploading
       } catch (error) {
         safeReportError(onError, error)
         return false

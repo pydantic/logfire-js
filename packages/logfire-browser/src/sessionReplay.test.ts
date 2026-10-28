@@ -112,7 +112,43 @@ describe('startBrowserSessionReplay', () => {
     expect(state.getState()).toBeUndefined()
   })
 
-  it('loads replay, passes browser-owned config, and uses peekSessionId on the hot path', async () => {
+  it('marks spans as full only once the recording uploads', async () => {
+    let uploading: boolean | undefined = false
+    let mode: 'full' | 'buffer' = 'full'
+    const state = new BrowserSessionReplayState()
+    const runtime: BrowserSessionReplayRuntime = {
+      get mode() {
+        return mode
+      },
+      recording: true,
+      get uploading() {
+        return uploading
+      },
+      flush: async () => Promise.resolve(),
+      getSessionId: () => 'browser-session-1',
+      stop: async () => Promise.resolve(),
+    }
+    await startBrowserSessionReplay(
+      { load: () => ({ startSessionReplay: () => runtime }), replayUrl: '/logfire/replay' },
+      createManager(),
+      state,
+      {
+        traceUrl: '/logfire/traces',
+      }
+    )
+
+    expect(state.getState()).toBeUndefined()
+    mode = 'buffer'
+    expect(state.getState()).toEqual({ active: true, mode: 'buffer' })
+    mode = 'full'
+    uploading = true
+    expect(state.getState()).toEqual({ active: true, mode: 'full' })
+    // Replay packages without the getter keep marking full spans.
+    uploading = undefined
+    expect(state.getState()).toEqual({ active: true, mode: 'full' })
+  })
+
+  it('loads replay, passes browser-owned config, and reads the session id without touching it', async () => {
     const manager = createManager()
     const touchSpy = vi.spyOn(manager, 'touch')
     const getSessionSpy = vi.spyOn(manager, 'getSession')
@@ -212,7 +248,39 @@ describe('startBrowserSessionReplay', () => {
     expect(replayConfig?.getSessionId?.()).toBe('browser-session-1')
     expect(replayConfig?.getSessionAttributes?.()).toEqual({})
     expect(touchSpy).toHaveBeenCalledTimes(1)
-    expect(getSessionSpy).not.toHaveBeenCalled()
+    expect(getSessionSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('rotates the replay session id once the browser session goes idle', async () => {
+    let now = 1_000
+    let id = 0
+    const manager = new BrowserSessionManager({
+      generateId: () => {
+        id += 1
+        return `browser-session-${id.toString()}`
+      },
+      idleTimeoutMs: 60_000,
+      now: () => now,
+      storage: new MemoryStorage(),
+      storageKey: 'test-session',
+    })
+    let replayConfig: BrowserSessionReplayPackageConfig | undefined
+    const replayModule: BrowserSessionReplayModule = {
+      startSessionReplay: (config) => {
+        replayConfig = config
+        return createReplayRuntime()
+      },
+    }
+
+    await startBrowserSessionReplay({ load: () => replayModule, replayUrl: '/logfire/replay' }, manager, new BrowserSessionReplayState(), {
+      traceUrl: '/logfire/traces',
+    })
+
+    now += 60_000
+    expect(replayConfig?.getSessionId?.()).toBe('browser-session-1')
+    now += 1
+    expect(replayConfig?.getSessionId?.()).toBe('browser-session-2')
+    expect(manager.peekSessionId()).toBe('browser-session-2')
   })
 
   it('passes the browser session snapshot to replay without touching the session again', async () => {

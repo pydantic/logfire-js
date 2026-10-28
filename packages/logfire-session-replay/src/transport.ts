@@ -83,6 +83,11 @@ interface ReplayTransportOptions {
    * shared sequence record. The recording starts at once, while its lock is still pending.
    */
   awaitBinding?: boolean
+  /**
+   * Called once, after the server rejects a chunk with a status that later chunks would also get,
+   * such as a revoked token. The transport sends nothing more.
+   */
+  onPermanentRejection?: () => void
 }
 
 /**
@@ -143,6 +148,8 @@ export class ReplayTransport {
   private sequenceRecordFailed = false
   private awaitingBinding: boolean
   private bindingBufferIncomplete = false
+  private readonly onPermanentRejection: (() => void) | undefined
+  private permanentlyRejected = false
 
   constructor(
     config: ResolvedSessionReplayConfig,
@@ -163,6 +170,7 @@ export class ReplayTransport {
     this.takeFullSnapshot = options.takeFullSnapshot
     this.sequenceRecord = options.sequenceRecord
     this.awaitingBinding = options.awaitBinding === true
+    this.onPermanentRejection = options.onPermanentRejection
     this.minimumDurationSatisfied = config.minSessionDurationMs === 0
     this.seq = options.sequenceRecord?.initialSeq ?? this.readPersistedSequence() ?? 0
     this.startedAt = this.config.now()
@@ -422,6 +430,14 @@ export class ReplayTransport {
     await this.settleWithinDeadline([finalFlush, ...finalAttempts])
   }
 
+  /**
+   * Stop sending after the ingest permanently rejected this recording's session, possibly through
+   * another transport. Requests already on the wire settle with their own responses.
+   */
+  abandon(): void {
+    this.closeAfterPermanentRejection([])
+  }
+
   discard(): void {
     this.started = false
     this.closed = true
@@ -435,6 +451,14 @@ export class ReplayTransport {
 
   getMode(): 'full' | 'buffer' {
     return this.mode
+  }
+
+  /**
+   * Whether a full recording passed its minimum duration and uploads what it records. A pending
+   * binding only defers sequence reservation: the buffered events upload once it is attached.
+   */
+  isCommitted(): boolean {
+    return this.mode === 'full' && this.minimumDurationSatisfied && !this.held && !this.closed
   }
 
   isHeld(): boolean {
@@ -842,7 +866,10 @@ export class ReplayTransport {
 
   private handleSequencedLoss(seq: number, sessionId: string, failure: UploadFailure): void {
     const droppedSeqs: number[] = []
-    if (!this.shuttingDown) {
+    const permanent = isPermanentRejection(failure)
+    if (permanent) {
+      this.closeAfterPermanentRejection(droppedSeqs)
+    } else if (!this.shuttingDown) {
       let anchored = false
       for (const upload of [...this.queue]) {
         if (upload.seq < seq) {
@@ -885,6 +912,33 @@ export class ReplayTransport {
         status: failure.status,
       })
     )
+    if (permanent && !this.permanentlyRejected) {
+      this.permanentlyRejected = true
+      // The loss is detected inside the upload queue's settlement, so the owner stops afterwards.
+      queueMicrotask(() => {
+        try {
+          this.onPermanentRejection?.()
+        } catch (error) {
+          safeReportError(this.config.onError, error)
+        }
+      })
+    }
+  }
+
+  /**
+   * Every later chunk would get the same answer, so a resync snapshot would only serialize the DOM
+   * for another rejected request.
+   */
+  private closeAfterPermanentRejection(droppedSeqs: number[]): void {
+    this.discard()
+    this.retryAbort.abort()
+    for (const upload of [...this.queue]) {
+      // A request already on the wire cannot be recalled, and settles with its own response.
+      if (!upload.attempting) {
+        droppedSeqs.push(upload.seq)
+        this.settle(upload, undefined)
+      }
+    }
   }
 
   private trimBufferToAnchor(): boolean {
@@ -1417,6 +1471,15 @@ function getRetryDelay(error: unknown, attempt: number, random: () => number): n
   // would otherwise retry a rate-limited endpoint without pause.
   const retryAfter = error instanceof ReplayIngestError ? error.retryAfter : undefined
   return retryAfter === undefined ? backoff : Math.max(retryAfter, backoff)
+}
+
+// These answer one chunk, or clear without a configuration change.
+const CHUNK_SCOPED_CLIENT_STATUSES = new Set([408, 413, 425, 429])
+
+/** A 4xx such as a revoked token, a deleted application, or a usage block, which later chunks also get. */
+function isPermanentRejection(failure: UploadFailure): boolean {
+  const status = failure.status
+  return failure.reason === 'rejected' && status !== undefined && status >= 400 && status < 500 && !CHUNK_SCOPED_CLIENT_STATUSES.has(status)
 }
 
 function toUploadFailure(error: unknown, reachedFetch: boolean): UploadFailure {

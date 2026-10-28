@@ -34,6 +34,11 @@ export type { ReplayUploadErrorInit, ReplayUploadFailureReason } from './uploadE
 export interface SessionReplay {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
+  /**
+   * Whether a `full` recording passed its minimum duration and uploads what it records. Until then
+   * the visit can end without a replay, so spans should not link to it.
+   */
+  readonly uploading: boolean
   getSessionId(): string
   /**
    * Add an error to the replay and promote an error-sampled buffer, as an uncaught error does.
@@ -55,6 +60,7 @@ export interface CaptureErrorOptions {
 const NOOP: SessionReplay = {
   mode: 'off',
   recording: false,
+  uploading: false,
   getSessionId: () => '',
   captureError: () => undefined,
   getRecordingId: () => '',
@@ -164,6 +170,13 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           isCurrentRecording: () => recordingIdentity.isCurrent(recordingId, getSessionId(false)),
           holdUntilActivity,
           awaitBinding,
+          // A rotated or restored recording would be rejected in the same way, so the whole controller stops.
+          // The rejection can come from an earlier pagehide upload after a restored recording started,
+          // and a graceful stop would still send that recording's buffered tail.
+          onPermanentRejection: () => {
+            runtime?.transport.abandon()
+            ignorePromise(stop(), resolvedConfig.onError)
+          },
         })
       } catch (error) {
         runtime = undefined
@@ -411,6 +424,31 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
     window.addEventListener('pagehide', onPageHide)
     window.addEventListener('pageshow', onPageShow)
 
+    const stop = async (): Promise<void> => {
+      stopPromise ??= (async () => {
+        stopped = true
+        lifecycleGeneration += 1
+        claimAbort?.abort()
+        clearInterval(sessionTimer)
+        window.removeEventListener('pagehide', onPageHide)
+        window.removeEventListener('pageshow', onPageShow)
+        const oldRuntime = runtime
+        runtime = undefined
+        const oldShutdown = oldRuntime?.deactivate() ?? Promise.resolve()
+        await reportPromise(oldShutdown, resolvedConfig.onError)
+        await transition
+        await pageShutdowns
+        internalSessions.flushPendingStorage()
+        sequenceIsResumable = oldRuntime?.transport.canResumeSequence() ?? sequenceIsResumable
+        if (sequenceIsResumable) {
+          recordingIdentity.release()
+        }
+        releaseLock()
+        releaseLease()
+      })()
+      return stopPromise
+    }
+
     return {
       get mode() {
         try {
@@ -423,6 +461,14 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       get recording() {
         try {
           return runtime !== undefined
+        } catch (error) {
+          safeReportError(resolvedConfig.onError, error)
+          return false
+        }
+      },
+      get uploading() {
+        try {
+          return runtime?.transport.isCommitted() ?? false
         } catch (error) {
           safeReportError(resolvedConfig.onError, error)
           return false
@@ -450,30 +496,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           safeReportError(resolvedConfig.onError, error)
         }
       },
-      stop: async () => {
-        stopPromise ??= (async () => {
-          stopped = true
-          lifecycleGeneration += 1
-          claimAbort?.abort()
-          clearInterval(sessionTimer)
-          window.removeEventListener('pagehide', onPageHide)
-          window.removeEventListener('pageshow', onPageShow)
-          const oldRuntime = runtime
-          runtime = undefined
-          const oldShutdown = oldRuntime?.deactivate() ?? Promise.resolve()
-          await reportPromise(oldShutdown, resolvedConfig.onError)
-          await transition
-          await pageShutdowns
-          internalSessions.flushPendingStorage()
-          sequenceIsResumable = oldRuntime?.transport.canResumeSequence() ?? sequenceIsResumable
-          if (sequenceIsResumable) {
-            recordingIdentity.release()
-          }
-          releaseLock()
-          releaseLease()
-        })()
-        return stopPromise
-      },
+      stop,
     }
   } catch (error) {
     releaseLease()
@@ -492,6 +515,7 @@ function createActiveRuntime(options: {
   isCurrentRecording: () => boolean
   holdUntilActivity: boolean
   awaitBinding: boolean
+  onPermanentRejection: () => void
 }): ActiveRuntime {
   const {
     config,
@@ -504,6 +528,7 @@ function createActiveRuntime(options: {
     recordingId,
     isCurrentRecording,
     awaitBinding,
+    onPermanentRejection,
   } = options
   const sessionAttributes = snapshotSessionAttributes(config.getSessionAttributes, (error) => {
     safeReportError(config.onError, error)
@@ -515,6 +540,7 @@ function createActiveRuntime(options: {
       recorder.takeFullSnapshot()
     },
     awaitBinding,
+    onPermanentRejection,
   })
   const cleanup: (() => void)[] = []
   let active = true
@@ -545,9 +571,12 @@ function createActiveRuntime(options: {
           return
         }
         try {
-          const observedSessionId = getSessionId(isUserActivityEvent(event))
+          const userActivity = isUserActivityEvent(event)
+          const observedSessionId = getSessionId(userActivity)
           if (observedSessionId !== sessionId || !isCurrentRecording()) {
-            onSessionChanged(observedSessionId, false)
+            // A background mutation can be the first to see an idle session expire. The next
+            // recording waits for activity, as it does when the session monitor sees the expiry.
+            onSessionChanged(observedSessionId, !userActivity)
             return
           }
           transport.add(event)

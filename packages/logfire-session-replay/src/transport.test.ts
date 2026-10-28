@@ -143,6 +143,48 @@ function largeEvent(timestamp: number, seed: number, length = 30_000): RrwebEven
 }
 
 describe('ReplayTransport full mode', () => {
+  it('is committed only once nothing holds back its uploads', () => {
+    const { fetchImpl } = recordingFetch()
+    const held = new ReplayTransport(
+      makeConfig(fetchImpl),
+      'sess-held',
+      'full',
+      null,
+      immediateCompression(),
+      {},
+      { holdUntilActivity: true }
+    )
+    expect(held.isCommitted()).toBe(false)
+    held.releaseHeld(() => undefined)
+    expect(held.isCommitted()).toBe(true)
+
+    const unbound = new ReplayTransport(
+      makeConfig(fetchImpl),
+      'sess-unbound',
+      'full',
+      null,
+      immediateCompression(),
+      {},
+      { awaitBinding: true }
+    )
+    // The pending lock only defers sequence reservation; the buffered events still upload.
+    expect(unbound.isCommitted()).toBe(true)
+
+    const buffered = new ReplayTransport(makeConfig(fetchImpl), 'sess-buffer', 'buffer', null, immediateCompression())
+    expect(buffered.isCommitted()).toBe(false)
+
+    const gated = new ReplayTransport(
+      { ...makeConfig(fetchImpl), minSessionDurationMs: 5_000 },
+      'sess-gated',
+      'full',
+      null,
+      immediateCompression()
+    )
+    expect(gated.isCommitted()).toBe(false)
+    held.discard()
+    expect(held.isCommitted()).toBe(false)
+  })
+
   it('retains metadata when releasing a complete held session', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const transport = new ReplayTransport(
@@ -1836,7 +1878,8 @@ describe('ReplayTransport upload recovery', () => {
   function recoveringTransport(
     fetchImpl: typeof fetch,
     overrides: Partial<ResolvedSessionReplayConfig> = {},
-    compression = immediateCompression()
+    compression = immediateCompression(),
+    onPermanentRejection?: () => void
   ) {
     const onError = vi.fn()
     const holder: { transport?: ReplayTransport } = {}
@@ -1851,7 +1894,7 @@ describe('ReplayTransport upload recovery', () => {
       null,
       compression,
       {},
-      { takeFullSnapshot }
+      { takeFullSnapshot, ...(onPermanentRejection === undefined ? {} : { onPermanentRejection }) }
     )
     holder.transport = transport
     return { onError, takeFullSnapshot, transport }
@@ -1959,18 +2002,70 @@ describe('ReplayTransport upload recovery', () => {
     }
   })
 
-  it.each([400, 401, 403, 404, 413, 422])('does not retry terminal status %i and re-anchors', async (status) => {
+  it('does not retry a chunk-scoped 413 and re-anchors', async () => {
     vi.useFakeTimers()
     try {
-      const { calls, fetchImpl } = scriptedFetch(() => new Response(null, { status }))
-      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl)
+      const { calls, fetchImpl } = scriptedFetch(() => new Response(null, { status: 413 }))
+      const onPermanentRejection = vi.fn()
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl, {}, undefined, onPermanentRejection)
       transport.add(fullSnapshot)
       await transport.flush()
       await vi.advanceTimersByTimeAsync(0)
 
       expect(calls).toHaveLength(1)
-      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'rejected', seq: 0, status }))
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'rejected', seq: 0, status: 413 }))
       expect(takeFullSnapshot).toHaveBeenCalledTimes(1)
+      expect(onPermanentRejection).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([400, 401, 402, 403, 404, 409, 422])('stops sending and resyncing after a permanent %i rejection', async (status) => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch(() => new Response(null, { status }))
+      const onPermanentRejection = vi.fn()
+      const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl, {}, undefined, onPermanentRejection)
+      transport.add(fullSnapshot)
+      await transport.flush()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(onPermanentRejection).toHaveBeenCalledOnce()
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ droppedSeqs: [], reason: 'rejected', seq: 0, status }))
+      transport.add({ ...meta, timestamp: 40 })
+      transport.add({ ...fullSnapshot, timestamp: 41 })
+      await transport.flush()
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(calls).toHaveLength(1)
+      expect(takeFullSnapshot).not.toHaveBeenCalled()
+      expect(transport.isCommitted()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('drops queued chunks, including later anchors, after a permanent rejection', async () => {
+    vi.useFakeTimers()
+    try {
+      const { calls, fetchImpl } = scriptedFetch((seq) => (seq === 0 ? new Response(null, { status: 401 }) : accepted()))
+      const onPermanentRejection = vi.fn()
+      const { onError, transport } = recoveringTransport(fetchImpl, {}, undefined, onPermanentRejection)
+      transport.add(fullSnapshot)
+      const lost = transport.flush()
+      transport.add({ ...mutation, timestamp: 39 })
+      const dependent = transport.flush()
+      transport.add({ ...meta, timestamp: 40 })
+      transport.add({ ...fullSnapshot, timestamp: 41 })
+      const anchored = transport.flush()
+      await Promise.all([lost, dependent, anchored])
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(calls.map((call) => call.seq)).toEqual([0])
+      expect(onError).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ droppedSeqs: [1, 2], reason: 'rejected', seq: 0, status: 401 })
+      )
+      expect(onPermanentRejection).toHaveBeenCalledOnce()
     } finally {
       vi.useRealTimers()
     }
@@ -2229,7 +2324,7 @@ describe('ReplayTransport upload recovery', () => {
   it('drops the dependent chunk before a queued checkpoint without dropping the checkpoint', async () => {
     vi.useFakeTimers()
     try {
-      const { calls, fetchImpl } = scriptedFetch((seq) => (seq === 0 ? new Response(null, { status: 400 }) : accepted()))
+      const { calls, fetchImpl } = scriptedFetch((seq) => (seq === 0 ? new Response(null, { status: 413 }) : accepted()))
       const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl)
       transport.add(fullSnapshot)
       const lost = transport.flush()
@@ -2314,7 +2409,7 @@ describe('ReplayTransport upload recovery', () => {
   it('keeps a buffered anchor instead of taking a new snapshot', async () => {
     vi.useFakeTimers()
     try {
-      const { calls, fetchImpl } = scriptedFetch((seq) => (seq === 0 ? new Response(null, { status: 400 }) : accepted()))
+      const { calls, fetchImpl } = scriptedFetch((seq) => (seq === 0 ? new Response(null, { status: 413 }) : accepted()))
       const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl)
       transport.add(fullSnapshot)
       const lost = transport.flush()
@@ -2337,7 +2432,7 @@ describe('ReplayTransport upload recovery', () => {
   it('takes at most one resync snapshot per minute', async () => {
     vi.useFakeTimers()
     try {
-      const { fetchImpl } = scriptedFetch(() => new Response(null, { status: 401 }))
+      const { fetchImpl } = scriptedFetch(() => new Response(null, { status: 413 }))
       const takeFullSnapshot = vi.fn()
       const onError = vi.fn()
       const transport = new ReplayTransport(
@@ -2715,7 +2810,7 @@ describe('ReplayTransport background delivery', () => {
 
   it('drops queued hidden-tab chunks that depend on a lost chunk', async () => {
     const fetchMock = vi.fn(
-      async (_url: string | URL, _init?: RequestInit) => new Response(null, { status: fetchMock.mock.calls.length === 1 ? 400 : 202 })
+      async (_url: string | URL, _init?: RequestInit) => new Response(null, { status: fetchMock.mock.calls.length === 1 ? 413 : 202 })
     )
     const onError = vi.fn()
     const transport = new ReplayTransport(
@@ -2732,7 +2827,7 @@ describe('ReplayTransport background delivery', () => {
     await transport.flush({ background: true })
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(onError).toHaveBeenCalledTimes(1)
-    expect(onError.mock.calls[0]?.[0]).toMatchObject({ droppedSeqs: [1, 2], reason: 'rejected', seq: 0, status: 400 })
+    expect(onError.mock.calls[0]?.[0]).toMatchObject({ droppedSeqs: [1, 2], reason: 'rejected', seq: 0, status: 413 })
   })
 
   it('sends the pagehide tail after the keepalive budget as one unsplit chunk', async () => {
