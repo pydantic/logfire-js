@@ -113,6 +113,11 @@ jobs:
       contents: write
     environment:
       name: npm
+    env:
+      # The install's `vp config` would otherwise install the repository's git hooks, and the
+      # pre-push hook rebuilds and tests on every version and tag push; parallel tag pushes
+      # time those tests out and the tags are rejected.
+      VP_GIT_HOOKS: '0'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
