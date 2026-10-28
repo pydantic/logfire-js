@@ -80,6 +80,12 @@ export class BrowserUrlSpanProcessor implements SpanProcessor {
         sanitizeAttributes(event.attributes)
       }
     }
+    // The export pass leaves URL attributes to this policy, so links must be covered here too.
+    for (const link of span.links) {
+      if (link.attributes !== undefined) {
+        sanitizeAttributes(link.attributes)
+      }
+    }
   }
 
   async forceFlush(): Promise<void> {
