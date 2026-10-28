@@ -113,6 +113,20 @@ describe('BrowserUrlSpanProcessor', () => {
     expect(span.attributes).toEqual({ 'exception.stacktrace': "Error: GET 'https://api.example.com/x' failed" })
   })
 
+  it('handles a long run of closing punctuation in a stack trace in linear time', () => {
+    const span = {
+      attributes: { 'exception.stacktrace': `Error: https://example.test/?q=${')'.repeat(32_000)}x` },
+      events: [],
+      links: [],
+    } as unknown as ReadableSpan
+    const started = performance.now()
+    new BrowserUrlSpanProcessor().onEnd(span)
+
+    expect(span.attributes).toEqual({ 'exception.stacktrace': 'Error: https://example.test/' })
+    // Generous bound: the unanchored punctuation regex took seconds for this input.
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
   it('does not export non-HTTP URL payloads or unexpected URL attribute types', () => {
     const span = {
       attributes: { 'url.full': 'data:text/plain,secret', 'http.url': ['secret'] },

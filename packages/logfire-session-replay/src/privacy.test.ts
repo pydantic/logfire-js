@@ -73,6 +73,15 @@ describe('redactUrlsInText', () => {
     )
   })
 
+  it('handles a long run of closing punctuation in linear time', () => {
+    const text = `https://example.test/?q=${')'.repeat(32_000)}x`
+    const started = performance.now()
+
+    expect(redactUrlsInText(text, [/.+/u], baseUrl)).toBe('https://example.test/')
+    // Generous bound: the unanchored punctuation regex took seconds for this input.
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
   it('tests each URL embedded in a match against the patterns', () => {
     const privateOnly = [/^https:\/\/private\./u]
 
