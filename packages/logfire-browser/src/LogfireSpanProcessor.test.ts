@@ -98,6 +98,7 @@ describe('LogfireSpanProcessor', () => {
       events: [],
       links: [],
       name: 'GET',
+      status: { code: 0 },
     } as unknown as ReadableSpan
 
     processor.onEnd(span)

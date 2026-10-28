@@ -1,5 +1,6 @@
 import { trace } from '@opentelemetry/api'
 import { InMemoryLogRecordExporter, LoggerProvider, SimpleLogRecordProcessor } from '@opentelemetry/sdk-logs'
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as logfire from 'logfire'
 import { configureLogfireApi, PendingSpanProcessor } from 'logfire'
@@ -110,7 +111,6 @@ describe('export-time scrubbing', () => {
     })
     span.setAttribute('db.password', 'hunter2')
     span.addEvent('retry', { note: 'session=abc' })
-    span.recordException(new Error('invalid session token'))
     span.end()
     await provider.forceFlush()
 
@@ -126,7 +126,42 @@ describe('export-time scrubbing', () => {
       ]),
     })
     expect(exported?.events[0]?.attributes).toEqual({ note: "[Scrubbed due to 'session']" })
-    expect(exported?.events[1]?.attributes?.['exception.message']).toBe('invalid session token')
+  })
+
+  it('scrubs the reported error message from the attribute, the exception event, and the status', async () => {
+    const exporter = new InMemorySpanExporter()
+    const provider = new BasicTracerProvider({ spanProcessors: [new LogfireSpanProcessor(new SimpleSpanProcessor(exporter), undefined)] })
+    trace.setGlobalTracerProvider(provider)
+    configureLogfireApi({ otelScope: 'logfire' })
+
+    logfire.reportError('Checkout failed', new Error('login failed for password hunter2-secret'))
+    await provider.forceFlush()
+
+    const [exported] = exporter.getFinishedSpans()
+    expect(exported?.attributes['exception.message']).toBe("[Scrubbed due to 'password']")
+    expect(exported?.events[0]?.attributes?.['exception.message']).toBe("[Scrubbed due to 'password']")
+    expect(exported?.status.message).toBe("[Scrubbed due to 'password']")
+    expect(exportedText(exported)).not.toContain('hunter2-secret')
+  })
+
+  it('scrubs the error and its cause when a logfire.span callback throws', async () => {
+    const exporter = new InMemorySpanExporter()
+    const provider = new BasicTracerProvider({ spanProcessors: [new LogfireSpanProcessor(new SimpleSpanProcessor(exporter), undefined)] })
+    trace.setGlobalTracerProvider(provider)
+    configureLogfireApi({ otelScope: 'logfire' })
+
+    expect(() =>
+      logfire.span('checkout', {}, {}, () => {
+        throw new Error('session expired for hunter2-secret', { cause: new Error('bad password hunter2-cause') })
+      })
+    ).toThrow('session expired')
+    await provider.forceFlush()
+
+    const [exported] = exporter.getFinishedSpans()
+    expect(exported?.events[0]?.attributes?.['exception.message']).toBe("[Scrubbed due to 'session']")
+    expect(exported?.status.message).toBe("[Scrubbed due to 'session']")
+    expect(exportedText(exported)).not.toContain('hunter2-secret')
+    expect(exportedText(exported)).not.toContain('hunter2-cause')
   })
 
   it('scrubs log record attributes and bodies before export', async () => {
@@ -147,3 +182,7 @@ describe('export-time scrubbing', () => {
     expect(exported?.body).toBe("[Scrubbed due to 'password']")
   })
 })
+
+function exportedText(span: ReadableSpan | undefined): string {
+  return JSON.stringify({ attributes: span?.attributes, events: span?.events, status: span?.status })
+}

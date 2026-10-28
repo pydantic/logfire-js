@@ -9,7 +9,7 @@ The TypeScript SDK scrubs sensitive-looking attribute values before export. Scru
 
 In the browser and in Cloudflare Workers, span processors you add yourself (`spanProcessors` and `additionalSpanProcessors`) run before this pass and receive unscrubbed spans.
 
-As in the Python SDK, `exception.message` and `exception.stacktrace` are not scrubbed, so error reports stay readable. In the browser, `configureFrontend` removes query strings and fragments from URL attributes and from the URLs inside exception stack traces.
+Exception messages are scrubbed wherever they appear: the `exception.message` attribute, the exception event, the span status message, and the message and `Caused by` lines of `exception.stacktrace`. Stack frame lines are kept as they are. In the browser, `configureFrontend` removes query strings and fragments from URL attributes and from the URLs inside exception stack traces.
 
 ## Add Patterns
 

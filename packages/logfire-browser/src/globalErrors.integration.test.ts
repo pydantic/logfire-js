@@ -54,6 +54,18 @@ describe('browser global error capture', () => {
     expect(errorSpans()).toEqual([{ level: Level.Error, message: 'rejected', name: 'Unhandled promise rejection' }])
   })
 
+  it('scrubs a sensitive unhandled rejection message from the attribute, the event, and the status', async () => {
+    start()
+
+    dispatchRejection(new Error('session expired for hunter2-secret'))
+    await nextTask()
+
+    const [span] = exporter.getFinishedSpans()
+    expect(span?.attributes['exception.message']).toBe("[Scrubbed due to 'session']")
+    expect(span?.status.message).toBe("[Scrubbed due to 'session']")
+    expect(JSON.stringify({ attributes: span?.attributes, events: span?.events, status: span?.status })).not.toContain('hunter2-secret')
+  })
+
   it('reports a cross-origin script error by its message', async () => {
     start()
 

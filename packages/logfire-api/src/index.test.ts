@@ -1003,15 +1003,15 @@ describe('reportError', () => {
     expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: legacy' })
   })
 
-  test('exports the same unscrubbed exception message in the attribute, event, and status, like the Python SDK', () => {
+  test('scrubs the exception message attribute and the message line of the stack trace at creation', () => {
     const error = new Error('invalid session token')
+    error.stack = 'Error: invalid session token\n    at login (file:///app/auth.js:1:2)'
 
     reportError('Caught error', error)
 
     const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
-    expect(attributes[ATTR_EXCEPTION_MESSAGE]).toBe('invalid session token')
-    expect(spanMock.recordException).toHaveBeenCalledWith(error)
-    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: invalid session token' })
+    expect(attributes[ATTR_EXCEPTION_MESSAGE]).toBe("[Scrubbed due to 'session']")
+    expect(attributes[ATTR_EXCEPTION_STACKTRACE]).toBe("[Scrubbed due to 'session']\n    at login (file:///app/auth.js:1:2)")
   })
 
   test('records Error cause chain in reportError stacktrace', () => {

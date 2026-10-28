@@ -14,7 +14,7 @@ import { configureLogfireApi } from './logfireApiConfig'
 import { serializeAttributes } from './serializeAttributes'
 
 function fakeSpan(fields: Partial<Pick<ReadableSpan, 'attributes' | 'events' | 'links'>>): ReadableSpan {
-  return { attributes: {}, events: [], links: [], ...fields } as unknown as ReadableSpan
+  return { attributes: {}, events: [], links: [], status: { code: 0 }, ...fields } as unknown as ReadableSpan
 }
 
 function fakeLogRecord(attributes: Record<string, unknown>, body?: unknown): ScrubbableLogRecord {
@@ -69,18 +69,48 @@ describe('scrubSpanForExport', () => {
     expect(span.attributes['values']).toEqual(['plain', "[Scrubbed due to 'session']"])
   })
 
-  test('leaves exception messages and stack traces unscrubbed, like the Python SDK', () => {
-    const attributes = {
-      'exception.message': 'invalid session token',
-      'exception.stacktrace': 'Error: invalid session token\n    at login (https://app.example/auth.js:1:2)',
-      'exception.type': 'Error',
-    }
-    const span = fakeSpan({ events: [{ attributes: { ...attributes }, name: 'exception', time: [0, 0] }] })
+  test('scrubs the exception message, the message lines of its stack trace, and the status message', () => {
+    const span = fakeSpan({
+      events: [
+        {
+          attributes: {
+            'exception.message': 'invalid session token',
+            'exception.stacktrace': [
+              'Error: invalid session token',
+              '    at login (https://app.example/auth.js:1:2)',
+              'login@https://app.example/auth.js:1:2',
+              'Caused by: Error: bad password',
+            ].join('\n'),
+            'exception.type': 'Error',
+          },
+          name: 'exception',
+          time: [0, 0],
+        },
+      ],
+    })
+    Object.assign(span, { status: { code: 2, message: 'Error: invalid session token' } })
 
     scrubSpanForExport(span)
 
-    expect(span.events[0]?.attributes).toEqual(attributes)
-    expect(span.attributes).toEqual({})
+    expect(span.events[0]?.attributes).toEqual({
+      'exception.message': "[Scrubbed due to 'session']",
+      'exception.stacktrace': [
+        "[Scrubbed due to 'session']",
+        '    at login (https://app.example/auth.js:1:2)',
+        'login@https://app.example/auth.js:1:2',
+        "[Scrubbed due to 'password']",
+      ].join('\n'),
+      'exception.type': 'Error',
+    })
+    expect(span.status).toEqual({ code: 2, message: "[Scrubbed due to 'session']" })
+    expect(span.attributes).toEqual({
+      [ATTRIBUTES_SCRUBBED_KEY]: JSON.stringify([
+        { matched_substring: 'session', path: ['otel_events', 0, 'attributes', 'exception.message'] },
+        { matched_substring: 'session', path: ['otel_events', 0, 'attributes', 'exception.stacktrace'] },
+        { matched_substring: 'password', path: ['otel_events', 0, 'attributes', 'exception.stacktrace'] },
+        { matched_substring: 'session', path: ['otel_status_message'] },
+      ]),
+    })
   })
 
   test('skips keys that the runtime marks as safe', () => {

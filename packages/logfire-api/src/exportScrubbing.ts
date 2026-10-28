@@ -86,8 +86,8 @@ export function copyScrubbedAttributes(from: object, to: object): void {
  * Scrub a finished span in place before it reaches an exporter.
  *
  * The logfire API scrubs the attributes it is given when it creates a span, but instrumentation
- * spans, attributes set after creation, events, and links never pass through that path. Like the
- * Python SDK's span processor, this pass covers all of them.
+ * spans, attributes set after creation, events, links, and the status message never pass through
+ * that path. This pass covers all of them.
  */
 export function scrubSpanForExport(span: ReadableSpan, options: ExportScrubbingOptions = {}): void {
   const notes: ScrubbedNote[] = []
@@ -106,6 +106,14 @@ export function scrubSpanForExport(span: ReadableSpan, options: ExportScrubbingO
       scrubAttributes(link.attributes, ['links', index, 'attributes'], notes, options)
     }
   })
+  // An error status repeats the exception message, so it is scrubbed like the message attribute.
+  const statusMessage = span.status.message
+  if (statusMessage !== undefined && statusMessage !== '') {
+    const scrubbed = scrubOrFail(['otel_status_message'], statusMessage, notes)
+    if (scrubbed !== statusMessage) {
+      span.status.message = String(scrubbed)
+    }
+  }
   if (notes.length > 0) {
     setOwn(span.attributes, ATTRIBUTES_SCRUBBED_KEY, mergeScrubbedNotes(span.attributes[ATTRIBUTES_SCRUBBED_KEY], notes))
   }
@@ -125,6 +133,7 @@ export function scrubbedSpanCopy(span: ReadableSpan, options: ExportScrubbingOpt
       enumerable: true,
       value: span.events.map((event) => ({ ...event, ...(event.attributes ? { attributes: { ...event.attributes } } : {}) })),
     },
+    status: { enumerable: true, value: { ...span.status } },
     links: {
       enumerable: true,
       value: span.links.map((link) => ({ ...link, ...(link.attributes ? { attributes: { ...link.attributes } } : {}) })),

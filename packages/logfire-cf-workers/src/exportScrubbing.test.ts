@@ -37,6 +37,7 @@ describe('cf-workers export-time scrubbing', () => {
       attributes: { 'logfire.span_type': 'span', 'logfire.msg': 'checkout', 'late.password': 'hunter2' },
       events: [{ attributes: { note: 'session=abc' }, name: 'event', time: [0, 0] }],
       links: [],
+      status: { code: 0 },
     } as unknown as ReadableSpan
 
     postProcessor?.([span])

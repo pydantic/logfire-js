@@ -81,7 +81,6 @@ const SAFE_KEYS = new Set([
   'code.lineno',
   'db.plan',
   'db.statement',
-  'exception.message',
   'exception.stacktrace',
   'exception.type',
   'http.method',
@@ -110,6 +109,14 @@ const SAFE_KEYS = new Set([
 ])
 
 const MAX_SCRUB_DEPTH = 100
+const EXCEPTION_STACKTRACE_KEY = 'exception.stacktrace'
+// V8 frames start with `at`; Firefox and Safari frames are `name@url:line:column`.
+const V8_FRAME_LINE_PATTERN = /^\s*at\s/u
+const LOCATION_LINE_END_PATTERN = /:\d+:\d+\)?$/u
+
+function isStackFrameLine(line: string): boolean {
+  return V8_FRAME_LINE_PATTERN.test(line) || (line.includes('@') && LOCATION_LINE_END_PATTERN.test(line))
+}
 const MAX_DEPTH_REPLACEMENT = '[Scrubbed due to max depth]'
 const CYCLE_REPLACEMENT = '[Scrubbed due to cycle]'
 
@@ -158,6 +165,15 @@ export class LogfireAttributeScrubber implements BaseScrubber {
     const matchedSubstring = match[0]
     notes.push({ matched_substring: matchedSubstring, path })
     return `[Scrubbed due to '${matchedSubstring}']`
+  }
+
+  // A stack trace repeats the exception message and its causes, so those lines are scrubbed like the
+  // message. Frame lines are kept, since a file path such as `auth.js` would otherwise redact them.
+  private scrubStackTrace(path: JsonPath, stack: string, notes: ScrubbedNote[], seen: WeakSet<object>, depth: number): string {
+    return stack
+      .split('\n')
+      .map((line) => (isStackFrameLine(line) ? line : (this.scrub(path, line, notes, seen, depth) as string)))
+      .join('\n')
   }
 
   private scrub(path: JsonPath, value: unknown, notes: ScrubbedNote[], seen: WeakSet<object>, depth: number): unknown {
@@ -213,7 +229,9 @@ export class LogfireAttributeScrubber implements BaseScrubber {
       try {
         const result = new Map<string, unknown>()
         for (const [k, v] of Object.entries(value)) {
-          if (SAFE_KEYS.has(k) || ['boolean', 'number', 'undefined'].includes(typeof v) || v === null) {
+          if (k === EXCEPTION_STACKTRACE_KEY && typeof v === 'string') {
+            result.set(k, this.scrubStackTrace([...path, k], v, notes, seen, depth + 1))
+          } else if (SAFE_KEYS.has(k) || ['boolean', 'number', 'undefined'].includes(typeof v) || v === null) {
             // Safe key or a primitive value, no scrubbing of the key itself.
             // (In the Python SDK we still scrub primitive values to be extra careful)
             result.set(k, v)
