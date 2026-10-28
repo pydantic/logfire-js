@@ -186,6 +186,9 @@ describe('redactCssUrls', () => {
     expect(redactCssUrls('background: u\\72l(/image?token=secret)', redact)).toBe('background: url(https://app.example.test/image)')
     expect(redactCssUrls('background: \\55 RL(/image?token=secret)', redact)).toBe('background: url(https://app.example.test/image)')
     expect(redactCssUrls('background: xurl(/image?token=secret)', redact)).toBe('background: xurl(/image?token=secret)')
+    expect(redactCssUrls('background: u\\72\rl(/image?token=secret)', redact)).toBe('background: url(https://app.example.test/image)')
+    expect(redactCssUrls('background: u\\72\r\nl(/image?token=secret)', redact)).toBe('background: url(https://app.example.test/image)')
+    expect(redactCssUrls('background: u\\72\fl(/image?token=secret)', redact)).toBe('background: url(https://app.example.test/image)')
   })
 
   it('keeps an escaped trailing space in an unquoted URL', () => {
@@ -203,6 +206,21 @@ describe('redactCssUrls', () => {
     )
     expect(redactCssUrls('/* url(" */ background-image: url("/image.png?token=secret")', redact)).toBe(
       '/* url(" */ background-image: url("https://app.example.test/image.png")'
+    )
+  })
+
+  it('ends a quoted URL at an unescaped CR or FF newline', () => {
+    expect(redactCssUrls('a: url("x\r; background: url("/image.png?token=secret")', redact)).toBe(
+      'a: url("https://app.example.test/current/x"\r; background: url("https://app.example.test/image.png")'
+    )
+    expect(redactCssUrls(`--a: 'x\f; background: url("/image.png?token=secret")`, redact)).toBe(
+      `--a: 'x\f; background: url("https://app.example.test/image.png")`
+    )
+  })
+
+  it('continues a string across an escaped CRLF', () => {
+    expect(redactCssUrls(`--a: 'x\\\r\ny url("'; background: url("/image.png?token=secret")`, redact)).toBe(
+      `--a: 'x\\\r\ny url("'; background: url("https://app.example.test/image.png")`
     )
   })
 

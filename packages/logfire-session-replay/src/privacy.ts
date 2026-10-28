@@ -131,7 +131,10 @@ export function redactSrcset(value: string, redact: (url: string) => string): st
   return result
 }
 
-const CSS_ESCAPE_PATTERN = /\\(?:([0-9a-f]{1,6})[ \t\n]?|([\s\S]))/giu
+// CSS reads CR, FF, and CRLF as newlines, and one whitespace character, CRLF included, ends a hex
+// escape.
+const CSS_ESCAPE_PATTERN = /\\(?:([0-9a-f]{1,6})(?:\r\n|[ \t\n\r\f])?|(\r\n|[\s\S]))/giu
+const CSS_NEWLINE_PATTERN = /[\n\r\f]/u
 const CSS_URL_SPECIAL_CHARACTER_PATTERN = /[\\"'()\s]/gu
 
 /** Apply `redact` to each `url()` in CSS text, such as an inline `style` attribute. */
@@ -181,10 +184,10 @@ function skipCssString(value: string, start: number, quote: string): number {
   while (position < value.length) {
     const character = value[position]
     if (character === '\\') {
-      position += 2
+      position = cssEscapedCharacterEnd(value, position)
     } else if (character === quote) {
       return position + 1
-    } else if (character === '\n') {
+    } else if (CSS_NEWLINE_PATTERN.test(character ?? '')) {
       return position
     } else {
       position++
@@ -207,7 +210,7 @@ function scanCssIdentifier(value: string, start: number): { decoded: string; end
     const character = value[position] ?? ''
     if (character === '\\') {
       const next = value[position + 1]
-      if (next === undefined || next === '\n') {
+      if (next === undefined || CSS_NEWLINE_PATTERN.test(next)) {
         break
       }
       let hexEnd = position + 1
@@ -216,7 +219,7 @@ function scanCssIdentifier(value: string, start: number): { decoded: string; end
       }
       if (hexEnd > position + 1) {
         decoded += decodeCssCodePoint(value.slice(position + 1, hexEnd))
-        position = /[ \t\n]/u.test(value[hexEnd] ?? '') ? hexEnd + 1 : hexEnd
+        position = cssEscapeTerminatorEnd(value, hexEnd)
       } else {
         decoded += next
         position += 2
@@ -257,9 +260,9 @@ function scanCssUrl(value: string, start: number): CssUrlToken {
   while (position < value.length) {
     const character = value[position] ?? ''
     if (character === '\\') {
-      position += 2
+      position = cssEscapedCharacterEnd(value, position)
       contentEnd = position
-    } else if (quote === '' ? character === ')' : character === quote || character === '\n') {
+    } else if (quote === '' ? character === ')' : character === quote || CSS_NEWLINE_PATTERN.test(character)) {
       break
     } else {
       position++
@@ -282,10 +285,22 @@ function scanCssUrl(value: string, start: number): CssUrlToken {
 function unescapeCss(value: string): string {
   return value.replace(CSS_ESCAPE_PATTERN, (_match, hex: string | undefined, character: string | undefined) => {
     if (hex === undefined) {
-      return character === '\n' ? '' : (character ?? '')
+      return character === undefined || character === '\r\n' || CSS_NEWLINE_PATTERN.test(character) ? '' : character
     }
     return decodeCssCodePoint(hex)
   })
+}
+
+// A backslash before CRLF continues the line, so both characters belong to the escape.
+function cssEscapedCharacterEnd(value: string, backslash: number): number {
+  return value[backslash + 1] === '\r' && value[backslash + 2] === '\n' ? backslash + 3 : backslash + 2
+}
+
+function cssEscapeTerminatorEnd(value: string, position: number): number {
+  if (value[position] === '\r' && value[position + 1] === '\n') {
+    return position + 2
+  }
+  return /[ \t\n\r\f]/u.test(value[position] ?? '') ? position + 1 : position
 }
 
 function decodeCssCodePoint(hex: string): string {
