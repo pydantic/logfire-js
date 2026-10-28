@@ -857,7 +857,8 @@ async function reportPromise(promise: Promise<void>, onError: ((error: unknown) 
 }
 
 // The redaction that calls a transform keeps its built-in result when the transform throws, so the
-// error is only reported here.
+// error is only reported here. A full snapshot can call a broken transform for every URL in the
+// page, so only the first error is reported.
 function reportUrlTransformErrors(
   transformUrl: ((url: string) => string) | undefined,
   onError: ((error: unknown) => void) | undefined
@@ -865,11 +866,15 @@ function reportUrlTransformErrors(
   if (transformUrl === undefined) {
     return undefined
   }
+  let reported = false
   return (url) => {
     try {
       return transformUrl(url)
     } catch (error) {
-      safeReportError(onError, error)
+      if (!reported) {
+        reported = true
+        safeReportError(onError, error)
+      }
       throw error
     }
   }

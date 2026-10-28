@@ -1441,7 +1441,8 @@ describe('startSessionReplay lifecycle', () => {
     expect(navigationSpy.mock.calls[0]![1]?.transformUrl).toBe(transformUrl)
     expect(transformUrl?.('https://app.example.test/a')).toBe('https://app.example.test/a/transformed')
     expect(() => transformUrl?.('https://app.example.test/fail')).toThrow(transformError)
-    expect(onError).toHaveBeenCalledWith(transformError)
+    expect(() => transformUrl?.('https://app.example.test/fail-again')).toThrow(transformError)
+    expect(onError.mock.calls).toEqual([[transformError]])
     await replay.stop()
   })
 

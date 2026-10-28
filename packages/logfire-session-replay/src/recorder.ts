@@ -19,20 +19,29 @@ const TEXT_ATTRIBUTE_NAMES = new Set([
   'placeholder',
   'title',
 ])
-// UI libraries style open, selected, and positioned states through these attributes, so masking
-// them would make playback show a different state than the user saw.
+// UI libraries and themes select styles through these attributes, so masking them would make
+// playback show a different state or theme than the user saw.
 const UI_STATE_DATA_ATTRIBUTE_NAMES = new Set([
   'data-active',
   'data-align',
+  'data-bs-theme',
   'data-checked',
   'data-disabled',
   'data-headlessui-state',
   'data-highlighted',
   'data-orientation',
+  'data-placement',
+  'data-popper-placement',
   'data-selected',
   'data-side',
+  'data-size',
+  'data-slot',
   'data-state',
+  'data-theme',
+  'data-variant',
 ])
+// Flag values such as `data-expanded="true"` carry no personal data and are matched by selectors.
+const FLAG_DATA_ATTRIBUTE_VALUES = new Set(['', 'false', 'true'])
 const TEXT_VALUE_INPUT_TYPES = new Set(['button', 'reset', 'submit'])
 const MAX_ERROR_MESSAGE_LENGTH = 1024
 const MAX_ERROR_STACK_LENGTH = 8192
@@ -290,18 +299,23 @@ function sanitizeAttribute(name: string, value: unknown, options: SanitizeOption
   if (SRCSET_ATTRIBUTE_NAMES.has(name)) {
     return redactSrcset(value, redact)
   }
-  if (options.maskTextAttributes && isTextAttribute(name)) {
+  if (options.maskTextAttributes && isTextAttribute(name, value)) {
     return maskText(value)
   }
   return value
 }
 
-function isTextAttribute(name: string): boolean {
+function isTextAttribute(name: string, value: string): boolean {
   if (TEXT_ATTRIBUTE_NAMES.has(name)) {
     return true
   }
   // `data-rr-*` attributes are rrweb's own markers, which playback reads.
-  return name.startsWith('data-') && !name.startsWith('data-rr-') && !UI_STATE_DATA_ATTRIBUTE_NAMES.has(name)
+  return (
+    name.startsWith('data-') &&
+    !name.startsWith('data-rr-') &&
+    !UI_STATE_DATA_ATTRIBUTE_NAMES.has(name) &&
+    !FLAG_DATA_ATTRIBUTE_VALUES.has(value)
+  )
 }
 
 // rrweb records a full snapshot's style as text and a mutation's style as a map of changed properties,

@@ -9,4 +9,4 @@ The new `transformUrl` option rewrites each replay page, navigation, network, an
 
 URL redaction now also covers the `srcset`, `imagesrcset`, `poster`, `data`, `xlink:href`, `background`, and `cite` attributes and `url()` in inline styles. URLs with an opaque scheme, such as `mailto:`, `tel:`, `data:`, and `blob:`, now keep only the scheme instead of their content.
 
-`maskAllInputs` now masks hidden input values. `maskAllText` now masks the text-bearing attributes `title`, `alt`, `aria-label`, `placeholder`, and similar, button labels set through `value`, and `data-*` attributes, except common UI state attributes such as `data-state`. Replay error messages and stacks are limited to 1,024 and 8,192 characters.
+`maskAllInputs` now masks hidden input values. `maskAllText` now masks the text-bearing attributes `title`, `alt`, `aria-label`, `placeholder`, and similar, button labels set through `value`, and `data-*` attributes, except common UI state and theme attributes such as `data-state` and `data-theme` and the values `true` and `false`. Replay error messages and stacks are limited to 1,024 and 8,192 characters.

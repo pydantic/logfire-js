@@ -48,8 +48,9 @@ omitted.
 Input masking also covers hidden inputs. Text masking also covers the
 text-bearing attributes `title`, `alt`, `aria-label`, `placeholder`, and
 similar, button labels set through `value`, and `data-*` attributes. UI state
-attributes such as `data-state` and `data-orientation` are kept so that open
-menus and selected items replay as the user saw them.
+and theme attributes such as `data-state`, `data-orientation`, and `data-theme`,
+and `data-*` values that are empty, `true`, or `false`, are kept so that open
+menus, selected items, and themes replay as the user saw them.
 
 Use `blockSelector` to omit a subtree. Set `maskAllText: false` only when
 visible text recording is acceptable; `maskTextSelector` can then selectively

@@ -252,11 +252,13 @@ The recorder masks all rendered text and input values by default
 hidden input values. `maskAllText` also masks the text-bearing attributes
 `title`, `alt`, `aria-label`, `aria-description`, `aria-placeholder`,
 `aria-roledescription`, `aria-valuetext`, `label`, `placeholder`, the value of
-`button`, `submit`, and `reset` inputs, and `data-*` attributes. The UI state
-attributes `data-state`, `data-orientation`, `data-side`, `data-align`,
+`button`, `submit`, and `reset` inputs, and `data-*` attributes. So that styled
+states and themes replay correctly, `data-*` values that are empty, `true`, or
+`false` are kept, as are the attributes `data-state`, `data-orientation`,
+`data-side`, `data-align`, `data-placement`, `data-popper-placement`,
 `data-disabled`, `data-highlighted`, `data-selected`, `data-checked`,
-`data-active`, and `data-headlessui-state` are kept so that styled states replay
-correctly. The recorder also disables canvas recording
+`data-active`, `data-headlessui-state`, `data-slot`, `data-variant`,
+`data-size`, `data-theme`, and `data-bs-theme`. The recorder also disables canvas recording
 and font collection, skips inlined images and cross-origin iframe recording,
 omits nonvisual DOM metadata, throttles pointer, scroll, and media sampling,
 never captures request or response bodies, and leaves console capture off
