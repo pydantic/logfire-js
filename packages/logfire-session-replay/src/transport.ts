@@ -445,9 +445,12 @@ export class ReplayTransport {
     return this.mode
   }
 
-  /** Whether a full recording passed its minimum duration and uploads what it records. */
+  /**
+   * Whether a full recording passed its minimum duration and uploads what it records. A pending
+   * binding only defers sequence reservation: the buffered events upload once it is attached.
+   */
   isCommitted(): boolean {
-    return this.mode === 'full' && this.minimumDurationSatisfied && !this.held && !this.awaitingBinding && !this.closed
+    return this.mode === 'full' && this.minimumDurationSatisfied && !this.held && !this.closed
   }
 
   isHeld(): boolean {

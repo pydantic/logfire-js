@@ -166,8 +166,7 @@ describe('ReplayTransport full mode', () => {
       {},
       { awaitBinding: true }
     )
-    expect(unbound.isCommitted()).toBe(false)
-    unbound.bind({ initialSeq: 0, write: () => true, onFailure: () => undefined })
+    // The pending lock only defers sequence reservation; the buffered events still upload.
     expect(unbound.isCommitted()).toBe(true)
 
     const buffered = new ReplayTransport(makeConfig(fetchImpl), 'sess-buffer', 'buffer', null, immediateCompression())
