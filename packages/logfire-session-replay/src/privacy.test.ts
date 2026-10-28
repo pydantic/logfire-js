@@ -197,6 +197,21 @@ describe('redactCssUrls', () => {
     expect(seen).toEqual(['/a '])
   })
 
+  it('does not let url( inside a string or comment hide a later URL', () => {
+    expect(redactCssUrls(`--label: 'url("'; background-image: url("/image.png?token=secret")`, redact)).toBe(
+      `--label: 'url("'; background-image: url("https://app.example.test/image.png")`
+    )
+    expect(redactCssUrls('/* url(" */ background-image: url("/image.png?token=secret")', redact)).toBe(
+      '/* url(" */ background-image: url("https://app.example.test/image.png")'
+    )
+  })
+
+  it('ends a quoted URL at an unescaped newline', () => {
+    expect(redactCssUrls('a: url("x\n; background: url("/image.png?token=secret")', redact)).toBe(
+      'a: url("https://app.example.test/current/x"\n; background: url("https://app.example.test/image.png")'
+    )
+  })
+
   it('keeps offsets when earlier text changes length when lowercased', () => {
     expect(redactCssUrls('content: "İ"; background: url(/image.png?token=secret)', redact)).toBe(
       'content: "İ"; background: url(https://app.example.test/image.png)'

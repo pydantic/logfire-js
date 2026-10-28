@@ -138,11 +138,22 @@ const CSS_URL_SPECIAL_CHARACTER_PATTERN = /[\\"'()\s]/gu
 export function redactCssUrls(value: string, redact: (url: string) => string): string {
   // A single forward scan rather than a regex, because text with an unclosed `url(` made a
   // backtracking pattern take seconds on a page's main thread. Identifiers are decoded, because CSS
-  // also reads an escaped name such as `u\72l(` as `url(`.
+  // also reads an escaped name such as `u\72l(` as `url(`. Strings and comments are skipped, so a
+  // `url(` inside them cannot consume the start of a later URL.
   let result = ''
   let copied = 0
   let position = 0
   while (position < value.length) {
+    const character = value[position]
+    if (character === '"' || character === "'") {
+      position = skipCssString(value, position + 1, character)
+      continue
+    }
+    if (character === '/' && value[position + 1] === '*') {
+      const commentEnd = value.indexOf('*/', position + 2)
+      position = commentEnd === -1 ? value.length : commentEnd + 2
+      continue
+    }
     const name = scanCssIdentifier(value, position)
     if (name === undefined) {
       position++
@@ -161,6 +172,25 @@ export function redactCssUrls(value: string, redact: (url: string) => string): s
     position = Math.max(token.end, name.end + 1)
   }
   return copied === 0 ? value : result + value.slice(copied)
+}
+
+// Returns the position after a string's closing quote. An unescaped newline ends the string early,
+// as it does in the CSS tokenizer.
+function skipCssString(value: string, start: number, quote: string): number {
+  let position = start
+  while (position < value.length) {
+    const character = value[position]
+    if (character === '\\') {
+      position += 2
+    } else if (character === quote) {
+      return position + 1
+    } else if (character === '\n') {
+      return position
+    } else {
+      position++
+    }
+  }
+  return value.length
 }
 
 const CSS_HEX_DIGIT_PATTERN = /[0-9a-f]/iu
@@ -209,8 +239,9 @@ interface CssUrlToken {
   url: string
 }
 
-// Follows the CSS tokenizer: a backslash escapes the next character, and a URL or string that
-// reaches the end of the text still counts, because the browser loads it.
+// Follows the CSS tokenizer: a backslash escapes the next character, a URL or string that reaches
+// the end of the text still counts, because the browser loads it, and an unescaped newline ends a
+// quoted URL.
 function scanCssUrl(value: string, start: number): CssUrlToken {
   let position = start
   while (position < value.length && /\s/u.test(value[position] ?? '')) {
@@ -228,7 +259,7 @@ function scanCssUrl(value: string, start: number): CssUrlToken {
     if (character === '\\') {
       position += 2
       contentEnd = position
-    } else if (quote === '' ? character === ')' : character === quote) {
+    } else if (quote === '' ? character === ')' : character === quote || character === '\n') {
       break
     } else {
       position++
@@ -238,7 +269,7 @@ function scanCssUrl(value: string, start: number): CssUrlToken {
     }
   }
   const url = value.slice(urlStart, Math.min(contentEnd, value.length))
-  if (quote !== '' && position < value.length) {
+  if (quote !== '' && value[position] === quote) {
     position++
     while (position < value.length && /\s/u.test(value[position] ?? '')) {
       position++
