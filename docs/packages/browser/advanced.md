@@ -276,6 +276,25 @@ const cleanup = logfire.configure({
 await cleanup()
 ```
 
+A record that must arrive even if the page unloads soon after, such as the start
+or the end of a page-load measurement, can be exported at once with
+`forceFlush()`. The request leaves while the page is still alive, so the
+document-hide flush does not have to carry the record. `forceFlush()` splits its
+export like the document-hide flush: the newest spans go first in one small
+request, and the older spans follow in a second request.
+`batchSpanProcessorConfig.documentHideKeepaliveBytes` sets the size of the first
+request for both flushes.
+
+```ts
+logfire.info('page load finished', { route: '/dashboard' })
+logfire.forceFlush().catch(() => undefined)
+```
+
+Each flush splits only when the trace exporter has two free request slots. When
+it has fewer, for example with `traceExporterConfig.concurrencyLimit: 1`, the
+flush sends all of its spans in one request. Each `forceFlush()` call costs one
+or two requests, so call it for a few records per page, not for every span.
+
 ## Pending spans
 
 Browser `configure()` does not install automatic pending-span processing.

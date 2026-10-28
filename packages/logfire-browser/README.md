@@ -1090,7 +1090,9 @@ logfire.forceFlush().catch(() => undefined)
 ```
 
 `forceFlush()` exports every span that the active configuration has buffered.
-It rejects when the export fails, and resolves at once when no configuration is
+Like the document-hide flush, it sends the newest spans first in a small
+keepalive request, and the older spans in a second request. So the record you
+just ended leads, even when the buffer already holds a whole page load. It rejects when the export fails, and resolves at once when no configuration is
 active.
 
 ## Pending spans

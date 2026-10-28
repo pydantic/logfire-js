@@ -4,6 +4,8 @@ import { JsonTraceSerializer } from '@opentelemetry/otlp-transformer'
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-web'
 
 export const DEFAULT_DOCUMENT_HIDE_KEEPALIVE_BYTES = 12_000
+/** The default `concurrencyLimit` of the OpenTelemetry OTLP exporters. */
+export const DEFAULT_EXPORT_CONCURRENCY_LIMIT = 30
 
 function serializedBytes(spans: ReadableSpan[]): number {
   return JsonTraceSerializer.serializeRequest(spans)?.byteLength ?? 0
@@ -27,9 +29,14 @@ interface PendingExport {
 }
 
 /**
- * Sends the newest spans of a document-hide flush first, in one request small enough to outlive
- * a navigation, and the rest in a second request started at the same time. Every other export
- * passes through unchanged.
+ * Sends the newest spans of a document-hide flush or a public `forceFlush()` first, in one request
+ * small enough to outlive a navigation, and the rest in a second request started at the same time.
+ * Every other export passes through unchanged.
+ *
+ * An application calls `forceFlush()` right after a record that must arrive, so that record is the
+ * newest span of the flush. By then the buffer can hold a whole page load, and one request for all
+ * of it is too large for `keepalive`. An unload soon after can cancel that request, with the record
+ * inside.
  *
  * The browser only lets a request started during unload complete when it is small enough for
  * `keepalive`, and OpenTelemetry's fetch transport turns `keepalive` off once its own in-flight
@@ -43,38 +50,51 @@ interface PendingExport {
  * response. The transport gives it `keepalive` only when it fits the budget that the first leaves,
  * so the unload can still cancel a large remainder, but the request has started. A remainder small
  * enough for that budget can still exceed what session replay leaves of the browser quota, and the
- * browser then rejects it. The flush needs two free slots, and an exporter with
- * `concurrencyLimit: 1` rejects the second request.
+ * browser then rejects it.
+ *
+ * The split needs two free export slots. The OTLP exporter fails an export at once when all of its
+ * `concurrencyLimit` slots are in use, and the batch processor has already removed those spans from
+ * its buffer. So when fewer than two slots are free, the flush goes out unsplit in one request, as
+ * it did before the split existed. Every export passes through this exporter, so it counts the slots
+ * in use itself.
  */
 export class DocumentHideChunkingExporter implements SpanExporter {
+  private readonly concurrencyLimit: number
+  private exportsInFlight = 0
   private readonly inner: SpanExporter
   private readonly keepaliveBytes: number
-  private hideFlushDepth = 0
+  private newestFirstDepth = 0
   private pending: PendingExport[] = []
 
-  constructor(inner: SpanExporter, keepaliveBytes: number = DEFAULT_DOCUMENT_HIDE_KEEPALIVE_BYTES) {
+  constructor(
+    inner: SpanExporter,
+    keepaliveBytes: number = DEFAULT_DOCUMENT_HIDE_KEEPALIVE_BYTES,
+    concurrencyLimit: number = DEFAULT_EXPORT_CONCURRENCY_LIMIT
+  ) {
     this.inner = inner
     this.keepaliveBytes = keepaliveBytes
+    this.concurrencyLimit = concurrencyLimit
   }
 
   /**
-   * Runs `flush` with hide-time chunking on until it settles. Processors ahead of the batch
-   * processor await before they delegate, so the batches reach `export` a few microtasks after
-   * the call, still before the page unloads. A timer export that lands inside that window is
-   * grouped in as well.
+   * Runs `flush` with newest-first chunking on until it settles. The document-hide flush and the
+   * public `forceFlush()` both use it, because both export records that must outlive the page.
+   * Processors ahead of the batch processor await before they delegate, so the batches reach
+   * `export` a few microtasks after the call, still before the page unloads. A timer export that
+   * lands inside that window is grouped in as well.
    */
-  async withHideFlush(flush: () => Promise<void>): Promise<void> {
-    this.hideFlushDepth += 1
+  async withNewestFirstFlush(flush: () => Promise<void>): Promise<void> {
+    this.newestFirstDepth += 1
     try {
       await flush()
     } finally {
-      this.hideFlushDepth -= 1
+      this.newestFirstDepth -= 1
     }
   }
 
   export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
-    if (this.hideFlushDepth === 0) {
-      this.inner.export(spans, resultCallback)
+    if (this.newestFirstDepth === 0) {
+      this.send(spans, resultCallback)
       return
     }
     if (this.pending.length === 0) {
@@ -101,12 +121,14 @@ export class DocumentHideChunkingExporter implements SpanExporter {
         resultCallback(result)
       }
     }
-    const { newest, older } = splitNewestSpans(
-      pending.flatMap(({ spans }) => spans),
-      this.keepaliveBytes
-    )
+    const spans = pending.flatMap(({ spans: batch }) => batch)
+    if (this.concurrencyLimit - this.exportsInFlight < 2) {
+      this.send(spans, settle)
+      return
+    }
+    const { newest, older } = splitNewestSpans(spans, this.keepaliveBytes)
     if (older.length === 0) {
-      this.inner.export(newest, settle)
+      this.send(newest, settle)
       return
     }
     let newestResult: ExportResult | undefined
@@ -117,13 +139,21 @@ export class DocumentHideChunkingExporter implements SpanExporter {
       }
       settle(newestResult.code === ExportResultCode.SUCCESS ? olderResult : newestResult)
     }
-    this.inner.export(newest, (result) => {
+    this.send(newest, (result) => {
       newestResult = result
       settleWhenBoth()
     })
-    this.inner.export(older, (result) => {
+    this.send(older, (result) => {
       olderResult = result
       settleWhenBoth()
+    })
+  }
+
+  private send(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
+    this.exportsInFlight += 1
+    this.inner.export(spans, (result) => {
+      this.exportsInFlight -= 1
+      resultCallback(result)
     })
   }
 }

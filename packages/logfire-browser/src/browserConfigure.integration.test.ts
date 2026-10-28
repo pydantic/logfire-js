@@ -698,6 +698,44 @@ describe('public browser forceFlush', () => {
     }
   })
 
+  it('sends the newest record first, apart from the older records', async () => {
+    const cleanup = configure({
+      batchSpanProcessorConfig: { documentHideKeepaliveBytes: 1, scheduledDelayMillis: 60_000 },
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      info('page load started')
+      info('resource loaded')
+      info('page load finished')
+
+      await forceFlush()
+
+      expect(otlpExports).toEqual([['page load finished'], ['page load started', 'resource loaded']])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('sends every record in one request when the exporter allows one request at a time', async () => {
+    const cleanup = configure({
+      batchSpanProcessorConfig: { documentHideKeepaliveBytes: 1, scheduledDelayMillis: 60_000 },
+      traceExporterConfig: { concurrencyLimit: 1 },
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      info('page load started')
+      info('page load finished')
+
+      await forceFlush()
+
+      expect(otlpExports).toEqual([['page load started', 'page load finished']])
+    } finally {
+      await cleanup()
+    }
+  })
+
   it('rejects when the export fails', async () => {
     const cleanup = configure({
       batchSpanProcessorConfig: { scheduledDelayMillis: 60_000 },

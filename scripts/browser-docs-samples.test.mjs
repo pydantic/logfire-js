@@ -85,7 +85,7 @@ test('browser guide SDK snippets typecheck against the built public API', () => 
     } catch (error) {
       assert.fail(error.stdout || error.message)
     }
-    assert.equal(checked, 33, 'Account for added or removed SDK samples explicitly')
+    assert.equal(checked, 34, 'Account for added or removed SDK samples explicitly')
   } finally {
     rmSync(scratch, { recursive: true, force: true })
   }
