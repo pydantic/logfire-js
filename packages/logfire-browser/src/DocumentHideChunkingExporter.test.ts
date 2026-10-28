@@ -77,7 +77,7 @@ describe('DocumentHideChunkingExporter', () => {
       results.push(result)
     }
 
-    const flush = exporter.withHideFlush(async () => {
+    const flush = exporter.withNewestFirstFlush(async () => {
       // The batch processor hands over one batch per `maxExportBatchSize`, oldest first.
       exporter.export(createSpans(['a', 'b', 'c'], 700), record)
       exporter.export(createSpans(['d', 'e', 'f'], 700), record)
@@ -97,6 +97,48 @@ describe('DocumentHideChunkingExporter', () => {
     await flush
   })
 
+  it('sends the flush unsplit when fewer than two export slots are free', async () => {
+    const inner = new RecordingExporter()
+    inner.deferred = true
+    const exporter = new DocumentHideChunkingExporter(inner, 3_000, 2)
+    const results: ExportResult[] = []
+    // A regular export holds one of the two slots.
+    exporter.export(createSpans(['timer'], 700), () => undefined)
+
+    const flush = exporter.withNewestFirstFlush(async () => {
+      exporter.export(createSpans(['a', 'b', 'c', 'd', 'e', 'f'], 700), (result) => {
+        results.push(result)
+      })
+      await Promise.resolve()
+    })
+    await drainMicrotasks()
+
+    // A split would send its second request into a full queue, and the exporter would drop it.
+    expect(inner.batches).toEqual([['timer'], ['a', 'b', 'c', 'd', 'e', 'f']])
+    inner.callbacks[1]?.({ code: ExportResultCode.SUCCESS })
+    expect(results).toEqual([{ code: ExportResultCode.SUCCESS }])
+    await flush
+  })
+
+  it('splits again once an export frees its slot', async () => {
+    const inner = new RecordingExporter()
+    inner.deferred = true
+    const exporter = new DocumentHideChunkingExporter(inner, 3_000, 2)
+    exporter.export(createSpans(['timer'], 700), () => undefined)
+    inner.callbacks[0]?.({ code: ExportResultCode.SUCCESS })
+
+    const flush = exporter.withNewestFirstFlush(async () => {
+      exporter.export(createSpans(['a', 'b', 'c', 'd', 'e', 'f'], 700), () => undefined)
+      await Promise.resolve()
+    })
+    await drainMicrotasks()
+
+    expect(inner.batches).toEqual([['timer'], ['e', 'f'], ['a', 'b', 'c', 'd']])
+    inner.callbacks[1]?.({ code: ExportResultCode.SUCCESS })
+    inner.callbacks[2]?.({ code: ExportResultCode.SUCCESS })
+    await flush
+  })
+
   it('reports a failure of either request to every batch of the flush', async () => {
     const inner = new RecordingExporter()
     inner.deferred = true
@@ -104,7 +146,7 @@ describe('DocumentHideChunkingExporter', () => {
     const results: ExportResult[] = []
     const failure: ExportResult = { code: ExportResultCode.FAILED, error: new Error('rejected') }
 
-    await exporter.withHideFlush(async () => {
+    await exporter.withNewestFirstFlush(async () => {
       exporter.export(createSpans(['a', 'b', 'c', 'd', 'e'], 700), (result) => {
         results.push(result)
       })
@@ -126,7 +168,7 @@ describe('DocumentHideChunkingExporter', () => {
     const newestFailure: ExportResult = { code: ExportResultCode.FAILED, error: new Error('newest rejected') }
     const olderFailure: ExportResult = { code: ExportResultCode.FAILED, error: new Error('older rejected') }
 
-    await exporter.withHideFlush(async () => {
+    await exporter.withNewestFirstFlush(async () => {
       exporter.export(createSpans(['a', 'b', 'c', 'd', 'e'], 700), (result) => {
         results.push(result)
       })
@@ -155,7 +197,7 @@ describe('DocumentHideChunkingExporter', () => {
     }
     expect(inner.batches).toEqual([['a', 'b', 'c']])
 
-    const flush = exporter.withHideFlush(async () => provider.forceFlush())
+    const flush = exporter.withNewestFirstFlush(async () => provider.forceFlush())
     await drainMicrotasks()
 
     // Two queued batches, oldest first, become one newest-first request and one remainder.
@@ -194,7 +236,7 @@ describe('DocumentHideChunkingExporter', () => {
     const exporter = new DocumentHideChunkingExporter(delegate, 3_000)
     const results: ExportResult[] = []
 
-    await exporter.withHideFlush(async () => {
+    await exporter.withNewestFirstFlush(async () => {
       exporter.export(createSpans(['a', 'b', 'c', 'd', 'e'], 700), (result) => {
         results.push(result)
       })

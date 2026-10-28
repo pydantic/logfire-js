@@ -18,8 +18,14 @@ type LifecycleTracerProvider = TracerProvider & { forceFlush?: () => Promise<voi
 
 type GenerationState =
   | { status: 'idle' }
-  | { status: 'active'; provider: LifecycleTracerProvider; token: ProviderGenerationToken }
-  | { delegateActive: boolean; status: 'cleaning'; provider: LifecycleTracerProvider; token: ProviderGenerationToken }
+  | { flush: () => Promise<void>; status: 'active'; provider: LifecycleTracerProvider; token: ProviderGenerationToken }
+  | {
+      delegateActive: boolean
+      flush: () => Promise<void>
+      status: 'cleaning'
+      provider: LifecycleTracerProvider
+      token: ProviderGenerationToken
+    }
   | { error: Error; status: 'failed'; token?: ProviderGenerationToken | undefined }
 
 type TraceOwnership = { status: 'external' | 'logfire' | 'uninitialized' }
@@ -130,16 +136,17 @@ class BrowserProviderLifecycle {
     this.initializePropagation()
   }
 
-  activate(provider: LifecycleTracerProvider): ProviderGenerationToken {
+  activate(provider: LifecycleTracerProvider, flush: () => Promise<void> = async () => provider.forceFlush?.()): ProviderGenerationToken {
     this.assertAvailable()
     const token = Symbol('logfire-browser-provider-generation')
-    this.generation = { provider, status: 'active', token }
+    this.generation = { flush, provider, status: 'active', token }
     return token
   }
 
   beginCleanup(token: ProviderGenerationToken): void {
     if (this.generation.status === 'active' && this.generation.token === token) {
-      this.generation = { delegateActive: true, provider: this.generation.provider, status: 'cleaning', token }
+      const { flush, provider } = this.generation
+      this.generation = { delegateActive: true, flush, provider, status: 'cleaning', token }
     }
   }
 
@@ -184,15 +191,19 @@ class BrowserProviderLifecycle {
   }
 
   async forceFlush(): Promise<void> {
-    await this.getCurrentProvider()?.forceFlush?.()
+    await this.getCurrentGeneration()?.flush()
   }
 
   private getCurrentProvider(): LifecycleTracerProvider | undefined {
+    return this.getCurrentGeneration()?.provider
+  }
+
+  private getCurrentGeneration(): Extract<GenerationState, { provider: LifecycleTracerProvider }> | undefined {
     if (this.generation.status === 'active') {
-      return this.generation.provider
+      return this.generation
     }
     if (this.generation.status === 'cleaning' && this.generation.delegateActive) {
-      return this.generation.provider
+      return this.generation
     }
     return undefined
   }
@@ -277,8 +288,11 @@ export function initializeProviderLifecycleGlobals(contextManager?: ContextManag
   providerLifecycle.initializeGlobals(contextManager)
 }
 
-export function activateProviderGeneration(provider: LifecycleTracerProvider): ProviderGenerationToken {
-  return providerLifecycle.activate(provider)
+/**
+ * `flush` runs for the public `forceFlush()`. It defaults to the provider's own flush.
+ */
+export function activateProviderGeneration(provider: LifecycleTracerProvider, flush?: () => Promise<void>): ProviderGenerationToken {
+  return providerLifecycle.activate(provider, flush)
 }
 
 export function beginProviderCleanup(token: ProviderGenerationToken): void {

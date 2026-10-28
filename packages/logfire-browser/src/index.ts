@@ -110,8 +110,9 @@ export type AutoInstrumentationsConfig = WebAutoInstrumentationConfigMap & { ena
 export interface BrowserBatchSpanProcessorConfig extends BatchSpanProcessorBrowserConfig {
   /**
    * Estimated size, in bytes, of the request that carries the newest spans when the document
-   * hides. Defaults to 12 000. The flush sends that request first, so it is the one most likely to
-   * outlive a navigation, and the rest of the batch follows in a second request.
+   * hides or `forceFlush()` runs. Defaults to 12 000. The flush sends that request first, so it is
+   * the one most likely to outlive a navigation, and the rest of the batch follows in a second
+   * request.
    */
   documentHideKeepaliveBytes?: number
 }
@@ -720,7 +721,8 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
         resolveTraceExporterHeaders(options.traceExporterConfig?.headers, options.traceExporterHeaders ?? defaultTraceExporterHeaders),
       url: options.traceUrl,
     }),
-    documentHideKeepaliveBytes
+    documentHideKeepaliveBytes,
+    options.traceExporterConfig?.concurrencyLimit
   )
   // The processor's own document-hide flush stays off: its `pagehide` listener is on `document`,
   // where the event never arrives, and its `visibilitychange` listener runs before application
@@ -759,16 +761,15 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   }
 
   const sharedApiConfigSnapshot = snapshotSharedLogfireApiConfig()
-  const generationToken = activateProviderGeneration(tracerProvider)
+  const flushNewestFirst = async () => traceExporter.withNewestFirstFlush(async () => tracerProvider.forceFlush())
+  const generationToken = activateProviderGeneration(tracerProvider, flushNewestFirst)
   const removeDocumentHideFlush =
     batchSpanProcessorConfig.disableAutoFlushOnDocumentHide === true
       ? () => undefined
       : installDocumentHideFlush(() => {
-          traceExporter
-            .withHideFlush(async () => tracerProvider.forceFlush())
-            .catch((error: unknown) => {
-              diag.error('logfire-browser: failed to flush spans on document hide', error)
-            })
+          flushNewestFirst().catch((error: unknown) => {
+            diag.error('logfire-browser: failed to flush spans on document hide', error)
+          })
         })
   try {
     const apiConfig: LogfireApiConfigOptions = {
@@ -1117,10 +1118,12 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
 /**
  * Exports the spans that the active configuration has buffered, without waiting for the batch
  * delay. Call it after a record that must arrive even if the page unloads soon after, such as the
- * start of a page-load measurement. The request leaves while the page is still alive, so the
- * document-hide flush does not have to carry the record. The promise rejects when the export
- * fails, so a caller that does not await it must catch the rejection. It resolves at once when no
- * configuration is active.
+ * start or the end of a page-load measurement. The request leaves while the page is still alive, so
+ * the document-hide flush does not have to carry the record. Like that flush, it sends the newest
+ * spans first in a request small enough for `keepalive`, and the older spans in a second request.
+ * So the record leads even when the buffer holds a whole page load. The promise rejects when the
+ * export fails, so a caller that does not await it must catch the rejection. It resolves at once
+ * when no configuration is active.
  */
 export async function forceFlush(): Promise<void> {
   await forceFlushActiveProvider()
