@@ -182,6 +182,12 @@ describe('redactCssUrls', () => {
     expect(redactCssUrls('background: url(/\\3f token=secret)', redact)).toBe('background: url(https://app.example.test/)')
   })
 
+  it('keeps offsets when earlier text changes length when lowercased', () => {
+    expect(redactCssUrls('content: "İ"; background: url(/image.png?token=secret)', redact)).toBe(
+      'content: "İ"; background: url(https://app.example.test/image.png)'
+    )
+  })
+
   it('redacts a URL that the end of the text closes', () => {
     expect(redactCssUrls('background: url(/a.png?token=secret', redact)).toBe('background: url(https://app.example.test/a.png')
     expect(redactCssUrls("background: url('/a.png?token=secret", redact)).toBe("background: url('https://app.example.test/a.png'")

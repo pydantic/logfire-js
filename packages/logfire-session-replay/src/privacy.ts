@@ -138,18 +138,21 @@ const CSS_URL_SPECIAL_CHARACTER_PATTERN = /[\\"'()\s]/gu
 export function redactCssUrls(value: string, redact: (url: string) => string): string {
   // A single forward scan rather than a regex, because text with an unclosed `url(` made a
   // backtracking pattern take seconds on a page's main thread.
-  const lowerValue = value.toLowerCase()
+  // Searched in the original text, because lowercasing can change its length and shift offsets.
+  const urlFunction = /url\(/giu
   let result = ''
   let copied = 0
-  let position = lowerValue.indexOf('url(')
-  while (position !== -1) {
-    const token = scanCssUrl(value, position + 'url('.length)
+  let match = urlFunction.exec(value)
+  while (match !== null) {
+    const position = match.index
+    const token = scanCssUrl(value, position + match[0].length)
     if (token.url.length > 0) {
       const redacted = escapeCssUrl(redact(unescapeCss(token.url)))
       result += `${value.slice(copied, position)}url(${token.quote}${redacted}${token.quote}${token.closed ? ')' : ''}`
       copied = token.end
     }
-    position = lowerValue.indexOf('url(', Math.max(token.end, position + 1))
+    urlFunction.lastIndex = Math.max(token.end, position + 1)
+    match = urlFunction.exec(value)
   }
   return copied === 0 ? value : result + value.slice(copied)
 }
