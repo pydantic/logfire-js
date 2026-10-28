@@ -125,6 +125,52 @@ describe('scrubSpanForExport', () => {
     })
   })
 
+  test('keeps only lines with a full stack-frame shape', () => {
+    const stack = [
+      'Error: Authentication failed for user@example.com:10:5',
+      '    at password reset for jane',
+      '    at login (https://app.example/auth.js:1:2)',
+      '    at https://app.example/auth.js:3:4',
+      '    at Array.forEach (<anonymous>)',
+      '    at JSON.parse (native)',
+      'login@https://app.example/auth.js:1:2',
+      'global code@blob:https://app.example/0f3c:5:6',
+      'Caused by: Error: session lost',
+    ].join('\n')
+    const span = fakeSpan({ attributes: { 'exception.stacktrace': stack } })
+
+    scrubSpanForExport(span)
+
+    expect(span.attributes['exception.stacktrace']).toBe(
+      [
+        "[Scrubbed due to 'Auth']",
+        "[Scrubbed due to 'password']",
+        '    at login (https://app.example/auth.js:1:2)',
+        '    at https://app.example/auth.js:3:4',
+        '    at Array.forEach (<anonymous>)',
+        '    at JSON.parse (native)',
+        'login@https://app.example/auth.js:1:2',
+        'global code@blob:https://app.example/0f3c:5:6',
+        "[Scrubbed due to 'session']",
+      ].join('\n')
+    )
+  })
+
+  test('applies safe keys and namespace prefixes to span attributes only, not events or links', () => {
+    const span = fakeSpan({
+      events: [{ attributes: { 'session.id': 'secret-1', 'logfire.session.tier': 'paid' }, name: 'event', time: [0, 0] }],
+      links: [{ attributes: { 'session.id': 'secret-2' }, context: { spanId: '', traceFlags: 0, traceId: '' } }],
+    })
+
+    scrubSpanForExport(span, { isSafeKey: (key) => key === 'session.id', namespacePrefixes: ['logfire.session.'] })
+
+    expect(span.events[0]?.attributes).toEqual({
+      'session.id': "[Scrubbed due to 'session']",
+      'logfire.session.tier': "[Scrubbed due to 'session']",
+    })
+    expect(span.links[0]?.attributes).toEqual({ 'session.id': "[Scrubbed due to 'session']" })
+  })
+
   test('does not rescrub values the logfire API scrubbed at creation and appends new notes', () => {
     const created = serializeAttributes({ nested: { password: 'hunter2' }, token: 'plain' })
     const span = fakeSpan({ attributes: { ...created, 'late.secret': 'abc' } })

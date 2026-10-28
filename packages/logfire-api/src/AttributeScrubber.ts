@@ -110,12 +110,18 @@ const SAFE_KEYS = new Set([
 
 const MAX_SCRUB_DEPTH = 100
 const EXCEPTION_STACKTRACE_KEY = 'exception.stacktrace'
-// V8 frames start with `at`; Firefox and Safari frames are `name@url:line:column`.
-const V8_FRAME_LINE_PATTERN = /^\s*at\s/u
-const LOCATION_LINE_END_PATTERN = /:\d+:\d+\)?$/u
+// A frame needs its full shape, so a message line such as `user@example.com:10:5` or a multiline
+// message line starting with `at` is still scrubbed. V8 frames start with `at` and end with a
+// location or a native marker; Firefox and Safari frames end with `@` and a URL with a scheme.
+const V8_FRAME_LINE_PATTERN = /^\s*at\s.*(?::\d+:\d+\)?|\((?:native|<anonymous>|index \d+)\))$/u
+const URL_LOCATION_PATTERN = /^[a-z][\w+.-]*:\S*:\d+:\d+$/iu
 
 function isStackFrameLine(line: string): boolean {
-  return V8_FRAME_LINE_PATTERN.test(line) || (line.includes('@') && LOCATION_LINE_END_PATTERN.test(line))
+  if (V8_FRAME_LINE_PATTERN.test(line)) {
+    return true
+  }
+  const at = line.lastIndexOf('@')
+  return at >= 0 && URL_LOCATION_PATTERN.test(line.slice(at + 1))
 }
 const MAX_DEPTH_REPLACEMENT = '[Scrubbed due to max depth]'
 const CYCLE_REPLACEMENT = '[Scrubbed due to cycle]'

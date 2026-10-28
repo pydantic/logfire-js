@@ -122,6 +122,25 @@ describe('LogfireSpanProcessor', () => {
     expect(wrapped.onEnd).toHaveBeenCalledWith(span)
   })
 
+  it('scrubs session-named keys that an application puts on events and links', () => {
+    const processor = new LogfireSpanProcessor(makeWrapped(), false)
+    const span = {
+      attributes: {},
+      events: [{ attributes: { 'session.id': 'secret-1', 'logfire.page.url.full': 'https://app.example.com/?secret=abc' } }],
+      links: [{ attributes: { 'logfire.session_replay.id': 'secret-2' } }],
+      name: 'GET',
+      status: { code: 0 },
+    } as unknown as ReadableSpan
+
+    processor.onEnd(span)
+
+    expect(span.events[0]?.attributes).toEqual({
+      'session.id': "[Scrubbed due to 'session']",
+      'logfire.page.url.full': "[Scrubbed due to 'secret']",
+    })
+    expect(span.links[0]?.attributes).toEqual({ 'logfire.session_replay.id': "[Scrubbed due to 'session']" })
+  })
+
   it('renames interaction spans from the event type and target', () => {
     const wrapped = makeWrapped()
     const processor = new LogfireSpanProcessor(wrapped, false)

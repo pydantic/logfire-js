@@ -113,6 +113,7 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
 }
 
 export function getTailConfig(config: TailConfigOptions): (env: Env) => TraceConfig {
+  configureScrubbing(config)
   return (_env: Env): TraceConfig => {
     return {
       ...config,
@@ -133,7 +134,6 @@ export function instrumentDO<Env = unknown, T extends DOClass<Env> = DOClass<Env
 }
 
 export function instrumentTail<T>(handler: T, config: TailConfigOptions): T {
-  configureScrubbing(config)
   return baseInstrument(handler as WorkerHandler, getTailConfig(config)) as T
 }
 

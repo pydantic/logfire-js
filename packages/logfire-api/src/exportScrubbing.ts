@@ -19,11 +19,14 @@ let attributesInCreation: Readonly<Record<string, unknown>> | undefined
 export interface ExportScrubbingOptions {
   /** Attribute values the caller already passed through the scrubber. Keys whose value is unchanged are skipped. */
   alreadyScrubbed?: Readonly<Record<string, unknown>>
-  /** Attribute keys that a runtime package sets from SDK-owned values, such as browser session ids. */
+  /**
+   * Span attribute keys that a runtime package sets from SDK-owned values, such as browser session
+   * ids. Event and link attributes are always scrubbed, since the SDK does not set these keys there.
+   */
   isSafeKey?: (key: string) => boolean
   /**
-   * Key prefixes, ending in a separator, whose remainder is an application-chosen name, such as
-   * `logfire.session.`. Only the remainder is matched against the scrubbing patterns.
+   * Span attribute key prefixes, ending in a separator, whose remainder is an application-chosen
+   * name, such as `logfire.session.`. Only the remainder is matched against the scrubbing patterns.
    */
   namespacePrefixes?: readonly string[]
 }
@@ -98,12 +101,12 @@ export function scrubSpanForExport(span: ReadableSpan, options: ExportScrubbingO
   scrubAttributes(span.attributes, ['attributes'], notes, options, known)
   span.events.forEach((event, index) => {
     if (event.attributes !== undefined) {
-      scrubAttributes(event.attributes, ['otel_events', index, 'attributes'], notes, options)
+      scrubAttributes(event.attributes, ['otel_events', index, 'attributes'], notes, {})
     }
   })
   span.links.forEach((link, index) => {
     if (link.attributes !== undefined) {
-      scrubAttributes(link.attributes, ['links', index, 'attributes'], notes, options)
+      scrubAttributes(link.attributes, ['links', index, 'attributes'], notes, {})
     }
   })
   // An error status repeats the exception message, so it is scrubbed like the message attribute.

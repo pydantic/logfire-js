@@ -3,6 +3,7 @@ import { BasicTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-tra
 import { configureLogfireApi } from 'logfire'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
+import { getTailConfig } from './index'
 import { LogfireCloudflareConsoleSpanExporter } from './LogfireCloudflareConsoleSpanExporter'
 import type { IExportTraceServiceRequest } from './OtlpTransformerTypes'
 import { TailWorkerExporter } from './TailWorkerExporter'
@@ -52,6 +53,21 @@ describe('cf-workers export-time scrubbing', () => {
       ]),
     })
     expect(span.events[0]?.attributes).toEqual({ note: "[Scrubbed due to 'session']" })
+  })
+
+  it('applies the scrubbing option passed to getTailConfig', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    getTailConfig({ scrubbing: false, service: { name: 'tail-service' } })
+    const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(new TailWorkerExporter())] })
+    provider
+      .getTracer('instrumentation')
+      .startSpan('fetch', { attributes: { 'http.request.header.cookie': 'abc' } })
+      .end()
+
+    const message = log.mock.calls[0]?.[0] as IExportTraceServiceRequest
+    expect(message.resourceSpans?.[0]?.scopeSpans[0]?.spans?.[0]?.attributes).toEqual([
+      { key: 'http.request.header.cookie', value: { stringValue: 'abc' } },
+    ])
   })
 
   it('scrubs spans before the tail worker exporter writes them out', () => {
