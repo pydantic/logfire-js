@@ -104,15 +104,23 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     if: success() && github.ref == 'refs/heads/main'
+    # Cancelling a release mid-publish could leave npm and main out of step, so runs queue.
+    concurrency:
+      group: release-main
+      cancel-in-progress: false
     permissions:
       id-token: write
       contents: write
-      pull-requests: write
     environment:
       name: npm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # The tip, not the triggering commit, so the version commit still fast-forwards
+          # when another PR merged while this run waited. A merge landing mid-run rejects
+          # the push and fails this run; the next run versions both.
+          ref: main
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
@@ -126,6 +134,25 @@ jobs:
       - name: Install pnpm for publishing
         uses: pnpm/action-setup@v4
 
+      - name: Select release mode
+        id: select-mode
+        uses: changesets/action/select-mode@v2
+
+      # Versions are committed straight to main instead of through a Version Packages PR,
+      # so merging a PR with a changeset releases it. Pushes made with GITHUB_TOKEN start no
+      # workflow runs, so this commit does not loop back into CI. It is pushed before
+      # publishing: if publishing then fails, the next run finds no changesets and publishes
+      # whatever versions npm is missing.
+      - name: Version packages
+        if: steps.select-mode.outputs.mode == 'version'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          pnpm changeset version
+          git add --all
+          git commit --message "Version Packages"
+          git push origin HEAD:main
+
       # Publishing authenticates through npm trusted publishing (OIDC via the id-token
       # permission and the npm environment); no registry token is involved. A brand-new
       # package cannot use OIDC for its first publish (npm/cli#8544): publish it once
@@ -135,4 +162,7 @@ jobs:
         uses: changesets/action@v2
         with:
           publish-script: pnpm run release
+          # The API push mode tags the triggering commit; the git CLI pushes the tags that
+          # `changeset publish` creates on the version commit.
+          push-with-git-cli: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
