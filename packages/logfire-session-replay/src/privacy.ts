@@ -3,10 +3,10 @@ export function matchesUrlPatterns(url: string, patterns: readonly RegExp[]): bo
 }
 
 export function redactUrl(url: string, patterns: readonly RegExp[], baseUrl: string): string {
-  if (!matchesUrlPatterns(url, patterns)) {
-    return url
-  }
+  return matchesUrlPatterns(url, patterns) ? stripQueryAndFragment(url, baseUrl) : url
+}
 
+function stripQueryAndFragment(url: string, baseUrl: string): string {
   try {
     const parsed = new URL(url, baseUrl)
     return `${parsed.origin}${parsed.pathname}`
@@ -23,6 +23,8 @@ const TEXT_URL_PATTERN = /https?:\/\/[^\s"<>`]+/giu
 const LOCATION_SUFFIX_PATTERN = /:\d+:\d+\)?$/u
 // Closing parentheses and quotes around a URL in prose are kept as punctuation.
 const CLOSING_PUNCTUATION_PATTERN = /[')]+$/u
+// Text such as `?next=https://...` holds a URL inside another URL's match.
+const EMBEDDED_URL_BOUNDARY_PATTERN = /(?=https?:\/\/)/iu
 // A V8 frame line starts with `at`; Firefox and Safari frames put `@` right before the URL.
 const V8_FRAME_LINE_PATTERN = /^\s*at\s/u
 
@@ -31,6 +33,14 @@ const V8_FRAME_LINE_PATTERN = /^\s*at\s/u
 function urlTextSuffix(match: string, isFrame: boolean): string {
   const location = isFrame ? LOCATION_SUFFIX_PATTERN.exec(match)?.[0] : undefined
   return location ?? CLOSING_PUNCTUATION_PATTERN.exec(match)?.[0] ?? ''
+}
+
+// Each embedded URL is tested on its own, so a pattern anchored to the start of a private URL still
+// matches it. Removing the outer query and fragment also removes the embedded URL they carry.
+function redactTextUrl(url: string, patterns: readonly RegExp[], baseUrl: string): string {
+  const matches =
+    matchesUrlPatterns(url, patterns) || url.split(EMBEDDED_URL_BOUNDARY_PATTERN).some((embedded) => matchesUrlPatterns(embedded, patterns))
+  return matches ? stripQueryAndFragment(url, baseUrl) : url
 }
 
 /** Redact each HTTP URL inside free text, such as a stack trace, that matches `patterns`. */
@@ -45,7 +55,7 @@ export function redactUrlsInText(text: string, patterns: readonly RegExp[], base
       const isV8Frame = V8_FRAME_LINE_PATTERN.test(line)
       return line.replace(TEXT_URL_PATTERN, (match: string, offset: number) => {
         const suffix = urlTextSuffix(match, isV8Frame || line[offset - 1] === '@')
-        return `${redactUrl(match.slice(0, match.length - suffix.length), patterns, baseUrl)}${suffix}`
+        return `${redactTextUrl(match.slice(0, match.length - suffix.length), patterns, baseUrl)}${suffix}`
       })
     })
     .join('\n')

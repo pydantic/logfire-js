@@ -73,6 +73,17 @@ describe('redactUrlsInText', () => {
     )
   })
 
+  it('tests each URL embedded in a match against the patterns', () => {
+    const privateOnly = [/^https:\/\/private\./u]
+
+    expect(
+      redactUrlsInText('go https://public.example.test/login?next=https://private.example.test/x?token=secret', privateOnly, baseUrl)
+    ).toBe('go https://public.example.test/login')
+    expect(redactUrlsInText('go https://public.example.test/login?next=/home', privateOnly, baseUrl)).toBe(
+      'go https://public.example.test/login?next=/home'
+    )
+  })
+
   it('redacts many URLs on one line in linear time', () => {
     const line = Array.from({ length: 10_000 }, (_, index) => `https://x.example.test/${index.toString()}?t=1`).join(' ')
     const started = performance.now()
