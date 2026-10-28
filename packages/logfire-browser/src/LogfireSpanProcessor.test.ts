@@ -80,7 +80,7 @@ describe('LogfireSpanProcessor', () => {
     expect(wrapped.onStart).toHaveBeenCalledTimes(1)
   })
 
-  it('scrubs spans before export but keeps the SDK session attributes', () => {
+  it('scrubs spans before export but keeps the SDK session and URL attributes', () => {
     const wrapped = makeWrapped()
     const processor = new LogfireSpanProcessor(wrapped, false)
     const span = {
@@ -89,6 +89,8 @@ describe('LogfireSpanProcessor', () => {
         'logfire.session.tier': 'paid',
         'logfire.session.password': 'hunter2',
         'logfire.session_replay.id': 'recording-1',
+        'logfire.page.url.full': 'https://app.example.com/?page_secret=kept',
+        'web_vital.lcp.url': 'https://cdn.example.com/a.jpg?secret=kept',
         'app.password': 'hunter2',
       },
       events: [],
@@ -103,6 +105,8 @@ describe('LogfireSpanProcessor', () => {
       'logfire.session.tier': 'paid',
       'logfire.session.password': "[Scrubbed due to 'password']",
       'logfire.session_replay.id': 'recording-1',
+      'logfire.page.url.full': 'https://app.example.com/?page_secret=kept',
+      'web_vital.lcp.url': 'https://cdn.example.com/a.jpg?secret=kept',
       'app.password': "[Scrubbed due to 'password']",
       'logfire.scrubbed': JSON.stringify([
         { matched_substring: 'password', path: ['attributes', 'logfire.session', 'password'] },

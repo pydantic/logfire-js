@@ -13,11 +13,21 @@ const ATTR_TARGET_XPATH = 'target_xpath'
 const ATTR_EVENT_TYPE = 'event_type'
 
 /**
- * BrowserSessionSpanProcessor sets these from the SDK's own session state. Their keys contain
- * `session`, which the default scrubbing patterns would otherwise redact on every span.
+ * BrowserSessionSpanProcessor sets the session keys from the SDK's own session state; their names
+ * contain `session`, which the default patterns would otherwise redact on every span. URL keys are
+ * governed by the URL policy (`captureUrlQueryAndFragment`), like the core `url.full` and `http.url`
+ * safe keys, so a query parameter named `secret` does not redact a page URL the application opted
+ * to keep.
  */
-function isBrowserSessionAttribute(key: string): boolean {
-  return key === 'session.id' || key.startsWith('logfire.session_replay.')
+function isBrowserSafeAttribute(key: string): boolean {
+  return (
+    key === 'session.id' ||
+    key.startsWith('logfire.session_replay.') ||
+    key === 'logfire.page.url.full' ||
+    key === 'logfire.page.url.path' ||
+    key === 'http.referrer' ||
+    key.endsWith('.url')
+  )
 }
 
 // Application session attributes from `getSessionAttributes()`. Their values are still scrubbed,
@@ -143,7 +153,7 @@ export class LogfireSpanProcessor implements SpanProcessor {
     // Serialization has to happen when `logfire.span` and friends create the span, because the
     // OpenTelemetry API rejects non-primitive attribute values. Scrubbing primitives here also covers
     // instrumentation spans, attributes set after creation, events, and links.
-    scrubSpanForExport(span, { isSafeKey: isBrowserSessionAttribute, namespacePrefixes: BROWSER_SESSION_ATTRIBUTE_PREFIXES })
+    scrubSpanForExport(span, { isSafeKey: isBrowserSafeAttribute, namespacePrefixes: BROWSER_SESSION_ATTRIBUTE_PREFIXES })
     this.console?.onEnd(span)
     this.wrapped.onEnd(span)
   }
