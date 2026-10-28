@@ -20,7 +20,7 @@ import {
   ATTRIBUTES_SPAN_TYPE_KEY,
   ATTRIBUTES_TAGS_KEY,
 } from '../constants'
-import { recordScrubbedAttributes } from '../exportScrubbing'
+import { beginScrubbedSpan, recordScrubbedAttributes } from '../exportScrubbing'
 import { logfireFormatWithExtras } from '../formatter'
 import { logfireApiConfig } from '../logfireApiConfig'
 import { serializeAttributes } from '../serializeAttributes'
@@ -70,6 +70,7 @@ export function evalsSpan<R>(msgTemplate: string, opts: EvalsSpanOptions, callba
     [ATTRIBUTES_SPAN_TYPE_KEY]: spanType,
     [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
   }
+  beginScrubbedSpan(spanAttributes)
   return getEvalsTracer().startActiveSpan(opts.spanName ?? msgTemplate, { attributes: spanAttributes }, ctx, (span: Span) => {
     recordScrubbedAttributes(span, spanAttributes)
     let result: R

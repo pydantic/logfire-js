@@ -3,6 +3,7 @@ import { BasicTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-tra
 import { configureLogfireApi } from 'logfire'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
+import { LogfireCloudflareConsoleSpanExporter } from './LogfireCloudflareConsoleSpanExporter'
 import type { IExportTraceServiceRequest } from './OtlpTransformerTypes'
 import { TailWorkerExporter } from './TailWorkerExporter'
 
@@ -66,5 +67,24 @@ describe('cf-workers export-time scrubbing', () => {
         value: { stringValue: JSON.stringify([{ matched_substring: 'cookie', path: ['attributes', 'http.request.header.cookie'] }]) },
       },
     ])
+  })
+
+  it('prints a scrubbed copy to the console and leaves the span for the export pass', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(new LogfireCloudflareConsoleSpanExporter())] })
+    const span = provider.getTracer('instrumentation').startSpan('fetch', { attributes: { 'http.request.header.cookie': 'abc' } })
+    span.end()
+
+    expect(log.mock.calls[2]?.[0]).toBe(
+      JSON.stringify(
+        {
+          'http.request.header.cookie': "[Scrubbed due to 'cookie']",
+          'logfire.scrubbed': JSON.stringify([{ matched_substring: 'cookie', path: ['attributes', 'http.request.header.cookie'] }]),
+        },
+        null,
+        2
+      )
+    )
+    expect((span as unknown as ReadableSpan).attributes).toEqual({ 'http.request.header.cookie': 'abc' })
   })
 })

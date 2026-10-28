@@ -85,7 +85,7 @@ describe('BrowserUrlSpanProcessor', () => {
     const span = {
       attributes: {
         'exception.stacktrace':
-          'Error: GET https://api.example.com/x?token=abc:123456 failed\n    at f (https://app.example.com/a.js?v=9:12:34)',
+          'Error: GET https://api.example.com/x?token=abc:123:456 failed\n    at f (https://app.example.com/a.js?v=9:12:34)',
       },
       events: [],
       links: [],

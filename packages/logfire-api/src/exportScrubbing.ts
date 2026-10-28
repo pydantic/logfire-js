@@ -12,6 +12,9 @@ const SCRUBBING_FAILED_VALUE = '[Scrubbing failed]'
 // here, rather than recognizing replacement text, keeps a scrubbing callback to one run per value
 // and stops a value from claiming to be scrubbed already.
 const scrubbedAtCreation = new WeakMap<object, Map<string, unknown>>()
+// Span processors see a span in `onStart` before `tracer.startSpan` returns, so the attributes being
+// started with are exposed here from `beginScrubbedSpan` until the API records them on the span.
+let attributesInCreation: Readonly<Record<string, unknown>> | undefined
 
 export interface ExportScrubbingOptions {
   /** Attribute values the caller already passed through the scrubber. Keys whose value is unchanged are skipped. */
@@ -38,6 +41,9 @@ export interface ScrubbableLogRecord {
 
 /** Remember attribute values that the logfire API scrubbed before handing them to `span`. */
 export function recordScrubbedAttributes(span: unknown, attributes: Readonly<Record<string, unknown>>): void {
+  if (attributesInCreation === attributes) {
+    attributesInCreation = undefined
+  }
   const target = (span as Partial<ReadableSpan> | undefined)?.attributes
   if (target === undefined) {
     return
@@ -50,6 +56,22 @@ export function recordScrubbedAttributes(span: unknown, attributes: Readonly<Rec
   for (const [key, value] of Object.entries(attributes)) {
     known.set(key, value)
   }
+}
+
+/** Call before starting a span with `attributes` the logfire API already scrubbed, then record them on the span. */
+export function beginScrubbedSpan(attributes: Readonly<Record<string, unknown>>): void {
+  attributesInCreation = attributes
+}
+
+/** For processors that copy a span in `onStart`: record the attributes the API scrubbed for it. */
+export function recordScrubbedAttributesOnStart(span: Pick<ReadableSpan, 'attributes'>): void {
+  const created = attributesInCreation
+  // A start that threw never recorded its attributes, so a later span only inherits them when they
+  // are its own.
+  if (created === undefined || !Object.entries(created).every(([key, value]) => sameAttributeValue(span.attributes[key], value))) {
+    return
+  }
+  recordScrubbedAttributes(span, created)
 }
 
 /** Carry the scrubbed-value record over to a copy of a span's attribute record. */
@@ -87,6 +109,29 @@ export function scrubSpanForExport(span: ReadableSpan, options: ExportScrubbingO
   if (notes.length > 0) {
     setOwn(span.attributes, ATTRIBUTES_SCRUBBED_KEY, mergeScrubbedNotes(span.attributes[ATTRIBUTES_SCRUBBED_KEY], notes))
   }
+}
+
+/**
+ * Return a scrubbed copy of `span` for output that runs before the export pass, such as a console
+ * exporter. `span` itself is left for the export pass to scrub.
+ */
+export function scrubbedSpanCopy(span: ReadableSpan, options: ExportScrubbingOptions = {}): ReadableSpan {
+  const attributes = { ...span.attributes }
+  copyScrubbedAttributes(span.attributes, attributes)
+  // Inheriting from the span keeps its methods and getters, such as `spanContext()` and `duration`.
+  const copy = Object.create(span, {
+    attributes: { enumerable: true, value: attributes },
+    events: {
+      enumerable: true,
+      value: span.events.map((event) => ({ ...event, ...(event.attributes ? { attributes: { ...event.attributes } } : {}) })),
+    },
+    links: {
+      enumerable: true,
+      value: span.links.map((link) => ({ ...link, ...(link.attributes ? { attributes: { ...link.attributes } } : {}) })),
+    },
+  }) as ReadableSpan
+  scrubSpanForExport(copy, options)
+  return copy
 }
 
 /** Scrub an OpenTelemetry log record's attributes and body before the batch processor queues it. */

@@ -12,21 +12,30 @@ import { scrubSpanForExport } from 'logfire'
 const ATTR_TARGET_XPATH = 'target_xpath'
 const ATTR_EVENT_TYPE = 'event_type'
 
+// URL and route attributes the browser SDK sets itself. Like the core `url.full`, `http.url`, and
+// `http.route` safe keys, they are governed by the URL policy (`captureUrlQueryAndFragment`), so a
+// path such as `/auth/login` or a kept query parameter named `secret` does not redact them.
+const BROWSER_URL_ATTRIBUTES = new Set([
+  'browser.long_animation_frame.script.source_url',
+  'http.referrer',
+  'logfire.page.route',
+  'logfire.page.url.full',
+  'logfire.page.url.path',
+  'web_vital.inp.script.source_url',
+  'web_vital.lcp.url',
+])
+const MAIN_THREAD_WINDOW_SCRIPT_URL_PATTERN = /^browser\.main_thread_window\.script\.\d+\.source_url$/u
+
 /**
  * BrowserSessionSpanProcessor sets the session keys from the SDK's own session state; their names
- * contain `session`, which the default patterns would otherwise redact on every span. URL keys are
- * governed by the URL policy (`captureUrlQueryAndFragment`), like the core `url.full` and `http.url`
- * safe keys, so a query parameter named `secret` does not redact a page URL the application opted
- * to keep.
+ * contain `session`, which the default patterns would otherwise redact on every span.
  */
 function isBrowserSafeAttribute(key: string): boolean {
   return (
     key === 'session.id' ||
     key.startsWith('logfire.session_replay.') ||
-    key === 'logfire.page.url.full' ||
-    key === 'logfire.page.url.path' ||
-    key === 'http.referrer' ||
-    key.endsWith('.url')
+    BROWSER_URL_ATTRIBUTES.has(key) ||
+    MAIN_THREAD_WINDOW_SCRIPT_URL_PATTERN.test(key)
   )
 }
 

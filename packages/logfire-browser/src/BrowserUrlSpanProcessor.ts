@@ -29,8 +29,18 @@ const ATTR_EXCEPTION_STACKTRACE = 'exception.stacktrace'
 // Runs to the next whitespace because a query string can contain parentheses.
 const TEXT_URL_PATTERN = /https?:\/\/[^\s"'<>`]+/giu
 // Stack frames append `:line:column` to the script URL, and Chrome wraps the location in parentheses.
-// Only a full line and column pair is kept, so digits that end a query value are not restored.
-const URL_TEXT_SUFFIX_PATTERN = /:\d+:\d+\)?$|\)$/u
+const LOCATION_SUFFIX_PATTERN = /:\d+:\d+\)?$/u
+const CLOSING_PARENTHESIS_PATTERN = /\)$/u
+// A V8 frame line starts with `at`; Firefox and Safari frames put `@` right before the URL.
+const STACK_FRAME_PREFIX_PATTERN = /^\s*at\s|@$/u
+
+// The location is kept only on a stack-frame line, so digits that end a query value elsewhere,
+// such as in a message, are not restored after the query is removed.
+function urlTextSuffix(match: string, offset: number, text: string): string {
+  const prefix = text.slice(text.lastIndexOf('\n', offset - 1) + 1, offset)
+  const location = STACK_FRAME_PREFIX_PATTERN.test(prefix) ? LOCATION_SUFFIX_PATTERN.exec(match)?.[0] : undefined
+  return location ?? CLOSING_PARENTHESIS_PATTERN.exec(match)?.[0] ?? ''
+}
 
 // A suffix rule rather than a fixed list, so a new URL attribute such as `web_vital.lcp.url` cannot
 // skip sanitization by omission.
@@ -40,8 +50,8 @@ function isUrlAttribute(key: string): boolean {
 
 /** Remove credentials, queries, and fragments from every HTTP URL in a stack trace or message. */
 export function sanitizeUrlsInText(text: string): string {
-  return text.replace(TEXT_URL_PATTERN, (match) => {
-    const suffix = URL_TEXT_SUFFIX_PATTERN.exec(match)?.[0] ?? ''
+  return text.replace(TEXT_URL_PATTERN, (match: string, offset: number) => {
+    const suffix = urlTextSuffix(match, offset, text)
     return `${sanitizeUrl(match.slice(0, match.length - suffix.length))}${suffix}`
   })
 }

@@ -56,6 +56,12 @@ describe('redactUrlsInText', () => {
     expect(redactUrlsInText('fetch https://api.example.test/x?token=abc:123456 failed', [/.+/u], baseUrl)).toBe(
       'fetch https://api.example.test/x failed'
     )
+    expect(redactUrlsInText('fetch https://api.example.test/x?token=abc:123:456 failed', [/.+/u], baseUrl)).toBe(
+      'fetch https://api.example.test/x failed'
+    )
+    expect(redactUrlsInText('    at f (https://api.example.test/x.js?token=abc:123:456:10:5)', [/.+/u], baseUrl)).toBe(
+      '    at f (https://api.example.test/x.js:10:5)'
+    )
   })
 
   it('only redacts URLs that match a pattern', () => {

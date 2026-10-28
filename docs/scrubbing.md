@@ -7,6 +7,8 @@ description: Scrub sensitive data from Logfire TypeScript SDK span attributes be
 
 The TypeScript SDK scrubs sensitive-looking attribute values before export. Scrubbing applies to every exported span, including spans from automatic instrumentation and attributes set after a span starts, and to span event attributes, span link attributes, and Node.js log records.
 
+In the browser and in Cloudflare Workers, span processors you add yourself (`spanProcessors` and `additionalSpanProcessors`) run before this pass and receive unscrubbed spans.
+
 As in the Python SDK, `exception.message` and `exception.stacktrace` are not scrubbed, so error reports stay readable. In the browser, `configureFrontend` removes query strings and fragments from URL attributes and from the URLs inside exception stack traces.
 
 ## Add Patterns

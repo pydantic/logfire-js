@@ -3,7 +3,7 @@ import { TraceFlags } from '@opentelemetry/api'
 import type { IdGenerator, ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
 import { ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY, ATTRIBUTES_SAMPLE_RATE_KEY, ATTRIBUTES_SPAN_TYPE_KEY, INVALID_SPAN_ID } from './constants'
-import { copyScrubbedAttributes } from './exportScrubbing'
+import { copyScrubbedAttributes, recordScrubbedAttributesOnStart } from './exportScrubbing'
 import { isPendingSpanSuppressed } from './pendingSpanSuppression'
 import { checkTraceIdRatio } from './sampling'
 import { ULIDGenerator } from './ULIDGenerator'
@@ -74,10 +74,11 @@ export class PendingSpanProcessor implements SpanProcessor {
       duration,
       ended: true,
       endTime: startAndEndTime,
-      events: span.events,
+      // Own lists, so events and links the real span adds later never join an already-scrubbed copy.
+      events: [...span.events],
       instrumentationScope: span.instrumentationScope,
       kind: span.kind,
-      links: span.links,
+      links: [...span.links],
       name: span.name,
       parentSpanContext: realSpanContext,
       resource: span.resource,
@@ -86,6 +87,7 @@ export class PendingSpanProcessor implements SpanProcessor {
       status: span.status,
     }
 
+    recordScrubbedAttributesOnStart(span)
     copyScrubbedAttributes(span.attributes, pendingSpan.attributes)
     this.wrapped.onEnd(pendingSpan)
   }

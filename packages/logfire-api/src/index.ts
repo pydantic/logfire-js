@@ -28,7 +28,7 @@ import { logfireFormatWithExtras, truncateString } from './formatter'
 import { Level } from './levels'
 import type { LogFireLevel } from './levels'
 import { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire, serializeAttributes } from './logfireApiConfig'
-import { recordScrubbedAttributes } from './exportScrubbing'
+import { beginScrubbedSpan, recordScrubbedAttributes } from './exportScrubbing'
 import { PendingSpanProcessor } from './PendingSpanProcessor'
 import { setPendingSpanSuppressed } from './pendingSpanSuppression'
 import { SpanLevel, checkTraceIdRatio, levelOrDuration } from './sampling'
@@ -36,7 +36,7 @@ import { TailSamplingProcessor } from './TailSamplingProcessor'
 import { ULIDGenerator } from './ULIDGenerator'
 
 export * from './AttributeScrubber'
-export { scrubLogRecordForExport, scrubSpanForExport } from './exportScrubbing'
+export { scrubbedSpanCopy, scrubLogRecordForExport, scrubSpanForExport } from './exportScrubbing'
 export type { ExportScrubbingOptions, ScrubbableLogRecord } from './exportScrubbing'
 export { canonicalizeError, computeFingerprint } from './fingerprint'
 export { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire } from './logfireApiConfig'
@@ -460,6 +460,7 @@ function startSpanWithSettings(
   // Logs are always INTERNAL: a runtime options object carrying `kind` must not
   // change the exported kind of zero-duration Logfire logs.
   const kind = resolvedOptions.log === true ? undefined : resolvedOptions.kind
+  beginScrubbedSpan(spanStart.attributes)
   const span = logfireApiConfig.tracer.startSpan(
     spanStart.name,
     { attributes: spanStart.attributes, ...(kind !== undefined ? { kind } : {}) },
@@ -601,6 +602,7 @@ function spanWithSettings<R>(
   const { serializationAttributes, serializedAttributes } = buildSerializedLogfireAttributes(msgTemplate, attributes, { tags, level })
 
   const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : TheContextAPI.active()
+  beginScrubbedSpan(serializedAttributes)
   return logfireApiConfig.tracer.startActiveSpan(
     spanName ?? msgTemplate,
     {

@@ -91,6 +91,8 @@ describe('LogfireSpanProcessor', () => {
         'logfire.session_replay.id': 'recording-1',
         'logfire.page.url.full': 'https://app.example.com/?page_secret=kept',
         'web_vital.lcp.url': 'https://cdn.example.com/a.jpg?secret=kept',
+        'browser.main_thread_window.script.0.source_url': 'https://app.example.com/auth.js',
+        'app.url': 'https://app.example.com/?secret=abc',
         'app.password': 'hunter2',
       },
       events: [],
@@ -107,9 +109,12 @@ describe('LogfireSpanProcessor', () => {
       'logfire.session_replay.id': 'recording-1',
       'logfire.page.url.full': 'https://app.example.com/?page_secret=kept',
       'web_vital.lcp.url': 'https://cdn.example.com/a.jpg?secret=kept',
+      'browser.main_thread_window.script.0.source_url': 'https://app.example.com/auth.js',
+      'app.url': "[Scrubbed due to 'secret']",
       'app.password': "[Scrubbed due to 'password']",
       'logfire.scrubbed': JSON.stringify([
         { matched_substring: 'password', path: ['attributes', 'logfire.session', 'password'] },
+        { matched_substring: 'secret', path: ['attributes', 'app.url'] },
         { matched_substring: 'password', path: ['attributes', 'app.password'] },
       ]),
     })

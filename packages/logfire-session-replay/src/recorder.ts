@@ -116,7 +116,8 @@ function sanitizeRecorderEvent(event: RrwebEvent, patterns: RegExp[]): RrwebEven
 }
 
 // Network and navigation payloads are redacted where they are captured. Error and console payloads
-// carry URLs inside free text, so they are redacted here, where every custom event passes.
+// carry URLs inside free text (messages, stacks, arguments), so they are redacted here, where every
+// custom event passes.
 function sanitizeCustomEvent(event: RrwebEvent, data: Record<string, unknown>, patterns: RegExp[]): RrwebEvent {
   const payload = data['payload']
   if (typeof payload !== 'object' || payload === null) {
@@ -127,6 +128,9 @@ function sanitizeCustomEvent(event: RrwebEvent, data: Record<string, unknown>, p
   let sanitized: Record<string, unknown>
   if (data['tag'] === CustomTag.Error) {
     sanitized = { ...fields }
+    if (typeof fields['message'] === 'string') {
+      sanitized['message'] = redactUrlsInText(fields['message'], patterns, baseUrl)
+    }
     if (typeof fields['source'] === 'string') {
       sanitized['source'] = redactUrl(fields['source'], patterns, baseUrl)
     }

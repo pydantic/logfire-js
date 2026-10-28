@@ -2,7 +2,7 @@ import { trace } from '@opentelemetry/api'
 import { InMemoryLogRecordExporter, LoggerProvider, SimpleLogRecordProcessor } from '@opentelemetry/sdk-logs'
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as logfire from 'logfire'
-import { configureLogfireApi } from 'logfire'
+import { configureLogfireApi, PendingSpanProcessor } from 'logfire'
 import { afterEach, beforeEach, describe, expect, it } from 'vite-plus/test'
 
 import { ScrubbingLogRecordProcessor } from '../logsExporter'
@@ -30,6 +30,8 @@ describe('export-time scrubbing', () => {
     const exporter = new InMemorySpanExporter()
     const provider = new BasicTracerProvider({ spanProcessors: [new LogfireSpanProcessor(new SimpleSpanProcessor(exporter), undefined)] })
     trace.setGlobalTracerProvider(provider)
+    // The API's proxy tracer keeps the first provider it resolved; reconfiguring fetches a fresh one.
+    configureLogfireApi({ otelScope: 'logfire' })
 
     logfire.span('checkout', { allowed_password: 'kept' }, {}, (span) => {
       span.setAttribute('late_password', 'hunter2')
@@ -40,6 +42,38 @@ describe('export-time scrubbing', () => {
     expect(paths).toEqual([['allowed_password'], ['attributes', 'late_password']])
     expect(exported?.attributes['allowed_password']).toBe('kept')
     expect(exported?.attributes['late_password']).toBe("[Scrubbed due to 'password']")
+  })
+
+  it('scrubs pending span copies once and keeps events added later out of them', async () => {
+    const paths: unknown[] = []
+    configureLogfireApi({
+      scrubbing: {
+        callback: (match) => {
+          paths.push(match.path)
+          return null
+        },
+      },
+    })
+    const exporter = new InMemorySpanExporter()
+    const primary = new LogfireSpanProcessor(new SimpleSpanProcessor(exporter), undefined)
+    const provider = new BasicTracerProvider({ spanProcessors: [primary, new PendingSpanProcessor(primary)] })
+    trace.setGlobalTracerProvider(provider)
+    // The API's proxy tracer keeps the first provider it resolved; reconfiguring fetches a fresh one.
+    configureLogfireApi({ otelScope: 'logfire' })
+
+    const span = logfire.startSpan('checkout', { password: 'hunter2' })
+    span.addEvent('retry', { note: 'session=abc' })
+    span.end()
+    await provider.forceFlush()
+
+    const [pending, real] = exporter.getFinishedSpans()
+    const creationNotes = JSON.stringify([{ matched_substring: 'password', path: ['password'] }])
+    expect(paths).toEqual([['password'], ['otel_events', 0, 'attributes', 'note']])
+    expect(pending?.attributes['logfire.span_type']).toBe('pending_span')
+    expect(pending?.attributes['logfire.scrubbed']).toBe(creationNotes)
+    expect(pending?.events).toEqual([])
+    expect(real?.attributes['password']).toBe("[Scrubbed due to 'password']")
+    expect(real?.events[0]?.attributes).toEqual({ note: "[Scrubbed due to 'session']" })
   })
 
   it('scrubs instrumentation spans, late attributes, and events before export', async () => {

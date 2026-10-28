@@ -197,7 +197,7 @@ describe('startRecording', () => {
     expect(mutation.data.adds[0]?.node.attributes.action).toBe('/checkout?token=add')
   })
 
-  it('redacts URLs in error sources, error stacks, and console arguments at the custom-event boundary', () => {
+  it('redacts URLs in error messages, sources, stacks, and console arguments at the custom-event boundary', () => {
     const emitted: RrwebEvent[] = []
     startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [/.+/u] })
     const error = {
@@ -205,7 +205,7 @@ describe('startRecording', () => {
       data: {
         tag: CustomTag.Error,
         payload: {
-          message: 'boom',
+          message: 'GET https://api.example.test/x?token=secret failed',
           source: 'https://app.example.test/app.js?token=secret',
           stack: 'Error: boom\n    at load (https://app.example.test/app.js?token=secret:10:5)',
         },
@@ -232,7 +232,7 @@ describe('startRecording', () => {
       data: {
         tag: CustomTag.Error,
         payload: {
-          message: 'boom',
+          message: 'GET https://api.example.test/x failed',
           source: 'https://app.example.test/app.js',
           stack: 'Error: boom\n    at load (https://app.example.test/app.js:10:5)',
         },

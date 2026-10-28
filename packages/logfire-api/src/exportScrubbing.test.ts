@@ -2,7 +2,13 @@ import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test'
 
 import { ATTRIBUTES_SCRUBBED_KEY } from './constants'
-import { copyScrubbedAttributes, recordScrubbedAttributes, scrubLogRecordForExport, scrubSpanForExport } from './exportScrubbing'
+import {
+  copyScrubbedAttributes,
+  recordScrubbedAttributes,
+  scrubbedSpanCopy,
+  scrubLogRecordForExport,
+  scrubSpanForExport,
+} from './exportScrubbing'
 import type { ScrubbableLogRecord } from './exportScrubbing'
 import { configureLogfireApi } from './logfireApiConfig'
 import { serializeAttributes } from './serializeAttributes'
@@ -200,6 +206,23 @@ describe('scrubSpanForExport', () => {
       scrubSpanForExport(span)
     }).not.toThrow()
     expect(span.attributes).toEqual({ 'app.password': '[Scrubbing failed]', 'http.method': 'GET' })
+  })
+
+  test('returns a scrubbed copy that keeps the span methods and leaves the span unchanged', () => {
+    const span = {
+      attributes: { 'app.password': 'hunter2' },
+      events: [{ attributes: { note: 'session=abc' }, name: 'event', time: [0, 0] }],
+      links: [],
+      spanContext: () => ({ spanId: 'span-1', traceFlags: 0, traceId: 'trace-1' }),
+    } as unknown as ReadableSpan
+
+    const copy = scrubbedSpanCopy(span)
+
+    expect(copy.attributes['app.password']).toBe("[Scrubbed due to 'password']")
+    expect(copy.events[0]?.attributes).toEqual({ note: "[Scrubbed due to 'session']" })
+    expect(copy.spanContext().spanId).toBe('span-1')
+    expect(span.attributes).toEqual({ 'app.password': 'hunter2' })
+    expect(span.events[0]?.attributes).toEqual({ note: 'session=abc' })
   })
 
   test('changes nothing when scrubbing is disabled', () => {
