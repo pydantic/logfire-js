@@ -248,15 +248,41 @@ not retry them.
 ## Privacy
 
 The recorder masks all rendered text and input values by default
-(`maskAllText: true`, `maskAllInputs: true`). It also disables canvas recording
+(`maskAllText: true`, `maskAllInputs: true`). `maskAllInputs` also masks
+hidden input values. `maskAllText` also masks the text-bearing attributes
+`title`, `alt`, `aria-label`, `aria-description`, `aria-placeholder`,
+`aria-roledescription`, `aria-valuetext`, `label`, `placeholder`, the value of
+`button`, `submit`, and `reset` inputs, and `data-*` attributes. The UI state
+attributes `data-state`, `data-orientation`, `data-side`, `data-align`,
+`data-disabled`, `data-highlighted`, `data-selected`, `data-checked`,
+`data-active`, and `data-headlessui-state` are kept so that styled states replay
+correctly. The recorder also disables canvas recording
 and font collection, skips inlined images and cross-origin iframe recording,
 omits nonvisual DOM metadata, throttles pointer, scroll, and media sampling,
 never captures request or response bodies, and leaves console capture off
 (`captureConsole: false`).
 Network and navigation capture remain on, but query strings and fragments are
-removed from rrweb page metadata and captured network/navigation URLs by the
-default `redactUrlPatterns` value. Replay envelope `meta.urls` contains those
-same sanitized captured URLs.
+removed from rrweb page metadata, captured network/navigation URLs, and URL
+attributes (`href`, `src`, `srcset`, `poster`, `data`, `xlink:href`, inline
+style `url()`, and similar) by the default `redactUrlPatterns` value. URLs with
+an opaque scheme, such as `mailto:`, `tel:`, `data:`, and `blob:`, keep only
+the scheme. Replay envelope `meta.urls` contains those same sanitized captured
+URLs. Error messages and stacks in replay error events are limited to 1,024 and
+8,192 characters.
+
+Paths can also carry private values, such as reset tokens or email addresses.
+Use `transformUrl` to rewrite them. It runs after `redactUrlPatterns` on page
+metadata, navigation and network URLs, and DOM URL attributes, so it also
+applies to `meta.urls`. URLs inside error messages, stacks, and console
+arguments keep the built-in redaction only. When `transformUrl` throws, the
+URL keeps the built-in redaction and `onError` receives the error.
+
+```ts
+startSessionReplay({
+  replayUrl: '/replay',
+  transformUrl: (url) => url.replace(/\/reset-password\/[^/]+/u, '/reset-password/:token'),
+})
+```
 
 Use `blockSelector` to omit entire DOM subtrees. Set `maskAllText: false` only
 when visible text recording is acceptable; `maskTextSelector` can then retain
@@ -265,9 +291,11 @@ arguments. An explicit `redactUrlPatterns: []` restores raw captured page,
 network, and navigation URLs. `captureNetwork` and `captureNavigation` can
 disable those capture classes completely.
 
-Text masking does not scrub DOM attributes, CSS content, resource URLs, or
-arbitrary custom-event payloads. Avoid placing secrets there, block affected
-subtrees, and sanitize custom events before recording them.
+Attribute masking applies only with `maskAllText: true`; a selective
+`maskTextSelector` masks text nodes only. Masking does not scrub other DOM
+attributes, stylesheet content, or arbitrary custom-event payloads. Avoid
+placing secrets there, block affected subtrees, and sanitize custom events
+before recording them.
 
 ## Sampling
 

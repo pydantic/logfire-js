@@ -2,13 +2,32 @@ export function matchesUrlPatterns(url: string, patterns: readonly RegExp[]): bo
   return patterns.some((pattern) => new RegExp(pattern.source, pattern.flags).test(url))
 }
 
-export function redactUrl(url: string, patterns: readonly RegExp[], baseUrl: string): string {
-  return matchesUrlPatterns(url, patterns) ? stripQueryAndFragment(url, baseUrl) : url
+/** Rewrites a URL after query and fragment removal, for example to replace tokens in its path. */
+export type UrlTransform = (url: string) => string
+
+export function redactUrl(url: string, patterns: readonly RegExp[], baseUrl: string, transformUrl?: UrlTransform): string {
+  const redacted = matchesUrlPatterns(url, patterns) ? stripQueryAndFragment(url, baseUrl) : url
+  return transformUrl === undefined ? redacted : applyUrlTransform(redacted, transformUrl)
+}
+
+// A failing transform keeps the built-in result, so a bug in it never restores a stripped query.
+function applyUrlTransform(url: string, transformUrl: UrlTransform): string {
+  try {
+    const transformed = transformUrl(url)
+    return typeof transformed === 'string' ? transformed : url
+  } catch {
+    return url
+  }
 }
 
 function stripQueryAndFragment(url: string, baseUrl: string): string {
   try {
     const parsed = new URL(url, baseUrl)
+    // Opaque URLs such as `mailto:` and `data:` hold their content in the path, and a `blob:` path
+    // repeats its origin, so only the scheme is kept.
+    if (parsed.origin === 'null' || parsed.protocol === 'blob:') {
+      return parsed.protocol
+    }
     return `${parsed.origin}${parsed.pathname}`
   } catch {
     const [withoutQuery = url] = url.split('?')
@@ -74,4 +93,71 @@ export function redactUrlsInText(
       })
     })
     .join('\n')
+}
+
+/** Apply `redact` to each image candidate URL in a `srcset` value, keeping the descriptors. */
+export function redactSrcset(value: string, redact: (url: string) => string): string {
+  // Follows the HTML srcset grammar: a URL runs to whitespace, trailing commas end its candidate, and
+  // otherwise descriptors run to the next comma. A comma inside a URL therefore stays in that URL.
+  let result = ''
+  let position = 0
+  while (position < value.length) {
+    const separatorStart = position
+    while (position < value.length && /[\s,]/u.test(value[position] ?? '')) {
+      position++
+    }
+    result += value.slice(separatorStart, position)
+    if (position >= value.length) {
+      break
+    }
+    const urlStart = position
+    while (position < value.length && !/\s/u.test(value[position] ?? '')) {
+      position++
+    }
+    let urlEnd = position
+    while (urlEnd > urlStart && value[urlEnd - 1] === ',') {
+      urlEnd--
+    }
+    result += redact(value.slice(urlStart, urlEnd)) + value.slice(urlEnd, position)
+    if (urlEnd < position) {
+      continue
+    }
+    const descriptorStart = position
+    while (position < value.length && value[position] !== ',') {
+      position++
+    }
+    result += value.slice(descriptorStart, position)
+  }
+  return result
+}
+
+const CSS_URL_PATTERN = /url\(\s*(['"]?)(.*?)\1\s*\)/giu
+
+/** Apply `redact` to each `url()` in CSS text, such as an inline `style` attribute. */
+export function redactCssUrls(value: string, redact: (url: string) => string): string {
+  return value.replace(CSS_URL_PATTERN, (_match, quote: string, url: string) => `url(${quote}${redact(url)}${quote})`)
+}
+
+/**
+ * Cut `text` to at most `maxLength` UTF-16 code units and return the kept text with the number of
+ * code units dropped.
+ */
+export function cutText(text: string, maxLength: number): [kept: string, dropped: number] {
+  if (text.length <= maxLength) {
+    return [text, 0]
+  }
+  // Cutting between the halves of a surrogate pair leaves a lone surrogate, which has no UTF-8
+  // encoding once the text is sent. Drop the whole character instead.
+  const lastCode = text.charCodeAt(maxLength - 1)
+  const end = lastCode >= 0xd800 && lastCode <= 0xdbff ? maxLength - 1 : maxLength
+  return [text.slice(0, end), text.length - end]
+}
+
+export function truncationSuffix(dropped: number): string {
+  return dropped === 0 ? '' : `...(+${String(dropped)} chars)`
+}
+
+export function truncateText(text: string, maxLength: number): string {
+  const [kept, dropped] = cutText(text, maxLength)
+  return `${kept}${truncationSuffix(dropped)}`
 }

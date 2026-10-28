@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vite-plus/test'
 
-import { matchesUrlPatterns, redactUrl, redactUrlsInText } from './privacy'
+import { cutText, matchesUrlPatterns, redactCssUrls, redactSrcset, redactUrl, redactUrlsInText, truncateText } from './privacy'
 
 const baseUrl = 'https://app.example.test/current/page'
 
@@ -17,6 +17,30 @@ describe('redactUrl', () => {
 
   it('falls back to string stripping for malformed URLs', () => {
     expect(redactUrl('https://[invalid]?token=secret#details', [/.+/u], baseUrl)).toBe('https://[invalid]')
+  })
+
+  it('keeps only the scheme of opaque and blob URLs', () => {
+    expect(redactUrl('mailto:jane@example.test?subject=hi', [/.+/u], baseUrl)).toBe('mailto:')
+    expect(redactUrl('tel:+15550100', [/.+/u], baseUrl)).toBe('tel:')
+    expect(redactUrl('data:image/png;base64,AAAA', [/.+/u], baseUrl)).toBe('data:')
+    expect(redactUrl('blob:https://app.example.test/0f6e3c1a', [/.+/u], baseUrl)).toBe('blob:')
+  })
+
+  it('applies a transform after the built-in redaction', () => {
+    const transform = (url: string) => url.replace(/\/reset\/[^/?#]+/u, '/reset/:token')
+
+    expect(redactUrl('/reset/abc123?next=/home', [/.+/u], baseUrl, transform)).toBe('https://app.example.test/reset/:token')
+    expect(redactUrl('/reset/abc123?next=/home', [], baseUrl, transform)).toBe('/reset/:token?next=/home')
+  })
+
+  it('keeps the built-in redaction when a transform throws or returns a non-string', () => {
+    const throwing = () => {
+      throw new Error('transform failed')
+    }
+    const nonString = (() => undefined) as unknown as (url: string) => string
+
+    expect(redactUrl('/reset/abc123?token=secret', [/.+/u], baseUrl, throwing)).toBe('https://app.example.test/reset/abc123')
+    expect(redactUrl('/reset/abc123?token=secret', [/.+/u], baseUrl, nonString)).toBe('https://app.example.test/reset/abc123')
   })
 
   it('does not mutate global or sticky pattern state across repeated matches', () => {
@@ -112,5 +136,56 @@ describe('redactUrlsInText', () => {
       'at https://app.example.test/a.js?t=1:1:1 and https://cdn.example.test/b.js:2:2'
     )
     expect(redactUrlsInText(text, [], baseUrl)).toBe(text)
+  })
+})
+
+describe('redactSrcset', () => {
+  const redact = (url: string) => redactUrl(url, [/.+/u], baseUrl)
+
+  it('redacts each candidate URL and keeps descriptors and separators', () => {
+    expect(redactSrcset('/a.png?t=1 1x, /b.png?t=2 2x', redact)).toBe(
+      'https://app.example.test/a.png 1x, https://app.example.test/b.png 2x'
+    )
+    expect(redactSrcset('/a.png?t=1 480w,/b.png?t=2 800w', redact)).toBe(
+      'https://app.example.test/a.png 480w,https://app.example.test/b.png 800w'
+    )
+  })
+
+  it('ends a candidate at trailing commas of a URL without descriptors', () => {
+    expect(redactSrcset('/a.png?t=1, /b.png?t=2', redact)).toBe('https://app.example.test/a.png, https://app.example.test/b.png')
+  })
+
+  it('keeps a comma inside a URL as part of that URL', () => {
+    expect(redactSrcset('data:image/png;base64,AAAA 1x', redact)).toBe('data: 1x')
+  })
+})
+
+describe('redactCssUrls', () => {
+  const redact = (url: string) => redactUrl(url, [/.+/u], baseUrl)
+
+  it('redacts quoted and unquoted url() values', () => {
+    expect(redactCssUrls('background: url("/bg.png?t=1") no-repeat; mask: URL(/m.svg?t=2)', redact)).toBe(
+      'background: url("https://app.example.test/bg.png") no-repeat; mask: url(https://app.example.test/m.svg)'
+    )
+    expect(redactCssUrls("background-image: url( '/a.png?t=1' )", redact)).toBe("background-image: url('https://app.example.test/a.png')")
+  })
+
+  it('leaves CSS without url() unchanged', () => {
+    expect(redactCssUrls('color: red', redact)).toBe('color: red')
+  })
+})
+
+describe('truncateText', () => {
+  it('keeps text within the limit', () => {
+    expect(truncateText('short', 10)).toBe('short')
+    expect(cutText('short', 10)).toEqual(['short', 0])
+  })
+
+  it('cuts longer text and reports the dropped length', () => {
+    expect(truncateText('abcdefghij', 4)).toBe('abcd...(+6 chars)')
+  })
+
+  it('does not split a surrogate pair', () => {
+    expect(cutText('abc\u{1F600}def', 4)).toEqual(['abc', 5])
   })
 })

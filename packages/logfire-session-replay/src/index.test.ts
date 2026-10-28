@@ -1416,6 +1416,35 @@ describe('startSessionReplay lifecycle', () => {
     await selectiveReplay.stop()
   })
 
+  it('passes the URL transform to the recorder and captures and reports its errors', async () => {
+    const { fetchImpl } = recordingFetch()
+    const networkSpy = vi.spyOn(captureMod, 'captureNetwork').mockReturnValue(() => {})
+    const navigationSpy = vi.spyOn(captureMod, 'captureNavigation').mockReturnValue(() => {})
+    const transformError = new Error('transform failed')
+    const onError = vi.fn<(error: unknown) => void>()
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        captureNetwork: true,
+        captureNavigation: true,
+        onError,
+        transformUrl: (url) => {
+          if (url.includes('fail')) {
+            throw transformError
+          }
+          return `${url}/transformed`
+        },
+      })
+    )
+
+    const transformUrl = captured.transformUrl
+    expect(networkSpy.mock.calls[0]![1].transformUrl).toBe(transformUrl)
+    expect(navigationSpy.mock.calls[0]![1]?.transformUrl).toBe(transformUrl)
+    expect(transformUrl?.('https://app.example.test/a')).toBe('https://app.example.test/a/transformed')
+    expect(() => transformUrl?.('https://app.example.test/fail')).toThrow(transformError)
+    expect(onError).toHaveBeenCalledWith(transformError)
+    await replay.stop()
+  })
+
   it('does not install console capture by default', async () => {
     const { fetchImpl } = recordingFetch()
     const consoleSpy = vi.spyOn(captureMod, 'captureConsole')

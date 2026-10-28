@@ -53,6 +53,7 @@ function makeConfig(fetchImpl: typeof fetch): ResolvedSessionReplayConfig {
     captureGlobalErrors: true,
     ignoreUrlPatterns: [],
     redactUrlPatterns: [],
+    transformUrl: undefined,
     onError: undefined,
     fetchImpl,
     now: () => 1_000,

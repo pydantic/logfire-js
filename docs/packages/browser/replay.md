@@ -37,16 +37,43 @@ const cleanup = logfire.configureFrontend({
 
 Replay masks all rendered text and input values by default, leaves console
 capture off, and removes query strings and fragments from captured page,
-fetch/XHR, and navigation URLs, and from the URLs in error messages, sources, and
-stacks and in console arguments. Network and navigation capture remain enabled.
-These replay-package defaults are inherited when browser options are omitted.
+fetch/XHR, and navigation URLs, from DOM URL attributes such as `href`, `src`,
+`srcset`, and inline style `url()`, and from the URLs in error messages, sources,
+and stacks and in console arguments. URLs with an opaque scheme, such as
+`mailto:` and `data:`, keep only the scheme. Error messages and stacks are
+limited to 1,024 and 8,192 characters. Network and navigation capture remain
+enabled. These replay-package defaults are inherited when browser options are
+omitted.
+
+Input masking also covers hidden inputs. Text masking also covers the
+text-bearing attributes `title`, `alt`, `aria-label`, `placeholder`, and
+similar, button labels set through `value`, and `data-*` attributes. UI state
+attributes such as `data-state` and `data-orientation` are kept so that open
+menus and selected items replay as the user saw them.
 
 Use `blockSelector` to omit a subtree. Set `maskAllText: false` only when
 visible text recording is acceptable; `maskTextSelector` can then selectively
-mask sensitive regions. `captureConsole: true` is an explicit opt-in, and
-`redactUrlPatterns: []` explicitly restores raw replay URLs. Text masking does
-not scrub DOM attributes, CSS content, resource URLs, or arbitrary custom-event
-payloads, so those values still require application-side care.
+mask sensitive text, but it does not mask attributes. `captureConsole: true` is
+an explicit opt-in, and `redactUrlPatterns: []` explicitly restores raw replay
+URLs. Masking does not scrub other DOM attributes, stylesheet content, or
+arbitrary custom-event payloads, so those values still require
+application-side care.
+
+Paths can also carry private values, such as reset tokens or email addresses.
+Use `transformUrl` to rewrite each page, navigation, network, and DOM attribute
+URL after the built-in redaction. The rewritten URLs are also the ones replay
+search shows. URLs inside error messages, stacks, and console arguments keep
+the built-in redaction only.
+
+```ts
+const cleanup = logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  sessionReplay: sessionReplayIntegration({
+    transformUrl: (url) => url.replace(/\/reset-password\/[^/]+/u, '/reset-password/:token'),
+  }),
+})
+```
 
 ## Record sessions with errors
 

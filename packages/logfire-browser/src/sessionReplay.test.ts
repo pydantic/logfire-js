@@ -126,6 +126,7 @@ describe('startBrowserSessionReplay', () => {
     }
     const headers = () => ({ 'X-CSRF': 'csrf-token' })
     const getDistinctId = () => 'user-1'
+    const transformUrl = (url: string) => url.replace('/users/jane', '/users/:id')
     const fetchImpl = vi.fn<typeof fetch>()
     const onError = vi.fn<(error: unknown) => void>()
     const replayState = new BrowserSessionReplayState()
@@ -154,6 +155,7 @@ describe('startBrowserSessionReplay', () => {
         replayUrl: '/logfire/replay',
         sessionSampleRate: 0.25,
         token: 'direct-token',
+        transformUrl,
       },
       manager,
       replayState,
@@ -185,6 +187,7 @@ describe('startBrowserSessionReplay', () => {
       replayUrl: '/logfire/replay',
       sessionSampleRate: 0.25,
       token: 'direct-token',
+      transformUrl,
     })
     expect(replayConfig).not.toHaveProperty('sessionIdleTimeoutMs')
     expect(replayConfig).not.toHaveProperty('maxSessionDurationMs')
@@ -379,6 +382,7 @@ describe('startBrowserSessionReplay', () => {
     expect(replayConfig).not.toHaveProperty('maskAllText')
     expect(replayConfig).not.toHaveProperty('maskTextSelector')
     expect(replayConfig).not.toHaveProperty('redactUrlPatterns')
+    expect(replayConfig).not.toHaveProperty('transformUrl')
   })
 
   it('forwards explicit raw-data privacy opt-ins unchanged', async () => {

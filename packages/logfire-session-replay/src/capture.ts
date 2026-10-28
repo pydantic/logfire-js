@@ -1,4 +1,5 @@
-import { matchesUrlPatterns, redactUrl } from './privacy'
+import { matchesUrlPatterns, redactUrl, truncateText } from './privacy'
+import type { UrlTransform } from './privacy'
 import { CustomTag } from './types'
 import type { ConsoleLevel, ConsolePayload, NavigationPayload, NetworkPayload } from './types'
 
@@ -16,10 +17,12 @@ interface NetworkCaptureOptions extends CaptureOptions {
   ignoreUrlPatterns: RegExp[]
   now: () => number
   redactUrlPatterns: RegExp[]
+  transformUrl?: UrlTransform | undefined
 }
 
 interface NavigationCaptureOptions extends CaptureOptions {
   redactUrlPatterns?: RegExp[] | undefined
+  transformUrl?: UrlTransform | undefined
 }
 
 const CONSOLE_LEVELS: readonly ConsoleLevel[] = ['log', 'info', 'warn', 'error', 'debug']
@@ -81,7 +84,7 @@ export function captureNetwork(emit: Emit, options: NetworkCaptureOptions): Stop
 export function captureNavigation(emit: Emit, options: NavigationCaptureOptions = { redactUrlPatterns: [] }): Stop {
   const reportError = createSafeReporter(options.onError)
   const emitNavigation = (kind: NavigationPayload['kind']) => {
-    const url = redactUrl(window.location.href, options.redactUrlPatterns ?? [], window.location.href)
+    const url = redactUrl(window.location.href, options.redactUrlPatterns ?? [], window.location.href, options.transformUrl)
     safeEmit(emit, CustomTag.Navigation, { url, kind } satisfies NavigationPayload, reportError)
   }
   const stops: Stop[] = []
@@ -149,7 +152,7 @@ function captureFetch(emit: Emit, options: NetworkCaptureOptions): Stop {
       if (shouldIgnoreUrl(rawUrl, options.ignoreUrlPatterns)) {
         return callOriginal.call(this, input, init)
       }
-      const url = redactUrl(rawUrl, options.redactUrlPatterns, window.location.href)
+      const url = redactUrl(rawUrl, options.redactUrlPatterns, window.location.href, options.transformUrl)
       const reqBytes = sizeOfBody(init?.body)
 
       try {
@@ -221,7 +224,7 @@ function captureXhr(emit: Emit, options: NetworkCaptureOptions): Stop {
             }
             states.set(this, {
               method: method.toUpperCase(),
-              url: redactUrl(rawUrl, options.redactUrlPatterns, window.location.href),
+              url: redactUrl(rawUrl, options.redactUrlPatterns, window.location.href, options.transformUrl),
               startedAt: 0,
               reqBytes: 0,
               failed: false,
@@ -436,15 +439,7 @@ function stringifyArg(value: unknown): string {
 }
 
 function truncate(text: string): string {
-  if (text.length <= MAX_ARG_LENGTH) {
-    return text
-  }
-  // Slicing counts UTF-16 code units, so cutting between the halves of a
-  // surrogate pair leaves a lone surrogate, which has no UTF-8 encoding once the
-  // captured argument is sent. Drop the whole character instead.
-  const lastCode = text.charCodeAt(MAX_ARG_LENGTH - 1)
-  const end = lastCode >= 0xd800 && lastCode <= 0xdbff ? MAX_ARG_LENGTH - 1 : MAX_ARG_LENGTH
-  return `${text.slice(0, end)}...(+${String(text.length - end)} chars)`
+  return truncateText(text, MAX_ARG_LENGTH)
 }
 
 function getFetchMethod(input: RequestInfo | URL, init: RequestInit | undefined): string {

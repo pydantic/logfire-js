@@ -77,7 +77,26 @@ describe('startRecording', () => {
     expect(options.inlineImages).toBe(false)
     expect(options.recordCrossOriginIframes).toBe(false)
     expect(options.slimDOMOptions).toBe('all')
-    expect(options.maskAllInputs).toBe(true)
+    expect('maskAllInputs' in options).toBe(false)
+    expect(options.maskInputOptions).toEqual({
+      color: true,
+      date: true,
+      'datetime-local': true,
+      email: true,
+      hidden: true,
+      month: true,
+      number: true,
+      password: true,
+      range: true,
+      search: true,
+      select: true,
+      tel: true,
+      text: true,
+      textarea: true,
+      time: true,
+      url: true,
+      week: true,
+    })
     expect(options.maskTextSelector).toBe('*')
     expect(options.sampling).toEqual({
       mousemove: 100,
@@ -99,6 +118,8 @@ describe('startRecording', () => {
   it('omits optional selectors and checkoutEveryNms when unset', () => {
     startRecordingForTest({ emit: () => {}, maskAllInputs: false, checkoutEveryNms: 0 })
     const options = lastOptions()
+    expect(options.maskAllInputs).toBe(false)
+    expect('maskInputOptions' in options).toBe(false)
     expect('maskTextSelector' in options).toBe(false)
     expect('blockSelector' in options).toBe(false)
     expect('checkoutEveryNms' in options).toBe(false)
@@ -244,6 +265,210 @@ describe('startRecording', () => {
     })
     expect(emitted[2]).toBe(network)
     expect(error.data.payload.source).toBe('https://app.example.test/app.js?token=secret')
+  })
+
+  it('redacts image, media, object, SVG, and inline style URLs', () => {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [/.+/u] })
+    const fullSnapshot = {
+      type: EventType.FullSnapshot,
+      data: {
+        node: {
+          attributes: {
+            srcset: '/a.png?t=1 1x, /b.png?t=2 2x',
+            poster: '/poster.png?t=3',
+            data: '/doc.pdf?t=4',
+            'xlink:href': '/sprite.svg?t=5#icon',
+            rr_src: '/frame?t=6',
+            style: 'background: url("/bg.png?t=7")',
+          },
+        },
+      },
+      timestamp: 7,
+    } satisfies RrwebEvent
+    const mutation = {
+      type: EventType.IncrementalSnapshot,
+      data: {
+        source: IncrementalSource.Mutation,
+        attributes: [
+          {
+            id: 1,
+            attributes: { style: { 'background-image': 'url(/m.png?t=8)', 'mask-image': ['url(/n.png?t=9)', 'important'], color: 'red' } },
+          },
+        ],
+      },
+      timestamp: 8,
+    } satisfies RrwebEvent
+
+    emitFromRrweb(fullSnapshot)
+    emitFromRrweb(mutation)
+
+    expect(emitted[0]).toEqual({
+      ...fullSnapshot,
+      data: {
+        node: {
+          attributes: {
+            srcset: 'http://localhost:3000/a.png 1x, http://localhost:3000/b.png 2x',
+            poster: 'http://localhost:3000/poster.png',
+            data: 'http://localhost:3000/doc.pdf',
+            'xlink:href': 'http://localhost:3000/sprite.svg',
+            rr_src: 'http://localhost:3000/frame',
+            style: 'background: url("http://localhost:3000/bg.png")',
+          },
+        },
+      },
+    })
+    expect(emitted[1]).toEqual({
+      ...mutation,
+      data: {
+        source: IncrementalSource.Mutation,
+        attributes: [
+          {
+            id: 1,
+            attributes: {
+              style: {
+                'background-image': 'url(http://localhost:3000/m.png)',
+                'mask-image': ['url(http://localhost:3000/n.png)', 'important'],
+                color: 'red',
+              },
+            },
+          },
+        ],
+      },
+    })
+  })
+
+  it('applies the URL transform to Meta and DOM attribute URLs', () => {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({
+      emit: (event) => emitted.push(event),
+      redactUrlPatterns: [/.+/u],
+      transformUrl: (url) => url.replace(/\/users\/[^/]+/u, '/users/:email'),
+    })
+    const meta = {
+      type: EventType.Meta,
+      data: { href: 'https://app.example.test/users/jane@example.test?tab=1' },
+      timestamp: 5,
+    } satisfies RrwebEvent
+    const fullSnapshot = {
+      type: EventType.FullSnapshot,
+      data: { node: { attributes: { href: '/users/jane@example.test', srcset: '/users/jane@example.test/avatar.png 1x' } } },
+      timestamp: 6,
+    } satisfies RrwebEvent
+
+    emitFromRrweb(meta)
+    emitFromRrweb(fullSnapshot)
+
+    expect(emitted[0]).toEqual({ ...meta, data: { href: 'https://app.example.test/users/:email' } })
+    expect(emitted[1]).toEqual({
+      ...fullSnapshot,
+      data: {
+        node: { attributes: { href: 'http://localhost:3000/users/:email', srcset: 'http://localhost:3000/users/:email/avatar.png 1x' } },
+      },
+    })
+  })
+
+  it('masks text-bearing attributes when all text is masked', () => {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({ emit: (event) => emitted.push(event), maskAllText: true })
+    const fullSnapshot = {
+      type: EventType.FullSnapshot,
+      data: {
+        node: {
+          attributes: {
+            title: 'Jane Doe',
+            alt: 'Photo of Jane',
+            'aria-label': 'Account jane@example.test',
+            placeholder: 'Your email',
+            'data-user-email': 'jane@example.test',
+            'data-state': 'open',
+            'data-rr-is-password': 'true',
+            class: 'menu open',
+          },
+          childNodes: [{ attributes: { type: 'submit', value: 'Pay 120 EUR' } }, { attributes: { type: 'text', value: '****' } }],
+        },
+      },
+      timestamp: 7,
+    } satisfies RrwebEvent
+    const mutation = {
+      type: EventType.IncrementalSnapshot,
+      data: {
+        source: IncrementalSource.Mutation,
+        attributes: [{ id: 1, attributes: { title: 'Signed in as Jane', 'data-state': 'closed' } }],
+      },
+      timestamp: 8,
+    } satisfies RrwebEvent
+
+    emitFromRrweb(fullSnapshot)
+    emitFromRrweb(mutation)
+
+    expect(emitted[0]).toEqual({
+      ...fullSnapshot,
+      data: {
+        node: {
+          attributes: {
+            title: '**** ***',
+            alt: '***** ** ****',
+            'aria-label': '******* *****************',
+            placeholder: '**** *****',
+            'data-user-email': '*****************',
+            'data-state': 'open',
+            'data-rr-is-password': 'true',
+            class: 'menu open',
+          },
+          childNodes: [{ attributes: { type: 'submit', value: '*** *** ***' } }, { attributes: { type: 'text', value: '****' } }],
+        },
+      },
+    })
+    expect(emitted[1]).toEqual({
+      ...mutation,
+      data: {
+        source: IncrementalSource.Mutation,
+        attributes: [{ id: 1, attributes: { title: '****** ** ** ****', 'data-state': 'closed' } }],
+      },
+    })
+  })
+
+  it('keeps text-bearing attributes when text masking is off', () => {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({ emit: (event) => emitted.push(event), maskAllText: false })
+    const fullSnapshot = {
+      type: EventType.FullSnapshot,
+      data: { node: { attributes: { title: 'Jane Doe', 'data-user-email': 'jane@example.test', type: 'submit', value: 'Pay' } } },
+      timestamp: 7,
+    } satisfies RrwebEvent
+
+    emitFromRrweb(fullSnapshot)
+
+    expect(emitted[0]).toBe(fullSnapshot)
+  })
+
+  it('bounds error messages and stacks after redacting their URLs', () => {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [/.+/u] })
+    const message = `GET https://api.example.test/x?token=secret failed ${'m'.repeat(2000)}`
+    const stack = `Error: boom\n${'    at load (https://app.example.test/app.js?token=secret:10:5)\n'.repeat(200)}`
+    const error = {
+      type: EventType.Custom,
+      data: { tag: CustomTag.Error, payload: { message, stack } },
+      timestamp: 9,
+    } satisfies RrwebEvent
+
+    emitFromRrweb(error)
+
+    const frame = '    at load (https://app.example.test/app.js?token=secret:10:5)\n'
+    const keptFrames = Math.floor((8192 - 'Error: boom\n'.length) / frame.length)
+    const partialFrame = frame.slice(0, 8192 - 'Error: boom\n'.length - keptFrames * frame.length)
+    expect(emitted[0]).toEqual({
+      ...error,
+      data: {
+        tag: CustomTag.Error,
+        payload: {
+          message: `GET https://api.example.test/x failed ${'m'.repeat(1024 - 'GET https://api.example.test/x?token=secret failed '.length)}...(+${String(message.length - 1024)} chars)`,
+          stack: `Error: boom\n${'    at load (https://app.example.test/app.js:10:5)\n'.repeat(keptFrames)}${partialFrame.replace(/\?token=[^:]*/u, '')}...(+${String(stack.length - 8192)} chars)`,
+        },
+      },
+    })
   })
 
   it('leaves custom events unchanged when no redaction pattern is configured', () => {
