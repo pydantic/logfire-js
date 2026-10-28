@@ -1,6 +1,8 @@
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto'
-import type { LogRecordExporter, LogRecordProcessor } from '@opentelemetry/sdk-logs'
+import type { Context } from '@opentelemetry/api'
+import type { LogRecordExporter, LogRecordProcessor, SdkLogRecord } from '@opentelemetry/sdk-logs'
 import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs'
+import { scrubLogRecordForExport } from 'logfire'
 
 import { logfireConfig } from './logfireConfig'
 import { USER_AGENT } from './userAgent'
@@ -37,11 +39,35 @@ export function logfireLogRecordProcessor(): LogRecordProcessor | null {
   if (!logfireConfig.sendToLogfire || !(typeof token === 'function' || (token !== undefined && token !== ''))) {
     return null
   }
-  return makeBatchLogRecordProcessor(
-    new OTLPLogExporter({
-      headers: logfireConfig.authorizationHeaders,
-      url: logfireConfig.logsExporterUrl,
-      userAgent: USER_AGENT,
-    })
+  return new ScrubbingLogRecordProcessor(
+    makeBatchLogRecordProcessor(
+      new OTLPLogExporter({
+        headers: logfireConfig.authorizationHeaders,
+        url: logfireConfig.logsExporterUrl,
+        userAgent: USER_AGENT,
+      })
+    )
   )
+}
+
+/** Scrubs each record while it is still writable, before the batch processor queues it. */
+export class ScrubbingLogRecordProcessor implements LogRecordProcessor {
+  private readonly wrapped: LogRecordProcessor
+
+  constructor(wrapped: LogRecordProcessor) {
+    this.wrapped = wrapped
+  }
+
+  onEmit(logRecord: SdkLogRecord, context?: Context): void {
+    scrubLogRecordForExport(logRecord)
+    this.wrapped.onEmit(logRecord, context)
+  }
+
+  async forceFlush(): Promise<void> {
+    return this.wrapped.forceFlush()
+  }
+
+  async shutdown(): Promise<void> {
+    return this.wrapped.shutdown()
+  }
 }

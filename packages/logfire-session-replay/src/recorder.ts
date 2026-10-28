@@ -1,7 +1,7 @@
 import { record } from '@rrweb/record'
 
-import { redactUrl } from './privacy'
-import { EventType, IncrementalSource } from './types'
+import { redactUrl, redactUrlsInText } from './privacy'
+import { CustomTag, EventType, IncrementalSource } from './types'
 import type { RrwebEvent } from './types'
 
 const URL_ATTRIBUTE_NAMES = new Set(['action', 'formaction', 'href', 'src'])
@@ -92,6 +92,9 @@ function sanitizeRecorderEvent(event: RrwebEvent, patterns: RegExp[]): RrwebEven
   }
 
   const data = event.data as Record<string, unknown>
+  if (event.type === EventType.Custom) {
+    return sanitizeCustomEvent(event, data, patterns)
+  }
   if (event.type === EventType.Meta) {
     if (typeof data['href'] !== 'string') {
       return event
@@ -110,6 +113,39 @@ function sanitizeRecorderEvent(event: RrwebEvent, patterns: RegExp[]): RrwebEven
 
   const sanitizedData = sanitizeSnapshotValue(data, patterns)
   return sanitizedData === data ? event : { ...event, data: sanitizedData }
+}
+
+// Network and navigation payloads are redacted where they are captured. Error and console payloads
+// carry URLs inside free text (messages, stacks, arguments), so they are redacted here, where every
+// custom event passes.
+function sanitizeCustomEvent(event: RrwebEvent, data: Record<string, unknown>, patterns: RegExp[]): RrwebEvent {
+  const payload = data['payload']
+  if (typeof payload !== 'object' || payload === null) {
+    return event
+  }
+  const fields = payload as Record<string, unknown>
+  const baseUrl = window.location.href
+  let sanitized: Record<string, unknown>
+  if (data['tag'] === CustomTag.Error) {
+    sanitized = { ...fields }
+    if (typeof fields['message'] === 'string') {
+      sanitized['message'] = redactUrlsInText(fields['message'], patterns, baseUrl)
+    }
+    if (typeof fields['source'] === 'string') {
+      sanitized['source'] = redactUrl(fields['source'], patterns, baseUrl)
+    }
+    if (typeof fields['stack'] === 'string') {
+      sanitized['stack'] = redactUrlsInText(fields['stack'], patterns, baseUrl, { stackTrace: true })
+    }
+  } else if (data['tag'] === CustomTag.Console && Array.isArray(fields['args'])) {
+    sanitized = {
+      ...fields,
+      args: fields['args'].map((arg: unknown) => (typeof arg === 'string' ? redactUrlsInText(arg, patterns, baseUrl) : arg)),
+    }
+  } else {
+    return event
+  }
+  return { ...event, data: { ...data, payload: sanitized } }
 }
 
 function sanitizeSnapshotValue(value: unknown, patterns: RegExp[]): unknown {

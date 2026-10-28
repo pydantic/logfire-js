@@ -109,6 +109,20 @@ const SAFE_KEYS = new Set([
 ])
 
 const MAX_SCRUB_DEPTH = 100
+const EXCEPTION_STACKTRACE_KEY = 'exception.stacktrace'
+// A frame needs its full shape, so a message line such as `user@example.com:10:5` or a multiline
+// message line starting with `at` is still scrubbed. V8 frames start with `at` and end with a
+// location or a native marker; Firefox and Safari frames end with `@` and a URL with a scheme.
+const V8_FRAME_LINE_PATTERN = /^\s*at\s.*(?::\d+:\d+\)?|\((?:native|<anonymous>|index \d+)\))$/u
+const URL_LOCATION_PATTERN = /^[a-z][\w+.-]*:\S*:\d+:\d+$/iu
+
+function isStackFrameLine(line: string): boolean {
+  if (V8_FRAME_LINE_PATTERN.test(line)) {
+    return true
+  }
+  const at = line.lastIndexOf('@')
+  return at >= 0 && URL_LOCATION_PATTERN.test(line.slice(at + 1))
+}
 const MAX_DEPTH_REPLACEMENT = '[Scrubbed due to max depth]'
 const CYCLE_REPLACEMENT = '[Scrubbed due to cycle]'
 
@@ -159,6 +173,15 @@ export class LogfireAttributeScrubber implements BaseScrubber {
     return `[Scrubbed due to '${matchedSubstring}']`
   }
 
+  // A stack trace repeats the exception message and its causes, so those lines are scrubbed like the
+  // message. Frame lines are kept, since a file path such as `auth.js` would otherwise redact them.
+  private scrubStackTrace(path: JsonPath, stack: string, notes: ScrubbedNote[], seen: WeakSet<object>, depth: number): string {
+    return stack
+      .split('\n')
+      .map((line) => (isStackFrameLine(line) ? line : (this.scrub(path, line, notes, seen, depth) as string)))
+      .join('\n')
+  }
+
   private scrub(path: JsonPath, value: unknown, notes: ScrubbedNote[], seen: WeakSet<object>, depth: number): unknown {
     if (typeof value === 'string') {
       // Check if the string matches the pattern
@@ -183,7 +206,8 @@ export class LogfireAttributeScrubber implements BaseScrubber {
         }
       }
       return value
-    } else if (value instanceof Date) {
+    } else if (value instanceof Date || ArrayBuffer.isView(value)) {
+      // Byte arrays are OpenTelemetry log values in their own right, not maps of their indices.
       return value
     } else if (Array.isArray(value)) {
       if (depth >= MAX_SCRUB_DEPTH) {
@@ -211,7 +235,9 @@ export class LogfireAttributeScrubber implements BaseScrubber {
       try {
         const result = new Map<string, unknown>()
         for (const [k, v] of Object.entries(value)) {
-          if (SAFE_KEYS.has(k) || ['boolean', 'number', 'undefined'].includes(typeof v) || v === null) {
+          if (k === EXCEPTION_STACKTRACE_KEY && typeof v === 'string') {
+            result.set(k, this.scrubStackTrace([...path, k], v, notes, seen, depth + 1))
+          } else if (SAFE_KEYS.has(k) || ['boolean', 'number', 'undefined'].includes(typeof v) || v === null) {
             // Safe key or a primitive value, no scrubbing of the key itself.
             // (In the Python SDK we still scrub primitive values to be extra careful)
             result.set(k, v)

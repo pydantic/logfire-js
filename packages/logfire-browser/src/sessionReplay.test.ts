@@ -410,6 +410,34 @@ describe('startBrowserSessionReplay', () => {
     })
   })
 
+  it.each([
+    [false, undefined, undefined],
+    [false, false, false],
+    [false, true, true],
+    [true, undefined, false],
+    [true, true, false],
+  ])(
+    'with browser global error capture %s and replay captureGlobalErrors %s, passes %s to replay',
+    async (capturesGlobalErrors, captureGlobalErrors, expected) => {
+      let replayConfig: BrowserSessionReplayPackageConfig | undefined
+      const replayModule: BrowserSessionReplayModule = {
+        startSessionReplay: (config) => {
+          replayConfig = config
+          return createReplayRuntime()
+        },
+      }
+
+      await startBrowserSessionReplay(
+        { load: () => replayModule, replayUrl: '/logfire/replay', ...(captureGlobalErrors === undefined ? {} : { captureGlobalErrors }) },
+        createManager(),
+        new BrowserSessionReplayState(),
+        { capturesGlobalErrors, traceUrl: '/logfire/traces' }
+      )
+
+      expect(replayConfig?.captureGlobalErrors).toBe(expected)
+    }
+  )
+
   it('clears replay state when the wrapped replay is stopped once', async () => {
     const replayState = new BrowserSessionReplayState()
     let stopCalls = 0

@@ -27,7 +27,7 @@ vi.mock('@rrweb/record', () => ({ record }))
 
 import { startRecording } from './recorder'
 import type { RecorderOptions } from './recorder'
-import { EventType, IncrementalSource } from './types'
+import { CustomTag, EventType, IncrementalSource } from './types'
 
 function lastOptions(): RrwebRecordOptions {
   const options = record.mock.calls.at(-1)?.[0]
@@ -195,6 +195,69 @@ describe('startRecording', () => {
     expect(meta.data).toEqual({ href: 'https://app.example.test/orders?token=secret#details', width: 800 })
     expect(fullSnapshot.data.node.attributes.href).toBe('/orders?token=full#details')
     expect(mutation.data.adds[0]?.node.attributes.action).toBe('/checkout?token=add')
+  })
+
+  it('redacts URLs in error messages, sources, stacks, and console arguments at the custom-event boundary', () => {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [/.+/u] })
+    const error = {
+      type: EventType.Custom,
+      data: {
+        tag: CustomTag.Error,
+        payload: {
+          message: 'GET https://api.example.test/x?token=secret failed',
+          source: 'https://app.example.test/app.js?token=secret',
+          stack: 'Error: boom\n    at load (https://app.example.test/app.js?token=secret:10:5)',
+        },
+      },
+      timestamp: 9,
+    } satisfies RrwebEvent
+    const consoleEvent = {
+      type: EventType.Custom,
+      data: { tag: CustomTag.Console, payload: { level: 'error', args: ['fetch https://api.example.test/x?key=secret failed', '42'] } },
+      timestamp: 10,
+    } satisfies RrwebEvent
+    const network = {
+      type: EventType.Custom,
+      data: { tag: CustomTag.Network, payload: { url: 'https://api.example.test/kept-as-captured?x=1' } },
+      timestamp: 11,
+    } satisfies RrwebEvent
+
+    emitFromRrweb(error)
+    emitFromRrweb(consoleEvent)
+    emitFromRrweb(network)
+
+    expect(emitted[0]).toEqual({
+      ...error,
+      data: {
+        tag: CustomTag.Error,
+        payload: {
+          message: 'GET https://api.example.test/x failed',
+          source: 'https://app.example.test/app.js',
+          stack: 'Error: boom\n    at load (https://app.example.test/app.js:10:5)',
+        },
+      },
+    })
+    expect(emitted[1]).toEqual({
+      ...consoleEvent,
+      data: { tag: CustomTag.Console, payload: { level: 'error', args: ['fetch https://api.example.test/x failed', '42'] } },
+    })
+    expect(emitted[2]).toBe(network)
+    expect(error.data.payload.source).toBe('https://app.example.test/app.js?token=secret')
+  })
+
+  it('leaves custom events unchanged when no redaction pattern is configured', () => {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({ emit: (event) => emitted.push(event) })
+    const error = {
+      type: EventType.Custom,
+      data: { tag: CustomTag.Error, payload: { message: 'boom', source: 'https://app.example.test/app.js?v=1' } },
+      timestamp: 9,
+    } satisfies RrwebEvent
+
+    emitFromRrweb(error)
+
+    expect(emitted[0]).toEqual(error)
   })
 
   it('forwards custom events through rrweb statics', () => {

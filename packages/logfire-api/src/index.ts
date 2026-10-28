@@ -28,6 +28,7 @@ import { logfireFormatWithExtras, truncateString } from './formatter'
 import { Level } from './levels'
 import type { LogFireLevel } from './levels'
 import { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire, serializeAttributes } from './logfireApiConfig'
+import { beginScrubbedSpan, recordScrubbedAttributes } from './exportScrubbing'
 import { PendingSpanProcessor } from './PendingSpanProcessor'
 import { setPendingSpanSuppressed } from './pendingSpanSuppression'
 import { SpanLevel, checkTraceIdRatio, levelOrDuration } from './sampling'
@@ -35,6 +36,8 @@ import { TailSamplingProcessor } from './TailSamplingProcessor'
 import { ULIDGenerator } from './ULIDGenerator'
 
 export * from './AttributeScrubber'
+export { scrubbedSpanCopy, scrubLogRecordForExport, scrubSpanForExport } from './exportScrubbing'
+export type { ExportScrubbingOptions, ScrubbableLogRecord } from './exportScrubbing'
 export { canonicalizeError, computeFingerprint } from './fingerprint'
 export { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire } from './logfireApiConfig'
 export type {
@@ -403,6 +406,7 @@ function buildInstrumentedCallSerializationAttributes(msgTemplate: string, attri
 function safeSetSpanAttribute(span: Span, key: string, value: SerializedAttributeValue): void {
   try {
     span.setAttribute(key, value)
+    recordScrubbedAttributes(span, { [key]: value })
   } catch {
     // Late-added metadata is best-effort and must never change function outcome.
   }
@@ -456,11 +460,13 @@ function startSpanWithSettings(
   // Logs are always INTERNAL: a runtime options object carrying `kind` must not
   // change the exported kind of zero-duration Logfire logs.
   const kind = resolvedOptions.log === true ? undefined : resolvedOptions.kind
+  beginScrubbedSpan(spanStart.attributes)
   const span = logfireApiConfig.tracer.startSpan(
     spanStart.name,
     { attributes: spanStart.attributes, ...(kind !== undefined ? { kind } : {}) },
     getSpanStartContext(resolvedOptions.parentSpan)
   )
+  recordScrubbedAttributes(span, spanStart.attributes)
 
   return span
 }
@@ -491,6 +497,7 @@ function startPendingSpanWithSettings(
     { attributes: spanStart.attributes, ...spanKindOptions },
     setPendingSpanSuppressed(parentContext)
   )
+  recordScrubbedAttributes(realSpan, spanStart.attributes)
 
   if (!realSpan.isRecording()) {
     return realSpan
@@ -502,19 +509,17 @@ function startPendingSpanWithSettings(
     return realSpan
   }
 
+  const placeholderAttributes = {
+    ...spanStart.attributes,
+    [ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY]: readableSpan.parentSpanContext?.spanId ?? INVALID_SPAN_ID,
+    [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span',
+  }
   const placeholder = logfireApiConfig.tracer.startSpan(
     spanStart.name,
-    {
-      attributes: {
-        ...spanStart.attributes,
-        [ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY]: readableSpan.parentSpanContext?.spanId ?? INVALID_SPAN_ID,
-        [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span',
-      },
-      startTime,
-      ...spanKindOptions,
-    },
+    { attributes: placeholderAttributes, startTime, ...spanKindOptions },
     TheTraceAPI.setSpan(parentContext, realSpan)
   )
+  recordScrubbedAttributes(placeholder, placeholderAttributes)
   placeholder.end(startTime)
 
   return realSpan
@@ -597,6 +602,7 @@ function spanWithSettings<R>(
   const { serializationAttributes, serializedAttributes } = buildSerializedLogfireAttributes(msgTemplate, attributes, { tags, level })
 
   const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : TheContextAPI.active()
+  beginScrubbedSpan(serializedAttributes)
   return logfireApiConfig.tracer.startActiveSpan(
     spanName ?? msgTemplate,
     {
@@ -605,6 +611,7 @@ function spanWithSettings<R>(
     },
     context,
     (span: Span) => {
+      recordScrubbedAttributes(span, serializedAttributes)
       let result: R
       try {
         result = callback(span)

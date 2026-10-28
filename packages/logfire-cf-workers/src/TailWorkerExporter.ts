@@ -2,6 +2,7 @@ import type { ExportResult } from '@opentelemetry/core'
 import { ExportResultCode } from '@opentelemetry/core'
 import { JsonTraceSerializer } from '@opentelemetry/otlp-transformer'
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base'
+import { scrubSpanForExport } from 'logfire'
 
 import type { IExportTraceServiceRequest, IKeyValue } from './OtlpTransformerTypes'
 
@@ -35,6 +36,10 @@ export class TailWorkerExporter implements SpanExporter {
   }
 
   private sendSpans(spans: ReadableSpan[], done?: (result: ExportResult) => void): void {
+    // The tail worker forwards this output to Logfire as is, so it must leave this worker scrubbed.
+    for (const span of spans) {
+      scrubSpanForExport(span)
+    }
     const bytes = JsonTraceSerializer.serializeRequest(spans)
     const jsonString = new TextDecoder().decode(bytes)
     const response = JSON.parse(jsonString) as IExportTraceServiceRequest
