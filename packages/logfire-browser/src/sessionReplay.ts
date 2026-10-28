@@ -12,7 +12,7 @@ export type MaybePromise<T> = T | Promise<T>
 export interface BrowserSessionReplayRuntime {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
-  /** Absent from replay packages older than 0.8. */
+  /** Absent from replay packages older than 0.9. */
   readonly uploading?: boolean | undefined
   getSessionId(): string
   /** Absent from replay packages older than 0.6. */
