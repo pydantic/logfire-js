@@ -10,9 +10,15 @@ interface OtlpRequest {
   resourceSpans?: { scopeSpans?: { spans?: ExportedSpan[] }[] }[]
 }
 
+// Pausing before navigation is applied to the new document without comparing against elapsed time.
+// The gap exceeds the test timeout, so the about:blank pause cannot target the past.
+const clockStart = Date.UTC(2026, 0, 1)
+const clockPauseGap = 60_000
+
 async function start(page: Page, mode = ''): Promise<ExportedSpan[]> {
   const spans: ExportedSpan[] = []
-  await page.clock.install()
+  await page.clock.install({ time: clockStart })
+  await page.clock.pauseAt(clockStart + clockPauseGap)
   await page.route('**/v1/**', async (handler) => {
     const request = handler.request()
     expect(new URL(request.url()).pathname).toBe('/v1/traces')
@@ -24,7 +30,6 @@ async function start(page: Page, mode = ''): Promise<ExportedSpan[]> {
   })
   await page.goto(`http://127.0.0.1:5190/acceptance.html?mode=${mode}`)
   await expect(page.getByText('ready', { exact: true })).toBeVisible()
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100))
   return spans
 }
 
