@@ -137,24 +137,69 @@ const CSS_URL_SPECIAL_CHARACTER_PATTERN = /[\\"'()\s]/gu
 /** Apply `redact` to each `url()` in CSS text, such as an inline `style` attribute. */
 export function redactCssUrls(value: string, redact: (url: string) => string): string {
   // A single forward scan rather than a regex, because text with an unclosed `url(` made a
-  // backtracking pattern take seconds on a page's main thread.
-  // Searched in the original text, because lowercasing can change its length and shift offsets.
-  const urlFunction = /url\(/giu
+  // backtracking pattern take seconds on a page's main thread. Identifiers are decoded, because CSS
+  // also reads an escaped name such as `u\72l(` as `url(`.
   let result = ''
   let copied = 0
-  let match = urlFunction.exec(value)
-  while (match !== null) {
-    const position = match.index
-    const token = scanCssUrl(value, position + match[0].length)
+  let position = 0
+  while (position < value.length) {
+    const name = scanCssIdentifier(value, position)
+    if (name === undefined) {
+      position++
+      continue
+    }
+    if (value[name.end] !== '(' || name.decoded.toLowerCase() !== 'url') {
+      position = name.end
+      continue
+    }
+    const token = scanCssUrl(value, name.end + 1)
     if (token.url.length > 0) {
       const redacted = escapeCssUrl(redact(unescapeCss(token.url)))
       result += `${value.slice(copied, position)}url(${token.quote}${redacted}${token.quote}${token.closed ? ')' : ''}`
       copied = token.end
     }
-    urlFunction.lastIndex = Math.max(token.end, position + 1)
-    match = urlFunction.exec(value)
+    position = Math.max(token.end, name.end + 1)
   }
   return copied === 0 ? value : result + value.slice(copied)
+}
+
+const CSS_HEX_DIGIT_PATTERN = /[0-9a-f]/iu
+const CSS_IDENTIFIER_CHARACTER_PATTERN = /[-\w]/u
+// Only names up to this length are kept, which is enough to recognize `url`.
+const MAX_DECODED_NAME_LENGTH = 4
+
+// Reads the identifier at `start`, if any, and returns where it ends with the start of its decoded
+// name.
+function scanCssIdentifier(value: string, start: number): { decoded: string; end: number } | undefined {
+  let position = start
+  let decoded = ''
+  while (position < value.length) {
+    const character = value[position] ?? ''
+    if (character === '\\') {
+      const next = value[position + 1]
+      if (next === undefined || next === '\n') {
+        break
+      }
+      let hexEnd = position + 1
+      while (hexEnd < value.length && hexEnd < position + 7 && CSS_HEX_DIGIT_PATTERN.test(value[hexEnd] ?? '')) {
+        hexEnd++
+      }
+      if (hexEnd > position + 1) {
+        decoded += decodeCssCodePoint(value.slice(position + 1, hexEnd))
+        position = /[ \t\n]/u.test(value[hexEnd] ?? '') ? hexEnd + 1 : hexEnd
+      } else {
+        decoded += next
+        position += 2
+      }
+    } else if (CSS_IDENTIFIER_CHARACTER_PATTERN.test(character) || character.charCodeAt(0) >= 0x80) {
+      decoded += character
+      position++
+    } else {
+      break
+    }
+    decoded = decoded.slice(0, MAX_DECODED_NAME_LENGTH)
+  }
+  return position === start ? undefined : { decoded, end: position }
 }
 
 interface CssUrlToken {
@@ -176,18 +221,23 @@ function scanCssUrl(value: string, start: number): CssUrlToken {
     position++
   }
   const urlStart = position
+  // An unquoted URL ends before trailing whitespace, but an escaped space belongs to the URL.
+  let contentEnd = position
   while (position < value.length) {
-    const character = value[position]
+    const character = value[position] ?? ''
     if (character === '\\') {
       position += 2
+      contentEnd = position
     } else if (quote === '' ? character === ')' : character === quote) {
       break
     } else {
       position++
+      if (quote !== '' || !/\s/u.test(character)) {
+        contentEnd = position
+      }
     }
   }
-  const urlEnd = Math.min(position, value.length)
-  const url = quote === '' ? value.slice(urlStart, urlEnd).trimEnd() : value.slice(urlStart, urlEnd)
+  const url = value.slice(urlStart, Math.min(contentEnd, value.length))
   if (quote !== '' && position < value.length) {
     position++
     while (position < value.length && /\s/u.test(value[position] ?? '')) {
@@ -203,11 +253,15 @@ function unescapeCss(value: string): string {
     if (hex === undefined) {
       return character === '\n' ? '' : (character ?? '')
     }
-    const codePoint = Number.parseInt(hex, 16)
-    return codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)
-      ? '\ufffd'
-      : String.fromCodePoint(codePoint)
+    return decodeCssCodePoint(hex)
   })
+}
+
+function decodeCssCodePoint(hex: string): string {
+  const codePoint = Number.parseInt(hex, 16)
+  return codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)
+    ? '\ufffd'
+    : String.fromCodePoint(codePoint)
 }
 
 function escapeCssUrl(value: string): string {

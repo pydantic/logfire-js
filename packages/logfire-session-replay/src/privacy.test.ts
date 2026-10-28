@@ -182,6 +182,21 @@ describe('redactCssUrls', () => {
     expect(redactCssUrls('background: url(/\\3f token=secret)', redact)).toBe('background: url(https://app.example.test/)')
   })
 
+  it('recognizes url functions whose names are written with escapes', () => {
+    expect(redactCssUrls('background: u\\72l(/image?token=secret)', redact)).toBe('background: url(https://app.example.test/image)')
+    expect(redactCssUrls('background: \\55 RL(/image?token=secret)', redact)).toBe('background: url(https://app.example.test/image)')
+    expect(redactCssUrls('background: xurl(/image?token=secret)', redact)).toBe('background: xurl(/image?token=secret)')
+  })
+
+  it('keeps an escaped trailing space in an unquoted URL', () => {
+    const seen: string[] = []
+    redactCssUrls('background: url(/a\\  )', (url) => {
+      seen.push(url)
+      return url
+    })
+    expect(seen).toEqual(['/a '])
+  })
+
   it('keeps offsets when earlier text changes length when lowercased', () => {
     expect(redactCssUrls('content: "İ"; background: url(/image.png?token=secret)', redact)).toBe(
       'content: "İ"; background: url(https://app.example.test/image.png)'
