@@ -385,6 +385,27 @@ test.describe('session replay delivery in Chromium', () => {
     await expect(page.frameLocator('iframe').locator('#late')).toHaveText('gap-after')
   })
 
+  test('a permanently rejected replay stops instead of resyncing', async ({ page, request }) => {
+    await page.clock.install()
+    await page.goto('http://127.0.0.1:4177/rejected/')
+    await expect(page.locator('#status')).toHaveText(/^(?:complete|failed)$/u)
+    await expect(page.locator('#status')).toHaveText('complete')
+    await page.locator('#payload').evaluate((node) => {
+      node.textContent = 'after-stop'
+    })
+    // Two resync intervals: a recorder that kept resyncing would upload another snapshot.
+    await page.clock.runFor(130_000)
+
+    const response = await request.get('http://127.0.0.1:4177/fixture/status?scenario=rejected')
+    expect(response.ok()).toBe(true)
+    const evidence = parseRecord(await response.text(), 'rejected-replay evidence')
+    const receipts = evidence['receipts']
+    expect(Array.isArray(receipts) ? receipts.length : receipts).toBe(1)
+    const state = parseRecord(JSON.stringify(evidence['state']), 'rejected-replay state')
+    expect(state['recording']).toBe(false)
+    expect(state['errors']).toEqual(['replay chunk seq=0 rejected: replay ingest failed: 401'])
+  })
+
   test('a five-minute checkpoint plays without the preceding recording', async ({ page, request }) => {
     const startedAt = Date.now()
     await page.clock.install({ time: startedAt })

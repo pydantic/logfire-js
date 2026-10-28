@@ -392,7 +392,7 @@ describe('startSessionReplay full mode', () => {
     }
   })
 
-  it.each([202, 400])('restores recording before a pending pagehide upload returns HTTP %s', async (status) => {
+  it.each([202, 413])('restores recording before a pending pagehide upload returns HTTP %s', async (status) => {
     vi.useFakeTimers()
     const { calls, fetchImpl } = recordingFetch()
     let finishUpload: ((response: Response) => void) | undefined
@@ -430,7 +430,7 @@ describe('startSessionReplay full mode', () => {
       finishUpload?.(new Response(null, { status }))
       await stop
       expect(stopped).toBe(true)
-      expect(onError).toHaveBeenCalledTimes(status === 400 ? 1 : 0)
+      expect(onError).toHaveBeenCalledTimes(status === 413 ? 1 : 0)
     } finally {
       finishUpload?.(new Response(null, { status }))
       await vi.advanceTimersByTimeAsync(1)
@@ -556,6 +556,42 @@ describe('startSessionReplay full mode', () => {
     })
     expect(handle.takeFullSnapshot).toHaveBeenCalledOnce()
     expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot, refreshedSnapshot])
+    await replay.stop()
+  })
+
+  it('reports uploading only once a full recording reaches its minimum duration', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { minSessionDurationMs: 5_000, now: () => Date.now() }))
+
+    emit({ ...fullSnapshot, timestamp: 0 })
+    expect(replay.recording).toBe(true)
+    expect(replay.mode).toBe('full')
+    expect(replay.uploading).toBe(false)
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(replay.uploading).toBe(false)
+
+    emit({ ...click, timestamp: 5_000 })
+    expect(replay.uploading).toBe(true)
+    await vi.waitFor(() => {
+      expect(calls).toHaveLength(1)
+    })
+    await replay.stop()
+    expect(replay.uploading).toBe(false)
+  })
+
+  it('does not report a buffered recording as uploading until an error promotes it', async () => {
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { sessionSampleRate: 0, onErrorSampleRate: 1, random: rng([0.9, 0.1]) }))
+    emit(fullSnapshot)
+    expect(replay.mode).toBe('buffer')
+    expect(replay.uploading).toBe(false)
+
+    replay.captureError(new Error('boom'))
+    await replay.flush()
+    expect(replay.mode).toBe('full')
+    expect(replay.uploading).toBe(true)
     await replay.stop()
   })
 
@@ -1269,7 +1305,7 @@ describe('startSessionReplay lifecycle', () => {
     const calls: string[] = []
     const fetchImpl = vi.fn(async (url: string | URL) => {
       calls.push(String(url))
-      return new Response(null, { status: calls.length === 1 ? 400 : 202 })
+      return new Response(null, { status: calls.length === 1 ? 413 : 202 })
     }) as unknown as typeof fetch
     const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId, onError }))
     const firstRecordingId = replay.getRecordingId()
@@ -1355,7 +1391,7 @@ describe('startSessionReplay lifecycle', () => {
   })
 
   it('takes a recorder full snapshot after a rejected chunk', async () => {
-    const fetchImpl = vi.fn(async () => new Response(null, { status: 400 })) as unknown as typeof fetch
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 413 })) as unknown as typeof fetch
     const onError = vi.fn<(error: unknown) => void>()
     const replay = startSessionReplay(baseConfig(fetchImpl, { onError }))
     emit(fullSnapshot)
@@ -1365,8 +1401,60 @@ describe('startSessionReplay lifecycle', () => {
       expect(handle.takeFullSnapshot).toHaveBeenCalledTimes(1)
     })
 
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ name: 'ReplayUploadError', reason: 'rejected', seq: 0, status: 400 }))
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ name: 'ReplayUploadError', reason: 'rejected', seq: 0, status: 413 }))
     await replay.stop()
+  })
+
+  it.each([401, 402, 403])('stops recording and detaches the recorder after a permanent %i rejection', async (status) => {
+    vi.useFakeTimers()
+    let sessionId = 'session-1'
+    const fetchImpl = vi.fn(async () => new Response(null, { status })) as unknown as typeof fetch
+    const onError = vi.fn<(error: unknown) => void>()
+    const start = vi.mocked(recorderMod.startRecording)
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId, onError }))
+    emit(fullSnapshot)
+    await replay.flush()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(replay.recording).toBe(false)
+    expect(replay.mode).toBe('off')
+    expect(handle.stop).toHaveBeenCalledOnce()
+    expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ name: 'ReplayUploadError', reason: 'rejected', status }))
+
+    sessionId = 'session-2'
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(handle.takeFullSnapshot).not.toHaveBeenCalled()
+    expect(start).toHaveBeenCalledOnce()
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    await replay.stop()
+  })
+
+  it('stops the controller when the previous recording is rejected after a session rotation', async () => {
+    let sessionId = 'session-old'
+    const calls: string[] = []
+    const fetchImpl = vi.fn(async (url: string | URL) => {
+      calls.push(String(url))
+      return new Response(null, { status: 401 })
+    }) as unknown as typeof fetch
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId, onError: () => undefined }))
+    const firstRecordingId = replay.getRecordingId()
+    emit(fullSnapshot)
+
+    sessionId = 'session-new'
+    emit(click)
+    await replay.flush()
+    await vi.waitFor(() => {
+      expect(replay.recording).toBe(false)
+    })
+    // The rejection arrives while the old recording shuts down, before the next one starts.
+    expect(handles).toHaveLength(1)
+    expect(handles[0]!.stop).toHaveBeenCalledOnce()
+
+    emit(fullSnapshot)
+    emitActivity(click)
+    await replay.flush()
+    expect(calls).toEqual([`https://app.example.com/replay/${firstRecordingId}?seq=0`])
   })
 
   it('honors capture toggles', async () => {

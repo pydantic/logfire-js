@@ -240,6 +240,12 @@ and takes a fresh full snapshot, so playback resumes correctly after the gap.
 Chunks that already start from a later full snapshot are kept. Replay takes at
 most one of these recovery snapshots per minute.
 
+A `4xx` rejection other than `408`, `413`, `425`, or `429`, such as a revoked
+token (`401`), a usage block (`402`), or a deleted frontend application
+(`403`), would also reject every later chunk. Replay then reports the
+`ReplayUploadError`, drops the queued chunks, and stops as `stop()` does: the
+recorder detaches and no further snapshots or uploads are made in this page.
+
 `stop()` gives each unsent chunk one last attempt and resolves within about 10
 seconds, even when uploads hang. The queue lives in memory only: chunks that are
 still queued when the page closes or reloads are lost, and a reloaded page does
@@ -309,7 +315,13 @@ Use `getSessionId` to share a session id with another SDK layer. The
 `@pydantic/logfire-browser` integration passes its browser RUM session id through
 this hook when top-level `sessionReplay` is configured. Other integrations must
 record the same value as `session.id` on their browser spans so Logfire
-can correlate those spans with the replay over its time bounds.
+can correlate those spans with the replay over its time bounds. Replay does not
+apply `sessionIdleTimeoutMs` to an external id, so return a new id once the
+session goes idle.
+
+`uploading` is `true` once a `full` recording has passed `minSessionDurationMs`
+and uploads what it records. Before that, the visit can still end without a
+replay, so mark spans as replayed only while `uploading` is `true`.
 
 ## Browser SDK Integration
 

@@ -60,9 +60,12 @@ performance data alongside replay, keep the default browser profile.
 RUM `session.id`. Each tab replay has a separate upload/playback identifier in
 `logfire.session_replay.id`. Same-tab reloads and navigations continue that replay;
 new tabs start separate replays, even when they share a RUM session. Replays
-roll over after at most two hours. Spans started after replay has
-loaded and sampled into `full` or `buffer` mode include
-`logfire.session_replay.active` and `logfire.session_replay.mode`. Those active
+roll over after at most two hours, and with the RUM session after its idle
+timeout. Spans started while replay records in `buffer` mode, or in `full` mode
+once it has passed its minimum duration and uploads, include
+`logfire.session_replay.active` and `logfire.session_replay.mode`. Spans from a
+visit that ends before the minimum duration are not marked, because that visit
+uploads no replay. Those active
 attributes are truthful best-effort annotations. Link a marked span to its
 recording using `logfire.session_replay.id`, falling back to `session.id` for
 older SDK recordings. Spans emitted before replay startup do not have a recording
@@ -150,7 +153,9 @@ is still lost, `sessionReplay.onError` receives a `ReplayUploadError` with the
 lost `seq`, the dependent `droppedSeqs`, and a `reason` of `unconfirmed`,
 `rejected`, or `not-sent`. Replay then takes a fresh full snapshot so playback
 resumes correctly after the gap. Queued chunks do not survive a page close or
-reload.
+reload. A `4xx` rejection other than `408`, `413`, `425`, or `429`, such as a
+revoked token or a usage block, stops replay for the page instead: the recorder
+detaches and the facade reports `recording: false`.
 
 For a separate replay destination or an authenticated proxy, see
 [Advanced configuration](advanced.md#separate-replay-destination).

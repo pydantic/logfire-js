@@ -149,6 +149,12 @@ export default defineConfig({
               response.end()
               return
             }
+            if (scenario === 'rejected') {
+              receipt.accepted = false
+              response.statusCode = 401
+              response.end()
+              return
+            }
             if (scenario === 'retry-after' && scenarioReceipts.length === 1) {
               receipt.accepted = false
               response.statusCode = 429

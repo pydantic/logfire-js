@@ -1,7 +1,7 @@
 import { startSessionReplay } from 'lf-replay-delivery'
 import type { SessionReplay } from '@pydantic/logfire-session-replay'
 
-type Scenario = 'csp' | 'gap' | 'retry-after' | 'short' | 'unload' | 'utf8'
+type Scenario = 'csp' | 'gap' | 'rejected' | 'retry-after' | 'short' | 'unload' | 'utf8'
 type Phase = 'starting' | 'ready' | 'complete' | 'failed'
 
 interface DeliveryState {
@@ -9,6 +9,7 @@ interface DeliveryState {
   error?: string
   errors: string[]
   phase: Phase
+  recording?: boolean
   scenario: Scenario
 }
 
@@ -76,6 +77,8 @@ async function run(): Promise<void> {
     await replay.flush()
   } else if (scenario === 'gap') {
     await runGap(replay)
+  } else if (scenario === 'rejected') {
+    await runRejected(replay)
   } else {
     await fetch(`/application/fetch?scenario=${scenario}`, { method: 'POST', body: 'é🚀' })
     await sendXhr(`/application/xhr?scenario=${scenario}`, 'é🚀')
@@ -108,6 +111,24 @@ async function runGap(replay: SessionReplay): Promise<void> {
   late.textContent = 'gap-after'
   await nextFrame()
   await replay.flush()
+}
+
+// The fixture answers 401, as for a revoked token. Replay stops instead of resyncing.
+async function runRejected(replay: SessionReplay): Promise<void> {
+  const payload = document.querySelector('#payload')
+  if (payload === null) {
+    throw new Error('missing payload node')
+  }
+  payload.textContent = 'rejected-before'
+  await nextFrame()
+  await replay.flush()
+  for (let attempt = 0; replay.recording && attempt < 100; attempt++) {
+    // eslint-disable-next-line no-await-in-loop -- polls until the deferred stop runs.
+    await delay(10)
+  }
+  state.recording = replay.recording
+  payload.textContent = 'rejected-after'
+  await nextFrame()
 }
 
 async function prepareUnload(): Promise<void> {
@@ -173,6 +194,9 @@ function scenarioFromPath(pathname: string): Scenario {
   }
   if (pathname.startsWith('/gap/')) {
     return 'gap'
+  }
+  if (pathname.startsWith('/rejected/')) {
+    return 'rejected'
   }
   if (pathname.startsWith('/retry-after/')) {
     return 'retry-after'

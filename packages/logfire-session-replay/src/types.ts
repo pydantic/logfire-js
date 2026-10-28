@@ -127,7 +127,9 @@ export interface SessionReplayConfig {
   /**
    * Optional external session id source. The browser SDK integration should
    * pass its RUM session id here. This controls sampling and session rotation;
-   * it is not used as the upload/playback id (see `getRecordingId()`).
+   * it is not used as the upload/playback id (see `getRecordingId()`). Return a
+   * new id once the session goes idle: replay does not apply
+   * `sessionIdleTimeoutMs` to an external id.
    */
   getSessionId?: () => string | undefined
   /**
