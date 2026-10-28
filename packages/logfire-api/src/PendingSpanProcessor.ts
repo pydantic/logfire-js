@@ -74,11 +74,12 @@ export class PendingSpanProcessor implements SpanProcessor {
       duration,
       ended: true,
       endTime: startAndEndTime,
-      // Own lists, so events and links the real span adds later never join an already-scrubbed copy.
-      events: [...span.events],
+      // Own lists and records: events and links the real span adds later never join this
+      // already-scrubbed copy, and scrubbing the copy leaves the real span's records unscrubbed.
+      events: span.events.map((event) => ({ ...event, ...(event.attributes ? { attributes: { ...event.attributes } } : {}) })),
       instrumentationScope: span.instrumentationScope,
       kind: span.kind,
-      links: [...span.links],
+      links: span.links.map((link) => ({ ...link, ...(link.attributes ? { attributes: { ...link.attributes } } : {}) })),
       name: span.name,
       parentSpanContext: realSpanContext,
       resource: span.resource,

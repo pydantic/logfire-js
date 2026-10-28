@@ -76,6 +76,32 @@ describe('export-time scrubbing', () => {
     expect(real?.events[0]?.attributes).toEqual({ note: "[Scrubbed due to 'session']" })
   })
 
+  it('leaves the real span link attributes raw when its pending copy is scrubbed', async () => {
+    const values: unknown[] = []
+    configureLogfireApi({
+      scrubbing: {
+        callback: (match) => {
+          values.push(match.value)
+          return null
+        },
+      },
+    })
+    const exporter = new InMemorySpanExporter()
+    const primary = new LogfireSpanProcessor(new SimpleSpanProcessor(exporter), undefined)
+    const provider = new BasicTracerProvider({ spanProcessors: [primary, new PendingSpanProcessor(primary)] })
+    const context = { spanId: '0000000000000001', traceFlags: 1, traceId: '00000000000000000000000000000001' }
+    provider
+      .getTracer('instrumentation')
+      .startSpan('job', { links: [{ attributes: { 'auth.header': 'Bearer abc' }, context }] })
+      .end()
+    await provider.forceFlush()
+
+    const [pending, real] = exporter.getFinishedSpans()
+    expect(values).toEqual(['Bearer abc', 'Bearer abc'])
+    expect(pending?.links[0]?.attributes).toEqual({ 'auth.header': "[Scrubbed due to 'auth']" })
+    expect(real?.links[0]?.attributes).toEqual({ 'auth.header': "[Scrubbed due to 'auth']" })
+  })
+
   it('scrubs instrumentation spans, late attributes, and events before export', async () => {
     const exporter = new InMemorySpanExporter()
     const provider = new BasicTracerProvider({ spanProcessors: [new LogfireSpanProcessor(new SimpleSpanProcessor(exporter), undefined)] })
