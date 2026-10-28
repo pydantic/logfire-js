@@ -52,7 +52,14 @@ function redactTextUrl(url: string, patterns: readonly RegExp[], baseUrl: string
 }
 
 /** Redact each HTTP URL inside free text, such as a stack trace, that matches `patterns`. */
-export function redactUrlsInText(text: string, patterns: readonly RegExp[], baseUrl: string): string {
+export function redactUrlsInText(
+  text: string,
+  patterns: readonly RegExp[],
+  baseUrl: string,
+  // Only text known to be a stack trace keeps `:line:column` after a frame URL. Elsewhere, such as in
+  // console arguments, a line that merely looks like a frame must not restore digits from a query.
+  { stackTrace = false }: { stackTrace?: boolean } = {}
+): string {
   if (patterns.length === 0) {
     return text
   }
@@ -60,9 +67,9 @@ export function redactUrlsInText(text: string, patterns: readonly RegExp[], base
   return text
     .split('\n')
     .map((line) => {
-      const isV8Frame = V8_FRAME_LINE_PATTERN.test(line)
+      const isV8Frame = stackTrace && V8_FRAME_LINE_PATTERN.test(line)
       return line.replace(TEXT_URL_PATTERN, (match: string, offset: number) => {
-        const suffix = urlTextSuffix(match, isV8Frame || line[offset - 1] === '@')
+        const suffix = urlTextSuffix(match, isV8Frame || (stackTrace && line[offset - 1] === '@'))
         return `${redactTextUrl(match.slice(0, match.length - suffix.length), patterns, baseUrl)}${suffix}`
       })
     })

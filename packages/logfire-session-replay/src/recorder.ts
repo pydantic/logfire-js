@@ -135,7 +135,7 @@ function sanitizeCustomEvent(event: RrwebEvent, data: Record<string, unknown>, p
       sanitized['source'] = redactUrl(fields['source'], patterns, baseUrl)
     }
     if (typeof fields['stack'] === 'string') {
-      sanitized['stack'] = redactUrlsInText(fields['stack'], patterns, baseUrl)
+      sanitized['stack'] = redactUrlsInText(fields['stack'], patterns, baseUrl, { stackTrace: true })
     }
   } else if (data['tag'] === CustomTag.Console && Array.isArray(fields['args'])) {
     sanitized = {

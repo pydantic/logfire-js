@@ -42,7 +42,7 @@ describe('redactUrlsInText', () => {
       '    at https://cdn.example.test/lib.js?q=a)b:3:1',
     ].join('\n')
 
-    expect(redactUrlsInText(stack, [/.+/u], baseUrl)).toBe(
+    expect(redactUrlsInText(stack, [/.+/u], baseUrl, { stackTrace: true })).toBe(
       [
         'Error: boom',
         '    at load (https://app.example.test/app.js:10:5)',
@@ -59,9 +59,11 @@ describe('redactUrlsInText', () => {
     expect(redactUrlsInText('fetch https://api.example.test/x?token=abc:123:456 failed', [/.+/u], baseUrl)).toBe(
       'fetch https://api.example.test/x failed'
     )
-    expect(redactUrlsInText('    at f (https://api.example.test/x.js?token=abc:123:456:10:5)', [/.+/u], baseUrl)).toBe(
-      '    at f (https://api.example.test/x.js:10:5)'
-    )
+    expect(
+      redactUrlsInText('    at f (https://api.example.test/x.js?token=abc:123:456:10:5)', [/.+/u], baseUrl, { stackTrace: true })
+    ).toBe('    at f (https://api.example.test/x.js:10:5)')
+    expect(redactUrlsInText('at https://api.example.test/x?secret=123:456', [/.+/u], baseUrl)).toBe('at https://api.example.test/x')
+    expect(redactUrlsInText('user@https://api.example.test/x?secret=123:456', [/.+/u], baseUrl)).toBe('user@https://api.example.test/x')
   })
 
   it('removes a query that contains an apostrophe and keeps quotes around a URL', () => {
@@ -106,7 +108,7 @@ describe('redactUrlsInText', () => {
   it('only redacts URLs that match a pattern', () => {
     const text = 'at https://app.example.test/a.js?t=1:1:1 and https://cdn.example.test/b.js?t=2:2:2'
 
-    expect(redactUrlsInText(text, [/cdn\./u], baseUrl)).toBe(
+    expect(redactUrlsInText(text, [/cdn\./u], baseUrl, { stackTrace: true })).toBe(
       'at https://app.example.test/a.js?t=1:1:1 and https://cdn.example.test/b.js:2:2'
     )
     expect(redactUrlsInText(text, [], baseUrl)).toBe(text)
