@@ -392,6 +392,43 @@ describe('startSessionReplay full mode', () => {
     }
   })
 
+  it('stops the restored recording when a pending pagehide upload is rejected with HTTP 401', async () => {
+    vi.useFakeTimers()
+    const { calls, fetchImpl } = recordingFetch()
+    let finishUpload: ((response: Response) => void) | undefined
+    vi.mocked(fetchImpl).mockImplementationOnce(
+      async () =>
+        new Promise<Response>((resolve) => {
+          finishUpload = resolve
+        })
+    )
+    const onError = vi.fn<(error: unknown) => void>()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => 'same-rum-session', onError }))
+    try {
+      emit(fullSnapshot)
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }))
+      await drainMicrotasks()
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+      await vi.advanceTimersByTimeAsync(1)
+      expect(replay.recording).toBe(true)
+      expect(handles).toHaveLength(2)
+
+      finishUpload?.(new Response(null, { status: 401 }))
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(replay.recording).toBe(false)
+      expect(handles[1]!.stop).toHaveBeenCalledOnce()
+      expect(onError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reason: 'rejected', status: 401 }))
+      emit(fullSnapshot)
+      emitActivity(click)
+      await replay.flush()
+      expect(calls).toEqual([])
+    } finally {
+      finishUpload?.(new Response(null, { status: 401 }))
+      await replay.stop()
+    }
+  })
+
   it.each([202, 413])('restores recording before a pending pagehide upload returns HTTP %s', async (status) => {
     vi.useFakeTimers()
     const { calls, fetchImpl } = recordingFetch()

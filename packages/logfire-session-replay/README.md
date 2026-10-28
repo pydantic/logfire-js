@@ -241,8 +241,8 @@ Chunks that already start from a later full snapshot are kept. Replay takes at
 most one of these recovery snapshots per minute.
 
 A `4xx` rejection other than `408`, `413`, `425`, or `429`, such as a revoked
-token (`401`), a usage block (`402`), or a deleted frontend application
-(`403`), would also reject every later chunk. Replay then reports the
+token or a usage block (`401`, `402`, `403`), would also reject every later
+chunk. Replay then reports the
 `ReplayUploadError`, drops the queued chunks, and stops as `stop()` does: the
 recorder detaches and no further snapshots or uploads are made in this page.
 
