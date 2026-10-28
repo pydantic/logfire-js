@@ -64,6 +64,15 @@ describe('redactUrlsInText', () => {
     )
   })
 
+  it('removes a query that contains an apostrophe and keeps quotes around a URL', () => {
+    expect(redactUrlsInText("GET https://api.example.test/x?name=O'Reilly&token=secret failed", [/.+/u], baseUrl)).toBe(
+      'GET https://api.example.test/x failed'
+    )
+    expect(redactUrlsInText("see 'https://api.example.test/x?token=secret' (or https://api.example.test/y?k=1)", [/.+/u], baseUrl)).toBe(
+      "see 'https://api.example.test/x' (or https://api.example.test/y)"
+    )
+  })
+
   it('redacts many URLs on one line in linear time', () => {
     const line = Array.from({ length: 10_000 }, (_, index) => `https://x.example.test/${index.toString()}?t=1`).join(' ')
     const started = performance.now()

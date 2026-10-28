@@ -103,6 +103,16 @@ describe('BrowserUrlSpanProcessor', () => {
     expect(attributes).toEqual({ 'callback.url': 'https://app.example/reset', 'link.kind': 'follows' })
   })
 
+  it('removes a stack trace query that contains an apostrophe', () => {
+    const span = {
+      attributes: { 'exception.stacktrace': "Error: GET 'https://api.example.com/x?name=O'Reilly&token=secret' failed" },
+      events: [],
+      links: [],
+    } as unknown as ReadableSpan
+    new BrowserUrlSpanProcessor().onEnd(span)
+    expect(span.attributes).toEqual({ 'exception.stacktrace': "Error: GET 'https://api.example.com/x' failed" })
+  })
+
   it('does not export non-HTTP URL payloads or unexpected URL attribute types', () => {
     const span = {
       attributes: { 'url.full': 'data:text/plain,secret', 'http.url': ['secret'] },

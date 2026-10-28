@@ -17,11 +17,12 @@ export function redactUrl(url: string, patterns: readonly RegExp[], baseUrl: str
   }
 }
 
-// Runs to the next whitespace because a query string can contain parentheses.
-const TEXT_URL_PATTERN = /https?:\/\/[^\s"'<>`]+/giu
+// Runs to the next whitespace because a query string can contain parentheses and apostrophes.
+const TEXT_URL_PATTERN = /https?:\/\/[^\s"<>`]+/giu
 // Stack frames append `:line:column` to the script URL, and Chrome wraps the location in parentheses.
 const LOCATION_SUFFIX_PATTERN = /:\d+:\d+\)?$/u
-const CLOSING_PARENTHESIS_PATTERN = /\)$/u
+// Closing parentheses and quotes around a URL in prose are kept as punctuation.
+const CLOSING_PUNCTUATION_PATTERN = /[')]+$/u
 // A V8 frame line starts with `at`; Firefox and Safari frames put `@` right before the URL.
 const V8_FRAME_LINE_PATTERN = /^\s*at\s/u
 
@@ -29,7 +30,7 @@ const V8_FRAME_LINE_PATTERN = /^\s*at\s/u
 // such as in a message, are not restored after the query is removed.
 function urlTextSuffix(match: string, isFrame: boolean): string {
   const location = isFrame ? LOCATION_SUFFIX_PATTERN.exec(match)?.[0] : undefined
-  return location ?? CLOSING_PARENTHESIS_PATTERN.exec(match)?.[0] ?? ''
+  return location ?? CLOSING_PUNCTUATION_PATTERN.exec(match)?.[0] ?? ''
 }
 
 /** Redact each HTTP URL inside free text, such as a stack trace, that matches `patterns`. */
