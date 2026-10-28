@@ -1003,6 +1003,17 @@ describe('reportError', () => {
     expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: legacy' })
   })
 
+  test('exports the same unscrubbed exception message in the attribute, event, and status, like the Python SDK', () => {
+    const error = new Error('invalid session token')
+
+    reportError('Caught error', error)
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTR_EXCEPTION_MESSAGE]).toBe('invalid session token')
+    expect(spanMock.recordException).toHaveBeenCalledWith(error)
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: invalid session token' })
+  })
+
   test('records Error cause chain in reportError stacktrace', () => {
     const cause = Object.assign(new TypeError('database unavailable'), {
       details: { retryable: true },

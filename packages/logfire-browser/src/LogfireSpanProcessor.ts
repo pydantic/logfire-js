@@ -6,10 +6,23 @@ import type { ReadableSpan, Span, SpanExporter, SpanProcessor } from '@opentelem
 import { SimpleSpanProcessor } from '@opentelemetry/sdk-trace-web'
 import { ATTR_URL_FULL } from '@opentelemetry/semantic-conventions'
 import { ATTR_HTTP_URL } from '@opentelemetry/semantic-conventions/incubating'
+import { scrubSpanForExport } from 'logfire'
 
 // not present in the semantic conventions
 const ATTR_TARGET_XPATH = 'target_xpath'
 const ATTR_EVENT_TYPE = 'event_type'
+
+/**
+ * BrowserSessionSpanProcessor sets these from the SDK's own session state. Their keys contain
+ * `session`, which the default scrubbing patterns would otherwise redact on every span.
+ */
+function isBrowserSessionAttribute(key: string): boolean {
+  return key === 'session.id' || key.startsWith('logfire.session_replay.')
+}
+
+// Application session attributes from `getSessionAttributes()`. Their values are still scrubbed,
+// but only the application's own name is matched, not the `session` in the prefix.
+const BROWSER_SESSION_ATTRIBUTE_PREFIXES = ['logfire.session.']
 
 export const LevelLabels = {
   1: 'trace',
@@ -127,10 +140,11 @@ export class LogfireSpanProcessor implements SpanProcessor {
   }
 
   onEnd(span: ReadableSpan): void {
+    // Serialization has to happen when `logfire.span` and friends create the span, because the
+    // OpenTelemetry API rejects non-primitive attribute values. Scrubbing primitives here also covers
+    // instrumentation spans, attributes set after creation, events, and links.
+    scrubSpanForExport(span, { isSafeKey: isBrowserSessionAttribute, namespacePrefixes: BROWSER_SESSION_ATTRIBUTE_PREFIXES })
     this.console?.onEnd(span)
-    // Note: this is too late for the regular node instrumentation. The opentelemetry API rejects the non-primitive attribute values.
-    // Instead, the serialization happens at the `logfire.span, logfire.startSpan`, etc.
-    // Object.assign(span.attributes, serializeAttributes(span.attributes))
     this.wrapped.onEnd(span)
   }
 

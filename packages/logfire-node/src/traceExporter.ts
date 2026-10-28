@@ -2,6 +2,7 @@ import type { Context } from '@opentelemetry/api'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
 import type { ReadableSpan, Span, SpanExporter, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { BatchSpanProcessor, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { scrubSpanForExport } from 'logfire'
 
 import { logfireConfig } from './logfireConfig'
 import { USER_AGENT } from './userAgent'
@@ -60,10 +61,11 @@ export class LogfireSpanProcessor implements SpanProcessor {
   }
 
   onEnd(span: ReadableSpan): void {
+    // Serialization has to happen when `logfire.span` and friends create the span, because the
+    // OpenTelemetry API rejects non-primitive attribute values. Scrubbing primitives here also covers
+    // instrumentation spans, attributes set after creation, events, and links.
+    scrubSpanForExport(span)
     this.console?.onEnd(span)
-    // Note: this is too late for the regular node instrumentation. The opentelemetry API rejects the non-primitive attribute values.
-    // Instead, the serialization happens at the `logfire.span, logfire.startSpan`, etc.
-    // Object.assign(span.attributes, serializeAttributes(span.attributes))
 
     // Dropped before the batch queue, not at export, so discarded placeholders never take queue slots from real spans.
     if (this.pendingSpans || !isPendingSpan(span)) {

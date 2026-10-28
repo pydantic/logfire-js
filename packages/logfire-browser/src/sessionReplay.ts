@@ -114,6 +114,11 @@ export interface BrowserSessionReplayOptions {
   captureConsole?: boolean
   captureNetwork?: boolean
   captureNavigation?: boolean
+  /**
+   * Whether the replay recorder installs its own uncaught error listeners. Browser global error
+   * capture replaces them with forwarded errors, so this only applies when that capture is off.
+   */
+  captureGlobalErrors?: boolean
   ignoreUrlPatterns?: RegExp[]
   redactUrlPatterns?: RegExp[]
 
@@ -271,6 +276,8 @@ function createReplayConfig(
   }
   if (telemetryOptions.capturesGlobalErrors === true) {
     config.captureGlobalErrors = false
+  } else if (options.captureGlobalErrors !== undefined) {
+    config.captureGlobalErrors = options.captureGlobalErrors
   }
   if (options.redactUrlPatterns !== undefined) {
     config.redactUrlPatterns = options.redactUrlPatterns

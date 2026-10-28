@@ -57,8 +57,8 @@ describe('LogfireSpanProcessor lifecycle', () => {
 })
 
 describe('LogfireSpanProcessor pending spans', () => {
-  const pendingSpan = { attributes: { 'logfire.span_type': 'pending_span' } } as unknown as ReadableSpan
-  const finishedSpan = { attributes: { 'logfire.span_type': 'span' } } as unknown as ReadableSpan
+  const pendingSpan = { attributes: { 'logfire.span_type': 'pending_span' }, events: [], links: [] } as unknown as ReadableSpan
+  const finishedSpan = { attributes: { 'logfire.span_type': 'span' }, events: [], links: [] } as unknown as ReadableSpan
 
   function endBoth(options?: { pendingSpans?: boolean }) {
     const wrappedOnEnd = vi.fn<(span: ReadableSpan) => void>()

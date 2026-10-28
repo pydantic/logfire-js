@@ -81,6 +81,7 @@ const SAFE_KEYS = new Set([
   'code.lineno',
   'db.plan',
   'db.statement',
+  'exception.message',
   'exception.stacktrace',
   'exception.type',
   'http.method',
@@ -183,7 +184,8 @@ export class LogfireAttributeScrubber implements BaseScrubber {
         }
       }
       return value
-    } else if (value instanceof Date) {
+    } else if (value instanceof Date || ArrayBuffer.isView(value)) {
+      // Byte arrays are OpenTelemetry log values in their own right, not maps of their indices.
       return value
     } else if (Array.isArray(value)) {
       if (depth >= MAX_SCRUB_DEPTH) {

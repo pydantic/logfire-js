@@ -37,7 +37,8 @@ const cleanup = logfire.configureFrontend({
 
 Replay masks all rendered text and input values by default, leaves console
 capture off, and removes query strings and fragments from captured page,
-fetch/XHR, and navigation URLs. Network and navigation capture remain enabled.
+fetch/XHR, and navigation URLs, and from the URLs in error sources, error stacks,
+and console arguments. Network and navigation capture remain enabled.
 These replay-package defaults are inherited when browser options are omitted.
 
 Use `blockSelector` to omit a subtree. Set `maskAllText: false` only when

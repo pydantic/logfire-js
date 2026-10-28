@@ -80,6 +80,38 @@ describe('LogfireSpanProcessor', () => {
     expect(wrapped.onStart).toHaveBeenCalledTimes(1)
   })
 
+  it('scrubs spans before export but keeps the SDK session attributes', () => {
+    const wrapped = makeWrapped()
+    const processor = new LogfireSpanProcessor(wrapped, false)
+    const span = {
+      attributes: {
+        'session.id': 'session-1',
+        'logfire.session.tier': 'paid',
+        'logfire.session.password': 'hunter2',
+        'logfire.session_replay.id': 'recording-1',
+        'app.password': 'hunter2',
+      },
+      events: [],
+      links: [],
+      name: 'GET',
+    } as unknown as ReadableSpan
+
+    processor.onEnd(span)
+
+    expect(span.attributes).toEqual({
+      'session.id': 'session-1',
+      'logfire.session.tier': 'paid',
+      'logfire.session.password': "[Scrubbed due to 'password']",
+      'logfire.session_replay.id': 'recording-1',
+      'app.password': "[Scrubbed due to 'password']",
+      'logfire.scrubbed': JSON.stringify([
+        { matched_substring: 'password', path: ['attributes', 'logfire.session', 'password'] },
+        { matched_substring: 'password', path: ['attributes', 'app.password'] },
+      ]),
+    })
+    expect(wrapped.onEnd).toHaveBeenCalledWith(span)
+  })
+
   it('renames interaction spans from the event type and target', () => {
     const wrapped = makeWrapped()
     const processor = new LogfireSpanProcessor(wrapped, false)

@@ -20,6 +20,7 @@ import {
   ATTRIBUTES_SPAN_TYPE_KEY,
   ATTRIBUTES_TAGS_KEY,
 } from '../constants'
+import { recordScrubbedAttributes } from '../exportScrubbing'
 import { logfireFormatWithExtras } from '../formatter'
 import { logfireApiConfig } from '../logfireApiConfig'
 import { serializeAttributes } from '../serializeAttributes'
@@ -61,48 +62,43 @@ export function evalsSpan<R>(msgTemplate: string, opts: EvalsSpanOptions, callba
 
   const ctx = opts.parentSpan ? TraceAPI.setSpan(ContextAPI.active(), opts.parentSpan) : ContextAPI.active()
 
-  return getEvalsTracer().startActiveSpan(
-    opts.spanName ?? msgTemplate,
-    {
-      attributes: {
-        ...serializeAttributes({ ...attributes, ...extraAttributes }),
-        [ATTRIBUTES_LEVEL_KEY]: level,
-        [ATTRIBUTES_MESSAGE_KEY]: formattedMessage,
-        [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
-        [ATTRIBUTES_SPAN_TYPE_KEY]: spanType,
-        [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
-      },
-    },
-    ctx,
-    (span: Span) => {
-      let result: R
-      try {
-        result = callback(span)
-      } catch (err) {
-        recordExceptionOnSpan(span, err)
-        span.end()
-        throw err
-      }
-      if (result instanceof Promise) {
-        // We can't return synchronously here because the promise chain captures
-        // the span's lifetime. Cast through unknown to satisfy TS — the caller
-        // already knows R is a Promise type.
-        return (result as Promise<unknown>).then(
-          (v: unknown) => {
-            span.end()
-            return v
-          },
-          (err: unknown) => {
-            recordExceptionOnSpan(span, err)
-            span.end()
-            throw err
-          }
-        ) as R
-      }
+  const spanAttributes = {
+    ...serializeAttributes({ ...attributes, ...extraAttributes }),
+    [ATTRIBUTES_LEVEL_KEY]: level,
+    [ATTRIBUTES_MESSAGE_KEY]: formattedMessage,
+    [ATTRIBUTES_MESSAGE_TEMPLATE_KEY]: newTemplate,
+    [ATTRIBUTES_SPAN_TYPE_KEY]: spanType,
+    [ATTRIBUTES_TAGS_KEY]: Array.from(new Set(tags).values()),
+  }
+  return getEvalsTracer().startActiveSpan(opts.spanName ?? msgTemplate, { attributes: spanAttributes }, ctx, (span: Span) => {
+    recordScrubbedAttributes(span, spanAttributes)
+    let result: R
+    try {
+      result = callback(span)
+    } catch (err) {
+      recordExceptionOnSpan(span, err)
       span.end()
-      return result
+      throw err
     }
-  )
+    if (result instanceof Promise) {
+      // We can't return synchronously here because the promise chain captures
+      // the span's lifetime. Cast through unknown to satisfy TS — the caller
+      // already knows R is a Promise type.
+      return (result as Promise<unknown>).then(
+        (v: unknown) => {
+          span.end()
+          return v
+        },
+        (err: unknown) => {
+          recordExceptionOnSpan(span, err)
+          span.end()
+          throw err
+        }
+      ) as R
+    }
+    span.end()
+    return result
+  })
 }
 
 /**
@@ -114,6 +110,7 @@ export function setEvalsSpanAttributes(span: Span, attributes: Record<string, un
   for (const [k, v] of Object.entries(serialized)) {
     span.setAttribute(k, v)
   }
+  recordScrubbedAttributes(span, serialized)
 }
 
 function recordExceptionOnSpan(span: Span, err: unknown): void {

@@ -48,6 +48,51 @@ describe('BrowserUrlSpanProcessor', () => {
     expect(attributes).toEqual({ 'http.url': 'https://example.com/asset', 'http.referrer': 'https://example.com/' })
   })
 
+  it('sanitizes every attribute whose key ends in .url, such as the Web Vitals LCP resource', () => {
+    const span = {
+      attributes: { 'web_vital.lcp.url': 'https://cdn.example.com/avatar.jpg?X-Amz-Signature=secret#frag', 'web_vital.lcp.element': 'img' },
+      events: [],
+    } as unknown as ReadableSpan
+    new BrowserUrlSpanProcessor().onEnd(span)
+    expect(span.attributes).toEqual({ 'web_vital.lcp.url': 'https://cdn.example.com/avatar.jpg', 'web_vital.lcp.element': 'img' })
+  })
+
+  it('removes queries and fragments from URLs in exception stack traces', () => {
+    const stacktrace = [
+      'Error: boom',
+      '    at load (https://app.example.com/app.js?token=secret:10:5)',
+      '    at https://user:pass@app.example.com/vendor.js?q=a)b#frag:3:1',
+      'load@https://app.example.com/app.js?token=secret:10:5',
+      '    at native (blob:https://app.example.com/0f3c:1:1)',
+    ].join('\n')
+    const attributes = { 'exception.stacktrace': stacktrace, 'exception.message': 'boom' }
+    const span = { attributes: { 'exception.stacktrace': stacktrace }, events: [{ attributes }] } as unknown as ReadableSpan
+    new BrowserUrlSpanProcessor().onEnd(span)
+    const expected = [
+      'Error: boom',
+      '    at load (https://app.example.com/app.js:10:5)',
+      '    at https://app.example.com/vendor.js:3:1',
+      'load@https://app.example.com/app.js:10:5',
+      '    at native (blob:https://app.example.com/0f3c:1:1)',
+    ].join('\n')
+    expect(span.attributes).toEqual({ 'exception.stacktrace': expected })
+    expect(attributes).toEqual({ 'exception.stacktrace': expected, 'exception.message': 'boom' })
+  })
+
+  it('keeps only a full line and column pair after a URL in text', () => {
+    const span = {
+      attributes: {
+        'exception.stacktrace':
+          'Error: GET https://api.example.com/x?token=abc:123456 failed\n    at f (https://app.example.com/a.js?v=9:12:34)',
+      },
+      events: [],
+    } as unknown as ReadableSpan
+    new BrowserUrlSpanProcessor().onEnd(span)
+    expect(span.attributes).toEqual({
+      'exception.stacktrace': 'Error: GET https://api.example.com/x failed\n    at f (https://app.example.com/a.js:12:34)',
+    })
+  })
+
   it('does not export non-HTTP URL payloads or unexpected URL attribute types', () => {
     const span = { attributes: { 'url.full': 'data:text/plain,secret', 'http.url': ['secret'] }, events: [] } as unknown as ReadableSpan
     new BrowserUrlSpanProcessor().onEnd(span)

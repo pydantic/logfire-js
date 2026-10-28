@@ -177,7 +177,7 @@ export default defineWorkersConfig({
 
 ## Scrubbing
 
-Pass `scrubbing` to control sensitive data scrubbing before telemetry is sent:
+Pass `scrubbing` to `instrument`, `instrumentDO`, or `instrumentTail` to control sensitive data scrubbing before telemetry is sent:
 
 ```ts
 export default instrument(handler, {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vite-plus/test'
 
-import { matchesUrlPatterns, redactUrl } from './privacy'
+import { matchesUrlPatterns, redactUrl, redactUrlsInText } from './privacy'
 
 const baseUrl = 'https://app.example.test/current/page'
 
@@ -30,5 +30,40 @@ describe('redactUrl', () => {
     expect(matchesUrlPatterns('https://example.test/?token=three', [sticky])).toBe(true)
     expect(global.lastIndex).toBe(3)
     expect(sticky.lastIndex).toBe(2)
+  })
+})
+
+describe('redactUrlsInText', () => {
+  it('redacts matching URLs inside stack frames and keeps line and column numbers', () => {
+    const stack = [
+      'Error: boom',
+      '    at load (https://app.example.test/app.js?token=secret:10:5)',
+      'load@https://app.example.test/app.js?token=secret#frag:10:5',
+      '    at https://cdn.example.test/lib.js?q=a)b:3:1',
+    ].join('\n')
+
+    expect(redactUrlsInText(stack, [/.+/u], baseUrl)).toBe(
+      [
+        'Error: boom',
+        '    at load (https://app.example.test/app.js:10:5)',
+        'load@https://app.example.test/app.js:10:5',
+        '    at https://cdn.example.test/lib.js:3:1',
+      ].join('\n')
+    )
+  })
+
+  it('does not restore digits that end a query value', () => {
+    expect(redactUrlsInText('fetch https://api.example.test/x?token=abc:123456 failed', [/.+/u], baseUrl)).toBe(
+      'fetch https://api.example.test/x failed'
+    )
+  })
+
+  it('only redacts URLs that match a pattern', () => {
+    const text = 'at https://app.example.test/a.js?t=1:1:1 and https://cdn.example.test/b.js?t=2:2:2'
+
+    expect(redactUrlsInText(text, [/cdn\./u], baseUrl)).toBe(
+      'at https://app.example.test/a.js?t=1:1:1 and https://cdn.example.test/b.js:2:2'
+    )
+    expect(redactUrlsInText(text, [], baseUrl)).toBe(text)
   })
 })

@@ -18,6 +18,7 @@ import {
   reportError,
   resolveBaseUrl,
   resolveSendToLogfire,
+  scrubSpanForExport,
   serializeAttributes,
   span,
   startPendingSpan,
@@ -61,8 +62,12 @@ export interface InProcessConfigOptions extends ConfigOptionsBase {
   scrubbing?: false | ScrubbingOptions
 }
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface TailConfigOptions extends ConfigOptionsBase {}
+export interface TailConfigOptions extends ConfigOptionsBase {
+  /**
+   * Options for scrubbing sensitive data before spans are handed to the tail worker. Set to False to disable.
+   */
+  scrubbing?: false | ScrubbingOptions
+}
 
 function envString(env: Env, key: string): string | undefined {
   if (typeof env !== 'object' || env === null) {
@@ -72,7 +77,7 @@ function envString(env: Env, key: string): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
-function configureScrubbing(config: InProcessConfigOptions): void {
+function configureScrubbing(config: Pick<InProcessConfigOptions, 'scrubbing'>): void {
   if (config.scrubbing !== undefined) {
     configureLogfireApi({ scrubbing: config.scrubbing })
   }
@@ -128,6 +133,7 @@ export function instrumentDO<Env = unknown, T extends DOClass<Env> = DOClass<Env
 }
 
 export function instrumentTail<T>(handler: T, config: TailConfigOptions): T {
+  configureScrubbing(config)
   return baseInstrument(handler as WorkerHandler, getTailConfig(config)) as T
 }
 
@@ -145,12 +151,17 @@ function postProcessAttributes(spans: ReadableSpan[]) {
         delete span.attributes[attrKey]
       }
     }
+    // `serializeAttributes` scrubs only spans the logfire API did not create; the API scrubbed the
+    // others at creation and records what it scrubbed for the export pass below.
+    const createdByLogfireApi = 'logfire.span_type' in span.attributes
     // Applied key by key with own-property writes: `Object.assign` runs the inherited `__proto__`
     // setter, which would discard that attribute right after the serializer preserved it.
     const serialized = serializeAttributes(span.attributes)
     for (const [key, value] of Object.entries(serialized)) {
       Object.defineProperty(span.attributes, key, { configurable: true, enumerable: true, value, writable: true })
     }
+    // Covers attributes set after creation, events, and links without scrubbing a value twice.
+    scrubSpanForExport(span, createdByLogfireApi ? {} : { alreadyScrubbed: serialized })
   }
   return spans
 }
