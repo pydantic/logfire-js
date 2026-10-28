@@ -1,5 +1,13 @@
 # logfire
 
+## 0.19.2
+
+### Patch Changes
+
+- 1d7eaf5: Require dependency versions that are free of known security advisories. `@pydantic/logfire-node` now needs `@opentelemetry/auto-instrumentations-node` 0.79.0 or later, because earlier releases bundle database instrumentations that record the database username in `db.user` on every span (GHSA for pg, mysql, mysql2, knex, mongoose, tedious, oracledb, and cassandra-driver). `logfire` now needs `handlebars` 4.7.10 or later, so dependency scanners no longer flag the 4.7.9 advisories.
+- Updated dependencies [1d7eaf5]
+  - logfire@0.23.4
+
 ## 0.19.1
 
 ### Patch Changes
