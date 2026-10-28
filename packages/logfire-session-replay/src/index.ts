@@ -171,7 +171,10 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           holdUntilActivity,
           awaitBinding,
           // A rotated or restored recording would be rejected in the same way, so the whole controller stops.
+          // The rejection can come from an earlier pagehide upload after a restored recording started,
+          // and a graceful stop would still send that recording's buffered tail.
           onPermanentRejection: () => {
+            runtime?.transport.abandon()
             ignorePromise(stop(), resolvedConfig.onError)
           },
         })
@@ -568,9 +571,12 @@ function createActiveRuntime(options: {
           return
         }
         try {
-          const observedSessionId = getSessionId(isUserActivityEvent(event))
+          const userActivity = isUserActivityEvent(event)
+          const observedSessionId = getSessionId(userActivity)
           if (observedSessionId !== sessionId || !isCurrentRecording()) {
-            onSessionChanged(observedSessionId, false)
+            // A background mutation can be the first to see an idle session expire. The next
+            // recording waits for activity, as it does when the session monitor sees the expiry.
+            onSessionChanged(observedSessionId, !userActivity)
             return
           }
           transport.add(event)

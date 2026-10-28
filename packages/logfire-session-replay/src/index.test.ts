@@ -412,6 +412,8 @@ describe('startSessionReplay full mode', () => {
       await vi.advanceTimersByTimeAsync(1)
       expect(replay.recording).toBe(true)
       expect(handles).toHaveLength(2)
+      emit(fullSnapshot)
+      emitActivity(click)
 
       finishUpload?.(new Response(null, { status: 401 }))
       await vi.advanceTimersByTimeAsync(1)
@@ -422,6 +424,8 @@ describe('startSessionReplay full mode', () => {
       emit(fullSnapshot)
       emitActivity(click)
       await replay.flush()
+      await vi.advanceTimersByTimeAsync(1_000)
+      await replay.stop()
       expect(calls).toEqual([])
     } finally {
       finishUpload?.(new Response(null, { status: 401 }))
@@ -815,6 +819,39 @@ describe('startSessionReplay full mode', () => {
       `https://app.example.com/replay/${secondRecordingId}?seq=0`,
     ])
     expect(decodeBody(calls[1]!.init.body).events).toEqual([fullSnapshot, click])
+    await replay.stop()
+  })
+
+  it('holds a session that a background mutation rotates before the session monitor runs', async () => {
+    vi.useFakeTimers()
+    let sessionId = 'external-1'
+    const { calls, fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, { getSessionId: () => sessionId }))
+    const firstRecordingId = replay.getRecordingId()
+    emit(fullSnapshot)
+    await replay.flush()
+
+    const mutation: RrwebEvent = { type: EventType.IncrementalSnapshot, data: { source: IncrementalSource.Mutation }, timestamp: 3 }
+    sessionId = 'external-2'
+    emit(mutation)
+    await replay.flush()
+    expect(handles).toHaveLength(2)
+    const secondRecordingId = replay.getRecordingId()
+    emit(fullSnapshot)
+    emit(mutation)
+    await vi.advanceTimersByTimeAsync(60_000)
+    await replay.flush()
+    expect(replay.uploading).toBe(false)
+    expect(calls).toHaveLength(1)
+
+    emitActivity(click)
+    await replay.flush()
+
+    expect(calls.map((call) => call.url)).toEqual([
+      `https://app.example.com/replay/${firstRecordingId}?seq=0`,
+      `https://app.example.com/replay/${secondRecordingId}?seq=0`,
+    ])
+    expect(decodeBody(calls[1]!.init.body).events).toEqual([fullSnapshot, mutation, click])
     await replay.stop()
   })
 

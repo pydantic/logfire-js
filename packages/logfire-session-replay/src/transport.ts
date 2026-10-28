@@ -430,6 +430,14 @@ export class ReplayTransport {
     await this.settleWithinDeadline([finalFlush, ...finalAttempts])
   }
 
+  /**
+   * Stop sending after the ingest permanently rejected this recording's session, possibly through
+   * another transport. Requests already on the wire settle with their own responses.
+   */
+  abandon(): void {
+    this.closeAfterPermanentRejection([])
+  }
+
   discard(): void {
     this.started = false
     this.closed = true
