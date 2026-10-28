@@ -64,6 +64,16 @@ describe('redactUrlsInText', () => {
     )
   })
 
+  it('redacts many URLs on one line in linear time', () => {
+    const line = Array.from({ length: 10_000 }, (_, index) => `https://x.example.test/${index.toString()}?t=1`).join(' ')
+    const started = performance.now()
+    const redacted = redactUrlsInText(line, [/.+/u], baseUrl)
+
+    expect(redacted).toBe(Array.from({ length: 10_000 }, (_, index) => `https://x.example.test/${index.toString()}`).join(' '))
+    // Generous bound: the quadratic scan took seconds for this input.
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
   it('only redacts URLs that match a pattern', () => {
     const text = 'at https://app.example.test/a.js?t=1:1:1 and https://cdn.example.test/b.js?t=2:2:2'
 

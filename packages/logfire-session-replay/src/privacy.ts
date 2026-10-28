@@ -23,13 +23,12 @@ const TEXT_URL_PATTERN = /https?:\/\/[^\s"'<>`]+/giu
 const LOCATION_SUFFIX_PATTERN = /:\d+:\d+\)?$/u
 const CLOSING_PARENTHESIS_PATTERN = /\)$/u
 // A V8 frame line starts with `at`; Firefox and Safari frames put `@` right before the URL.
-const STACK_FRAME_PREFIX_PATTERN = /^\s*at\s|@$/u
+const V8_FRAME_LINE_PATTERN = /^\s*at\s/u
 
 // The location is kept only on a stack-frame line, so digits that end a query value elsewhere,
 // such as in a message, are not restored after the query is removed.
-function urlTextSuffix(match: string, offset: number, text: string): string {
-  const prefix = text.slice(text.lastIndexOf('\n', offset - 1) + 1, offset)
-  const location = STACK_FRAME_PREFIX_PATTERN.test(prefix) ? LOCATION_SUFFIX_PATTERN.exec(match)?.[0] : undefined
+function urlTextSuffix(match: string, isFrame: boolean): string {
+  const location = isFrame ? LOCATION_SUFFIX_PATTERN.exec(match)?.[0] : undefined
   return location ?? CLOSING_PARENTHESIS_PATTERN.exec(match)?.[0] ?? ''
 }
 
@@ -38,8 +37,15 @@ export function redactUrlsInText(text: string, patterns: readonly RegExp[], base
   if (patterns.length === 0) {
     return text
   }
-  return text.replace(TEXT_URL_PATTERN, (match: string, offset: number) => {
-    const suffix = urlTextSuffix(match, offset, text)
-    return `${redactUrl(match.slice(0, match.length - suffix.length), patterns, baseUrl)}${suffix}`
-  })
+  // Line by line, so deciding whether a URL sits in a stack frame never rescans earlier text.
+  return text
+    .split('\n')
+    .map((line) => {
+      const isV8Frame = V8_FRAME_LINE_PATTERN.test(line)
+      return line.replace(TEXT_URL_PATTERN, (match: string, offset: number) => {
+        const suffix = urlTextSuffix(match, isV8Frame || line[offset - 1] === '@')
+        return `${redactUrl(match.slice(0, match.length - suffix.length), patterns, baseUrl)}${suffix}`
+      })
+    })
+    .join('\n')
 }
