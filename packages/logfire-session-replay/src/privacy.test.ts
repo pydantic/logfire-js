@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vite-plus/test'
 
-import { cutText, matchesUrlPatterns, redactCssUrls, redactSrcset, redactUrl, redactUrlsInText, truncateText } from './privacy'
+import { cutText, matchesUrlPatterns, mayReferenceCssUrl, redactSrcset, redactUrl, redactUrlsInText, truncateText } from './privacy'
 
 const baseUrl = 'https://app.example.test/current/page'
 
@@ -160,93 +160,21 @@ describe('redactSrcset', () => {
   })
 })
 
-describe('redactCssUrls', () => {
-  const redact = (url: string) => redactUrl(url, [/.+/u], baseUrl)
-
-  it('redacts quoted and unquoted url() values', () => {
-    expect(redactCssUrls('background: url("/bg.png?t=1") no-repeat; mask: URL(/m.svg?t=2)', redact)).toBe(
-      'background: url("https://app.example.test/bg.png") no-repeat; mask: url(https://app.example.test/m.svg)'
-    )
-    expect(redactCssUrls("background-image: url( '/a.png?t=1' )", redact)).toBe("background-image: url('https://app.example.test/a.png')")
+describe('mayReferenceCssUrl', () => {
+  it.each([
+    'background: url("/bg.png?t=1")',
+    'background: URL(/bg.png)',
+    'mask: -webkit-image-set("/a.png" 1x)',
+    'background-image: image-set("/a.png" 1x)',
+    "font: src('/font.woff2')",
+    'background: u\\72l(/image?token=secret)',
+    '--avatar-url: none',
+  ])('detects a possible URL reference in %s', (value) => {
+    expect(mayReferenceCssUrl(value)).toBe(true)
   })
 
-  it('leaves CSS without url() unchanged', () => {
-    expect(redactCssUrls('color: red', redact)).toBe('color: red')
-  })
-
-  it('reads escaped characters as part of the URL', () => {
-    expect(redactCssUrls('background: url(/image\\)?token=secret)', redact)).toBe('background: url(https://app.example.test/image\\))')
-    expect(redactCssUrls('background: url("/a\\"b.png?token=secret")', redact)).toBe(
-      'background: url("https://app.example.test/a%22b.png")'
-    )
-    expect(redactCssUrls('background: url(/\\3f token=secret)', redact)).toBe('background: url(https://app.example.test/)')
-  })
-
-  it('recognizes url functions whose names are written with escapes', () => {
-    expect(redactCssUrls('background: u\\72l(/image?token=secret)', redact)).toBe('background: url(https://app.example.test/image)')
-    expect(redactCssUrls('background: \\55 RL(/image?token=secret)', redact)).toBe('background: url(https://app.example.test/image)')
-    expect(redactCssUrls('background: xurl(/image?token=secret)', redact)).toBe('background: xurl(/image?token=secret)')
-    expect(redactCssUrls('background: u\\72\rl(/image?token=secret)', redact)).toBe('background: url(https://app.example.test/image)')
-    expect(redactCssUrls('background: u\\72\r\nl(/image?token=secret)', redact)).toBe('background: url(https://app.example.test/image)')
-    expect(redactCssUrls('background: u\\72\fl(/image?token=secret)', redact)).toBe('background: url(https://app.example.test/image)')
-  })
-
-  it('keeps an escaped trailing space in an unquoted URL', () => {
-    const seen: string[] = []
-    redactCssUrls('background: url(/a\\  )', (url) => {
-      seen.push(url)
-      return url
-    })
-    expect(seen).toEqual(['/a '])
-  })
-
-  it('does not let url( inside a string or comment hide a later URL', () => {
-    expect(redactCssUrls(`--label: 'url("'; background-image: url("/image.png?token=secret")`, redact)).toBe(
-      `--label: 'url("'; background-image: url("https://app.example.test/image.png")`
-    )
-    expect(redactCssUrls('/* url(" */ background-image: url("/image.png?token=secret")', redact)).toBe(
-      '/* url(" */ background-image: url("https://app.example.test/image.png")'
-    )
-  })
-
-  it('ends a quoted URL at an unescaped CR or FF newline', () => {
-    expect(redactCssUrls('a: url("x\r; background: url("/image.png?token=secret")', redact)).toBe(
-      'a: url("https://app.example.test/current/x"\r; background: url("https://app.example.test/image.png")'
-    )
-    expect(redactCssUrls(`--a: 'x\f; background: url("/image.png?token=secret")`, redact)).toBe(
-      `--a: 'x\f; background: url("https://app.example.test/image.png")`
-    )
-  })
-
-  it('continues a string across an escaped CRLF', () => {
-    expect(redactCssUrls(`--a: 'x\\\r\ny url("'; background: url("/image.png?token=secret")`, redact)).toBe(
-      `--a: 'x\\\r\ny url("'; background: url("https://app.example.test/image.png")`
-    )
-  })
-
-  it('ends a quoted URL at an unescaped newline', () => {
-    expect(redactCssUrls('a: url("x\n; background: url("/image.png?token=secret")', redact)).toBe(
-      'a: url("https://app.example.test/current/x"\n; background: url("https://app.example.test/image.png")'
-    )
-  })
-
-  it('keeps offsets when earlier text changes length when lowercased', () => {
-    expect(redactCssUrls('content: "İ"; background: url(/image.png?token=secret)', redact)).toBe(
-      'content: "İ"; background: url(https://app.example.test/image.png)'
-    )
-  })
-
-  it('redacts a URL that the end of the text closes', () => {
-    expect(redactCssUrls('background: url(/a.png?token=secret', redact)).toBe('background: url(https://app.example.test/a.png')
-    expect(redactCssUrls("background: url('/a.png?token=secret", redact)).toBe("background: url('https://app.example.test/a.png'")
-  })
-
-  it('scans text with an unclosed url( in linear time', () => {
-    const value = `--label: "url(${' '.repeat(100_000)}"; ${'url('.repeat(100_000)}`
-    const started = performance.now()
-    redactCssUrls(value, redact)
-    // Generous bound: the backtracking pattern took seconds for 1,600 spaces.
-    expect(performance.now() - started).toBeLessThan(1000)
+  it('leaves styles without URL tokens alone', () => {
+    expect(mayReferenceCssUrl('color: red; display: block')).toBe(false)
   })
 })
 

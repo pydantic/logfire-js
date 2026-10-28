@@ -267,7 +267,7 @@ describe('startRecording', () => {
     expect(error.data.payload.source).toBe('https://app.example.test/app.js?token=secret')
   })
 
-  it('redacts image, media, object, SVG, and inline style URLs', () => {
+  it('redacts image, media, object, and SVG URLs and removes styles that reference URLs', () => {
     const emitted: RrwebEvent[] = []
     startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [/.+/u] })
     const fullSnapshot = {
@@ -313,7 +313,7 @@ describe('startRecording', () => {
             data: 'http://localhost:3000/doc.pdf',
             'xlink:href': 'http://localhost:3000/sprite.svg',
             rr_src: 'http://localhost:3000/frame',
-            style: 'background: url("http://localhost:3000/bg.png")',
+            style: '',
           },
         },
       },
@@ -327,8 +327,8 @@ describe('startRecording', () => {
             id: 1,
             attributes: {
               style: {
-                'background-image': 'url(http://localhost:3000/m.png)',
-                'mask-image': ['url(http://localhost:3000/n.png)', 'important'],
+                'background-image': '',
+                'mask-image': '',
                 color: 'red',
               },
             },
@@ -336,6 +336,39 @@ describe('startRecording', () => {
         ],
       },
     })
+  })
+
+  it('keeps styles without URL tokens, and all styles when URL redaction is off', () => {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [/.+/u] })
+    const plain = {
+      type: EventType.FullSnapshot,
+      data: { node: { attributes: { style: 'color: red; display: block' } } },
+      timestamp: 7,
+    } satisfies RrwebEvent
+    emitFromRrweb(plain)
+    expect(emitted[0]).toBe(plain)
+
+    startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [] })
+    const raw = {
+      type: EventType.FullSnapshot,
+      data: { node: { attributes: { style: 'background: url("/bg.png?t=1")' } } },
+      timestamp: 8,
+    } satisfies RrwebEvent
+    emitFromRrweb(raw)
+    expect(emitted[1]).toBe(raw)
+  })
+
+  it('removes a style that a URL transform would otherwise miss', () => {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({ emit: (event) => emitted.push(event), transformUrl: (url) => url })
+    const event = {
+      type: EventType.FullSnapshot,
+      data: { node: { attributes: { style: 'background: url(/users/jane/avatar.png)' } } },
+      timestamp: 7,
+    } satisfies RrwebEvent
+    emitFromRrweb(event)
+    expect(emitted[0]).toEqual({ ...event, data: { node: { attributes: { style: '' } } } })
   })
 
   it('applies the URL transform to Meta and DOM attribute URLs', () => {

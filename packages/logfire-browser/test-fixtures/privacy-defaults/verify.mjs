@@ -87,7 +87,8 @@ if (scenario === 'default') {
   assertEqual('image src', imageNode.attributes?.src, 'http://127.0.0.1:4178/api/image')
   assertEqual('image srcset', imageNode.attributes?.srcset, 'http://127.0.0.1:4178/api/image 1x')
   assertEqual('image title', imageNode.attributes?.title, '*'.repeat('title-secret'.length))
-  assertDeepEqual('mutated style URL', mutationStyles, ['url("http://127.0.0.1:4178/api/image")'])
+  assertEqual('image style', imageNode.attributes?.style, '')
+  assertDeepEqual('mutated style URL', mutationStyles, [''])
   for (const secret of [...urlSecrets, ...textAttributeSecrets]) {
     assert(!serializedEvents.includes(secret), `${secret} was recorded`)
   }

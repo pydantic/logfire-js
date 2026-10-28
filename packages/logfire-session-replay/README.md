@@ -265,10 +265,13 @@ never captures request or response bodies, and leaves console capture off
 (`captureConsole: false`).
 Network and navigation capture remain on, but query strings and fragments are
 removed from rrweb page metadata, captured network/navigation URLs, and URL
-attributes (`href`, `src`, `srcset`, `poster`, `data`, `xlink:href`, inline
-style `url()`, and similar) by the default `redactUrlPatterns` value. URLs with
-an opaque scheme, such as `mailto:`, `tel:`, `data:`, and `blob:`, keep only
-the scheme. Replay envelope `meta.urls` contains those same sanitized captured
+attributes (`href`, `src`, `srcset`, `poster`, `data`, `xlink:href`, and
+similar) by the default `redactUrlPatterns` value. URLs with an opaque scheme,
+such as `mailto:`, `tel:`, `data:`, and `blob:`, keep only the scheme. An inline
+`style` value that could reference a URL, because it contains `url`,
+`image-set`, `src(`, or a backslash escape, is removed whole, so such elements
+can lose background images or other styling in replays. This also applies when
+only `transformUrl` is set, and not with `redactUrlPatterns: []` alone. Replay envelope `meta.urls` contains those same sanitized captured
 URLs. Error messages and stacks in replay error events are limited to 1,024 and
 8,192 characters.
 

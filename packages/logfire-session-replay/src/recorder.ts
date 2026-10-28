@@ -1,6 +1,6 @@
 import { record } from '@rrweb/record'
 
-import { cutText, redactCssUrls, redactSrcset, redactUrl, redactUrlsInText, truncationSuffix } from './privacy'
+import { cutText, mayReferenceCssUrl, redactSrcset, redactUrl, redactUrlsInText, truncationSuffix } from './privacy'
 import type { UrlTransform } from './privacy'
 import { CustomTag, EventType, IncrementalSource } from './types'
 import type { RrwebEvent } from './types'
@@ -288,7 +288,8 @@ function sanitizeAttributes(value: unknown, options: SanitizeOptions): unknown {
 function sanitizeAttribute(name: string, value: unknown, options: SanitizeOptions): unknown {
   const redact = (url: string) => redactUrl(url, options.patterns, window.location.href, options.transformUrl)
   if (name === 'style') {
-    return sanitizeStyle(value, redact)
+    // `redactUrlPatterns: []` without a transform keeps raw URLs, so styles are kept too.
+    return options.patterns.length > 0 || options.transformUrl !== undefined ? sanitizeStyle(value) : value
   }
   if (typeof value !== 'string') {
     return value
@@ -318,11 +319,12 @@ function isTextAttribute(name: string, value: string): boolean {
   )
 }
 
-// rrweb records a full snapshot's style as text and a mutation's style as a map of changed properties,
-// where a value with a priority is a `[value, priority]` pair.
-function sanitizeStyle(value: unknown, redact: (url: string) => string): unknown {
+// CSS escapes and strings make URLs in a style hard to find reliably, so a style that could
+// reference one is removed whole. rrweb records a full snapshot's style as text and a mutation's
+// style as a map of changed properties, where a value with a priority is a `[value, priority]` pair.
+function sanitizeStyle(value: unknown): unknown {
   if (typeof value === 'string') {
-    return redactCssUrls(value, redact)
+    return mayReferenceCssUrl(value) ? '' : value
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return value
@@ -330,16 +332,8 @@ function sanitizeStyle(value: unknown, redact: (url: string) => string): unknown
   let changed = false
   const sanitized: Record<string, unknown> = {}
   for (const [property, propertyValue] of Object.entries(value as Record<string, unknown>)) {
-    let next = propertyValue
-    if (typeof propertyValue === 'string') {
-      next = redactCssUrls(propertyValue, redact)
-    } else if (Array.isArray(propertyValue)) {
-      const [propertyText, ...rest] = propertyValue as unknown[]
-      if (typeof propertyText === 'string') {
-        const redacted = redactCssUrls(propertyText, redact)
-        next = redacted === propertyText ? propertyValue : [redacted, ...rest]
-      }
-    }
+    const propertyText = Array.isArray(propertyValue) ? (propertyValue as unknown[])[0] : propertyValue
+    const next = typeof propertyText === 'string' && mayReferenceCssUrl(propertyText) ? '' : propertyValue
     if (next !== propertyValue) {
       changed = true
     }
