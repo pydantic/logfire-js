@@ -30,10 +30,16 @@ function attributes(span: ExportedSpan): Record<string, string | undefined> {
   return Object.fromEntries(span.attributes.map(({ key, value }) => [key, value.stringValue ?? value.intValue]))
 }
 
+// Pausing before navigation is applied to the new document without comparing against elapsed time.
+// The gap exceeds the test timeout, so the about:blank pause cannot target the past.
+const clockStart = Date.UTC(2026, 0, 1)
+const clockPauseGap = 60_000
+
 async function start(page: Page) {
   const chunks: Chunk[] = []
   const spans: ExportedSpan[] = []
-  await page.clock.install()
+  await page.clock.install({ time: clockStart })
+  await page.clock.pauseAt(clockStart + clockPauseGap)
   // Every telemetry request is intercepted; no credentials or live project are used.
   await page.route('**/v1/**', async (route) => {
     const request = route.request()
@@ -56,7 +62,6 @@ async function start(page: Page) {
   await page.goto('http://127.0.0.1:5190/replay.html')
   await expect(page.getByRole('status')).toHaveText('ready')
   await expect.poll(async () => page.evaluate(() => window.frustrationReplay.recording())).toBeTruthy()
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100))
   return { chunks, spans }
 }
 

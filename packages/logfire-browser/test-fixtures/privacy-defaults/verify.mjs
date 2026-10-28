@@ -57,7 +57,23 @@ const initialText = collectText([initialTextNode])
 const mutationText = collectText(snapshot.events.filter((event) => event?.type === 3))
 const initialInputValue = privateInputNode.attributes?.value
 assert(typeof initialInputValue === 'string' && /^\*+$/u.test(initialInputValue), 'initial input value was not masked')
-assertEqual('raw DOM attribute caveat', privateInputNode.attributes?.['data-query-bearing'], '?attribute_secret=visible')
+const hiddenInputNode = findElementById(fullSnapshot.data?.node, 'hidden-input')
+const imageNode = findElementById(fullSnapshot.data?.node, 'private-image')
+assert(hiddenInputNode !== undefined, 'missing hidden input in full snapshot')
+assert(imageNode !== undefined, 'missing private image in full snapshot')
+assertEqual('masked hidden input value', hiddenInputNode.attributes?.value, '*'.repeat('hidden-value-secret'.length))
+assertEqual('UI state data attribute', imageNode.attributes?.['data-state'], 'open')
+
+const serializedEvents = JSON.stringify(snapshot.events)
+assert(!serializedEvents.includes('hidden-value-secret'), 'hidden input value was recorded')
+assert(!serializedEvents.includes('hidden-event-secret'), 'hidden input value change was recorded')
+const urlSecrets = ['src_secret', 'srcset_secret', 'style_secret', 'mutation_style_secret']
+const textAttributeSecrets = ['alt-secret', 'title-secret', 'aria-secret', 'data-secret', 'title-mutation-secret']
+const mutationStyles = snapshot.events
+  .filter((event) => event?.type === 3 && event?.data?.source === 0)
+  .flatMap((event) => event.data.attributes ?? [])
+  .map((item) => item.attributes?.style?.['background-image'])
+  .filter((value) => value !== undefined)
 
 const inputValues = snapshot.events
   .filter((event) => event?.type === 3 && event?.data?.source === 5)
@@ -67,10 +83,23 @@ assert(inputValues.length > 0, 'missing rrweb input event')
 assert(!inputValues.includes('input-event-secret'), 'input value was not masked')
 
 if (scenario === 'default') {
+  assertEqual('masked data attribute', privateInputNode.attributes?.['data-query-bearing'], '*'.repeat('?attribute_secret=visible'.length))
+  assertEqual('image src', imageNode.attributes?.src, 'http://127.0.0.1:4178/api/image')
+  assertEqual('image srcset', imageNode.attributes?.srcset, 'http://127.0.0.1:4178/api/image 1x')
+  assertEqual('image title', imageNode.attributes?.title, '*'.repeat('title-secret'.length))
+  assertEqual('image style', imageNode.attributes?.style, '')
+  assertDeepEqual('mutated style URL', mutationStyles, [''])
+  for (const secret of [...urlSecrets, ...textAttributeSecrets]) {
+    assert(!serializedEvents.includes(secret), `${secret} was recorded`)
+  }
   assertEqual('console events', consoleEvents.length, 0)
   assertDeepEqual('masked initial rendered text', initialText, ['*'.repeat('initial-visible-secret'.length)])
   assert(mutationText.includes('*'.repeat('mutated-visible-secret'.length)), 'mutated rendered text was not masked')
 } else {
+  assertEqual('raw data attribute', privateInputNode.attributes?.['data-query-bearing'], '?attribute_secret=visible')
+  for (const secret of [...urlSecrets, ...textAttributeSecrets]) {
+    assert(serializedEvents.includes(secret), `${secret} opt-in marker missing`)
+  }
   assertEqual(
     'console opt-in marker count',
     consoleEvents.filter((event) => JSON.stringify(event.data.payload).includes('privacy-console-secret')).length,

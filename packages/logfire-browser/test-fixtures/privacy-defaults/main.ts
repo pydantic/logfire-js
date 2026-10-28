@@ -91,6 +91,16 @@ async function run(): Promise<void> {
   input.dispatchEvent(new Event('input', { bubbles: true }))
   await delay(50)
 
+  const hiddenInput = document.querySelector<HTMLInputElement>('#hidden-input')
+  const image = document.querySelector<HTMLImageElement>('#private-image')
+  if (hiddenInput === null || image === null) {
+    throw new Error('missing attribute targets')
+  }
+  hiddenInput.value = 'hidden-event-secret'
+  image.setAttribute('title', 'title-mutation-secret')
+  image.style.backgroundImage = "url('/api/image?mutation_style_secret=visible')"
+  await delay(50)
+
   console.warn('privacy-console-secret', { scenario })
   await fetch('/api/fetch?fetch_secret=visible#fetch_fragment=visible')
   await xhr('/api/xhr?xhr_secret=visible#xhr_fragment=visible')

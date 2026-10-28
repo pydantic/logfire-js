@@ -143,8 +143,12 @@ export interface SessionReplayConfig {
   /** Probability of buffering each otherwise-unsampled session for uncaught error promotion. */
   onErrorSampleRate?: number
 
-  /** Mask all rendered DOM text. Defaults to true. */
+  /**
+   * Mask all rendered DOM text and text-bearing attributes such as `title`, `alt`, `aria-label`,
+   * `placeholder`, and `data-*`. Defaults to true.
+   */
   maskAllText?: boolean
+  /** Mask the values of all inputs, including hidden inputs. Defaults to true. */
   maskAllInputs?: boolean
   maskTextSelector?: string
   blockSelector?: string
@@ -180,6 +184,13 @@ export interface SessionReplayConfig {
   captureGlobalErrors?: boolean
   ignoreUrlPatterns?: RegExp[]
   redactUrlPatterns?: RegExp[]
+  /**
+   * Rewrites each page, navigation, network, and DOM attribute URL after `redactUrlPatterns` has
+   * removed its query and fragment, for example to replace a token or email in the path. URLs inside
+   * error messages, stacks, and console arguments keep the built-in redaction only. When it throws,
+   * the URL keeps the built-in redaction and `onError` receives the error.
+   */
+  transformUrl?: (url: string) => string
 
   onError?: (error: unknown) => void
   fetchImpl?: typeof fetch
@@ -213,6 +224,7 @@ export interface ResolvedSessionReplayConfig {
   captureGlobalErrors: boolean
   ignoreUrlPatterns: RegExp[]
   redactUrlPatterns: RegExp[]
+  transformUrl: ((url: string) => string) | undefined
   onError: ((error: unknown) => void) | undefined
   fetchImpl: typeof fetch
   now: () => number

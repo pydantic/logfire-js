@@ -84,6 +84,8 @@ Add a changeset when a package-visible change needs a release note or version bu
 pnpm run changeset-add
 ```
 
+Merging a PR that contains a changeset releases it: the CI release job commits the version bump straight to `main` and publishes to npm. There is no Version Packages PR, so check the bump type in the changeset before merging.
+
 ## Architecture Notes
 
 - `logfire` wraps OpenTelemetry tracing APIs with convenience methods such as `span`, `startSpan`, `info`, `debug`, `warn`, and `error`.

@@ -329,6 +329,32 @@ describe('captureNetwork', () => {
     stop()
   })
 
+  it('applies the URL transform to fetch and XHR URLs after redaction', async () => {
+    Object.defineProperty(window, 'fetch', {
+      value: async () => new Response('', { status: 200 }),
+      writable: true,
+      configurable: true,
+    })
+    const OriginalXhr = window.XMLHttpRequest
+    installFakeXhr()
+    const emit = vi.fn()
+    const transformUrl = (url: string) => url.replace(/\/users\/[^/]+/u, '/users/:email')
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [/.+/u], now: () => 0, transformUrl })
+
+    await window.fetch('https://api.example.com/users/jane@example.test/orders?token=xyz')
+    const xhr = new window.XMLHttpRequest() as unknown as FakeXhr
+    xhr.open('get', 'https://api.example.com/users/jane@example.test?token=xyz')
+    xhr.send()
+    xhr.complete(200)
+
+    expect(emit.mock.calls.map((call) => (call[1] as NetworkPayload).url)).toEqual([
+      'https://api.example.com/users/:email/orders',
+      'https://api.example.com/users/:email',
+    ])
+    stop()
+    Object.defineProperty(window, 'XMLHttpRequest', { value: OriginalXhr, writable: true, configurable: true })
+  })
+
   it('normalizes stateful redact URL patterns for repeated fetch decisions', async () => {
     Object.defineProperty(window, 'fetch', {
       value: async () => new Response('', { status: 200 }),
@@ -571,6 +597,18 @@ describe('captureNavigation', () => {
       { kind: 'replace', url: `${window.location.origin}/replaced` },
       { kind: 'pop', url: `${window.location.origin}/replaced` },
     ])
+    stop()
+  })
+
+  it('applies the URL transform to SPA navigation URLs', () => {
+    const emit = vi.fn()
+    const stop = captureNavigation(emit, {
+      redactUrlPatterns: [/.+/u],
+      transformUrl: (url) => url.replace(/\/reset-password\/[^/]+/u, '/reset-password/:token'),
+    })
+    history.pushState({}, '', '/reset-password/abc123?next=home')
+
+    expect((emit.mock.calls[0]![1] as NavigationPayload).url).toBe(`${window.location.origin}/reset-password/:token`)
     stop()
   })
 
