@@ -562,6 +562,7 @@ function createActiveRuntime(options: {
       // A periodic replacement anchor must not reset a longer minimum-duration gate.
       checkoutEveryNms: mode === 'buffer' ? 120_000 : Math.max(300_000, config.minSessionDurationMs),
       redactUrlPatterns: config.redactUrlPatterns,
+      transformUrl: config.transformUrl,
     })
     cleanup.push(() => {
       recorder.stop()
@@ -663,6 +664,7 @@ function createActiveRuntime(options: {
           now: config.now,
           onError: config.onError,
           redactUrlPatterns: config.redactUrlPatterns,
+          transformUrl: config.transformUrl,
         })
       )
     }
@@ -671,6 +673,7 @@ function createActiveRuntime(options: {
         captureNavigation(addCustomEvent, {
           onError: config.onError,
           redactUrlPatterns: config.redactUrlPatterns,
+          transformUrl: config.transformUrl,
         })
       )
     }
@@ -745,6 +748,7 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     captureGlobalErrors: config.captureGlobalErrors ?? DEFAULTS.captureGlobalErrors,
     ignoreUrlPatterns: config.ignoreUrlPatterns ?? [],
     redactUrlPatterns: config.redactUrlPatterns ?? [...DEFAULTS.redactUrlPatterns],
+    transformUrl: reportUrlTransformErrors(config.transformUrl, config.onError),
     onError: config.onError,
     fetchImpl,
     now: config.now ?? Date.now,
@@ -849,6 +853,30 @@ async function reportPromise(promise: Promise<void>, onError: ((error: unknown) 
     await promise
   } catch (error) {
     safeReportError(onError, error)
+  }
+}
+
+// The redaction that calls a transform keeps its built-in result when the transform throws, so the
+// error is only reported here. A full snapshot can call a broken transform for every URL in the
+// page, so only the first error is reported.
+function reportUrlTransformErrors(
+  transformUrl: ((url: string) => string) | undefined,
+  onError: ((error: unknown) => void) | undefined
+): ((url: string) => string) | undefined {
+  if (transformUrl === undefined) {
+    return undefined
+  }
+  let reported = false
+  return (url) => {
+    try {
+      return transformUrl(url)
+    } catch (error) {
+      if (!reported) {
+        reported = true
+        safeReportError(onError, error)
+      }
+      throw error
+    }
   }
 }
 

@@ -10,6 +10,18 @@
       <h1 id="initial-text">initial-visible-secret</h1>
       <p id="mutated-text">before mutation</p>
       <input id="private-input" value="input-value-secret" data-query-bearing="?attribute_secret=visible" />
+      <input id="hidden-input" type="hidden" value="hidden-value-secret" />
+      <img
+        id="private-image"
+        alt="alt-secret"
+        title="title-secret"
+        aria-label="aria-secret"
+        data-user="data-secret"
+        data-state="open"
+        src="/api/image?src_secret=visible"
+        srcset="/api/image?srcset_secret=visible 1x"
+        style="background-image: url('/api/image?style_secret=visible')"
+      />
       <p id="status">starting</p>
     </main>
     <script type="module" src="/main.ts"></script>

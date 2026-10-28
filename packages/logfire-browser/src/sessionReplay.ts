@@ -58,6 +58,7 @@ export interface BrowserSessionReplayPackageConfig {
   captureGlobalErrors?: boolean
   ignoreUrlPatterns?: RegExp[]
   redactUrlPatterns?: RegExp[]
+  transformUrl?: (url: string) => string
   onError?: (error: unknown) => void
   fetchImpl?: typeof fetch
 }
@@ -121,6 +122,12 @@ export interface BrowserSessionReplayOptions {
   captureGlobalErrors?: boolean
   ignoreUrlPatterns?: RegExp[]
   redactUrlPatterns?: RegExp[]
+  /**
+   * Rewrites each replay page, navigation, network, and DOM attribute URL after
+   * `redactUrlPatterns` has removed its query and fragment, for example to
+   * replace a token or email in the path.
+   */
+  transformUrl?: (url: string) => string
 
   onError?: (error: unknown) => void
   fetchImpl?: typeof fetch
@@ -281,6 +288,9 @@ function createReplayConfig(
   }
   if (options.redactUrlPatterns !== undefined) {
     config.redactUrlPatterns = options.redactUrlPatterns
+  }
+  if (options.transformUrl !== undefined) {
+    config.transformUrl = options.transformUrl
   }
   config.onError = (error) => {
     // Keep the recorder optional: inspect its public error shape without a runtime
