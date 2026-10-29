@@ -17,6 +17,18 @@ export type { RegionData } from './tokenBaseUrl'
 export interface ScrubbingOptions {
   callback?: ScrubCallback
   extraPatterns?: string[]
+  /**
+   * Top-level attribute keys prefixed with one of these strings, such as `app.checkout.`, are
+   * exempt from scrubbing like `safeKeys`. Include the trailing separator, so `app.checkout.` does
+   * not also match `app.checkout_token`.
+   */
+  safeKeyPrefixes?: string[]
+  /**
+   * Exact top-level attribute keys, such as `app.checkout.step`, whose key and value are never
+   * scrubbed. Use them for attributes your application sets from code-defined values. Applies to
+   * span, span event, span link, and log record attributes, and to message template fields.
+   */
+  safeKeys?: string[]
 }
 
 export interface BaggageOptions {
@@ -140,7 +152,7 @@ function resolveScrubber(scrubbing: LogfireApiConfigOptions['scrubbing']) {
     if (scrubbing === false) {
       return new NoopAttributeScrubber()
     } else {
-      return new LogfireAttributeScrubber(scrubbing.extraPatterns, scrubbing.callback)
+      return new LogfireAttributeScrubber(scrubbing.extraPatterns, scrubbing.callback, scrubbing.safeKeys, scrubbing.safeKeyPrefixes)
     }
   } else {
     return new LogfireAttributeScrubber()

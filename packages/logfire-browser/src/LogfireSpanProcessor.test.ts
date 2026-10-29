@@ -2,6 +2,7 @@
 import type { Context } from '@opentelemetry/api'
 import { ROOT_CONTEXT } from '@opentelemetry/api'
 import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-web'
+import { configureLogfireApi } from 'logfire'
 import { describe, expect, it, vi } from 'vite-plus/test'
 
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
@@ -120,6 +121,37 @@ describe('LogfireSpanProcessor', () => {
       ]),
     })
     expect(wrapped.onEnd).toHaveBeenCalledWith(span)
+  })
+
+  it('keeps application-declared safe keys alongside the SDK session attributes', () => {
+    configureLogfireApi({ scrubbing: { safeKeyPrefixes: ['app.checkout.'], safeKeys: ['app.result'] } })
+    try {
+      const processor = new LogfireSpanProcessor(makeWrapped(), false)
+      const span = {
+        attributes: {
+          'session.id': 'session-1',
+          'app.result': 'success_authenticated',
+          'app.checkout.step': 'bootstrap_auth_dependency',
+          'app.label': 'auth_ok',
+        },
+        events: [],
+        links: [],
+        name: 'checkout',
+        status: { code: 0 },
+      } as unknown as ReadableSpan
+
+      processor.onEnd(span)
+
+      expect(span.attributes).toEqual({
+        'session.id': 'session-1',
+        'app.result': 'success_authenticated',
+        'app.checkout.step': 'bootstrap_auth_dependency',
+        'app.label': "[Scrubbed due to 'auth']",
+        'logfire.scrubbed': JSON.stringify([{ matched_substring: 'auth', path: ['attributes', 'app.label'] }]),
+      })
+    } finally {
+      configureLogfireApi({ scrubbing: {} })
+    }
   })
 
   it('scrubs session-named keys that an application puts on events and links', () => {

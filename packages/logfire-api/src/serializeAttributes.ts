@@ -1,4 +1,4 @@
-import type { ScrubbedNote } from '.'
+import type { BaseScrubber, ScrubbedNote } from '.'
 import { logfireApiConfig } from '.'
 import { getOwn } from './ownRecord'
 import { ATTRIBUTES_SCRUBBED_KEY, ATTRIBUTES_SPAN_TYPE_KEY, ATTRIBUTES_TAGS_KEY, JSON_NULL_FIELDS_KEY, JSON_SCHEMA_KEY } from './constants'
@@ -37,7 +37,7 @@ const UNSERIALIZABLE_VALUE = '[unserializable]'
 export function serializeAttributes(attributes: RawAttributes): SerializedAttributes {
   const scrubber = logfireApiConfig.scrubber
   const alreadyScubbed = ATTRIBUTES_SPAN_TYPE_KEY in attributes
-  const [scrubbedAttributes, scrubNotes] = alreadyScubbed ? [attributes, []] : scrubber.scrubValue([], attributes)
+  const [scrubbedAttributes, scrubNotes] = alreadyScubbed ? [attributes, []] : scrubAttributeRecord(scrubber, attributes)
 
   // Built in Maps and materialized with `Object.fromEntries`, which defines own keys: attribute
   // keys are user data, and assigning a `__proto__` key to a plain record would run the inherited
@@ -92,6 +92,20 @@ export function serializeAttributes(attributes: RawAttributes): SerializedAttrib
     result.set(JSON_SCHEMA_KEY, JSON.stringify(schema))
   }
   return Object.fromEntries(result)
+}
+
+/**
+ * Application-declared safe keys are exempt only at the top level, so they are held out of the
+ * scrubber rather than added to its safe keys, which apply at every depth of a nested value.
+ */
+function scrubAttributeRecord(scrubber: BaseScrubber, attributes: RawAttributes): readonly [RawAttributes, ScrubbedNote[]] {
+  const isSafe = (key: string) => scrubber.isSafeAttributeKey?.(key) === true
+  const entries = Object.entries(attributes)
+  if (!entries.some(([key]) => isSafe(key))) {
+    return scrubber.scrubValue([], attributes)
+  }
+  const [scrubbed, notes] = scrubber.scrubValue([], Object.fromEntries(entries.filter(([key]) => !isSafe(key))))
+  return [Object.fromEntries(entries.map(([key, value]) => [key, isSafe(key) ? value : getOwn(scrubbed, key)])), notes]
 }
 
 let warnedOversizedInteger = false

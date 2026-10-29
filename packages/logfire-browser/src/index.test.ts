@@ -963,7 +963,7 @@ describe('browser configure resource attributes', () => {
   afterEach(async () => {
     await cleanup?.()
     clearConfiguredBrowserSessionForTests()
-    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
+    configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null, scrubbing: {} })
     Object.defineProperty(globalThis, 'navigator', {
       configurable: true,
       value: originalNavigator,
@@ -1036,6 +1036,16 @@ describe('browser configure resource attributes', () => {
     })
 
     expect(logfireApiConfig.jsonSchema).toBe('basic')
+  })
+
+  it('passes scrubbing safe keys to the shared API', () => {
+    cleanup = configure({
+      scrubbing: { safeKeyPrefixes: ['app.checkout.'], safeKeys: ['app.result'] },
+      traceUrl: 'http://localhost:8989/client-traces',
+    })
+
+    const { scrubber } = logfireApiConfig
+    expect(['app.result', 'app.checkout.step', 'app.label'].map((key) => scrubber.isSafeAttributeKey?.(key))).toEqual([true, true, false])
   })
 })
 
