@@ -45,6 +45,9 @@ const FLAG_DATA_ATTRIBUTE_VALUES = new Set(['', 'false', 'true'])
 const TEXT_VALUE_INPUT_TYPES = new Set(['button', 'reset', 'submit'])
 const MAX_ERROR_MESSAGE_LENGTH = 1024
 const MAX_ERROR_STACK_LENGTH = 8192
+// One inaccessible node can make rrweb throw on every mutation, so each distinct message is reported
+// once, and a page that keeps producing new messages stops being reported after this many.
+const MAX_REPORTED_RECORDER_ERRORS = 10
 // rrweb's `maskAllInputs` map, plus hidden inputs, whose values often carry tokens and ids.
 const MASK_ALL_INPUT_OPTIONS = {
   color: true,
@@ -83,6 +86,7 @@ export interface RecorderOptions {
   checkoutEveryNms?: number
   redactUrlPatterns: RegExp[]
   transformUrl?: UrlTransform | undefined
+  onError?: ((error: unknown) => void) | undefined
 }
 
 interface SanitizeOptions {
@@ -100,9 +104,25 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
     patterns: options.redactUrlPatterns,
     transformUrl: options.transformUrl,
   }
+  const reportedErrors = new Set<string>()
   const recordOptions: RrwebRecordOptions = {
     emit: (event) => {
       options.emit(sanitizeRecorderEvent(event, sanitizeOptions))
+    },
+    // rrweb catches errors in its observer callbacks only when an error handler is registered.
+    // Without one, they reach the page's global error handler. Firefox throws `Permission denied to
+    // access property "nodeType"` when rrweb reads a node that the page script cannot access, such
+    // as one a browser extension inserted. Returning `true` makes rrweb drop the error and keep
+    // recording.
+    errorHandler: (error) => {
+      if (reportedErrors.size < MAX_REPORTED_RECORDER_ERRORS) {
+        const message = errorMessage(error)
+        if (!reportedErrors.has(message)) {
+          reportedErrors.add(message)
+          options.onError?.(error)
+        }
+      }
+      return true
     },
     recordCanvas: false,
     collectFonts: false,
@@ -159,6 +179,14 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
     takeFullSnapshot: () => {
       record.takeFullSnapshot(true)
     },
+  }
+}
+
+function errorMessage(error: unknown): string {
+  try {
+    return error instanceof Error ? error.message : String(error)
+  } catch {
+    return ''
   }
 }
 

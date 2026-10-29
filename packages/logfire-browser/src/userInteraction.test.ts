@@ -84,6 +84,24 @@ describe('collapseUserInteractionSpans', () => {
     expect(createSpan).toHaveBeenCalledWith('element', 'click', parentSpan)
   })
 
+  it('skips the event and warns once when the instrumentation cannot create a span', () => {
+    const warn = vi.spyOn(diag, 'warn').mockImplementation(() => undefined)
+    const error = new Error('Permission denied to access property "localName"')
+    const instrumentation = fakeInstrumentation({
+      _createSpan: vi.fn<CreateSpan>(() => {
+        throw error
+      }),
+    })
+
+    collapseUserInteractionSpans([instrumentation as unknown as Instrumentation])
+
+    expect(instrumentation._createSpan?.('element', 'click')).toBeUndefined()
+    expect(instrumentation._createSpan?.('element', 'click')).toBeUndefined()
+    expect(warn.mock.calls).toEqual([
+      ['logfire-browser: the user interaction instrumentation could not create a span; skipping the event', error],
+    ])
+  })
+
   it('leaves other instrumentations unchanged', () => {
     const createSpan = vi.fn<CreateSpan>(() => createdSpan)
     const instrumentation = fakeInstrumentation({ _createSpan: createSpan, instrumentationName: '@opentelemetry/instrumentation-fetch' })

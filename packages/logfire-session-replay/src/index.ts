@@ -592,6 +592,9 @@ function createActiveRuntime(options: {
       checkoutEveryNms: mode === 'buffer' ? 120_000 : Math.max(300_000, config.minSessionDurationMs),
       redactUrlPatterns: config.redactUrlPatterns,
       transformUrl: config.transformUrl,
+      onError: (error) => {
+        safeReportError(config.onError, error)
+      },
     })
     cleanup.push(() => {
       recorder.stop()

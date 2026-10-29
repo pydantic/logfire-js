@@ -148,6 +148,32 @@ describe('startRecording', () => {
     expect(lastOptions().maskTextSelector).toBe('.secret')
   })
 
+  it('reports each distinct rrweb callback error once and tells rrweb to drop it', () => {
+    const onError = vi.fn<(error: unknown) => void>()
+    startRecordingForTest({ emit: () => {}, onError })
+    const errorHandler = lastOptions().errorHandler
+    const nodeTypeError = new Error('Permission denied to access property "nodeType"')
+    const localNameError = new Error('Permission denied to access property "localName"')
+
+    expect(errorHandler?.(nodeTypeError)).toBe(true)
+    expect(errorHandler?.(new Error('Permission denied to access property "nodeType"'))).toBe(true)
+    expect(errorHandler?.(localNameError)).toBe(true)
+
+    expect(onError.mock.calls).toEqual([[nodeTypeError], [localNameError]])
+  })
+
+  it('stops reporting rrweb callback errors after ten distinct messages', () => {
+    const onError = vi.fn<(error: unknown) => void>()
+    startRecordingForTest({ emit: () => {}, onError })
+    const errorHandler = lastOptions().errorHandler
+
+    for (let index = 0; index < 12; index++) {
+      expect(errorHandler?.(new Error(`failure ${String(index)}`))).toBe(true)
+    }
+
+    expect(onError).toHaveBeenCalledTimes(10)
+  })
+
   it('forwards rrweb emitted events to the caller', () => {
     const emitted: RrwebEvent[] = []
     startRecordingForTest({ emit: (event) => emitted.push(event), maskAllInputs: true })
