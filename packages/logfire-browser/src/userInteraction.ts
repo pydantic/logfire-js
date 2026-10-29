@@ -38,6 +38,7 @@ export function collapseUserInteractionSpans(instrumentations: readonly Instrume
       continue
     }
     const listenerEnds = new WeakMap<Span, () => void>()
+    let warnedCreateSpanError = false
     internals._createSpan = (element, eventName, parentSpan) => {
       if (parentSpan !== undefined && internals._isEnabled !== false) {
         const listenerSpan = trace.wrapSpanContext(parentSpan.spanContext())
@@ -50,7 +51,20 @@ export function collapseUserInteractionSpans(instrumentations: readonly Instrume
         }
         return listenerSpan
       }
-      const span = createSpan.call(instrumentation, element, eventName, parentSpan)
+      let span: Span | undefined
+      try {
+        span = createSpan.call(instrumentation, element, eventName, parentSpan)
+      } catch (error) {
+        // The instrumentation reads `localName` up the tree for the target's XPath outside its own
+        // try. Firefox throws `Permission denied to access property "localName"` for a node that the
+        // page script cannot access, such as one a browser extension inserted. Without a span the
+        // instrumentation runs the listener untraced.
+        if (!warnedCreateSpanError) {
+          warnedCreateSpanError = true
+          diag.warn('logfire-browser: the user interaction instrumentation could not create a span; skipping the event', error)
+        }
+        return undefined
+      }
       if (span !== undefined && internals._isEnabled !== false && !isZoneAvailable()) {
         listenerEnds.set(span, endAfterDispatch(span))
       }

@@ -51,3 +51,39 @@ describe('rrweb activity hooks', () => {
     expect(emittedTypes).toEqual([EventType.Meta, EventType.FullSnapshot, EventType.IncrementalSnapshot])
   })
 })
+
+describe('rrweb callback errors', () => {
+  it('reports an error thrown inside an rrweb callback once and keeps it from the page', () => {
+    const pageErrors: unknown[] = []
+    const onPageError = (event: ErrorEvent) => {
+      pageErrors.push(event.error)
+      event.preventDefault()
+    }
+    window.addEventListener('error', onPageError)
+    const reportedErrors: unknown[] = []
+    const button = document.createElement('button')
+    document.body.append(button)
+    const recorder = startRecording({
+      beforeUserActivity: () => {
+        throw new Error('Permission denied to access property "nodeType"')
+      },
+      emit: () => undefined,
+      maskAllInputs: true,
+      maskAllText: false,
+      onError: (error) => {
+        reportedErrors.push(error)
+      },
+      redactUrlPatterns: [],
+    })
+    stopRecording = () => {
+      recorder.stop()
+      window.removeEventListener('error', onPageError)
+    }
+
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    expect(pageErrors).toEqual([])
+    expect(reportedErrors).toEqual([new Error('Permission denied to access property "nodeType"')])
+  })
+})
