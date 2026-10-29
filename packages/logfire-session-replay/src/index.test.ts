@@ -84,6 +84,19 @@ describe('startSessionReplay environment and sampling gates', () => {
     await replay.stop()
   })
 
+  it('records one session in ten in full and buffers the rest for errors by default', async () => {
+    const { fetchImpl } = recordingFetch()
+    const { onErrorSampleRate: _onErrorSampleRate, sessionSampleRate: _sessionSampleRate, ...config } = baseConfig(fetchImpl)
+
+    const fullReplay = startSessionReplay({ ...config, getSessionId: () => 'default-full', random: () => 0.09 })
+    expect(fullReplay.mode).toBe('full')
+    await fullReplay.stop()
+
+    const bufferedReplay = startSessionReplay({ ...config, getSessionId: () => 'default-buffer', random: () => 0.1 })
+    expect(bufferedReplay.mode).toBe('buffer')
+    await bufferedReplay.stop()
+  })
+
   it('keeps sampling mode stable across page loads for the same session id', async () => {
     const { fetchImpl } = recordingFetch()
     const firstReplay = startSessionReplay(

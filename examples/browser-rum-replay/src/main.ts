@@ -46,6 +46,7 @@ logfire.configure({
     headers: () => ({
       'X-Logfire-Example': 'browser-rum-replay',
     }),
+    // Every local session is recorded so a run always produces a replay. Production apps use a lower rate.
     sessionSampleRate: 1,
     onErrorSampleRate: 1,
     maskAllInputs: true,

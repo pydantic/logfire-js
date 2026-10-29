@@ -107,6 +107,7 @@ ID lasts for the whole page or login session.
 ## Choose replay sampling separately
 
 Preserve the existing replay policy unless changing it is part of the request.
+The defaults are `sessionSampleRate: 0.1` and `onErrorSampleRate: 1`.
 `sessionSampleRate` controls continuous recording. `onErrorSampleRate` keeps an
 in-memory buffer for other eligible sessions and promotes it on uncaught
 `window.error` or `unhandledrejection` events. `logfire.reportError()` also

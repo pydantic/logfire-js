@@ -232,7 +232,7 @@ export interface ResolvedSessionReplayConfig {
 }
 
 export const DEFAULTS = {
-  sessionSampleRate: 1,
+  sessionSampleRate: 0.1,
   onErrorSampleRate: 1,
   maskAllText: true,
   maskAllInputs: true,
