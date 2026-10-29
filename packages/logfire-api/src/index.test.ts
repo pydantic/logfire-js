@@ -601,6 +601,35 @@ describe('span', () => {
     expect(spanMock.end).toHaveBeenCalledOnce()
   })
 
+  test('sync callback throws an Error whose message getter throws - re-throws the original error', () => {
+    spanMock.recordException.mockImplementationOnce((exception) => {
+      Reflect.get(exception as Error, 'message')
+    })
+    const error = new Error('boom')
+    error.stack = 'Error: boom\n    at handler (app.ts:8:1)'
+    Object.defineProperty(error, 'message', {
+      get() {
+        throw new Error('message getter failed')
+      },
+    })
+
+    expect(() =>
+      span('test', {
+        callback: () => {
+          throw error
+        },
+      })
+    ).toThrow(error)
+
+    expect(spanMock.recordException).toHaveBeenLastCalledWith({
+      message: 'Unknown error',
+      name: 'Error',
+      stack: 'Error: boom\n    at handler (app.ts:8:1)',
+    })
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: Unknown error' })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
   test('sync callback throws Error with cause - records cause chain in exception stacktrace', () => {
     const cause = Object.assign(new TypeError('database unavailable'), {
       details: { retryable: true },
@@ -984,6 +1013,31 @@ describe('reportError', () => {
       logfireApiConfig.onReportError = undefined
     }
 
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
+  test('still records and ends the span when reading the error message throws', () => {
+    spanMock.recordException.mockImplementationOnce((exception) => {
+      Reflect.get(exception as Error, 'message')
+    })
+    const error = new Error('boom')
+    error.stack = 'Error: boom\n    at handler (app.ts:8:1)'
+    Object.defineProperty(error, 'message', {
+      get() {
+        throw new Error('message getter failed')
+      },
+    })
+
+    expect(() => {
+      reportError('Caught error', error)
+    }).not.toThrow()
+
+    expect(spanMock.recordException).toHaveBeenLastCalledWith({
+      message: 'Unknown error',
+      name: 'Error',
+      stack: 'Error: boom\n    at handler (app.ts:8:1)',
+    })
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: Unknown error' })
     expect(spanMock.end).toHaveBeenCalledOnce()
   })
 

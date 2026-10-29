@@ -796,7 +796,7 @@ function recordSpanException(span: Span, thrown: unknown, spanSerializationAttri
     }
   }
 
-  span.recordException(recordExceptionValue)
+  recordExceptionSafely(span, recordExceptionValue, thrown)
   span.setStatus({ code: SpanStatusCode.ERROR, message: `${errorName}: ${errorMessage}` })
   span.setAttribute(ATTRIBUTES_LEVEL_KEY, Level.Error)
 
@@ -852,6 +852,21 @@ function getSafeErrorStack(error: Error): string | undefined {
     return typeof error.stack === 'string' ? error.stack : undefined
   } catch {
     return undefined
+  }
+}
+
+function recordExceptionSafely(span: Span, value: Exception, error: unknown): void {
+  try {
+    span.recordException(value)
+  } catch {
+    if (error instanceof Error) {
+      const stack = getSafeErrorStack(error)
+      span.recordException({
+        message: getSafeErrorMessage(error),
+        name: getSafeErrorName(error),
+        ...(stack !== undefined ? { stack } : {}),
+      })
+    }
   }
 }
 
@@ -1027,7 +1042,7 @@ function reportErrorWithSettings(
 
   const span = startSpanWithSettings(settings, message, attributes, reportErrorOptionsToLogOptions(options))
 
-  span.recordException(normalized.recordExceptionValue)
+  recordExceptionSafely(span, normalized.recordExceptionValue, error)
   span.setStatus({ code: SpanStatusCode.ERROR, message: normalized.statusMessage })
   span.end()
 
