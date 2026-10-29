@@ -390,6 +390,13 @@ describe('scrubbing.safeKeys', () => {
       logfireApiConfig.scrubber
     )
     expect(formattedMessage).toBe("checkout auth_ok [Scrubbed due to 'auth']")
+
+    const nested = logfireFormatWithExtras(
+      '{app.checkout.note}',
+      { app: { checkout: { note: 'password=hunter2' } } },
+      logfireApiConfig.scrubber
+    )
+    expect(nested.formattedMessage).toBe("[Scrubbed due to 'password']")
   })
 
   test('skips the callback and extra patterns for declared keys only', () => {
