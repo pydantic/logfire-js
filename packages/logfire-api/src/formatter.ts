@@ -130,7 +130,7 @@ class ChunksFormatter {
 
   private cleanValue(fieldName: string, value: string, scrubber: BaseScrubber): [string, ScrubbedNote[]] {
     // Scrub before truncating so the scrubber can see the full value
-    if (scrubber.SAFE_KEYS.includes(fieldName)) {
+    if (scrubber.SAFE_KEYS.includes(fieldName) || scrubber.isSafeAttributeKey?.(fieldName) === true) {
       return [truncateString(value, MESSAGE_FORMATTED_VALUE_LENGTH_LIMIT), []]
     }
 

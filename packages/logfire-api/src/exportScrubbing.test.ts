@@ -1,4 +1,5 @@
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
+import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { beforeEach, describe, expect, test, vi } from 'vite-plus/test'
 
 import { ATTRIBUTES_SCRUBBED_KEY } from './constants'
@@ -10,7 +11,8 @@ import {
   scrubSpanForExport,
 } from './exportScrubbing'
 import type { ScrubbableLogRecord } from './exportScrubbing'
-import { configureLogfireApi } from './logfireApiConfig'
+import { logfireFormatWithExtras } from './formatter'
+import { configureLogfireApi, logfireApiConfig } from './logfireApiConfig'
 import { serializeAttributes } from './serializeAttributes'
 
 function fakeSpan(fields: Partial<Pick<ReadableSpan, 'attributes' | 'events' | 'links'>>): ReadableSpan {
@@ -308,6 +310,107 @@ describe('scrubSpanForExport', () => {
     scrubSpanForExport(span)
 
     expect(span.attributes).toEqual({ 'app.password': 'hunter2' })
+  })
+})
+
+describe('scrubbing.safeKeys', () => {
+  beforeEach(() => {
+    configureLogfireApi({ scrubbing: { safeKeyPrefixes: ['app.checkout.'], safeKeys: ['app.result'] } })
+  })
+
+  test('keeps declared keys verbatim on a span from the raw OpenTelemetry tracer', async () => {
+    const exporter = new InMemorySpanExporter()
+    const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] })
+    const span = provider.getTracer('app').startSpan('checkout', {
+      attributes: { 'app.result': 'success_authenticated', 'app.label': 'session_restored' },
+    })
+    span.setAttribute('app.checkout.step', 'bootstrap_auth_dependency')
+    span.end()
+    await provider.forceFlush()
+    const [finished] = exporter.getFinishedSpans()
+    if (finished === undefined) {
+      throw new Error('expected a finished span')
+    }
+
+    scrubSpanForExport(finished)
+
+    expect(finished.attributes).toEqual({
+      'app.result': 'success_authenticated',
+      'app.label': "[Scrubbed due to 'session']",
+      'app.checkout.step': 'bootstrap_auth_dependency',
+      [ATTRIBUTES_SCRUBBED_KEY]: JSON.stringify([{ matched_substring: 'session', path: ['attributes', 'app.label'] }]),
+    })
+    await provider.shutdown()
+  })
+
+  test('applies to event, link, and log record attributes but not the status message or log body', () => {
+    const span = fakeSpan({
+      events: [{ attributes: { 'app.result': 'auth_ok', 'app.label': 'auth_ok' }, name: 'event', time: [0, 0] }],
+      links: [{ attributes: { 'app.checkout.step': 'auth_ok' }, context: { spanId: '', traceFlags: 0, traceId: '' } }],
+    })
+    span.status.message = 'auth_ok'
+
+    scrubSpanForExport(span)
+
+    expect(span.events[0]?.attributes).toEqual({ 'app.result': 'auth_ok', 'app.label': "[Scrubbed due to 'auth']" })
+    expect(span.links[0]?.attributes).toEqual({ 'app.checkout.step': 'auth_ok' })
+    expect(span.status.message).toBe("[Scrubbed due to 'auth']")
+
+    const record = fakeLogRecord({ 'app.result': 'auth_ok' }, 'auth_ok')
+    scrubLogRecordForExport(record)
+    expect(record.attributes).toEqual({
+      'app.result': 'auth_ok',
+      [ATTRIBUTES_SCRUBBED_KEY]: JSON.stringify([{ matched_substring: 'auth', path: ['log_body'] }]),
+    })
+  })
+
+  test('exempts only top-level keys from the API helpers, including message template fields', () => {
+    expect(serializeAttributes({ 'app.result': 'auth_ok', details: { 'app.result': 'auth_ok' } })).toEqual({
+      'app.result': 'auth_ok',
+      details: JSON.stringify({ 'app.result': "[Scrubbed due to 'auth']" }),
+      [ATTRIBUTES_SCRUBBED_KEY]: JSON.stringify([{ matched_substring: 'auth', path: ['details', 'app.result'] }]),
+      'logfire.json_schema': JSON.stringify({
+        properties: {
+          details: { properties: { 'app.result': { type: 'string' } }, type: 'object' },
+          [ATTRIBUTES_SCRUBBED_KEY]: {
+            items: {
+              properties: { matched_substring: { type: 'string' }, path: { items: { type: 'string' }, type: 'array' } },
+              type: 'object',
+            },
+            type: 'array',
+          },
+        },
+        type: 'object',
+      }),
+    })
+
+    const { formattedMessage } = logfireFormatWithExtras(
+      'checkout {app.result} {app.label}',
+      { 'app.label': 'auth_ok', 'app.result': 'auth_ok' },
+      logfireApiConfig.scrubber
+    )
+    expect(formattedMessage).toBe("checkout auth_ok [Scrubbed due to 'auth']")
+  })
+
+  test('skips the callback and extra patterns for declared keys only', () => {
+    const callback = vi.fn<() => undefined>(() => undefined)
+    configureLogfireApi({ scrubbing: { callback, extraPatterns: ['journey'], safeKeys: ['app.result'] } })
+    const span = fakeSpan({ attributes: { 'app.result': 'journey_auth', 'app.label': 'journey_start' } })
+
+    scrubSpanForExport(span)
+
+    expect(span.attributes).toEqual({
+      'app.result': 'journey_auth',
+      'app.label': "[Scrubbed due to 'journey']",
+      [ATTRIBUTES_SCRUBBED_KEY]: JSON.stringify([{ matched_substring: 'journey', path: ['attributes', 'app.label'] }]),
+    })
+    expect(callback).toHaveBeenCalledTimes(1)
+  })
+
+  test('rejects an empty prefix, which would exempt every key', () => {
+    expect(() => {
+      configureLogfireApi({ scrubbing: { safeKeyPrefixes: [''] } })
+    }).toThrow('logfire: scrubbing.safeKeyPrefixes must not contain an empty string')
   })
 })
 

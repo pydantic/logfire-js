@@ -26,6 +26,12 @@ export interface AttributeScrubber {
    * @returns A tuple: [scrubbedValue, scrubbedNotes]
    */
   scrubValue(path: JsonPath, value: unknown): readonly [unknown, ScrubbedNote[]]
+
+  /**
+   * Whether the application declared a top-level attribute key safe, so neither the key nor its
+   * value is scrubbed.
+   */
+  isSafeAttributeKey?(key: string): boolean
 }
 
 /**
@@ -134,13 +140,25 @@ export class LogfireAttributeScrubber implements BaseScrubber {
   private readonly callback?: ScrubCallback
 
   private readonly pattern: RegExp
+  private readonly safeAttributeKeys: ReadonlySet<string>
+  private readonly safeAttributeKeyPrefixes: readonly string[]
 
-  constructor(patterns?: string[], callback?: ScrubCallback) {
+  constructor(patterns?: string[], callback?: ScrubCallback, safeKeys?: readonly string[], safeKeyPrefixes?: readonly string[]) {
     const allPatterns = [...DEFAULT_PATTERNS, ...(patterns ?? [])]
     this.pattern = new RegExp(allPatterns.join('|'), 'iu')
     if (callback !== undefined) {
       this.callback = callback
     }
+    // An empty prefix would match every key and silently turn off attribute scrubbing.
+    if (safeKeyPrefixes?.includes('') === true) {
+      throw new Error('logfire: scrubbing.safeKeyPrefixes must not contain an empty string')
+    }
+    this.safeAttributeKeys = new Set(safeKeys)
+    this.safeAttributeKeyPrefixes = [...(safeKeyPrefixes ?? [])]
+  }
+
+  isSafeAttributeKey(key: string): boolean {
+    return this.safeAttributeKeys.has(key) || this.safeAttributeKeyPrefixes.some((prefix) => key.startsWith(prefix))
   }
 
   /**

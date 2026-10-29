@@ -24,6 +24,27 @@ logfire.configure({
 })
 ```
 
+## Declare Safe Attribute Keys
+
+Scrubbing checks values as well as keys, so a code-defined label such as `checkout_authenticated` is redacted because it contains `auth`. Declare the attribute keys your application sets from code-defined values to keep them intact:
+
+```ts
+logfire.configure({
+  scrubbing: {
+    safeKeyPrefixes: ['app.checkout.'],
+    safeKeys: ['app.result'],
+  },
+  serviceName: 'checkout-api',
+})
+```
+
+- `safeKeys` lists exact attribute keys.
+- `safeKeyPrefixes` lists key prefixes. Include the trailing separator, so `app.checkout.` does not also match `app.checkout_token`. An empty prefix is rejected.
+
+Neither the key nor the value of a matching attribute is scrubbed, and `extraPatterns` and `callback` do not apply to it. This covers top-level attributes on every exported span, including spans you create with the OpenTelemetry tracer directly, span event and span link attributes, Node.js log record attributes, and message template fields. Keys nested inside an object or array attribute value, the span status message, and log record bodies are still scrubbed. `@pydantic/logfire-browser` and `@pydantic/logfire-cf-workers` accept the same options, and the browser SDK keeps exempting its own session and URL attributes.
+
+Declare only keys whose values your code controls. A declared key is sent as is, even if a value later carries user input.
+
 ## Disable Scrubbing
 
 Disable scrubbing only when you are certain telemetry cannot contain sensitive data:

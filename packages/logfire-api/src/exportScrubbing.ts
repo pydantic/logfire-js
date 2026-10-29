@@ -22,6 +22,7 @@ export interface ExportScrubbingOptions {
   /**
    * Span attribute keys that a runtime package sets from SDK-owned values, such as browser session
    * ids. Event and link attributes are always scrubbed, since the SDK does not set these keys there.
+   * Keys the application declares through `scrubbing.safeKeys` are skipped everywhere regardless.
    */
   isSafeKey?: (key: string) => boolean
   /**
@@ -184,6 +185,7 @@ function scrubAttributes(
       typeof value === 'boolean' ||
       key === ATTRIBUTES_SCRUBBED_KEY ||
       options.isSafeKey?.(key) === true ||
+      logfireApiConfig.scrubber.isSafeAttributeKey?.(key) === true ||
       (alreadyScrubbed?.has(key) === true && sameAttributeValue(value, alreadyScrubbed.get(key)))
     ) {
       continue
