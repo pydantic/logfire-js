@@ -860,8 +860,10 @@ function recordExceptionSafely(span: Span, value: Exception, error: unknown): vo
     span.recordException(value)
   } catch {
     if (error instanceof Error) {
+      const code = getErrorCode(error)
       const stack = getSafeErrorStack(error)
       span.recordException({
+        ...(code !== undefined ? { code } : {}),
         message: getSafeErrorMessage(error),
         name: getSafeErrorName(error),
         ...(stack !== undefined ? { stack } : {}),
@@ -912,8 +914,12 @@ function formatErrorStackWithCauses(error: Error, seen: WeakSet<Error> = new Wea
 }
 
 function getErrorCode(error: Error): string | number | undefined {
-  const code = (error as { code?: unknown }).code
-  return typeof code === 'string' || typeof code === 'number' ? code : undefined
+  try {
+    const code = (error as { code?: unknown }).code
+    return typeof code === 'string' || typeof code === 'number' ? code : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function normalizeRecordException(error: Error): Exception {

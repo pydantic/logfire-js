@@ -1020,7 +1020,7 @@ describe('reportError', () => {
     spanMock.recordException.mockImplementationOnce((exception) => {
       Reflect.get(exception as Error, 'message')
     })
-    const error = new Error('boom')
+    const error = Object.assign(new Error('boom'), { code: 'ECONNREFUSED' })
     error.stack = 'Error: boom\n    at handler (app.ts:8:1)'
     Object.defineProperty(error, 'message', {
       get() {
@@ -1033,6 +1033,7 @@ describe('reportError', () => {
     }).not.toThrow()
 
     expect(spanMock.recordException).toHaveBeenLastCalledWith({
+      code: 'ECONNREFUSED',
       message: 'Unknown error',
       name: 'Error',
       stack: 'Error: boom\n    at handler (app.ts:8:1)',
