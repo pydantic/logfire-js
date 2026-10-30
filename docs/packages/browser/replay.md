@@ -49,9 +49,13 @@ usage, so choose the full-session rate from your traffic:
 Record every session in development:
 
 ```ts
-sessionReplay: sessionReplayIntegration({
-  sessionSampleRate: import.meta.env.DEV ? 1 : 0.1,
-}),
+logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  sessionReplay: sessionReplayIntegration({
+    sessionSampleRate: location.hostname === 'localhost' ? 1 : 0.1,
+  }),
+})
 ```
 
 ## Privacy controls
