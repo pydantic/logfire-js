@@ -796,7 +796,7 @@ function recordSpanException(span: Span, thrown: unknown, spanSerializationAttri
     }
   }
 
-  span.recordException(recordExceptionValue)
+  recordExceptionSafely(span, recordExceptionValue, thrown)
   span.setStatus({ code: SpanStatusCode.ERROR, message: `${errorName}: ${errorMessage}` })
   span.setAttribute(ATTRIBUTES_LEVEL_KEY, Level.Error)
 
@@ -855,6 +855,23 @@ function getSafeErrorStack(error: Error): string | undefined {
   }
 }
 
+function recordExceptionSafely(span: Span, value: Exception, error: unknown): void {
+  try {
+    span.recordException(value)
+  } catch {
+    if (error instanceof Error) {
+      const code = getErrorCode(error)
+      const stack = getSafeErrorStack(error)
+      span.recordException({
+        ...(code !== undefined ? { code } : {}),
+        message: getSafeErrorMessage(error),
+        name: getSafeErrorName(error),
+        ...(stack !== undefined ? { stack } : {}),
+      })
+    }
+  }
+}
+
 function recordErrorFingerprint(span: Span, error: Error): void {
   try {
     safeSetSpanAttribute(span, ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY, computeFingerprint(error))
@@ -897,8 +914,12 @@ function formatErrorStackWithCauses(error: Error, seen: WeakSet<Error> = new Wea
 }
 
 function getErrorCode(error: Error): string | number | undefined {
-  const code = (error as { code?: unknown }).code
-  return typeof code === 'string' || typeof code === 'number' ? code : undefined
+  try {
+    const code = (error as { code?: unknown }).code
+    return typeof code === 'string' || typeof code === 'number' ? code : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function normalizeRecordException(error: Error): Exception {
@@ -1027,7 +1048,7 @@ function reportErrorWithSettings(
 
   const span = startSpanWithSettings(settings, message, attributes, reportErrorOptionsToLogOptions(options))
 
-  span.recordException(normalized.recordExceptionValue)
+  recordExceptionSafely(span, normalized.recordExceptionValue, error)
   span.setStatus({ code: SpanStatusCode.ERROR, message: normalized.statusMessage })
   span.end()
 
