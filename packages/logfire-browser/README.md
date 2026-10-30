@@ -762,6 +762,29 @@ await cleanup.sessionReplay?.stop() // replay only; tracing remains active
 await cleanup() // full SDK cleanup
 ```
 
+By default, replay records one session in ten in full (`sessionSampleRate: 0.1`).
+It buffers every other session in memory and uploads it only if an error occurs
+(`onErrorSampleRate: 1`). Each uploaded recording counts toward your replay
+usage, so choose the full-session rate from your traffic:
+
+| Sessions per day  | `sessionSampleRate` |
+| ----------------- | ------------------- |
+| Fewer than 10,000 | `0.25`              |
+| 10,000 to 100,000 | `0.1`               |
+| More than 100,000 | `0.01`              |
+
+Record every session in development:
+
+```js
+logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  sessionReplay: sessionReplayIntegration({
+    sessionSampleRate: location.hostname === 'localhost' ? 1 : 0.1,
+  }),
+})
+```
+
 `sessionReplay` implies default browser session attributes. Replay chunks and
 browser spans share `session.id`. Spans started after
 replay has loaded and sampled into `full` or `buffer` mode get

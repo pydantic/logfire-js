@@ -317,6 +317,13 @@ The recorder uses a Sentry-style two-rate model:
   an in-memory replay buffer and promotes it for an uncaught `window.error` or
   `unhandledrejection`, or for an error passed to `captureError()`
 
+The defaults are `sessionSampleRate: 0.1` and `onErrorSampleRate: 1`: one
+session in ten is recorded in full, and every other session is buffered and
+uploaded only if an error occurs. Each uploaded recording counts toward your
+replay usage, so choose the full-session rate from your traffic: about `0.25`
+below 10,000 sessions per day, `0.1` up to 100,000, and `0.01` above that. Use
+`sessionSampleRate: 1` in development so every local session is recorded.
+
 Buffer mode is bounded by `maxBufferBytes`, measured as the UTF-8 byte sum of
 event JSON before envelope metadata and compression. It keeps the latest full
 snapshot and the earliest contiguous incremental events that fit; later
