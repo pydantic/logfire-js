@@ -1348,14 +1348,13 @@ describe('sdk lifecycle helpers', () => {
       expect(carrier).toEqual(expectedOutgoingHeaders)
     })
 
-    it('ignores incoming trace context but keeps baggage when disabled', () => {
+    it('ignores incoming trace context and baggage when disabled', () => {
       logfireConfig.distributedTracing = false
       start()
 
       const extracted = getLatestTextMapPropagator().extract(ROOT_CONTEXT, incomingHeaders, defaultTextMapGetter)
 
-      expect(trace.getSpanContext(extracted)).toBeUndefined()
-      expect(propagation.getBaggage(extracted)?.getEntry('tenant')?.value).toBe('acme')
+      expect(extracted).toBe(ROOT_CONTEXT)
     })
 
     it('keeps the active local span when disabled', () => {
