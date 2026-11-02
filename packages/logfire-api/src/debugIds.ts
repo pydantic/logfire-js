@@ -15,10 +15,6 @@ interface DebugIdGlobals {
   _logfireRelease?: unknown
 }
 
-// V8 frames: `at fn (location)` or `at location`, where location ends with `:line:column`.
-const V8_FRAME_PATTERN = /^\s*at\s+(?:.*?\s\()?(.+?):\d+:\d+\)?\s*$/u
-// SpiderMonkey and JavaScriptCore frames: `fn@location:line:column`; the function name holds no `@`.
-const AT_SIGN_FRAME_PATTERN = /^\s*[^@\s][^@]*@(.+?):\d+:\d+\s*$|^\s*@(.+?):\d+:\d+\s*$/u
 const V8_FRAME_START_PATTERN = /^\s*at\s/u
 const URL_USERINFO_PATTERN = /^([a-z][\w+.-]*:\/\/)[^/@]*@/iu
 
@@ -29,9 +25,48 @@ export function normalizeFrameUrl(url: string): string {
   return withoutQuery.replace(URL_USERINFO_PATTERN, '$1')
 }
 
+function isDigits(value: string): boolean {
+  if (value === '') {
+    return false
+  }
+  for (const char of value) {
+    if (char < '0' || char > '9') {
+      return false
+    }
+  }
+  return true
+}
+
+function withoutLineColumn(location: string): string | undefined {
+  const columnStart = location.lastIndexOf(':')
+  const lineStart = location.lastIndexOf(':', columnStart - 1)
+  if (lineStart === -1 || !isDigits(location.slice(columnStart + 1)) || !isDigits(location.slice(lineStart + 1, columnStart))) {
+    return undefined
+  }
+  return location.slice(0, lineStart)
+}
+
+// Parsed with string scans rather than regular expressions: a frame line can carry error message
+// text, and patterns with nested quantifiers backtrack polynomially on crafted input.
+function frameLocationWithPosition(line: string, v8: boolean): string | undefined {
+  const trimmed = line.trim()
+  if (v8) {
+    // V8 frames: `at fn (location)` or `at location`, where location ends with `:line:column`.
+    if (!V8_FRAME_START_PATTERN.test(trimmed)) {
+      return undefined
+    }
+    const frame = trimmed.slice(2).trimStart()
+    const nameEnd = frame.indexOf(' (')
+    return frame.endsWith(')') && nameEnd !== -1 ? frame.slice(nameEnd + 2, -1) : frame
+  }
+  // SpiderMonkey and JavaScriptCore frames: `fn@location:line:column`; the function name holds no `@`.
+  const nameEnd = trimmed.indexOf('@')
+  return nameEnd === -1 ? undefined : trimmed.slice(nameEnd + 1)
+}
+
 function frameLocation(line: string, v8: boolean): string | undefined {
-  const match = v8 ? V8_FRAME_PATTERN.exec(line) : AT_SIGN_FRAME_PATTERN.exec(line)
-  let location = match?.[1] ?? match?.[2]
+  const withPosition = frameLocationWithPosition(line, v8)
+  let location = withPosition === undefined ? undefined : withoutLineColumn(withPosition)
   if (location === undefined) {
     return undefined
   }

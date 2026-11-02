@@ -98,6 +98,14 @@ describe('parseStackFrameUrls', () => {
 
     expect(parseStackFrameUrls(stack)).toEqual(['index.js', 'script-0', 'http://localhost:8787/worker.js'])
   })
+
+  test('parses a crafted message line in linear time', () => {
+    // A backtracking frame pattern took seconds on a 6.5 KB version of this; the test timeout catches a regression.
+    const crafted = `    at ${' '.repeat(20_000)}f (/app/dist/server.js:1:1) ${'a ('.repeat(20_000)}z`
+    const stack = ['Error: bad', crafted, `x@${'a@'.repeat(20_000)}:1:z`, '    at /app/dist/server.js:3:9'].join('\n')
+
+    expect(parseStackFrameUrls(stack)).toEqual(['/app/dist/server.js'])
+  })
 })
 
 describe('normalizeFrameUrl', () => {
