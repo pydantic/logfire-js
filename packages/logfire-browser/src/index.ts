@@ -27,6 +27,7 @@ import {
 import type { BaggageOptions, JsonSchemaMode, LogfireApiConfigOptions, MinLevel, SamplingOptions, ScrubbingOptions } from 'logfire'
 import {
   configureLogfireApi,
+  DebugIdSpanProcessor,
   debug,
   error,
   fatal,
@@ -38,6 +39,7 @@ import {
   LogfireAttributeScrubber,
   NoopAttributeScrubber,
   notice,
+  readInjectedRelease,
   reportError,
   resolveBaseUrl,
   resolveSendToLogfire,
@@ -250,7 +252,10 @@ export interface LogfireConfigOptions {
   serviceName?: string
 
   /**
-   * Version of this service.
+   * Version of this service. Source map resolution needs a real per-build value, such as the commit SHA or release tag.
+   *
+   * Defaults to the release identifier that `logfire sourcemap inject` stamped into the loaded bundle, then to `0.0.1`.
+   * The `0.0.1` fallback is deprecated and is removed in the next major version.
    */
   serviceVersion?: string
 
@@ -686,7 +691,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
     resourceFromAttributes({
       [ATTR_BROWSER_LANGUAGE]: navigator.language,
       [ATTR_SERVICE_NAME]: options.serviceName ?? 'logfire-browser',
-      [ATTR_SERVICE_VERSION]: options.serviceVersion ?? '0.0.1',
+      [ATTR_SERVICE_VERSION]: options.serviceVersion ?? readInjectedRelease() ?? '0.0.1',
       [ATTR_TELEMETRY_SDK_LANGUAGE]: TELEMETRY_SDK_LANGUAGE_VALUE_WEBJS,
       [ATTR_TELEMETRY_SDK_NAME]: 'logfire-browser',
       ...(options.environment !== undefined && options.environment !== ''
@@ -739,7 +744,8 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
 
   const browserSessionManager = configureBrowserSession(browserSessionOptions)
   const browserSessionReplayState = new BrowserSessionReplayState()
-  const spanProcessors: SpanProcessor[] = []
+  // First, so the exporting processors that follow see the debug IDs it adds at span end.
+  const spanProcessors: SpanProcessor[] = [new DebugIdSpanProcessor()]
   if (browserSessionManager !== undefined) {
     spanProcessors.push(new BrowserSessionSpanProcessor(browserSessionManager, browserSessionReplayState))
   }

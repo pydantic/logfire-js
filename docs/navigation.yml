@@ -114,6 +114,10 @@ navigation:
         slug: instrument/typescript/scrubbing
         aliases:
           - typescript-sdk/scrubbing
+      - page: Source Maps
+        path: source-maps.md
+        slug: instrument/typescript/source-maps
+        hidden: true
       - page: Evaluations
         path: evals.md
         slug: instrument/typescript/evals

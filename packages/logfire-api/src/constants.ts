@@ -13,6 +13,8 @@ export const ATTRIBUTES_MESSAGE_KEY: 'logfire.msg' = `${LOGFIRE_ATTRIBUTES_NAMES
 export const ATTRIBUTES_SCRUBBED_KEY: 'logfire.scrubbed' = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.scrubbed`
 /** Key for exception fingerprint used for issue grouping */
 export const ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY: 'logfire.exception.fingerprint' = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.exception.fingerprint`
+/** Key for the `{url: debugId}` JSON of the injected bundles in an exception's stack */
+export const ATTRIBUTES_DEBUG_IDS_KEY: 'logfire.debug_ids' = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.debug_ids`
 export const ATTRIBUTES_SAMPLE_RATE_KEY: 'logfire.sample_rate' = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.sample_rate`
 export const ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY: 'logfire.pending_parent_id' = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.pending_parent_id`
 export const INVALID_SPAN_ID = '0000000000000000' as const

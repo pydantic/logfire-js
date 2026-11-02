@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Logfire debug ID acceptance</title>
+  </head>
+  <body>
+    <main>
+      <h1>Debug ID acceptance</h1>
+      <button id="uncaught" type="button">Uncaught error</button>
+      <button id="finish" type="button">Finish</button>
+      <p id="status">starting</p>
+    </main>
+    <!-- The cache-busting query must not change the URL the debug ID is keyed by. -->
+    <script src="/checkout-bundle.js?v=build1"></script>
+    <script src="/settings-bundle.js"></script>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>

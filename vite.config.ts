@@ -66,6 +66,8 @@ export default defineConfig({
       // with their own runtime-specific globals and generated files.
       'examples/**',
       'scripts/**',
+      // Plain scripts that stand in for bundles after source map injection, served verbatim.
+      'packages/logfire-browser/test-fixtures/debug-ids/public/**',
       ...generatedAndExternalFiles,
     ],
     options: {

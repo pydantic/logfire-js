@@ -99,6 +99,14 @@ export interface LogfireConfigOptions {
    */
   dataDir?: string
   /**
+   * Calls `process.setSourceMapsEnabled(true)`, so Node rewrites stack traces to original source files and lines using
+   * the `.map` files shipped beside your built code. This needs no source map upload. Call `configure()` before
+   * application modules load: Node reads maps only for files loaded after this. Do not install `source-map-support`
+   * alongside. Frames that Node rewrites no longer carry debug IDs. `false` leaves the setting as Node started,
+   * including `--enable-source-maps`. Defaults to false.
+   */
+  enableSourceMaps?: boolean
+  /**
    * The environment this service is running in, e.g. `staging` or `prod`. Sets the deployment.environment.name resource attribute. Useful for filtering within projects in the Logfire UI.
    * Defaults to the `LOGFIRE_ENVIRONMENT` environment variable.
    */
@@ -165,8 +173,9 @@ export interface LogfireConfigOptions {
    */
   serviceName?: string
   /**
-   * Version of this service.
-   * Defaults to the `LOGFIRE_SERVICE_VERSION` environment variable, then `OTEL_SERVICE_VERSION`.
+   * Version of this service. Source map resolution needs a real per-build value, such as the commit SHA or release tag.
+   * Defaults to the `LOGFIRE_SERVICE_VERSION` environment variable, then `OTEL_SERVICE_VERSION`, then the release
+   * identifier that `logfire sourcemap inject` stamped into a bundle loaded before `configure()` runs.
    */
   serviceVersion?: string
   /**
@@ -357,7 +366,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
   const baseUrl = resolveBaseUrl(env, cnf.advanced?.baseUrl, token, sendToLogfire, localCredentials?.logfire_api_url)
   const deploymentEnvironment = cnf.environment ?? env['LOGFIRE_ENVIRONMENT']
   const serviceName = cnf.serviceName ?? readServiceNameEnv(env)
-  const serviceVersion = cnf.serviceVersion ?? readServiceVersionEnv(env)
+  const serviceVersion = cnf.serviceVersion ?? readServiceVersionEnv(env) ?? logfireApi.readInjectedRelease()
   const variablesBaseUrl =
     apiKey !== undefined && apiKey !== '' ? logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, apiKey) : cnf.advanced?.baseUrl
   if (requiresRemoteVariables(cnf.variables) && (apiKey === undefined || apiKey === '')) {
@@ -395,6 +404,10 @@ export function configure(config: LogfireConfigOptions = {}): void {
     variables: cnf.variables,
     variablesBaseUrl,
   })
+
+  if (cnf.enableSourceMaps === true) {
+    process.setSourceMapsEnabled(true)
+  }
 
   start()
 }
