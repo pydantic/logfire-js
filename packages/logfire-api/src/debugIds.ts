@@ -57,7 +57,11 @@ function frameLocationWithPosition(line: string, v8: boolean): string | undefine
     }
     const frame = trimmed.slice(2).trimStart()
     const nameEnd = frame.indexOf(' (')
-    return frame.endsWith(')') && nameEnd !== -1 ? frame.slice(nameEnd + 2, -1) : frame
+    if (frame.endsWith(')') && nameEnd !== -1) {
+      return frame.slice(nameEnd + 2, -1)
+    }
+    // An anonymous async function has no parentheses: `at async location`.
+    return frame.startsWith('async ') ? frame.slice(6) : frame
   }
   // SpiderMonkey and JavaScriptCore frames: `fn@location:line:column`; the function name holds no `@`.
   const nameEnd = trimmed.indexOf('@')
@@ -179,6 +183,15 @@ export function debugIdsAttributeForStack(stack: string): string | undefined {
   return debugIds === undefined ? undefined : JSON.stringify(debugIds)
 }
 
+function parseDebugIdsAttribute(value: string): Record<string, string> | undefined {
+  const parsed: unknown = JSON.parse(value)
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return undefined
+  }
+  const entries = Object.entries(parsed)
+  return entries.every(([, debugId]) => typeof debugId === 'string') ? (parsed as Record<string, string>) : undefined
+}
+
 function stackOf(attributes: Attributes | undefined): string | undefined {
   const stack = attributes?.[ATTR_EXCEPTION_STACKTRACE]
   return typeof stack === 'string' ? stack : undefined
@@ -186,7 +199,8 @@ function stackOf(attributes: Attributes | undefined): string | undefined {
 
 /**
  * Stamps `logfire.debug_ids` on each `exception` event and on the span itself, from the stack traces
- * the span already holds. Existing values are kept. Mutates in place, so it also works on ended spans.
+ * the span already holds. Existing event values are kept; an existing span value is merged, winning on
+ * conflict. Mutates in place, so it also works on ended spans.
  */
 export function stampSpanDebugIds(span: Pick<ReadableSpan, 'attributes' | 'events'>): void {
   try {
@@ -209,13 +223,19 @@ export function stampSpanDebugIds(span: Pick<ReadableSpan, 'attributes' | 'event
       collect(debugIds)
       event.attributes[ATTRIBUTES_DEBUG_IDS_KEY] ??= JSON.stringify(debugIds)
     }
-    if (span.attributes[ATTRIBUTES_DEBUG_IDS_KEY] !== undefined) {
-      return
-    }
     const spanStack = stackOf(span.attributes)
     const debugIds = spanStack === undefined ? undefined : debugIdsForStack(spanStack)
     if (debugIds !== undefined) {
       collect(debugIds)
+    }
+    // recordSpanException stamps only the stack it threw with; the span still lists every recorded exception's bundles.
+    const existing = span.attributes[ATTRIBUTES_DEBUG_IDS_KEY]
+    if (existing !== undefined) {
+      const existingDebugIds = typeof existing === 'string' ? parseDebugIdsAttribute(existing) : undefined
+      if (existingDebugIds === undefined) {
+        return
+      }
+      collect(existingDebugIds)
     }
     if (spanDebugIds.size > 0) {
       span.attributes[ATTRIBUTES_DEBUG_IDS_KEY] = JSON.stringify(sortedRecord(spanDebugIds))

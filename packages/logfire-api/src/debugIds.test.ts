@@ -99,6 +99,17 @@ describe('parseStackFrameUrls', () => {
     expect(parseStackFrameUrls(stack)).toEqual(['index.js', 'script-0', 'http://localhost:8787/worker.js'])
   })
 
+  test('reads anonymous async frames', () => {
+    const stack = [
+      'Error: failed',
+      '    at f (/app/dist/server.js:2:60)',
+      '    at async /app/dist/server.js:2:94',
+      `    at async ${INDEX_URL}:1:16`,
+    ].join('\n')
+
+    expect(parseStackFrameUrls(stack)).toEqual(['/app/dist/server.js', '/app/dist/server.js', INDEX_URL])
+  })
+
   test('parses a crafted message line in linear time', () => {
     // A backtracking frame pattern took seconds on a 6.5 KB version of this; the test timeout catches a regression.
     const crafted = `    at ${' '.repeat(20_000)}f (/app/dist/server.js:1:1) ${'a ('.repeat(20_000)}z`
@@ -205,6 +216,33 @@ describe('stampSpanDebugIds', () => {
     expect(span.attributes['logfire.debug_ids']).toBe(`{"${INDEX_URL}":"${INDEX_ID}","${VENDOR_URL}":"${VENDOR_ID}"}`)
   })
 
+  test('merges an existing span value with every exception event, keeping existing entries', () => {
+    setGlobal('_logfireDebugIds', { [chromeRegistryKey(INDEX_URL)]: INDEX_ID, [chromeRegistryKey(VENDOR_URL)]: VENDOR_ID })
+    const span = {
+      attributes: { 'logfire.debug_ids': `{"${VENDOR_URL}":"stamped-earlier"}` },
+      events: [
+        { attributes: { 'exception.stacktrace': `Error\n    at f (${INDEX_URL}:1:1)` }, name: 'exception', time: [0, 0] },
+        { attributes: { 'exception.stacktrace': `Error\n    at g (${VENDOR_URL}:1:1)` }, name: 'exception', time: [0, 0] },
+      ],
+    } as unknown as Pick<ReadableSpan, 'attributes' | 'events'>
+
+    stampSpanDebugIds(span)
+
+    expect(span.attributes['logfire.debug_ids']).toBe(`{"${INDEX_URL}":"${INDEX_ID}","${VENDOR_URL}":"stamped-earlier"}`)
+  })
+
+  test('leaves an existing span value it cannot read', () => {
+    setGlobal('_logfireDebugIds', { [chromeRegistryKey(INDEX_URL)]: INDEX_ID })
+    const span = {
+      attributes: { 'logfire.debug_ids': '["not", "a map"]' },
+      events: [{ attributes: { 'exception.stacktrace': `Error\n    at f (${INDEX_URL}:1:1)` }, name: 'exception', time: [0, 0] }],
+    } as unknown as Pick<ReadableSpan, 'attributes' | 'events'>
+
+    stampSpanDebugIds(span)
+
+    expect(span.attributes['logfire.debug_ids']).toBe('["not", "a map"]')
+  })
+
   test('changes nothing without a registry', () => {
     const span = {
       attributes: { 'exception.stacktrace': `Error\n    at f (${INDEX_URL}:1:1)` },
@@ -284,6 +322,32 @@ describe('exported spans', () => {
 
     expect(spans.map((exported) => exported.attributes['logfire.debug_ids'])).toEqual([expected])
     expect(spans[0]?.events.map((event) => event.attributes?.['logfire.debug_ids'])).toEqual([expected])
+  })
+
+  test('a span() callback that records one exception and throws another lists both bundles on the span', async () => {
+    setGlobal('_logfireDebugIds', { [chromeRegistryKey(INDEX_URL)]: INDEX_ID, [chromeRegistryKey(VENDOR_URL)]: VENDOR_ID })
+
+    const spans = await collectSpans(
+      (primary) => [new DebugIdSpanProcessor(), primary],
+      () => {
+        expect(() =>
+          span('checkout', {
+            callback: (active) => {
+              active.recordException(errorWithStack('first', `Error: first\n    at f (${INDEX_URL}:1:1)`))
+              throw errorWithStack('second', `Error: second\n    at g (${VENDOR_URL}:1:1)`)
+            },
+          })
+        ).toThrow('second')
+      }
+    )
+
+    expect(spans.map((exported) => exported.attributes['logfire.debug_ids'])).toEqual([
+      `{"${INDEX_URL}":"${INDEX_ID}","${VENDOR_URL}":"${VENDOR_ID}"}`,
+    ])
+    expect(spans[0]?.events.map((event) => event.attributes?.['logfire.debug_ids'])).toEqual([
+      `{"${INDEX_URL}":"${INDEX_ID}"}`,
+      `{"${VENDOR_URL}":"${VENDOR_ID}"}`,
+    ])
   })
 
   test('the processor stamps exceptions that instrumentations record directly', async () => {
