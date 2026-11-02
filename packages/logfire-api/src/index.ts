@@ -11,6 +11,7 @@ import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetr
 
 import { LogfireAttributeScrubber, NoopAttributeScrubber, NoopScrubber } from './AttributeScrubber'
 import {
+  ATTRIBUTES_DEBUG_IDS_KEY,
   ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY,
   ATTRIBUTES_LEVEL_KEY,
   ATTRIBUTES_MESSAGE_KEY,
@@ -23,6 +24,7 @@ import {
   JSON_NULL_FIELDS_KEY,
   JSON_SCHEMA_KEY,
 } from './constants'
+import { debugIdsAttributeForStack } from './debugIds'
 import { canonicalizeError, computeFingerprint } from './fingerprint'
 import { logfireFormatWithExtras, truncateString } from './formatter'
 import { Level } from './levels'
@@ -50,7 +52,8 @@ export type {
   MinLevel,
   ScrubbingOptions,
 } from './logfireApiConfig'
-export { ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY } from './constants'
+export { ATTRIBUTES_DEBUG_IDS_KEY, ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY } from './constants'
+export { DebugIdSpanProcessor, debugIdsForStack, readInjectedRelease, stampSpanDebugIds } from './debugIds'
 export { Level } from './levels'
 export { PendingSpanProcessor } from './PendingSpanProcessor'
 export * from './sampling'
@@ -804,6 +807,15 @@ function recordSpanException(span: Span, thrown: unknown, spanSerializationAttri
     recordErrorFingerprint(span, thrown)
   }
 
+  let stack: string | undefined
+  if (typeof recordExceptionValue !== 'string') {
+    stack = recordExceptionValue instanceof Error ? getSafeErrorStack(recordExceptionValue) : recordExceptionValue.stack
+  }
+  const debugIds = stack === undefined ? undefined : debugIdsAttributeForStack(stack)
+  if (debugIds !== undefined) {
+    safeSetSpanAttribute(span, ATTRIBUTES_DEBUG_IDS_KEY, debugIds)
+  }
+
   if (causeValue !== undefined) {
     recordSerializedAttributes(span, { ...spanSerializationAttributes, [ATTR_EXCEPTION_CAUSE]: causeValue }, [
       ATTR_EXCEPTION_CAUSE,
@@ -1023,6 +1035,12 @@ function reportErrorWithSettings(
     } catch {
       // Error fingerprinting is best-effort and should not prevent reporting.
     }
+  }
+
+  const stack = normalized.attributes[ATTR_EXCEPTION_STACKTRACE]
+  const debugIds = typeof stack === 'string' ? debugIdsAttributeForStack(stack) : undefined
+  if (debugIds !== undefined) {
+    attributes[ATTRIBUTES_DEBUG_IDS_KEY] = debugIds
   }
 
   const span = startSpanWithSettings(settings, message, attributes, reportErrorOptionsToLogOptions(options))

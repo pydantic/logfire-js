@@ -95,6 +95,7 @@ const SAFE_KEYS = new Set([
   'http.status_code',
   'http.target',
   'http.url',
+  'logfire.debug_ids',
   'logfire.json_schema',
   'logfire.level_name',
   'logfire.level_num',

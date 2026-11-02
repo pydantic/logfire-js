@@ -15,12 +15,14 @@ import {
   LogfireAttributeScrubber,
   NoopAttributeScrubber,
   notice,
+  readInjectedRelease,
   reportError,
   resolveBaseUrl,
   resolveSendToLogfire,
   scrubSpanForExport,
   serializeAttributes,
   span,
+  stampSpanDebugIds,
   startPendingSpan,
   startSpan,
   trace,
@@ -77,6 +79,20 @@ function envString(env: Env, key: string): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
+// Read when the config function runs, after the inject snippet at the top of the bundle set the release.
+function withInjectedRelease(service: TraceConfig['service']): TraceConfig['service'] {
+  const release = service.version === undefined ? readInjectedRelease() : undefined
+  return release === undefined ? service : { ...service, version: release }
+}
+
+// The debug ID registry lives in this isolate's globalThis, so stamping must happen here rather than in a tail worker.
+function stampDebugIds(spans: ReadableSpan[]): ReadableSpan[] {
+  for (const span of spans) {
+    stampSpanDebugIds(span)
+  }
+  return spans
+}
+
 function configureScrubbing(config: Pick<InProcessConfigOptions, 'scrubbing'>): void {
   if (config.scrubbing !== undefined) {
     configureLogfireApi({ scrubbing: config.scrubbing })
@@ -106,7 +122,8 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
         userAgent: USER_AGENT,
       },
       idGenerator: new ULIDGenerator(),
-      postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(spans),
+      postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(stampDebugIds(spans)),
+      service: withInjectedRelease(config.service),
       ...(resolvedEnvironment !== undefined ? { environment: resolvedEnvironment } : {}),
     } satisfies TraceConfig
   }
@@ -119,6 +136,8 @@ export function getTailConfig(config: TailConfigOptions): (env: Env) => TraceCon
       ...config,
       exporter: new TailWorkerExporter(),
       idGenerator: new ULIDGenerator(),
+      postProcessor: stampDebugIds,
+      service: withInjectedRelease(config.service),
     }
   }
 }

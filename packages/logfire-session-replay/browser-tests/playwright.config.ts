@@ -21,6 +21,10 @@ const fixtureServers: { command: string; env?: Record<string, string>; url: stri
     command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/errors-profile/vite.config.ts',
     url: 'http://127.0.0.1:4184/receipts',
   },
+  {
+    command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/debug-ids/vite.config.ts',
+    url: 'http://127.0.0.1:4192/receipts',
+  },
   ...['react-router', 'tanstack-router', 'vue-router'].map((example, index) => ({
     command: `pnpm exec vp dev --config examples/${example}/vite.config.ts`,
     // router-examples.pw.ts answers for this origin, so the examples export locally.

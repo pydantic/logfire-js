@@ -25,7 +25,7 @@ import {
   ATTR_VCS_REPOSITORY_REF_REVISION,
   ATTR_VCS_REPOSITORY_URL_FULL,
 } from '@opentelemetry/semantic-conventions/incubating'
-import { logfireApiConfig, PendingSpanProcessor, reportError, TailSamplingProcessor, ULIDGenerator } from 'logfire'
+import { DebugIdSpanProcessor, logfireApiConfig, PendingSpanProcessor, reportError, TailSamplingProcessor, ULIDGenerator } from 'logfire'
 import { getEvalsSpanProcessor } from 'logfire/evals'
 import { configureVariables, shutdownVariables } from 'logfire/vars'
 
@@ -394,7 +394,8 @@ export function start(): void {
   const propagator = logfireConfig.distributedTracing ? basePropagator : new NoExtractPropagator(basePropagator)
 
   const primarySpanProcessor = logfireSpanProcessor(logfireConfig.console)
-  const spanProcessors: SpanProcessor[] = []
+  // First, so the exporting processors that follow see the debug IDs it adds at span end.
+  const spanProcessors: SpanProcessor[] = [new DebugIdSpanProcessor()]
   if (logfireConfig.sampling?.tail) {
     spanProcessors.push(
       new TailSamplingProcessor(primarySpanProcessor, logfireConfig.sampling.tail, {

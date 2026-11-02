@@ -391,7 +391,7 @@ vi.mock('./browserMetrics', () => ({
   startBrowserMetrics: async (options: unknown, resource: unknown) => mocks.startBrowserMetrics(options, resource),
 }))
 
-import { configureLogfireApi, Level, logfireApiConfig, PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
+import { configureLogfireApi, DebugIdSpanProcessor, Level, logfireApiConfig, PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
 
 import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
 import { BrowserUrlSpanProcessor } from './BrowserUrlSpanProcessor'
@@ -438,9 +438,12 @@ function getLatestWebTracerProvider() {
   return instance
 }
 
+// configure() always installs the debug ID processor first; callers inspect the pipeline after it.
 function getLatestSpanProcessors(): unknown[] {
   const provider = getLatestWebTracerProvider()
-  return (provider.options as { spanProcessors: unknown[] }).spanProcessors
+  const [first, ...rest] = (provider.options as { spanProcessors: unknown[] }).spanProcessors
+  expect(first).toBeInstanceOf(DebugIdSpanProcessor)
+  return rest
 }
 
 function noopSpanProcessorCallback(): void {

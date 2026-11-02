@@ -270,13 +270,15 @@ vi.mock('@opentelemetry/sdk-node', () => ({
 }))
 
 vi.mock('logfire', async () => {
-  const [{ Level }, { PendingSpanProcessor }, { TailSamplingProcessor }, { ULIDGenerator }] = await Promise.all([
+  const [{ DebugIdSpanProcessor }, { Level }, { PendingSpanProcessor }, { TailSamplingProcessor }, { ULIDGenerator }] = await Promise.all([
+    import('../../../logfire-api/src/debugIds'),
     import('../../../logfire-api/src/levels'),
     import('../../../logfire-api/src/PendingSpanProcessor'),
     import('../../../logfire-api/src/TailSamplingProcessor'),
     import('../../../logfire-api/src/ULIDGenerator'),
   ])
   return {
+    DebugIdSpanProcessor,
     Level,
     logfireApiConfig: mocks.logfireApiConfig,
     PendingSpanProcessor,
@@ -313,7 +315,7 @@ vi.mock('../traceExporter', () => ({
 
 import { forceFlush, shutdown, start } from '../sdk'
 import { logfireConfig } from '../logfireConfig'
-import { PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
+import { DebugIdSpanProcessor, PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
 
 type AnyProcessListener = (...args: unknown[]) => void
 
@@ -505,9 +507,10 @@ describe('sdk lifecycle helpers', () => {
 
     const spanProcessors = getLatestSpanProcessors()
 
-    expect(spanProcessors[0]).toBe(mocks.traceProcessor)
-    expect(spanProcessors[1]).toBeInstanceOf(PendingSpanProcessor)
-    expect(spanProcessors[2]).toBe(mocks.evalProcessor)
+    expect(spanProcessors[0]).toBeInstanceOf(DebugIdSpanProcessor)
+    expect(spanProcessors[1]).toBe(mocks.traceProcessor)
+    expect(spanProcessors[2]).toBeInstanceOf(PendingSpanProcessor)
+    expect(spanProcessors[3]).toBe(mocks.evalProcessor)
   })
 
   it('installs deferred pending-span support when tail sampling is enabled', () => {
@@ -518,10 +521,11 @@ describe('sdk lifecycle helpers', () => {
     start()
 
     const spanProcessors = getLatestSpanProcessors()
-    expect(spanProcessors[0]).toBeInstanceOf(TailSamplingProcessor)
-    expect(spanProcessors.slice(1).some((processor) => processor instanceof PendingSpanProcessor)).toBe(false)
+    expect(spanProcessors[0]).toBeInstanceOf(DebugIdSpanProcessor)
+    expect(spanProcessors[1]).toBeInstanceOf(TailSamplingProcessor)
+    expect(spanProcessors.slice(2).some((processor) => processor instanceof PendingSpanProcessor)).toBe(false)
 
-    const tailProcessor = spanProcessors[0]
+    const tailProcessor = spanProcessors[1]
     if (tailProcessor === undefined) {
       throw new Error('expected tail sampling processor')
     }
