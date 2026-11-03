@@ -7,15 +7,17 @@ example, which follows Anthropic's programmatic tool calling cookbook.
 
 - [`expenses.ts`](expenses.ts) defines `get_team_members`, `get_expenses`, and `get_custom_budget` as ordinary AI SDK
   tools.
-- [`runCode.ts`](runCode.ts) defines a `run_code` tool with the AI SDK's `experimental_toolCaller`. It turns the tools
-  routed to it into type-checked Python functions and runs the model's code with `agentSandboxes()`.
-- [`agent.ts`](agent.ts) routes the three tools to `run_code` through `experimental_toolCallers`, so the model sees only
+- [`runCode.ts`](runCode.ts) builds a `run_code` tool from them. It turns the tools into type-checked Python functions
+  and runs the model's code in a sandbox session.
+- [`agent.ts`](agent.ts) checks out one session with `agentSandboxes()` for the whole agent run and gives the model only
   `run_code`.
 
-In Logfire, the trace shows the model calls, the `run_code` tool span, the sandbox session under it, and a span for
-each tool call the Python code made.
+Every `run_code` call in a run uses the same session, like a REPL: variables and functions that one call defines are
+still there in the next, so the model can build on earlier results. A session runs one call at a time, so `run_code`
+queues calls the model makes in parallel.
 
-`experimental_toolCaller` is experimental in AI SDK 7 and can change in a minor release.
+In Logfire, the trace shows the agent run with the sandbox session under it, the model calls, a span for each
+`run_code` call, and under each one a span for every tool call its Python code made.
 
 ## Run against Logfire
 
@@ -35,7 +37,8 @@ pnpm run start
 pnpm run smoke
 ```
 
-Runs the agent with a mock model that replays a fixed `run_code` call, against a local stand-in for the sandboxes
-server that relays each connection to a `monty subprocess` worker. It checks the tool result, that the model saw only
-`run_code`, and that the sandbox session and the nested tool calls joined the `run_code` span's trace. CI runs it
+Runs the agent with a mock model that replays fixed `run_code` calls, against a local stand-in for the sandboxes
+server that relays each connection to a `monty subprocess` worker. The later calls, two of them in parallel, use what
+the first one defined. It checks the tool results, that the model saw only `run_code`, that the run opened one
+sandbox session in the agent run's trace, and that each call's tool calls nest under its `run_code` span. CI runs it
 through `pnpm run test:examples` from the repository root.

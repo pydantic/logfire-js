@@ -1,8 +1,8 @@
+import type { MontySession } from '@pydantic/monty'
 import type { JSONSchema7, Tool, ToolExecutionOptions, ToolSet } from 'ai'
 
-import { agentSandboxes } from '@pydantic/logfire-agent-sandboxes'
 import * as logfire from '@pydantic/logfire-node'
-import { asSchema, experimental_toolCaller, tool } from 'ai'
+import { asSchema, tool } from 'ai'
 import { z } from 'zod'
 
 // Adapted from the run_code description in Pydantic AI Code Mode, which lists what Monty 1.4 can import.
@@ -11,7 +11,7 @@ const DESCRIPTION = `Write and run Python code in a sandboxed environment.
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - No third-party libraries. Only these standard library modules can be imported: sys, typing, asyncio, math, json, re, unicodedata, datetime, time, random, os, pathlib, collections, itertools, functools, dataclasses, copy, base64, binascii, bisect, csv, decimal, hashlib, os.path, tomllib.
 - No filesystem, environment variables, or clock.
-- State is not kept between calls.
+- Variables, functions, and imports from earlier calls are kept, so build on earlier results instead of fetching them again.
 
 The value of the last expression is returned, so end the code with the value you want back instead of printing it.
 
@@ -49,11 +49,18 @@ function toJson(value: unknown): unknown {
   return Array.isArray(value) ? value.map(toJson) : value
 }
 
-function bindRunCode(tools: ToolSet): Tool {
-  const stubs = ['from typing import Any', ...Object.entries(tools).map(([name, t]) => pythonStub(name, t))].join('\n\n')
+export function pythonStubs(tools: ToolSet): string {
+  return ['from typing import Any', ...Object.entries(tools).map(([name, t]) => pythonStub(name, t))].join('\n\n')
+}
+
+// The model sees only run_code, and `tools` become Python functions inside the sandbox, so one model turn can
+// make many tool calls. Every call runs in `session`, which the sandbox keeps like a REPL.
+export function runCode(session: MontySession, tools: ToolSet): Tool {
+  // A session runs one feed at a time, and a second feed while one is waiting on a tool call breaks it.
+  let queue: Promise<unknown> = Promise.resolve()
 
   return tool({
-    description: `${DESCRIPTION}\n\n\`\`\`python\n${stubs}\n\`\`\``,
+    description: `${DESCRIPTION}\n\n\`\`\`python\n${pythonStubs(tools)}\n\`\`\``,
     inputSchema: z.object({ code: z.string().describe('The Python code to run.') }),
     execute: async ({ code }, options: ToolExecutionOptions<unknown>) => {
       // Sandbox code calls these directly, so the AI SDK records no tool spans for them.
@@ -65,19 +72,9 @@ function bindRunCode(tools: ToolSet): Tool {
         ])
       )
 
-      await using pool = await agentSandboxes()
-      await using session = await pool.checkout({ ephemeral: true, scriptName: 'run_code.py', typeCheck: true, typeCheckStubs: stubs })
-      return toJson(await session.feedRun(code, { externalLookup }))
+      const result = queue.then(() => session.feedRun(code, { externalLookup }))
+      queue = result.catch(() => undefined)
+      return toJson(await result)
     },
   })
 }
-
-// Tools routed to this caller through `experimental_toolCallers` are hidden from the model and become
-// Python functions inside the sandbox, so one model turn can make many tool calls.
-export const runCode = experimental_toolCaller(
-  tool({
-    description: DESCRIPTION,
-    inputSchema: z.object({ code: z.string() }),
-  }),
-  { type: 'local', bind: bindRunCode }
-)

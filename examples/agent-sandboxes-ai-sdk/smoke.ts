@@ -1,4 +1,5 @@
-// Runs the agent with a mock model that replays the Python from Monty's expense_analysis example, against a
+// Runs the agent with a mock model that replays the Python from Monty's expense_analysis example, split
+// across run_code calls that share one sandbox session, against a
 // local stand-in for the Agent Sandboxes server, so CI needs neither an OpenAI key nor a Logfire API key.
 // The relay is the same as in examples/agent-sandboxes/smoke.ts: each WebSocket connection goes to a local
 // `monty subprocess` worker, which speaks protobuf frames with a little-endian 4-byte length prefix.
@@ -20,18 +21,26 @@ import { analyzeExpenses } from './agent.ts'
 
 const API_KEY = 'smoke-test-key'
 
-const CODE = `team_data = await get_team_members(department="Engineering")
+const SETUP = `team_data = await get_team_members(department="Engineering")
 STANDARD_BUDGET = 5000
-over_budget_list = []
+
+async def travel_total(user_id: int) -> int:
+    expenses_data = await get_expenses(user_id=user_id, quarter="Q3", category="travel")
+    return sum(item["amount"] for item in expenses_data["expenses"])
+
+len(team_data["members"])`
+
+const ANALYSIS = `over_budget_list = []
 for member in team_data["members"]:
-    expenses_data = await get_expenses(user_id=member["id"], quarter="Q3", category="travel")
-    total_spent = sum(item["amount"] for item in expenses_data["expenses"])
+    total_spent = await travel_total(member["id"])
     if total_spent > STANDARD_BUDGET:
         custom = await get_custom_budget(user_id=member["id"])
         budget = custom["budget"] if custom is not None else STANDARD_BUDGET
         if total_spent > budget:
             over_budget_list.append({"name": member["name"], "total_spent": total_spent, "budget": budget})
-{"analyzed": len(team_data["members"]), "over_budget": over_budget_list}`
+over_budget_list`
+
+const CAROL = 'await travel_total(3)'
 
 const ANSWER = 'Carol Jones went over her Q3 travel budget.'
 
@@ -91,9 +100,15 @@ function step(content: LanguageModelV4GenerateResult['content'], finish: 'stop' 
   }
 }
 
+function runCodeCall(toolCallId: string, code: string): LanguageModelV4GenerateResult['content'][number] {
+  return { type: 'tool-call', toolCallId, toolName: 'run_code', input: JSON.stringify({ code }) }
+}
+
 const model = new MockLanguageModelV4({
   doGenerate: [
-    step([{ type: 'tool-call', toolCallId: 'call-1', toolName: 'run_code', input: JSON.stringify({ code: CODE }) }], 'tool-calls'),
+    step([runCodeCall('setup', SETUP)], 'tool-calls'),
+    // Two calls in one step run in parallel, so they also check that run_code queues feeds on the shared session.
+    step([runCodeCall('analysis', ANALYSIS), runCodeCall('carol', CAROL)], 'tool-calls'),
     step([{ type: 'text', text: ANSWER }], 'stop'),
   ],
 })
@@ -105,8 +120,8 @@ const finished = spans.getFinishedSpans()
 await logfire.shutdown()
 
 // The expense tools reach the model only as Python functions in the run_code description.
-const [firstCall, secondCall] = model.doGenerateCalls
-assert(firstCall !== undefined && secondCall !== undefined)
+const [firstCall, , lastCall] = model.doGenerateCalls
+assert(firstCall !== undefined && lastCall !== undefined)
 assert.deepEqual(
   firstCall.tools?.map((t) => t.name),
   ['run_code']
@@ -115,12 +130,16 @@ const runCodeTool = firstCall.tools?.[0]
 assert(runCodeTool?.type === 'function')
 assert.match(runCodeTool.description ?? '', /async def get_expenses\(\*, user_id: int, quarter: str, category: str\) -> Any:/)
 
-const toolResult = secondCall.prompt
-  .flatMap((message) => (message.role === 'tool' ? message.content : []))
-  .find((part) => part.type === 'tool-result')
-assert.deepEqual(toolResult?.output, {
-  type: 'json',
-  value: { analyzed: 5, over_budget: [{ name: 'Carol Jones', total_spent: 6740, budget: 5000 }] },
+// The later calls use team_data and travel_total from the first one.
+const toolResults = Object.fromEntries(
+  lastCall.prompt
+    .flatMap((message) => (message.role === 'tool' ? message.content : []))
+    .flatMap((part) => (part.type === 'tool-result' ? [[part.toolCallId, part.output]] : []))
+)
+assert.deepEqual(toolResults, {
+  setup: { type: 'json', value: 5 },
+  analysis: { type: 'json', value: [{ name: 'Carol Jones', total_spent: 6740, budget: 5000 }] },
+  carol: { type: 'json', value: 6740 },
 })
 
 assert.equal(upgrades.length, 1)
@@ -129,25 +148,23 @@ assert(upgrade !== undefined)
 assert.equal(upgrade.url, '/monty-ws/')
 assert.equal(upgrade.headers.authorization, `Bearer ${API_KEY}`)
 
-// The sandbox session joins the trace under the AI SDK's run_code span, and so do the tool calls it makes.
-const runCodeSpan = finished.find((span) => span.name === 'execute_tool run_code')
-assert(runCodeSpan !== undefined, 'missing run_code tool span')
-const { spanId, traceId } = runCodeSpan.spanContext()
+// The one sandbox session joins the trace under the agent run's span, and the tool calls each run_code call
+// makes are nested under that call's span.
+const runSpan = finished.find((span) => span.name === 'analyze expenses')
+assert(runSpan !== undefined, 'missing agent run span')
+const { spanId, traceId } = runSpan.spanContext()
 assert.equal(upgrade.headers['traceparent'], `00-${traceId}-${spanId}-01`)
-const nested = finished.filter((span) => span.name === 'run_code called {tool_name}')
-assert(nested.every((span) => span.parentSpanContext?.spanId === spanId))
-assert.deepEqual(
-  nested.map((span) => span.attributes['tool_name']),
-  [
-    'get_team_members',
-    'get_expenses',
-    'get_expenses',
-    'get_custom_budget',
-    'get_expenses',
-    'get_custom_budget',
-    'get_expenses',
-    'get_expenses',
-  ]
+const runCodeSpans = finished.filter((span) => span.name === 'execute_tool run_code')
+assert.equal(runCodeSpans.length, 3)
+const nestedToolNames = runCodeSpans.map((runCodeSpan) =>
+  finished
+    .filter((span) => span.name === 'run_code called {tool_name}' && span.parentSpanContext?.spanId === runCodeSpan.spanContext().spanId)
+    .map((span) => span.attributes['tool_name'])
 )
+assert.deepEqual(nestedToolNames, [
+  ['get_team_members'],
+  ['get_expenses', 'get_expenses', 'get_custom_budget', 'get_expenses', 'get_custom_budget', 'get_expenses', 'get_expenses'],
+  ['get_expenses'],
+])
 
 console.log('agent sandboxes AI SDK smoke test passed')

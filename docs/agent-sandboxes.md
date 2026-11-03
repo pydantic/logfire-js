@@ -79,37 +79,55 @@ independent branches. Saved sessions and snapshots are kept for 7 days.
 
 ## Use with the Vercel AI SDK
 
-An agent can write one Python program that calls its tools, instead of calling them one model turn at a time. With
-AI SDK 7, define a `run_code` tool with `experimental_toolCaller` and route your other tools to it through
-`experimental_toolCallers`. The model then sees only `run_code`, and the routed tools become Python functions in the
-sandbox. Pass them to `feedRun()` in `externalLookup`:
+An agent can write one Python program that calls its tools, instead of calling them one model turn at a time. Give
+the model a single `run_code` tool, and pass your other tools to `feedRun()` in `externalLookup`, so that they become
+Python functions in the sandbox:
 
 ```ts
+import type { MontySession } from '@pydantic/monty'
+import type { LanguageModel, Tool, ToolSet } from 'ai'
+
 import { agentSandboxes } from '@pydantic/logfire-agent-sandboxes'
-import { experimental_toolCaller, tool } from 'ai'
+import { generateText, tool } from 'ai'
 import { z } from 'zod'
 
-const inputSchema = z.object({ code: z.string() })
+function runCode(session: MontySession, tools: ToolSet): Tool {
+  let queue: Promise<unknown> = Promise.resolve()
+  return tool({
+    description: 'Run Python in a sandbox. Await these async functions with keyword arguments: ...',
+    inputSchema: z.object({ code: z.string() }),
+    execute: async ({ code }, options) => {
+      const externalLookup = Object.fromEntries(
+        Object.entries(tools).map(([name, t]) => [name, (kwargs: unknown) => t.execute?.(kwargs, options)])
+      )
+      const result = queue.then(() => session.feedRun(code, { externalLookup }))
+      queue = result.catch(() => undefined)
+      return await result
+    },
+  })
+}
 
-export const runCode = experimental_toolCaller(tool({ description: 'Run Python in a sandbox.', inputSchema }), {
-  type: 'local',
-  bind: (tools) =>
-    tool({
-      description: 'Run Python in a sandbox. Await these async functions with keyword arguments: ...',
-      inputSchema,
-      execute: async ({ code }, options) => {
-        const externalLookup = Object.fromEntries(
-          Object.entries(tools).map(([name, t]) => [name, (kwargs: unknown) => t.execute?.(kwargs, options)])
-        )
-        await using pool = await agentSandboxes()
-        await using session = await pool.checkout({ ephemeral: true })
-        return await session.feedRun(code, { externalLookup })
-      },
-    }),
+const getWeather = tool({
+  description: 'Get the weather for a city.',
+  inputSchema: z.object({ city: z.string() }),
+  execute: async ({ city }) => `Sunny in ${city}`,
 })
+
+export async function askAgent(model: LanguageModel, prompt: string): Promise<string> {
+  await using pool = await agentSandboxes()
+  await using session = await pool.checkout({ ephemeral: true })
+  const { text } = await generateText({
+    model,
+    prompt,
+    tools: { run_code: runCode(session, { get_weather: getWeather }) },
+  })
+  return text
+}
 ```
 
-Await `feedRun()` before you return, so that `await using` does not close the session while the code runs. Python
+Check out one session for the whole agent run, so that each `run_code` call can use the variables and functions that
+earlier calls defined. A session runs one `feedRun()` at a time, and starting a second one while the first waits on a
+host function breaks the session, so queue the calls: the AI SDK runs tool calls from one step in parallel. Python
 dicts come back as `Map`s, so convert the result to plain objects before the AI SDK sends it to the model.
 
 [`examples/agent-sandboxes-ai-sdk`](https://github.com/pydantic/logfire-js/tree/main/examples/agent-sandboxes-ai-sdk)
