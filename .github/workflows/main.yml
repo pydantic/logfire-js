@@ -40,6 +40,9 @@ jobs:
       - name: Test
         run: vp run --filter "./packages/*" test
 
+      - name: Example smoke tests
+        run: pnpm run test:examples
+
       - name: Resolve Playwright version
         id: playwright
         run: |

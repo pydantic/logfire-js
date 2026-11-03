@@ -1,0 +1,25 @@
+{
+  "name": "@pydantic/logfire-agent-sandboxes-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-strip-types --disable-warning=ExperimentalWarning index.ts",
+    "smoke": "node --experimental-strip-types --disable-warning=ExperimentalWarning smoke.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "catalog:",
+    "@pydantic/logfire-agent-sandboxes": "workspace:*",
+    "@pydantic/logfire-node": "workspace:*",
+    "@pydantic/monty": "^1.4.0",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@tsconfig/node22": "^22.0.0",
+    "@types/node": "^22.5.1",
+    "@types/ws": "^8.18.1",
+    "typescript": "catalog:",
+    "ws": "^8.22.0"
+  }
+}

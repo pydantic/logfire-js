@@ -17,7 +17,7 @@ This repository is the Pydantic Logfire JavaScript SDK monorepo. It provides Ope
 - `packages/logfire-agent-sandboxes` publishes `@pydantic/logfire-agent-sandboxes`, which connects Node.js to Logfire Agent Sandboxes through the `MontyWebsocket` pool from the `@pydantic/monty` peer dependency. Its docs page (`docs/agent-sandboxes.md`) is hidden in navigation until the feature leaves beta.
 - `vite.shared.ts` holds the build helpers every package config imports: `packageDefines()` stamps `PACKAGE_VERSION` and `PACKAGE_TIMESTAMP` from the package's own `package.json`, and `copyCjsDeclarations()` emits the `.d.cts` files.
 - `vite.config.ts` and `tsconfig.base.json` at the repository root hold the shared format, lint, task, and TypeScript configuration.
-- `examples/` contains runnable examples for Express, Next.js, Deno, Cloudflare Workers, browser usage, browser route grouping with React Router, TanStack Router, and Vue Router, and related integrations. The router examples run in the Playwright browser acceptance suite (`packages/logfire-session-replay/browser-tests/router-examples.pw.ts`), so keep their routes and link names in sync with that test.
+- `examples/` contains runnable examples for Express, Next.js, Deno, Cloudflare Workers, browser usage, browser route grouping with React Router, TanStack Router, and Vue Router, Agent Sandboxes, and related integrations. `examples/agent-sandboxes` doubles as a smoke test (`pnpm run test:examples`) that relays to a local `monty subprocess` worker instead of Logfire. The router examples run in the Playwright browser acceptance suite (`packages/logfire-session-replay/browser-tests/router-examples.pw.ts`), so keep their routes and link names in sync with that test.
 
 ## Environment
 
