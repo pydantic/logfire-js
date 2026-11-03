@@ -1,0 +1,72 @@
+{
+  "name": "@pydantic/logfire-agent-sandboxes",
+  "description": "Run untrusted agent code in Logfire Agent Sandboxes - https://pydantic.dev/logfire",
+  "author": {
+    "name": "The Pydantic Team",
+    "email": "engineering@pydantic.dev",
+    "url": "https://pydantic.dev"
+  },
+  "repository": {
+    "url": "https://github.com/pydantic/logfire-js",
+    "directory": "packages/logfire-agent-sandboxes"
+  },
+  "sideEffects": false,
+  "homepage": "https://pydantic.dev/logfire",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "logfire",
+    "monty",
+    "sandbox",
+    "agents",
+    "python"
+  ],
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "scripts": {
+    "dev": "vp pack --watch",
+    "build": "vp pack",
+    "lint": "vp lint",
+    "preview": "vp preview",
+    "typecheck": "tsc",
+    "prepack": "cp ../../LICENSE .",
+    "postpublish": "rm LICENSE",
+    "test": "vp test"
+  },
+  "dependencies": {
+    "logfire": "workspace:*"
+  },
+  "peerDependencies": {
+    "@opentelemetry/api": "catalog:",
+    "@pydantic/monty": "^1.4.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": "catalog:",
+    "@opentelemetry/context-async-hooks": "catalog:",
+    "@opentelemetry/core": "catalog:",
+    "@pydantic/monty": "^1.4.0",
+    "@types/node": "^22.5.1",
+    "vitest": "catalog:"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ]
+}
