@@ -77,6 +77,45 @@ Sessions are saved by the server under `session.sessionId` when the connection c
 `session.dump()` returns a snapshot ID you can load the same way, and loading one ID in several sessions forks it into
 independent branches. Saved sessions and snapshots are kept for 7 days.
 
+## Use with the Vercel AI SDK
+
+An agent can write one Python program that calls its tools, instead of calling them one model turn at a time. With
+AI SDK 7, define a `run_code` tool with `experimental_toolCaller` and route your other tools to it through
+`experimental_toolCallers`. The model then sees only `run_code`, and the routed tools become Python functions in the
+sandbox. Pass them to `feedRun()` in `externalLookup`:
+
+```ts
+import { agentSandboxes } from '@pydantic/logfire-agent-sandboxes'
+import { experimental_toolCaller, tool } from 'ai'
+import { z } from 'zod'
+
+const inputSchema = z.object({ code: z.string() })
+
+export const runCode = experimental_toolCaller(tool({ description: 'Run Python in a sandbox.', inputSchema }), {
+  type: 'local',
+  bind: (tools) =>
+    tool({
+      description: 'Run Python in a sandbox. Await these async functions with keyword arguments: ...',
+      inputSchema,
+      execute: async ({ code }, options) => {
+        const externalLookup = Object.fromEntries(
+          Object.entries(tools).map(([name, t]) => [name, (kwargs: unknown) => t.execute?.(kwargs, options)])
+        )
+        await using pool = await agentSandboxes()
+        await using session = await pool.checkout({ ephemeral: true })
+        return await session.feedRun(code, { externalLookup })
+      },
+    }),
+})
+```
+
+Await `feedRun()` before you return, so that `await using` does not close the session while the code runs. Python
+dicts come back as `Map`s, so convert the result to plain objects before the AI SDK sends it to the model.
+
+[`examples/agent-sandboxes-ai-sdk`](https://github.com/pydantic/logfire-js/tree/main/examples/agent-sandboxes-ai-sdk)
+is a complete agent. It generates type-checked Python signatures from the tools' schemas and records a span for each
+tool call the code makes.
+
 ## Tracing
 
 Each checkout sends the trace context that is active when you call `pool.checkout()`, so the spans Logfire records for
