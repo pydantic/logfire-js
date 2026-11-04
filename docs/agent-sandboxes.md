@@ -79,47 +79,30 @@ independent branches. Saved sessions and snapshots are kept for 7 days.
 
 ## Use with the Vercel AI SDK
 
-An agent can write one Python program that calls its tools, instead of calling them one model turn at a time. Give
-the model a single `run_code` tool, and pass your other tools to `feedRun()` in `externalLookup`, so that they become
-Python functions in the sandbox:
+An agent can write one Python program that calls its tools, instead of calling them one model turn at a time.
+`codeMode()` from `@pydantic/logfire-code-mode` turns AI SDK tools into typed async Python functions in a sandbox
+session and gives the model one `run_code` tool to call them from. The package is not on npm yet.
 
 ```ts
-import type { MontySession } from '@pydantic/monty'
-import type { LanguageModel, Tool, ToolSet } from 'ai'
+import type { LanguageModel } from 'ai'
 
-import { agentSandboxes } from '@pydantic/logfire-agent-sandboxes'
+import { codeMode } from '@pydantic/logfire-code-mode'
 import { generateText, stepCountIs, tool } from 'ai'
 import { z } from 'zod'
-
-function runCode(session: MontySession, tools: ToolSet): Tool {
-  let queue: Promise<unknown> = Promise.resolve()
-  return tool({
-    description: 'Run Python in a sandbox. Await these async functions with keyword arguments: ...',
-    inputSchema: z.object({ code: z.string() }),
-    execute: async ({ code }, options) => {
-      const externalLookup = Object.fromEntries(
-        Object.entries(tools).map(([name, t]) => [name, (kwargs: unknown) => t.execute?.(kwargs, options)])
-      )
-      const result = queue.then(() => session.feedRun(code, { externalLookup }))
-      queue = result.catch(() => undefined)
-      return await result
-    },
-  })
-}
 
 const getWeather = tool({
   description: 'Get the weather for a city.',
   inputSchema: z.object({ city: z.string() }),
-  execute: async ({ city }) => `Sunny in ${city}`,
+  outputSchema: z.object({ city: z.string(), forecast: z.string() }),
+  execute: async ({ city }) => ({ city, forecast: 'Sunny' }),
 })
 
 export async function askAgent(model: LanguageModel, prompt: string): Promise<string> {
-  await using pool = await agentSandboxes()
-  await using session = await pool.checkout({ ephemeral: true })
+  await using code = codeMode({ tools: { get_weather: getWeather } })
   const { text } = await generateText({
     model,
     prompt,
-    tools: { run_code: runCode(session, { get_weather: getWeather }) },
+    tools: code.tools,
     // The default is one step, which ends the run before the model sees the result of run_code.
     stopWhen: stepCountIs(10),
   })
@@ -127,14 +110,33 @@ export async function askAgent(model: LanguageModel, prompt: string): Promise<st
 }
 ```
 
-Check out one session for the whole agent run, so that each `run_code` call can use the variables and functions that
-earlier calls defined. A session runs one `feedRun()` at a time, and starting a second one while the first waits on a
-host function breaks the session, so queue the calls: the AI SDK runs tool calls from one step in parallel. Python
-dicts come back as `Map`s, so convert the result to plain objects before the AI SDK sends it to the model.
+The model sees the tools only as Python signatures in the `run_code` description, so do not also pass them to
+`generateText`. Tools that should stay direct can be spread in next to `code.tools`. Give each tool an `outputSchema`,
+so the model knows what a call returns.
+
+One `codeMode()` object is one sandbox session, kept like a REPL for every `run_code` call it serves, so create one per
+agent run. It checks out the session on the first call, from `agentSandboxes()` unless you pass `sandboxes`, and
+`close()` (or leaving an `await using` block) ends it. The session joins the trace that is active when you call
+`codeMode()`. With `streamText`, call `code.closeWhenDone(result)` instead,
+which closes once the stream finishes, fails or is aborted. A session also ends after `idleTimeout` seconds without a
+call (default 300).
+
+Calling a tool from the sandbox skips the AI SDK's own approval and context handling, so `codeMode()` takes them as
+options:
+
+- `context`: each tool's context, keyed by tool name, as `toolsContext`.
+- `approval`: the same shape as `toolApproval`. A call that needs a person's approval fails, because nothing in the
+  sandbox can wait for one. Tools with `needsApproval` are rejected.
+- `limits`: a wall-clock `timeout` per snippet that includes time spent waiting on tools (default 30 seconds), and caps
+  on nested calls, concurrent calls, and the sizes of code, results and tool input and output.
+- `onToolError`: replaces a tool's error message before the sandbox, the model or a span sees it. Messages pass through
+  unchanged by default.
+
+If you pass your own `sandboxes`, set its `requestTimeout` above `limits.timeout`, so that a long snippet gets the
+time-limit message instead of a dropped connection. `codeMode()` does this for the pool it creates.
 
 [`examples/agent-sandboxes-ai-sdk`](https://github.com/pydantic/logfire-js/tree/main/examples/agent-sandboxes-ai-sdk)
-is a complete agent. It generates type-checked Python signatures from the tools' schemas and records a span for each
-tool call the code makes.
+is a complete agent over a larger data set, with a smoke test.
 
 ## Tracing
 

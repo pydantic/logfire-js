@@ -236,13 +236,15 @@ assert(upgrade !== undefined)
 assert.equal(upgrade.url, '/monty-ws/')
 assert.equal(upgrade.headers.authorization, `Bearer ${API_KEY}`)
 
-// The one sandbox session joins the trace under the agent run's span, and the tool calls each run_code call
-// makes are nested under that call's span, failed ones marked as errors.
+// The one sandbox session joins the trace under the agent run's span, where codeMode() was created, and the tool
+// calls each run_code call makes are nested under that call's span, failed ones marked as errors.
 const runSpan = finished.find((span) => span.name === 'review travel')
 assert(runSpan !== undefined, 'missing agent run span')
 const { spanId, traceId } = runSpan.spanContext()
 assert.equal(upgrade.headers['traceparent'], `00-${traceId}-${spanId}-01`)
-const runCodeSpans = finished.filter((span) => span.name === 'execute_tool run_code')
+const runCodeSpans = finished
+  .filter((span) => span.name === 'execute_tool run_code')
+  .sort((a, b) => a.startTime[0] - b.startTime[0] || a.startTime[1] - b.startTime[1])
 assert.equal(runCodeSpans.length, 4)
 const nestedCalls = runCodeSpans.map((runCodeSpan) => {
   const nested = finished.filter(

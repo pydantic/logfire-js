@@ -21,14 +21,9 @@ The files:
 
 - [`expenses.ts`](expenses.ts) defines the data and five ordinary AI SDK tools, each with an `outputSchema`, and
   computes the correct answer.
-- [`runCode.ts`](runCode.ts) builds a `run_code` tool from them. It uses `@pydantic/logfire-code-mode` to show the
-  tools as typed Python functions, the way pydantic-ai CodeMode does, and runs the model's code in a sandbox session.
-- [`agent.ts`](agent.ts) checks out one session with `agentSandboxes()` for the whole agent run and gives the model
-  only `run_code`.
-
-A session runs one call at a time, so `run_code` queues calls that the model makes in parallel. Monty's type checker
-checks only the first snippet that passes, as in pydantic-ai: it rejects some valid code, such as a None check on an
-indexed value, and when every snippet was checked, real models used up their steps rewriting such code.
+- [`agent.ts`](agent.ts) passes them to `codeMode()` from `@pydantic/logfire-code-mode` and gives the model only the
+  `run_code` tool it returns. `codeMode()` shows the tools as typed Python functions, the way pydantic-ai CodeMode does,
+  checks out one session from `agentSandboxes()` on the first call, and closes it when the run ends.
 
 In Logfire, the trace shows the agent run with the sandbox session under it, the model calls, a span for each
 `run_code` call, and under each one a span for every tool call its Python code made, with failed calls marked as

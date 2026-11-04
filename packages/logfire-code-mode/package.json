@@ -49,15 +49,25 @@
     "test": "vp test",
     "render-fixtures": "uv run --no-project --script scripts/render-fixtures.py"
   },
+  "dependencies": {
+    "@pydantic/logfire-agent-sandboxes": "workspace:*",
+    "logfire": "workspace:*"
+  },
   "peerDependencies": {
+    "@opentelemetry/api": "catalog:",
     "@pydantic/monty": "^1.4.0",
     "ai": "^7.0.0"
   },
   "devDependencies": {
+    "@opentelemetry/api": "catalog:",
+    "@opentelemetry/context-async-hooks": "catalog:",
+    "@opentelemetry/sdk-trace-base": "catalog:",
     "@pydantic/monty": "^1.4.0",
     "@types/node": "^22.5.1",
+    "@types/ws": "^8.18.1",
     "ai": "^7.0.0",
     "vitest": "catalog:",
+    "ws": "^8.22.0",
     "zod": "catalog:"
   },
   "files": [

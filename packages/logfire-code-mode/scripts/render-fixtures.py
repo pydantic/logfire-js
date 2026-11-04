@@ -111,7 +111,9 @@ def render(commit: str, monty: str) -> None:
             for td in callable_defs.values()
         ]
         stubs = CodeModeToolset._build_type_check_stubs(tool_definitions(tools))  # pyright: ignore[reportPrivateUsage]
-        return {'typeDefinitions': type_definitions, 'functions': functions, 'typeCheckStubs': stubs}
+        # The whole `run_code` description, prose included, as CodeMode shows it without OS access or mounts.
+        description = CodeModeToolset._build_description(tool_definitions(tools), has_os=False, has_mount=False)  # pyright: ignore[reportPrivateUsage]
+        return {'typeDefinitions': type_definitions, 'functions': functions, 'typeCheckStubs': stubs, 'description': description}
 
     exceptions = json.loads(EXCEPTIONS.read_text()) if EXCEPTIONS.exists() else {}
     results: dict[str, object] = {}

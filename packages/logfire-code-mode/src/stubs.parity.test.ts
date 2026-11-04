@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from 'vitest'
 
 import type { PythonFunction, PythonStubs } from './stubs'
 
+import { runCodeDescription } from './prompt'
 import { pythonFunctions, renderPythonStubs } from './stubs'
 import { zodToolSets } from './zodToolSets.fixture'
 
@@ -23,7 +24,8 @@ function writeFixture(name: string, value: unknown): void {
 
 interface Expected {
   pydanticAiCommit: string
-  cases: Record<string, PythonStubs>
+  // `description` is the whole run_code description pydantic-ai builds for the case, prose included.
+  cases: Record<string, PythonStubs & { description: string }>
 }
 
 interface ParityException {
@@ -58,7 +60,10 @@ describe('parity with pydantic-ai', () => {
   const excepted = Object.entries(exceptions).map(([name, exception]) => [name, cases[name] ?? [], exception] as const)
 
   test.each(matching)('%s matches pydantic-ai', (name, functions) => {
-    expect(renderPythonStubs(functions)).toEqual(expected.cases[name])
+    const { description, ...stubs } = expected.cases[name] ?? { description: '' }
+    const actual = renderPythonStubs(functions)
+    expect(actual).toEqual(stubs)
+    expect(runCodeDescription(actual.typeDefinitions, actual.functions)).toBe(description)
   })
 
   test.each(excepted)('%s matches its parity exception', (name, functions, exception) => {
@@ -69,6 +74,7 @@ describe('parity with pydantic-ai', () => {
     }
     expect(actual).toEqual(exception.expected)
     // An exception that pydantic-ai no longer needs should be removed rather than kept.
-    expect(expected.cases[name]).not.toEqual(exception.expected)
+    const { description: _description, ...rendered } = expected.cases[name] ?? { description: '' }
+    expect(rendered).not.toEqual(exception.expected)
   })
 })

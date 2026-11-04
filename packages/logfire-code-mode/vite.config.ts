@@ -10,7 +10,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
     define: defines,
     dts: true,
     deps: {
-      neverBundle: [/^@pydantic\/monty/u, /^ai$/u, /^node:/u],
+      neverBundle: [/^@pydantic\//u, /^@opentelemetry\//u, /^ai$/u, /^logfire$/u, /^node:/u],
     },
     entry: {
       index: 'src/index.ts',
