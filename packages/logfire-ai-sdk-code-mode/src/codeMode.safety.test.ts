@@ -328,6 +328,17 @@ describe('size and concurrency caps', () => {
     expect(message).toMatch(/^ValueError: Invalid arguments for rows\(\): [\s\S]{2000} \.\.\. \(\d+ chars total\)$/u)
   })
 
+  test('replace the session after the memory limit', async () => {
+    const counted = new CountingSandboxes(pool)
+    await using code = codeMode({ tools: {}, sandboxes: counted, typeCheck: 'off', limits: { memory: 5_000_000 } })
+    await runCode(code, { code: 'kept = 1' })
+    const message = await runCodeError(code, { code: 'x = []\nwhile True:\n    x.append("a" * 10000)' })
+    expect(message).toMatch(/MemoryError: memory limit exceeded/u)
+    expect(message).toMatch(/The code ran out of memory and was stopped, so the session was reset\./u)
+    expect(await runCodeError(code, { code: 'kept' })).toMatch(/NameError/u)
+    expect(counted.sessions).toHaveLength(2)
+  })
+
   test('cut a huge exception message to the output budget', async () => {
     await using code = codeMode({ tools: {}, sandboxes: pool, limits: { outputBytes: 1000 } })
     const message = await runCodeError(code, { code: 'raise ValueError("X" * 200000)' })

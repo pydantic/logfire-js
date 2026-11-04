@@ -309,6 +309,15 @@ function isDurationExhausted(error: MontyRuntimeError): boolean {
   return error.traceback().length === 0 && error.display('msg').includes('time limit exceeded')
 }
 
+/**
+ * Whether Monty stopped the snippet at its memory limit. pydantic-ai keeps the session here, but Monty 1.4 says to
+ * discard it after a memory or time limit: execution is not transactional, so the heap and reference counts may be
+ * inconsistent (docs/limitations/resource_limits.md). Matching a tool's own error by mistake only costs the REPL state.
+ */
+function isMemoryExhausted(error: MontyRuntimeError): boolean {
+  return error.exception.typeName === 'MemoryError' && error.display('msg').startsWith('memory limit exceeded')
+}
+
 interface Failure {
   message: string
   reset: boolean
@@ -603,12 +612,19 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       if (snippet.budgetExhausted || SANDBOX_LIMIT_MARKERS.some((marker) => summary.includes(marker))) {
         message += snippet.startedCalls()
       }
-      const reset = isDurationExhausted(error)
-      if (reset) {
+      const timedOut = isDurationExhausted(error)
+      const outOfMemory = isMemoryExhausted(error)
+      if (timedOut) {
         message +=
           '\n\nThe code ran longer than its time limit and was stopped, so the session was reset. Re-run any imports, ' +
           'recreate any state you need, and make the code do less work per call.'
       }
+      if (outOfMemory) {
+        message +=
+          '\n\nThe code ran out of memory and was stopped, so the session was reset. Re-run any imports, ' +
+          'recreate any state you need, and keep less data in memory at once.'
+      }
+      const reset = timedOut || outOfMemory
       if (error.exception.typeName === 'RuntimeError' && SUSPENSION_LIMIT.test(summary)) {
         message +=
           "\n\nIf this reports the sandbox session's suspension limit, its cumulative host-interaction budget is exhausted. " +
