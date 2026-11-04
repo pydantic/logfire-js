@@ -141,8 +141,9 @@ async function parseErrorDetail(response: Response): Promise<unknown> {
 }
 
 async function parseSuccessJson(response: Response): Promise<unknown> {
+  const text = await response.text()
   try {
-    return await response.json()
+    return JSON.parse(text) as unknown
   } catch (error) {
     throw new PlatformJSONError(`Logfire platform API response was not valid JSON: ${formatError(error)}`)
   }
