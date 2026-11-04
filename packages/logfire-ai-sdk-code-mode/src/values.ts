@@ -89,6 +89,28 @@ export function forModel(value: unknown): unknown {
   return value
 }
 
+/**
+ * Cuts `text` to about `maxBytes` of UTF-8, keeping its start and end: a traceback's frames come first and the
+ * exception last, and either can be the large part.
+ */
+export function cutMiddle(text: string, maxBytes: number): string {
+  const size = byteLength(text)
+  if (size <= maxBytes) {
+    return text
+  }
+  const bytes = Buffer.from(text)
+  const half = Math.floor(maxBytes / 2)
+  const head = bytes
+    .subarray(0, half)
+    .toString()
+    .replace(/\uFFFD$/u, '')
+  const tail = bytes
+    .subarray(size - half)
+    .toString()
+    .replace(/^\uFFFD/u, '')
+  return `${head}\n... (${String(size - 2 * half)} of ${String(size)} bytes cut) ...\n${tail}`
+}
+
 /** UTF-8 size of a value's JSON, or of a string itself. */
 export function byteLength(text: string): number {
   return Buffer.byteLength(text, 'utf8')
@@ -128,11 +150,12 @@ export function preview(value: unknown, nested = false): string {
 
 export type CallStatus = 'denied' | 'failed' | 'returned' | 'running'
 
+/** A nested call as the started-call summary reports it. Only previews are kept, so a snippet's history stays small. */
 export interface StartedCall {
   toolName: string
-  input: unknown
+  inputPreview: string
   status: CallStatus
-  output?: unknown
+  outputPreview?: string
 }
 
 /**
@@ -145,11 +168,11 @@ export function describeStartedCalls(calls: readonly StartedCall[]): string {
   for (const call of calls) {
     const outcome =
       call.status === 'returned'
-        ? `returned ${preview(call.output)}`
+        ? `returned ${call.outputPreview ?? 'None'}`
         : call.status === 'denied'
           ? 'was denied and did not run'
           : 'did not finish, so it may have applied a partial change'
-    const line = `- ${call.toolName}(${preview(call.input)}) ${outcome}`
+    const line = `- ${call.toolName}(${call.inputPreview}) ${outcome}`
     if (used + line.length > SUMMARY_MAX_CHARS) {
       lines.push(`- ... and ${String(calls.length - lines.length)} more not shown`)
       break

@@ -17,7 +17,7 @@ import { resolveLimits } from './limits'
 import { pyIsBuiltin } from './python'
 import { CODE_DESCRIPTION, RESTART_DESCRIPTION, RUN_CODE_TOOL_NAME, runCodeDescription } from './prompt'
 import { toolStubs } from './stubs'
-import { byteLength, describeStartedCalls, forModel, fromSandbox, ValueTooLargeError } from './values'
+import { byteLength, cutMiddle, describeStartedCalls, forModel, fromSandbox, preview, ValueTooLargeError } from './values'
 
 /** Where code runs: a pool such as `agentSandboxes()`, `MontyWebsocket.create()` or `Monty.create()`. */
 export interface Sandboxes {
@@ -540,7 +540,9 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     if (stopped === 'deadline') {
       await this.releaseSession()
       const ran =
-        feedError instanceof MontyRuntimeError ? `Runtime error:\n${snippet.printed.prependTo(feedError.display('traceback'))}\n\n` : ''
+        feedError instanceof MontyRuntimeError
+          ? `Runtime error:\n${snippet.printed.prependTo(this.cut(feedError.display('traceback')))}\n\n`
+          : ''
       throw new Error(
         `${ran}The code ran longer than its ${String(this.limits.timeout)}-second time limit, counting time spent waiting on tools, ` +
           'and was stopped, so the session was reset. Re-run any imports, recreate any state you need, and make the code do less work per call.' +
@@ -579,18 +581,24 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     return output === '' ? (result ?? {}) : result === null || result === undefined ? { output } : { output, result }
   }
 
+  // An exception message or traceback is as large as the code makes it, and the AI SDK sends the error to the model,
+  // so it gets the same budget as a result.
+  private cut(text: string): string {
+    return cutMiddle(text, this.limits.outputBytes)
+  }
+
   /** The message the model gets for a failed snippet, from pydantic-ai `CodeModeToolset._execute_code`. */
   private describeFailure(error: unknown, snippet: Snippet): Failure {
     const { printed } = snippet
     if (error instanceof MontySyntaxError) {
-      return { message: `Syntax error in code:\n${printed.prependTo(error.display('traceback'))}`, reset: false }
+      return { message: `Syntax error in code:\n${printed.prependTo(this.cut(error.display('traceback')))}`, reset: false }
     }
     if (error instanceof MontyTypingError) {
       // pydantic-ai resets here to drop the checkout's type-check stubs; this port skips checking per feed instead.
-      return { message: `Type error in code:\n${printed.prependTo(error.display())}`, reset: false }
+      return { message: `Type error in code:\n${printed.prependTo(this.cut(error.display()))}`, reset: false }
     }
     if (error instanceof MontyRuntimeError) {
-      let message = `Runtime error:\n${printed.prependTo(error.display('traceback'))}`
+      let message = `Runtime error:\n${printed.prependTo(this.cut(error.display('traceback')))}`
       const summary = error.display('msg')
       if (snippet.budgetExhausted || SANDBOX_LIMIT_MARKERS.some((marker) => summary.includes(marker))) {
         message += snippet.startedCalls()
@@ -622,7 +630,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     return {
       message:
         'Code execution failed and the session was reset. Re-run any imports, recreate any state you need, and try again.\n' +
-        `${printed.prependTo(text)}${snippet.startedCalls()}`,
+        `${printed.prependTo(this.cut(text))}${snippet.startedCalls()}`,
       reset: true,
     }
   }
@@ -703,7 +711,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       toolContext = context === undefined ? toolContext : context.value
     }
 
-    const record: StartedCall = { toolName, input, status: 'running' }
+    const record: StartedCall = { toolName, inputPreview: preview(input), status: 'running' }
     const decision = await untilAborted(
       decideApproval(
         this.options.approval,
@@ -761,16 +769,20 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
           }
           const json = JSON.stringify(output ?? null)
           record.status = 'returned'
-          record.output = JSON.parse(json) as unknown
+          // Sized before it is parsed or kept, so sandbox code that catches the error and calls again cannot pile
+          // up rejected results on the host.
           const outputBytes = byteLength(json)
           if (outputBytes > limits.toolOutputBytes) {
+            record.outputPreview = `<${String(outputBytes)} bytes, over the limit>`
             throw pythonError(
               'ValueError',
               `${pythonName}() returned ${String(outputBytes)} bytes of JSON, over the ${String(limits.toolOutputBytes)}-byte limit for one call. ` +
                 'The call ran, so do not repeat it to get the same result.'
             )
           }
-          return record.output
+          const result = JSON.parse(json) as unknown
+          record.outputPreview = preview(result)
+          return result
         }
       )
     } finally {

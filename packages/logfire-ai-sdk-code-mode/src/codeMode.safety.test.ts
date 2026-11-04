@@ -328,6 +328,26 @@ describe('size and concurrency caps', () => {
     expect(message).toMatch(/^ValueError: Invalid arguments for rows\(\): [\s\S]{2000} \.\.\. \(\d+ chars total\)$/u)
   })
 
+  test('cut a huge exception message to the output budget', async () => {
+    await using code = codeMode({ tools: {}, sandboxes: pool, limits: { outputBytes: 1000 } })
+    const message = await runCodeError(code, { code: 'raise ValueError("X" * 200000)' })
+    expect(message).toMatch(/^Runtime error:\nTraceback[\s\S]*\n\.\.\. \(\d+ of \d+ bytes cut\) \.\.\.\nX+$/u)
+    expect(Buffer.byteLength(message)).toBeLessThan(1200)
+  })
+
+  test('keep only a preview of a rejected tool result', async () => {
+    const big = tool({
+      inputSchema: z.object({}),
+      outputSchema: z.object({ text: z.string() }),
+      execute: () => ({ text: 'y'.repeat(5000) }),
+    })
+    await using code = codeMode({ tools: { big }, sandboxes: pool, limits: { toolOutputBytes: 100, toolCalls: 2 } })
+    const message = await runCodeError(code, {
+      code: 'for i in range(3):\n    try:\n        await big()\n    except ValueError:\n        pass',
+    })
+    expect(message).toContain('- big({}) returned <5011 bytes, over the limit>\n- big({}) returned <5011 bytes, over the limit>')
+  })
+
   test('keep a __proto__ key as data', async () => {
     const seen: unknown[] = []
     const take = tool({
