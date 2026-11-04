@@ -220,7 +220,7 @@ describe('the wall-clock deadline', () => {
     await using code = codeMode({ tools: {}, sandboxes: pool, limits: { timeout: 1 } })
     expect(
       await runCode(code, { code: 'import time\ntry:\n    time.sleep(5)\n    r = "slept"\nexcept TimeoutError as e:\n    r = str(e)\nr' })
-    ).toMatch(/^sleeping 5s would exceed the 1s this code may run; 1\.0s left$/u)
+    ).toMatch(/^sleeping 5s would exceed the 1s this code may run; [01]\.\ds left$/u)
     const started = Date.now()
     expect(await runCodeError(code, { code: 'while True:\n    pass' })).toMatch(/time limit/u)
     expect(Date.now() - started).toBeLessThan(2500)

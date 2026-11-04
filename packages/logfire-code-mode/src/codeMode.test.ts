@@ -287,10 +287,12 @@ describe('lifecycle', () => {
 
   test('close() rejects queued calls and waits for the running one', async () => {
     let release: () => void = () => undefined
+    let started = false
     const wait = tool({
       inputSchema: z.object({}),
       outputSchema: z.object({}),
       execute: async () => {
+        started = true
         await new Promise<void>((resolve) => {
           release = resolve
         })
@@ -301,10 +303,10 @@ describe('lifecycle', () => {
     const code = codeMode({ tools: { wait }, sandboxes: counted })
     const running = runCodeError(code, { code: 'await wait()' })
     const queued = runCodeError(code, { code: '1' })
+    // Close only once the tool runs, so the snippet has a started call to report.
     await vi.waitFor(() => {
-      expect(counted.sessions).toHaveLength(1)
+      expect(started).toBe(true)
     })
-    await delay(50)
     const closed = code.close()
     release()
     await closed
