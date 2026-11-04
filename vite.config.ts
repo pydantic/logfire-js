@@ -9,7 +9,7 @@ const generatedFiles = [
   '**/next-env.d.ts',
   '**/worker-configuration.d.ts',
   // Written by the code mode tests and fixture script, which must reproduce them byte for byte.
-  'packages/logfire-code-mode/fixtures/signatures/**',
+  'packages/logfire-ai-sdk-code-mode/fixtures/signatures/**',
 ]
 
 // Browser fixtures type their virtual recorder module through a sibling

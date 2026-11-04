@@ -1,6 +1,6 @@
 import type { LanguageModel, ToolSet } from 'ai'
 
-import { codeMode } from '@pydantic/logfire-code-mode'
+import { codeMode } from '@pydantic/logfire-ai-sdk-code-mode'
 import * as logfire from '@pydantic/logfire-node'
 import { generateText, stepCountIs } from 'ai'
 

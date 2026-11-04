@@ -1,5 +1,5 @@
 {
-  "name": "@pydantic/logfire-code-mode",
+  "name": "@pydantic/logfire-ai-sdk-code-mode",
   "private": true,
   "description": "Let Vercel AI SDK agents call their tools from Python running in Logfire Agent Sandboxes - https://pydantic.dev/logfire",
   "author": {
@@ -9,7 +9,7 @@
   },
   "repository": {
     "url": "https://github.com/pydantic/logfire-js",
-    "directory": "packages/logfire-code-mode"
+    "directory": "packages/logfire-ai-sdk-code-mode"
   },
   "sideEffects": false,
   "homepage": "https://pydantic.dev/logfire",

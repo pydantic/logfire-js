@@ -21,7 +21,7 @@ The files:
 
 - [`expenses.ts`](expenses.ts) defines the data and five ordinary AI SDK tools, each with an `outputSchema`, and
   computes the correct answer.
-- [`agent.ts`](agent.ts) passes them to `codeMode()` from `@pydantic/logfire-code-mode` and gives the model only the
+- [`agent.ts`](agent.ts) passes them to `codeMode()` from `@pydantic/logfire-ai-sdk-code-mode` and gives the model only the
   `run_code` tool it returns. `codeMode()` shows the tools as typed Python functions, the way pydantic-ai CodeMode does,
   checks out one session from `agentSandboxes()` on the first call, and closes it when the run ends.
 
@@ -29,7 +29,7 @@ In Logfire, the trace shows the agent run with the sandbox session under it, the
 `run_code` call, and under each one a span for every tool call its Python code made, with failed calls marked as
 errors.
 
-`@pydantic/logfire-code-mode` is a private workspace package for now, so this example runs only inside this repository.
+`@pydantic/logfire-ai-sdk-code-mode` is a private workspace package for now, so this example runs only inside this repository.
 
 ## Run against Logfire
 

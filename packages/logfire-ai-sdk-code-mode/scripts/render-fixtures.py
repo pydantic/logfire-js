@@ -22,7 +22,7 @@ EXPECTED = FIXTURES / 'expected.json'
 EXCEPTIONS = FIXTURES / 'parity-exceptions.json'
 CASE_FILES = [FIXTURES / 'cases.json', FIXTURES / 'zod-cases.json']
 REPOSITORY = 'https://github.com/pydantic/pydantic-ai.git'
-CHECKOUT = Path.home() / '.cache' / 'logfire-code-mode' / 'pydantic-ai'
+CHECKOUT = Path.home() / '.cache' / 'logfire-ai-sdk-code-mode' / 'pydantic-ai'
 # Python 3.14 evaluates annotations lazily, so the validity check can resolve forward and recursive references.
 PYTHON = '3.14'
 
