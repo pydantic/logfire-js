@@ -246,16 +246,36 @@ describe('size and concurrency caps', () => {
     expect(await runCodeError(code, { code: `# ${'x'.repeat(300)}` })).toBe(
       'The code is 302 bytes, over the 200-byte limit for one snippet. Send less code per call; variables and functions from earlier calls are still defined.'
     )
-    expect(await runCodeError(code, { code: 'kept' })).toMatch(/^The result is 1002 bytes of JSON, over the 300-byte limit/u)
+    expect(await runCodeError(code, { code: 'kept' })).toMatch(/^The result is more than 300 bytes of JSON, over the limit/u)
     expect(await runCode(code, { code: 'len(kept)' })).toBe(1000)
     expect(await runCode(code, { code: 'print("y" * 400)' })).toEqual({ output: `${'y'.repeat(300)}\n[printed output cut at 300 bytes]\n` })
     expect(await runCode(code, { code: caught('big(text="z" * 60)') })).toMatch(
-      /^ValueError: The arguments to big\(\) are \d+ bytes of JSON, over the 50-byte limit/u
+      /^ValueError: The arguments to big\(\) are more than 50 bytes of JSON, over the limit for one call\.$/u
     )
     expect(await runCode(code, { code: caught('big(text="z" * 10)') })).toMatch(
       /^ValueError: big\(\) returned \d+ bytes of JSON, over the 500-byte limit for one call\. The call ran, so do not repeat it/u
     )
     expect(counted.sessions).toHaveLength(1)
+  })
+
+  test('stop converting a shared value before it expands on the host', async () => {
+    const calls: unknown[] = []
+    const take = tool({
+      inputSchema: z.object({ value: z.unknown() }),
+      outputSchema: z.object({}),
+      execute: ({ value }) => {
+        calls.push(value)
+        return {}
+      },
+    })
+    await using code = codeMode({ tools: { take }, sandboxes: pool, typeCheck: 'off' })
+    // 40 sandbox lists that share their items stand for 2**40 leaves once copied.
+    const shared = 'x = [1]\nfor i in range(40):\n    x = [x, x]'
+    expect(await runCodeError(code, { code: `${shared}\nx` })).toMatch(/^The result is more than 64000 bytes of JSON/u)
+    expect(await runCode(code, { code: caught('take(value=x)') })).toBe(
+      'ValueError: The arguments to take() are more than 1000000 bytes of JSON, over the limit for one call.'
+    )
+    expect(calls).toEqual([])
   })
 
   test('run at most concurrentToolCalls host calls at once', async () => {

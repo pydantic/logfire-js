@@ -1,26 +1,74 @@
 import { pyRepr } from './python'
 
+/** A sandbox value whose JSON would pass the byte budget it was converted under. */
+export class ValueTooLargeError extends Error {
+  readonly maxBytes: number
+
+  constructor(maxBytes: number) {
+    super(`The value is more than ${String(maxBytes)} bytes of JSON.`)
+    this.maxBytes = maxBytes
+  }
+}
+
 /**
  * Converts a value Monty hands to the host into plain JSON-shaped data. Monty passes Python dicts as Maps at any
  * depth, sets as Sets and big ints as bigints, none of which a tool schema or `JSON.stringify` handles.
+ *
+ * Monty keeps shared references, so a few dozen sandbox objects (`x = [x, x]`, repeated) can stand for an
+ * exponentially large tree. The conversion therefore spends a budget of `maxBytes`, about the JSON size of what it
+ * has built so far, and throws `ValueTooLargeError` as soon as it runs out, before the host's memory does.
  */
-export function fromSandbox(value: unknown): unknown {
-  if (value instanceof Map) {
-    return Object.fromEntries(Array.from(value, ([key, item]: [unknown, unknown]) => [String(key), fromSandbox(item)]))
+export function fromSandbox(value: unknown, maxBytes: number): unknown {
+  let left = maxBytes
+  const spend = (bytes: number): void => {
+    left -= bytes
+    if (left < 0) {
+      throw new ValueTooLargeError(maxBytes)
+    }
   }
-  if (value instanceof Set || Array.isArray(value)) {
-    return Array.from(value as Iterable<unknown>, fromSandbox)
+  const entries = (pairs: Iterable<[unknown, unknown]>): Record<string, unknown> => {
+    spend(2)
+    const out: Record<string, unknown> = {}
+    for (const [key, item] of pairs) {
+      const name = String(key)
+      spend(byteLength(name) + 4)
+      out[name] = convert(item)
+    }
+    return out
   }
-  if (typeof value === 'bigint') {
-    return Number.isSafeInteger(Number(value)) ? Number(value) : value.toString()
+  const convert = (item: unknown): unknown => {
+    if (item instanceof Map) {
+      return entries(item as Map<unknown, unknown>)
+    }
+    if (item instanceof Set || Array.isArray(item)) {
+      spend(2)
+      const out: unknown[] = []
+      for (const element of item as Iterable<unknown>) {
+        spend(1)
+        out.push(convert(element))
+      }
+      return out
+    }
+    if (typeof item === 'bigint') {
+      const text = item.toString()
+      spend(text.length)
+      return Number.isSafeInteger(Number(item)) ? Number(item) : text
+    }
+    if (item instanceof Uint8Array) {
+      spend(item.length + 2)
+      return Buffer.from(item).toString('latin1')
+    }
+    if (typeof item === 'string') {
+      spend(byteLength(item) + 2)
+      return item
+    }
+    if (typeof item === 'object' && item !== null) {
+      return entries(Object.entries(item))
+    }
+    spend(typeof item === 'number' ? String(item).length : 5)
+    return item
   }
-  if (value instanceof Uint8Array) {
-    return Buffer.from(value).toString('latin1')
-  }
-  if (typeof value === 'object' && value !== null) {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fromSandbox(item)]))
-  }
-  return value
+  return convert(value)
 }
 
 /**

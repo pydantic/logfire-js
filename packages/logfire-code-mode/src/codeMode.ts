@@ -17,7 +17,7 @@ import { resolveLimits } from './limits'
 import { pyIsBuiltin } from './python'
 import { CODE_DESCRIPTION, RESTART_DESCRIPTION, RUN_CODE_TOOL_NAME, runCodeDescription } from './prompt'
 import { toolStubs } from './stubs'
-import { byteLength, describeStartedCalls, forModel, fromSandbox } from './values'
+import { byteLength, describeStartedCalls, forModel, fromSandbox, ValueTooLargeError } from './values'
 
 /** Where code runs: a pool such as `agentSandboxes()`, `MontyWebsocket.create()` or `Monty.create()`. */
 export interface Sandboxes {
@@ -104,13 +104,27 @@ function errorMessage(error: unknown): string {
 }
 
 // Keyword arguments arrive as one trailing object without a prototype; anything before it is positional.
-function keywordArguments(name: string, args: unknown[]): Record<string, unknown> {
+function keywordArguments(name: string, args: unknown[], maxBytes: number): Record<string, unknown> {
   const last = args.at(-1)
   const hasKwargs = typeof last === 'object' && last !== null && Object.getPrototypeOf(last) === null
   if (args.length > (hasKwargs ? 1 : 0)) {
     throw pythonError('TypeError', `${name}() does not accept positional arguments; use keyword arguments`)
   }
-  return hasKwargs ? (fromSandbox(last) as Record<string, unknown>) : {}
+  if (!hasKwargs) {
+    return {}
+  }
+  try {
+    return fromSandbox(last, maxBytes) as Record<string, unknown>
+  } catch (error) {
+    if (error instanceof ValueTooLargeError) {
+      throw pythonError('ValueError', toolInputTooLarge(name, maxBytes))
+    }
+    throw error
+  }
+}
+
+function toolInputTooLarge(name: string, maxBytes: number): string {
+  return `The arguments to ${name}() are more than ${String(maxBytes)} bytes of JSON, over the limit for one call.`
 }
 
 function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
@@ -532,18 +546,24 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
 
   /** pydantic-ai's result shapes (`RunCodeExecution.build_tool_return`), checked against `limits.outputBytes`. */
   private shapeResult(value: unknown, snippet: Snippet): unknown {
-    const result = forModel(fromSandbox(value))
-    const output = snippet.printed.output
-    const shaped = output === '' ? (result ?? {}) : result === null || result === undefined ? { output } : { output, result }
-    // Printed output is already cut at the same cap, so the cap applies to the result on its own.
-    const size = byteLength(JSON.stringify(result ?? null))
-    if (size > this.limits.outputBytes) {
-      throw new Error(
-        `The result is ${String(size)} bytes of JSON, over the ${String(this.limits.outputBytes)}-byte limit for what one snippet returns. ` +
-          'The code ran and its variables are still defined, so return a smaller value from them, such as a summary or fewer fields.'
-      )
+    const { outputBytes } = this.limits
+    const tooLarge = new Error(
+      `The result is more than ${String(outputBytes)} bytes of JSON, over the limit for what one snippet returns. ` +
+        'The code ran and its variables are still defined, so return a smaller value from them, such as a summary or fewer fields.'
+    )
+    let result: unknown
+    try {
+      result = forModel(fromSandbox(value, outputBytes))
+    } catch (error) {
+      throw error instanceof ValueTooLargeError ? tooLarge : error
     }
-    return shaped
+    // Printed output is already cut at the same cap, so the cap applies to the result on its own. The conversion's
+    // budget only approximates JSON, so the exact size is checked too.
+    if (byteLength(JSON.stringify(result ?? null)) > outputBytes) {
+      throw tooLarge
+    }
+    const output = snippet.printed.output
+    return output === '' ? (result ?? {}) : result === null || result === undefined ? { output } : { output, result }
   }
 
   /** The message the model gets for a failed snippet, from pydantic-ai `CodeModeToolset._execute_code`. */
@@ -637,7 +657,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
   ): Promise<unknown> {
     const { limits } = this
     const target = this.options.tools[toolName] as TOOLS[string]
-    const kwargs = keywordArguments(pythonName, args)
+    const kwargs = keywordArguments(pythonName, args, limits.toolInputBytes)
     if (snippet.stopped !== undefined) {
       throw snippet.signal.reason as Error
     }
@@ -653,12 +673,8 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     snippet.callCount += 1
     const toolCallId = `${snippet.id}__${String(snippet.callCount)}`
 
-    const inputBytes = byteLength(JSON.stringify(kwargs))
-    if (inputBytes > limits.toolInputBytes) {
-      throw pythonError(
-        'ValueError',
-        `The arguments to ${pythonName}() are ${String(inputBytes)} bytes of JSON, over the ${String(limits.toolInputBytes)}-byte limit for one call.`
-      )
+    if (byteLength(JSON.stringify(kwargs)) > limits.toolInputBytes) {
+      throw pythonError('ValueError', toolInputTooLarge(pythonName, limits.toolInputBytes))
     }
     const validated = await untilAborted(Promise.resolve(asSchema(target.inputSchema).validate?.(kwargs)), snippet.signal)
     if (validated !== undefined && !validated.success) {
