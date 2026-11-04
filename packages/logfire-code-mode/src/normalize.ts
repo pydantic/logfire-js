@@ -95,7 +95,8 @@ function containsRef(node: unknown, ref: string): boolean {
   if (!isRecord(node)) {
     return false
   }
-  return node['$ref'] === ref || Object.values(node).some((value) => containsRef(value, ref))
+  // A `$ref` inside data such as a `default` is not a reference.
+  return node['$ref'] === ref || Object.entries(node).some(([key, value]) => !DATA_KEYWORDS.has(key) && containsRef(value, ref))
 }
 
 // zod names the definitions it creates for recursion `__schema0`, `__schema1`, and so on.

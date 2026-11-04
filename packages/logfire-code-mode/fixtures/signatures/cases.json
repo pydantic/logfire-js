@@ -1354,5 +1354,106 @@
         }
       }
     }
+  ],
+  "alias_definition": [
+    {
+      "name": "t",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "$ref": "#/$defs/Indirect"
+          },
+          "owner": {
+            "$ref": "#/$defs/OwnerRef"
+          },
+          "loop": {
+            "$ref": "#/$defs/LoopA"
+          }
+        },
+        "required": [
+          "x",
+          "owner",
+          "loop"
+        ],
+        "$defs": {
+          "Indirect": {
+            "$ref": "#/$defs/PageLimit"
+          },
+          "PageLimit": {
+            "type": "integer"
+          },
+          "OwnerRef": {
+            "$ref": "#/$defs/Owner"
+          },
+          "Owner": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "LoopA": {
+            "$ref": "#/$defs/LoopB"
+          },
+          "LoopB": {
+            "$ref": "#/$defs/LoopA"
+          }
+        }
+      }
+    }
+  ],
+  "union_labels_with_one_class_name": [
+    {
+      "name": "t",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "read-file"
+                  },
+                  "a": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "a"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "read_file"
+                  },
+                  "b": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "b"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "op"
+        ]
+      }
+    }
   ]
 }

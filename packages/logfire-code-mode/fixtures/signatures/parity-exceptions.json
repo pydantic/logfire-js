@@ -90,5 +90,31 @@
       ],
       "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass a_User(TypedDict):\n    address: a_Address\n\nclass a_Address(TypedDict):\n    street: str\n\nclass b_User(TypedDict):\n    address: b_Address\n\nclass b_Address(TypedDict):\n    zip: int\n\nasync def a(*, u: a_User) -> Any:\n    raise NotImplementedError()\n\nasync def b(*, u: b_User) -> Any:\n    raise NotImplementedError()"
     }
+  },
+  "alias_definition": {
+    "reason": "A def that is itself a $ref is left unresolved by pydantic-ai (test_ref_to_ref_def_keeps_alias_name), so x is annotated Indirect and owner OwnerRef, names that are never defined. The chain is followed here; a cycle of aliases renders as Any.",
+    "expected": {
+      "typeDefinitions": [
+        "class Owner(TypedDict):\n    name: str"
+      ],
+      "functions": [
+        "async def t(*, x: int, owner: Owner, loop: Any) -> Any:\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass Owner(TypedDict):\n    name: str\n\nasync def t(*, x: int, owner: Owner, loop: Any) -> Any:\n    raise NotImplementedError()"
+    }
+  },
+  "union_labels_with_one_class_name": {
+    "kind": "wrong-types",
+    "reason": "Both branches are inline objects that share the union's path, so pydantic-ai keeps only the first. Their discriminators read-file and read_file become the same class name, so the branches are numbered instead.",
+    "expected": {
+      "typeDefinitions": [
+        "class TOp_1(TypedDict):\n    kind: Literal['read-file']\n    a: str",
+        "class TOp_2(TypedDict):\n    kind: Literal['read_file']\n    b: int"
+      ],
+      "functions": [
+        "async def t(*, op: TOp_1 | TOp_2) -> Any:\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass TOp_1(TypedDict):\n    kind: Literal['read-file']\n    a: str\n\nclass TOp_2(TypedDict):\n    kind: Literal['read_file']\n    b: int\n\nasync def t(*, op: TOp_1 | TOp_2) -> Any:\n    raise NotImplementedError()"
+    }
   }
 }

@@ -621,8 +621,10 @@ function schemaToTypeExpr(
       const refSchema = normalizeSchemaNode(defs[refName])
       if (isObjectWithProperties(refSchema)) {
         buildAndRegisterType(refName, refSchema, defs, referencedTypes, toolName, path)
-      } else if (!('$ref' in refSchema)) {
+      } else {
         // Only object defs become TypedDicts; enums, aliases and unions resolve inline.
+        // Parity exception: pydantic-ai leaves a def that is itself a `$ref` unresolved, so the annotation names
+        // an alias that is never defined. Here the reference chain is followed, with the same recursion guard.
         if (resolvingRefs.has(refName)) {
           return ANY
         }
@@ -791,7 +793,9 @@ function inlineObjectBranchPaths(members: JsonSchema[], path: string): Map<JsonS
     return paths
   }
   const labels = inline.map(constLabel)
-  const distinct = labels.every((label) => label !== undefined) && new Set(labels).size === labels.length
+  // Labels such as `read-file` and `read_file` become the same class name, so distinctness is checked on that.
+  const distinct =
+    labels.every((label) => label !== undefined) && new Set(labels.map((label) => toPascalCase(label))).size === labels.length
   inline.forEach((s, i) => {
     paths.set(s, `${path}.${distinct ? (labels[i] ?? '') : String(i + 1)}`)
   })

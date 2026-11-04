@@ -276,3 +276,19 @@ describe('review fixes', () => {
     }
   })
 })
+
+describe('second review fixes', () => {
+  test('a reference inside default data does not make the root recursive', () => {
+    const normalized = normalizeSchema(
+      {
+        type: 'object',
+        title: 'Node',
+        properties: { x: { type: 'object', default: { $ref: '#' } } },
+        $defs: { Node: { type: 'object', properties: {} } },
+      },
+      't',
+      'parameters'
+    )
+    expect(normalized['$defs']).toEqual({ Node: { type: 'object', properties: {} } })
+  })
+})

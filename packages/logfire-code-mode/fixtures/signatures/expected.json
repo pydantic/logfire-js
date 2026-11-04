@@ -208,6 +208,24 @@
       ],
       "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass User(TypedDict):\n    address: Address\n\nclass a_Address(TypedDict):\n    street: str\n\nclass b_Address(TypedDict):\n    zip: int\n\nasync def a(*, u: User) -> Any:\n    raise NotImplementedError()\n\nasync def b(*, u: User) -> Any:\n    raise NotImplementedError()"
     },
+    "alias_definition": {
+      "typeDefinitions": [
+        "class Owner(TypedDict):\n    name: str"
+      ],
+      "functions": [
+        "async def t(*, x: Indirect, owner: OwnerRef, loop: LoopA) -> Any:\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass Owner(TypedDict):\n    name: str\n\nasync def t(*, x: Indirect, owner: OwnerRef, loop: LoopA) -> Any:\n    raise NotImplementedError()"
+    },
+    "union_labels_with_one_class_name": {
+      "typeDefinitions": [
+        "class TOp(TypedDict):\n    kind: Literal['read-file']\n    a: str"
+      ],
+      "functions": [
+        "async def t(*, op: TOp) -> Any:\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass TOp(TypedDict):\n    kind: Literal['read-file']\n    a: str\n\nasync def t(*, op: TOp) -> Any:\n    raise NotImplementedError()"
+    },
     "zod_expenses": {
       "typeDefinitions": [
         "class GetTeamMembersReturn(TypedDict):\n    department: str\n    members: list[GetTeamMembersReturnMembersitem]",
