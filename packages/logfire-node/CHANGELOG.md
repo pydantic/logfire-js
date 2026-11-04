@@ -1,5 +1,12 @@
 # logfire
 
+## 0.21.1
+
+### Patch Changes
+
+- Updated dependencies [6ab7b5a]
+  - logfire@0.25.1
+
 ## 0.21.0
 
 ### Minor Changes
