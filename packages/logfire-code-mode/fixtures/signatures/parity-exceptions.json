@@ -116,5 +116,33 @@
       ],
       "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass TOp_1(TypedDict):\n    kind: Literal['read-file']\n    a: str\n\nclass TOp_2(TypedDict):\n    kind: Literal['read_file']\n    b: int\n\nasync def t(*, op: TOp_1 | TOp_2) -> Any:\n    raise NotImplementedError()"
     }
+  },
+  "inline_objects_with_one_title": {
+    "kind": "wrong-types",
+    "reason": "Three inline objects are titled User, and the second has a different shape. pydantic-ai reuses the first User for all of them, so reviewer is described with a name where its schema has an id. A different shape gets the next free name, User_2; the same shape still reuses User.",
+    "expected": {
+      "typeDefinitions": [
+        "class User(TypedDict):\n    name: str",
+        "class User_2(TypedDict):\n    id: int"
+      ],
+      "functions": [
+        "async def t(*, author: User, reviewer: User_2, editor: User) -> Any:\n    \"\"\"\n    Args:\n        editor: Same shape as author, so it reuses author's type.\n    \"\"\"\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass User(TypedDict):\n    name: str\n\nclass User_2(TypedDict):\n    id: int\n\nasync def t(*, author: User, reviewer: User_2, editor: User) -> Any:\n    \"\"\"\n    Args:\n        editor: Same shape as author, so it reuses author's type.\n    \"\"\"\n    raise NotImplementedError()"
+    }
+  },
+  "inline_object_reuses_definition_name": {
+    "kind": "wrong-types",
+    "reason": "The inline data object's path name ToolData matches a definition with a different shape. pydantic-ai reuses the definition (test_schema_inline_object_reuses_existing_typename), so data is described with y where its schema has x. It gets the next free name, ToolData_2.",
+    "expected": {
+      "typeDefinitions": [
+        "class ToolData(TypedDict):\n    y: int",
+        "class ToolData_2(TypedDict):\n    x: str"
+      ],
+      "functions": [
+        "async def tool(*, data: ToolData_2) -> Any:\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass ToolData(TypedDict):\n    y: int\n\nclass ToolData_2(TypedDict):\n    x: str\n\nasync def tool(*, data: ToolData_2) -> Any:\n    raise NotImplementedError()"
+    }
   }
 }

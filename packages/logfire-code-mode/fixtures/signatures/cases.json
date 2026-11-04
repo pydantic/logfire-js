@@ -1455,5 +1455,57 @@
         ]
       }
     }
+  ],
+  "inline_objects_with_one_title": [
+    {
+      "name": "t",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "author": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "User"
+          },
+          "reviewer": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "title": "User"
+          },
+          "editor": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "User",
+            "description": "Same shape as author, so it reuses author's type."
+          }
+        },
+        "required": [
+          "author",
+          "reviewer",
+          "editor"
+        ]
+      }
+    }
   ]
 }

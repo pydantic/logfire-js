@@ -226,6 +226,15 @@
       ],
       "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass TOp(TypedDict):\n    kind: Literal['read-file']\n    a: str\n\nasync def t(*, op: TOp) -> Any:\n    raise NotImplementedError()"
     },
+    "inline_objects_with_one_title": {
+      "typeDefinitions": [
+        "class User(TypedDict):\n    name: str"
+      ],
+      "functions": [
+        "async def t(*, author: User, reviewer: User, editor: User) -> Any:\n    \"\"\"\n    Args:\n        editor: Same shape as author, so it reuses author's type.\n    \"\"\"\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass User(TypedDict):\n    name: str\n\nasync def t(*, author: User, reviewer: User, editor: User) -> Any:\n    \"\"\"\n    Args:\n        editor: Same shape as author, so it reuses author's type.\n    \"\"\"\n    raise NotImplementedError()"
+    },
     "zod_expenses": {
       "typeDefinitions": [
         "class GetTeamMembersReturn(TypedDict):\n    department: str\n    members: list[GetTeamMembersReturnMembersitem]",

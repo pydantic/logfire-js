@@ -691,7 +691,10 @@ function typeToExpr(
       // A `title` that is a valid identifier keeps real class names like `User`; otherwise name it by path.
       const title = schema['title']
       const tdName = typeof title === 'string' && title !== '' && pyIsIdentifier(title) ? title : pathToTypename(toolName, path)
-      return referencedTypes.get(tdName) ?? buildAndRegisterType(tdName, schema, defs, referencedTypes, toolName, path)
+      if (!referencedTypes.has(tdName)) {
+        return buildAndRegisterType(tdName, schema, defs, referencedTypes, toolName, path)
+      }
+      return inlineObjectWithTakenName(tdName, schema, defs, referencedTypes, toolName, path)
     }
     if ('additionalProperties' in schema) {
       const additional = schema['additionalProperties']
@@ -815,6 +818,33 @@ function constLabel(schema: JsonSchema): string | undefined {
     }
   }
   return undefined
+}
+
+// Parity exception: pydantic-ai reuses whatever type already has an inline object's name, so a second object
+// titled `User`, or one whose path name matches a definition, is described with the first one's fields. Here the
+// object is reused only when its structure matches, and otherwise gets the next free name: `User_2`, `User_3`.
+// An inline object cannot refer to itself, so it can be built in full before it is compared.
+function inlineObjectWithTakenName(
+  tdName: string,
+  schema: JsonSchema,
+  defs: Record<string, unknown>,
+  referencedTypes: Map<string, TypeSignature>,
+  toolName: string,
+  path: string
+): TypeSignature {
+  const candidate = buildTypeSignature(tdName, schema, defs, referencedTypes, toolName, path)
+  for (let n = 1; ; n++) {
+    const name = n === 1 ? tdName : `${tdName}_${String(n)}`
+    const existing = referencedTypes.get(name)
+    if (existing === undefined) {
+      const named = new TypeSignature(name, candidate.description, candidate.fields)
+      referencedTypes.set(name, named)
+      return named
+    }
+    if (existing.structurallyEqual(candidate)) {
+      return existing
+    }
+  }
 }
 
 // Registers a placeholder first, so that a recursive schema resolves to the same TypeSignature.
