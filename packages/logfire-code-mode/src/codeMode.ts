@@ -119,6 +119,8 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
 
 async function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) {
+    // The abandoned promise may still reject, and nothing else observes it.
+    promise.catch(() => undefined)
     throw signal.reason as Error
   }
   return new Promise<T>((resolve, reject) => {
