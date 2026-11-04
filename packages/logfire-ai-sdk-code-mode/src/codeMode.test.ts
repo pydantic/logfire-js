@@ -372,6 +372,10 @@ describe('setup', () => {
   test('rejects tools code mode cannot run', () => {
     const noExecute = tool({ inputSchema: z.object({}), outputSchema: z.object({}) })
     expect(() => codeMode({ tools: { noExecute }, sandboxes: sandboxes() })).toThrow(/Tool "noExecute" has no execute function/u)
+    const projected = tool({ ...add, toModelOutput: () => ({ type: 'text', value: 'hidden' }) })
+    expect(() => codeMode({ tools: { projected }, sandboxes: sandboxes() })).toThrow(
+      /Tool "projected" sets toModelOutput, which code mode cannot apply/u
+    )
     const gated = { ...add, needsApproval: true }
     expect(() => codeMode({ tools: { gated }, sandboxes: sandboxes() })).toThrow(/Tool "gated" sets needsApproval/u)
     expect(() => codeMode({ tools: { run_code: add }, sandboxes: sandboxes() })).toThrow(/reserves for itself/u)

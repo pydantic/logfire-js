@@ -129,6 +129,8 @@ options:
 - `context`: each tool's context, keyed by tool name, as `toolsContext`.
 - `approval`: the same shape as `toolApproval`. A call that needs a person's approval fails, because nothing in the
   sandbox can wait for one. Tools with `needsApproval` are rejected.
+- Sandbox code gets what `execute` returns, so a tool with `toModelOutput` is rejected rather than having its
+  filtering bypassed.
 - `limits`: a wall-clock `timeout` per snippet that includes time spent waiting on tools (default 30 seconds), and caps
   on nested calls, concurrent calls, and the sizes of code, results and tool input and output.
 - `onToolError`: replaces a tool's error message before the sandbox, the model or a span sees it. Messages pass through

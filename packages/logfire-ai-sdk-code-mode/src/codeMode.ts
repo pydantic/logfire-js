@@ -354,6 +354,14 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       if ((candidate as { needsApproval?: unknown }).needsApproval !== undefined) {
         throw new Error(`Tool "${name}" sets needsApproval, which code mode cannot enforce. Use the approval option of codeMode() instead.`)
       }
+      // Sandbox code gets the raw result, typed by outputSchema. A toModelOutput that hides fields from the model
+      // would be bypassed, so such a tool is refused rather than silently exposed.
+      if (candidate.toModelOutput !== undefined) {
+        throw new Error(
+          `Tool "${name}" sets toModelOutput, which code mode cannot apply: sandbox code receives the result that execute returns. ` +
+            'Return only what the model may see from execute, or pass the tool to generateText as a direct tool.'
+        )
+      }
     }
     if (sandboxes === undefined && [undefined, ''].includes(process.env['LOGFIRE_API_KEY'])) {
       throw new Error(
@@ -736,7 +744,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
           toolsContext: this.options.context ?? {},
           runtimeContext: this.options.runtimeContext as RUNTIME_CONTEXT,
         },
-        { toolName, toolCallId, input, messages: toolOptions.messages, toolContext }
+        { toolName, toolCallId, input, messages: toolOptions.messages, toolContext, tool: target }
       ),
       snippet.signal
     )

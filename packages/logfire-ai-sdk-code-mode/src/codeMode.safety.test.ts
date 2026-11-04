@@ -76,7 +76,7 @@ describe('approval', () => {
 
   test('a generic function gets the call, the tools, the context and runtimeContext', async () => {
     const seen: unknown[] = []
-    const tools = { lookup: countingTool() }
+    const tools = { lookup: tool({ ...countingTool(), title: 'Lookup', metadata: { requiresApproval: true } }) }
     await using code = codeMode({
       tools,
       sandboxes: pool,
@@ -92,7 +92,14 @@ describe('approval', () => {
     )
     expect(seen).toEqual([
       {
-        toolCall: { type: 'tool-call', toolCallId: 'p__1', toolName: 'lookup', input: { n: 3 } },
+        toolCall: {
+          type: 'tool-call',
+          toolCallId: 'p__1',
+          toolName: 'lookup',
+          input: { n: 3 },
+          toolMetadata: { requiresApproval: true },
+          title: 'Lookup',
+        },
         given: ['lookup'],
         toolsContext: { lookup: { tenant: 'acme' } },
         runtimeContext: { user: 'ada' },

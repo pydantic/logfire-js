@@ -6,6 +6,8 @@ export interface ApprovalRequest {
   input: unknown
   messages: ModelMessage[]
   toolContext: unknown
+  /** The tool's own fields that the AI SDK copies onto a direct call, so a policy that reads them sees the same. */
+  tool: { type?: string | undefined; title?: string | undefined; metadata?: unknown }
 }
 
 export type ApprovalDecision = { approved: true } | { approved: false; reason: string | undefined; needsUser: boolean }
@@ -24,7 +26,18 @@ export async function decideApproval<TOOLS extends ToolSet, RUNTIME_CONTEXT>(
   }
   let status: ToolApprovalStatus
   if (typeof approval === 'function') {
-    const toolCall = { type: 'tool-call', toolCallId: request.toolCallId, toolName: request.toolName, input: request.input }
+    // Built as the AI SDK's `parseToolCall` builds a direct call, so a policy that reads `toolMetadata` or `dynamic`
+    // gates nested calls the same way.
+    const { tool } = request
+    const toolCall = {
+      type: 'tool-call',
+      toolCallId: request.toolCallId,
+      toolName: request.toolName,
+      input: request.input,
+      ...(tool.metadata === undefined || tool.metadata === null ? {} : { toolMetadata: tool.metadata }),
+      ...(tool.type === 'dynamic' ? { dynamic: true } : {}),
+      title: tool.title,
+    }
     status = await approval({
       toolCall: toolCall as Parameters<typeof approval>[0]['toolCall'],
       tools,
