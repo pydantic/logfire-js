@@ -48,6 +48,28 @@ console.log(await session.feedRun('sum([20, 21, 1])')) // 42
 No connection is made until `pool.checkout()`, which gives you a session with its own sandbox. Variables and functions
 defined in one `feedRun()` call are available in later calls on the same session.
 
+`await using` is JavaScript's
+[explicit resource management](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/await_using),
+supported in Node.js 24 and TypeScript 5.2 and later. It works like Python's `async with`: when the enclosing block
+exits, normally or by an exception, JavaScript awaits the value's `Symbol.asyncDispose` method. For a session, that
+returns its sandbox to the pool. For the pool, it closes the pool. Values are disposed in reverse order, so the session
+closes before the pool. The `await` is for that cleanup, not for creating the value: `await agentSandboxes()` and
+`await pool.checkout()` are separate awaits on the right-hand side. Without `await using`, close them in `finally`:
+
+```ts
+const pool = await agentSandboxes()
+try {
+  const session = await pool.checkout()
+  try {
+    console.log(await session.feedRun('sum([20, 21, 1])'))
+  } finally {
+    await session.close()
+  }
+} finally {
+  await pool.close()
+}
+```
+
 ## Let sandbox code call your functions
 
 Pass your own functions in `externalLookup`. Sandbox code calls them by name, and each call runs in your application.
@@ -117,11 +139,26 @@ later: earlier versions validate every element of an oversized array before chec
 ([GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)).
 
 One `codeMode()` object is one sandbox session, kept like a REPL for every `run_code` call it serves, so create one per
-agent run. It checks out the session on the first call, from `agentSandboxes()` unless you pass `sandboxes`, and
-`close()` (or leaving an `await using` block) ends it. The session joins the trace that is active when you call
-`codeMode()`. With `streamText`, call `code.closeWhenDone(result)` instead,
-which closes once the stream finishes, fails or is aborted. A session also ends after `idleTimeout` seconds without a
-call (default 300).
+agent run. The session joins the trace that is active when you call `codeMode()`.
+
+`codeMode()` is synchronous and starts nothing: it checks out the session on the first `run_code` call, from
+`agentSandboxes()` unless you pass `sandboxes`. `await using code = codeMode(...)` only means that when `askAgent`
+returns or throws, JavaScript awaits `code[Symbol.asyncDispose]()`, which closes the session, and the pool too if
+`codeMode()` created it. It is the same as calling `await code.close()` in a `finally` block:
+
+```ts
+const code = codeMode({ tools: { get_weather: getWeather } })
+try {
+  const { text } = await generateText({ model, prompt, tools: code.tools, stopWhen: stepCountIs(10) })
+  return text
+} finally {
+  await code.close()
+}
+```
+
+With `streamText`, the function returns before the stream is read, so a block-scoped close would end the session too
+early. Call `code.closeWhenDone(result)` instead, which closes once the stream finishes, fails or is aborted. A session
+also ends after `idleTimeout` seconds without a call (default 300).
 
 Calling a tool from the sandbox skips the AI SDK's own approval and context handling, so `codeMode()` takes them as
 options:

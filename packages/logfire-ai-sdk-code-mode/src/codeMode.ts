@@ -87,6 +87,16 @@ export interface CodeMode extends AsyncDisposable {
  * Gives an AI SDK agent one `run_code` tool. The model writes Python, the code runs in one sandbox session for the
  * life of this object, and `tools` become typed async functions inside it, so one model step can make many tool
  * calls and keep their results in the sandbox instead of the model's context.
+ *
+ * Nothing starts here: the session is checked out on the first `run_code` call. Close it when the run ends, with
+ * `close()` or with `await using`, which awaits the same cleanup when the enclosing block exits:
+ *
+ * ```ts
+ * await using code = codeMode({ tools })
+ * const { text } = await generateText({ model, prompt, tools: code.tools, stopWhen: stepCountIs(10) })
+ * ```
+ *
+ * With `streamText`, use `closeWhenDone(result)` instead, because the block exits before the stream is read.
  */
 export function codeMode<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknown>(options: CodeModeOptions<TOOLS, RUNTIME_CONTEXT>): CodeMode {
   return new CodeModeRuntime(options)
