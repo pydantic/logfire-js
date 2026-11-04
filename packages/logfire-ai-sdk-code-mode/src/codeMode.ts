@@ -169,6 +169,22 @@ async function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promis
   })
 }
 
+// Every snippet's signal is aborted when it finishes, so the listener never outlives it.
+async function whenAborted(signal: AbortSignal): Promise<'stopped'> {
+  if (signal.aborted) {
+    return 'stopped'
+  }
+  return new Promise((resolve) => {
+    signal.addEventListener(
+      'abort',
+      () => {
+        resolve('stopped')
+      },
+      { once: true }
+    )
+  })
+}
+
 class Slots {
   private free: number
   private readonly waiting: (() => void)[] = []
@@ -542,21 +558,35 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     let value: unknown
     let feedError: unknown
     let fed = false
+    let abandoned = false
     snippet.start()
-    try {
-      const skipTypeCheck = this.options.typeCheck === 'off' || (this.options.typeCheck !== 'every-snippet' && this.passedTypeCheck)
-      value = await session.feedRun(code, {
+    const skipTypeCheck = this.options.typeCheck === 'off' || (this.options.typeCheck !== 'every-snippet' && this.passedTypeCheck)
+    const settled = session
+      .feedRun(code, {
         externalLookup: this.externalLookup(snippet, toolOptions),
         printCallback: snippet.printed.write,
         os: this.osCallback(snippet),
         skipTypeCheck,
       })
+      .then(
+        (result: unknown) => ({ ok: true as const, result }),
+        (error: unknown) => ({ ok: false as const, error })
+      )
+    // Monty cannot interrupt a feed, and close() waits for it, so a snippet that keeps running after it is stopped
+    // (catching each refused call in a loop, say) would hold this call and the queue. Stop waiting instead: refused
+    // calls never reach a tool, and Monty's own limits bound what is left.
+    const outcome = await Promise.race([settled, whenAborted(snippet.signal)])
+    if (outcome === 'stopped') {
+      abandoned = true
+      this.abandonSession(session, settled)
+    } else if (outcome.ok) {
+      value = outcome.result
       fed = true
       this.passedTypeCheck = true
-    } catch (error) {
-      feedError = error
+    } else {
+      feedError = outcome.error
       // A snippet that failed at run time still passed type checking.
-      this.passedTypeCheck ||= !(error instanceof MontyTypingError || error instanceof MontySyntaxError)
+      this.passedTypeCheck ||= !(feedError instanceof MontyTypingError || feedError instanceof MontySyntaxError)
     }
 
     // Read again: the feed can stop the snippet, which the narrowing above does not see.
@@ -565,7 +595,9 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       throw this.stoppedError(snippet, true)
     }
     if (stopped === 'deadline') {
-      await this.releaseSession()
+      if (!abandoned) {
+        await this.releaseSession()
+      }
       const ran =
         feedError instanceof MontyRuntimeError
           ? `Runtime error:\n${snippet.printed.prependTo(this.cut(feedError.display('traceback')))}\n\n`
@@ -710,11 +742,12 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
   ): Promise<unknown> {
     const { limits } = this
     const target = this.options.tools[toolName] as TOOLS[string]
-    const kwargs = keywordArguments(pythonName, args, limits.toolInputBytes)
     if (snippet.stopped !== undefined) {
       throw snippet.signal.reason as Error
     }
-    // Reserved before anything awaits, so calls started together by asyncio.gather cannot all pass the check.
+    // Reserved before anything awaits or converts, so calls started together by asyncio.gather cannot all pass the
+    // check, and a call rejected for its arguments still spends budget: otherwise a loop that catches the error could
+    // make the host convert large arguments without limit.
     if (snippet.callCount >= limits.toolCalls) {
       snippet.budgetExhausted = true
       throw pythonError(
@@ -725,6 +758,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     }
     snippet.callCount += 1
     const toolCallId = `${snippet.id}__${String(snippet.callCount)}`
+    const kwargs = keywordArguments(pythonName, args, limits.toolInputBytes)
 
     if (byteLength(JSON.stringify(kwargs)) > limits.toolInputBytes) {
       throw pythonError('ValueError', toolInputTooLarge(pythonName, limits.toolInputBytes))
@@ -893,6 +927,13 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
         osPolicy: { datetime: 'call_host', sleep: 'call_host', randomStart: 'call_host' },
       })
     )
+  }
+
+  /** Drops a session whose feed is still running; it closes itself once the feed settles. */
+  private abandonSession(session: MontySession, settled: Promise<unknown>): void {
+    this.sessionPromise = undefined
+    this.passedTypeCheck = false
+    settled.then(async () => session.close()).catch(() => undefined)
   }
 
   private async releaseSession(): Promise<void> {

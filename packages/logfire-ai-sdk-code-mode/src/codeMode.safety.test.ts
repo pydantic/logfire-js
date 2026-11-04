@@ -172,6 +172,16 @@ describe('the call budget', () => {
   const BUDGET_MESSAGE =
     'RuntimeError: Code mode allows 2 nested tool calls per `run_code` call and this snippet asked for more. Call fewer tools, for example by filtering the inputs first, or split the work across several `run_code` calls.'
 
+  test('counts calls rejected for their arguments', async () => {
+    const calls: unknown[] = []
+    await using code = codeMode({ tools: { count: countingTool(calls) }, sandboxes: pool, typeCheck: 'off', limits: { toolCalls: 2 } })
+    const message = await runCodeError(code, {
+      code: 'for i in range(5):\n    try:\n        await count(1, 2)\n    except TypeError:\n        pass\nawait count(n=1)',
+    })
+    expect(message).toContain(BUDGET_MESSAGE)
+    expect(calls).toEqual([])
+  })
+
   test('stops the third call in sequence before it reaches the tool', async () => {
     const calls: unknown[] = []
     await using code = codeMode({ tools: { count: countingTool(calls) }, sandboxes: pool, limits: { toolCalls: 2 } })
@@ -237,6 +247,23 @@ describe('the wall-clock deadline', () => {
     )
     expect(message).toContain('- stuck({}) did not finish, so it may have applied a partial change')
     expect(await runCodeError(code, { code: 'kept' })).toMatch(/Name `kept` used when not defined/u)
+    expect(counted.sessions).toHaveLength(2)
+  })
+
+  test('returns at the deadline even when the code keeps catching refused calls', async () => {
+    const calls: unknown[] = []
+    const counted = new CountingSandboxes(pool)
+    await using code = codeMode({ tools: { tick: countingTool(calls) }, sandboxes: counted, limits: { timeout: 0.3 } })
+    const started = Date.now()
+    const message = await runCodeError(code, {
+      code: 'n = 0\nwhile True:\n    try:\n        await tick(n=n)\n    except Exception:\n        pass\n    n = n + 1',
+    })
+    expect(Date.now() - started).toBeLessThan(1000)
+    expect(message).toMatch(/time limit/u)
+    const ran = calls.length
+    await delay(300)
+    expect(calls).toHaveLength(ran)
+    expect(await runCode(code, { code: '1 + 1' })).toBe(2)
     expect(counted.sessions).toHaveLength(2)
   })
 
