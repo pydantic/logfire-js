@@ -1,0 +1,494 @@
+{
+  "zod_expenses": [
+    {
+      "name": "get_team_members",
+      "description": "Get the team members of a department.",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "department": {
+            "type": "string",
+            "description": "The department name, such as \"Engineering\"."
+          }
+        },
+        "required": [
+          "department"
+        ],
+        "additionalProperties": false
+      },
+      "returnSchema": {
+        "type": "object",
+        "properties": {
+          "department": {
+            "type": "string"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "department",
+          "members"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_expenses",
+      "description": "Get the expense line items for a user.",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "The user's ID."
+          },
+          "quarter": {
+            "type": "string",
+            "enum": [
+              "Q1",
+              "Q2",
+              "Q3",
+              "Q4"
+            ]
+          },
+          "category": {
+            "default": "travel",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "quarter"
+        ],
+        "additionalProperties": false
+      },
+      "returnSchema": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "expenses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "amount": {
+                  "type": "number"
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "date",
+                "amount",
+                "description"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "user_id",
+          "expenses"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_custom_budget",
+      "description": "Get the custom budget for a user, or None if they have none.",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "additionalProperties": false
+      },
+      "returnSchema": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "budget": {
+                "type": "number"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "budget",
+              "reason"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    }
+  ],
+  "zod_shapes": [
+    {
+      "name": "plan_trip",
+      "description": "Plan a trip.",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "destination": {
+            "type": "string",
+            "description": "City or airport code."
+          },
+          "travelers": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "cabin": {
+            "type": "string",
+            "enum": [
+              "economy",
+              "business"
+            ]
+          },
+          "budget": {
+            "default": 1000,
+            "type": "number"
+          },
+          "departure": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stops": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "preferences": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          },
+          "itinerary": {
+            "type": "object",
+            "properties": {
+              "days": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    },
+                    "nights": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "city",
+                    "nights"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "days"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "destination",
+          "travelers",
+          "departure",
+          "stops",
+          "preferences"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "save_tree",
+      "description": "Save a whole tree.",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/SaveTree"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "children"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "SaveTree": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/SaveTree"
+                }
+              }
+            },
+            "required": [
+              "name",
+              "children"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "returnSchema": {
+        "type": "object",
+        "properties": {
+          "saved": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "saved"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_tree",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "returnSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/GetTreeReturn"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "children"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "GetTreeReturn": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/GetTreeReturn"
+                }
+              }
+            },
+            "required": [
+              "name",
+              "children"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "name": "get_category",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "returnSchema": {
+        "type": "object",
+        "properties": {
+          "root": {
+            "$ref": "#/$defs/TreeNode"
+          },
+          "parent": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/TreeNode"
+              }
+            ]
+          }
+        },
+        "required": [
+          "root"
+        ],
+        "additionalProperties": false,
+        "$defs": {
+          "TreeNode": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/TreeNode"
+                }
+              }
+            },
+            "required": [
+              "name",
+              "children"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "name": "parse_amount",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "returnSchema": {
+        "type": "object",
+        "properties": {
+          "amount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "amount"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "lookup",
+      "description": "Look something up.",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "q"
+        ]
+      },
+      "returnSchema": {
+        "type": "object",
+        "properties": {
+          "hits": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "hits"
+        ]
+      }
+    }
+  ]
+}

@@ -88,7 +88,7 @@ import type { MontySession } from '@pydantic/monty'
 import type { LanguageModel, Tool, ToolSet } from 'ai'
 
 import { agentSandboxes } from '@pydantic/logfire-agent-sandboxes'
-import { generateText, tool } from 'ai'
+import { generateText, stepCountIs, tool } from 'ai'
 import { z } from 'zod'
 
 function runCode(session: MontySession, tools: ToolSet): Tool {
@@ -120,6 +120,8 @@ export async function askAgent(model: LanguageModel, prompt: string): Promise<st
     model,
     prompt,
     tools: { run_code: runCode(session, { get_weather: getWeather }) },
+    // The default is one step, which ends the run before the model sees the result of run_code.
+    stopWhen: stepCountIs(10),
   })
   return text
 }

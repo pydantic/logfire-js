@@ -12,6 +12,7 @@
     "@ai-sdk/openai": "^4.0.0",
     "@ai-sdk/otel": "^1.0.0",
     "@pydantic/logfire-agent-sandboxes": "workspace:*",
+    "@pydantic/logfire-code-mode": "workspace:*",
     "@pydantic/logfire-node": "workspace:*",
     "@pydantic/monty": "^1.4.0",
     "ai": "^7.0.0",
