@@ -319,6 +319,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
   private closing: Promise<void> | undefined
   private readonly options: CodeModeOptions<TOOLS, RUNTIME_CONTEXT>
   private readonly traceContext: Context
+  private readonly slots: Slots
 
   constructor(options: CodeModeOptions<TOOLS, RUNTIME_CONTEXT>) {
     this.options = options
@@ -344,6 +345,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       throw new RangeError(`idleTimeout must be a positive number of seconds or Infinity, not ${String(idleTimeout)}.`)
     }
     this.limits = resolveLimits(options.limits)
+    this.slots = new Slots(this.limits.concurrentToolCalls)
     this.idleTimeout = idleTimeout
 
     const stubs = toolStubs(tools)
@@ -637,11 +639,10 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     snippet: Snippet,
     toolOptions: ToolExecutionOptions<unknown>
   ): Record<string, (...args: unknown[]) => Promise<unknown>> {
-    const slots = new Slots(this.limits.concurrentToolCalls)
     return Object.fromEntries(
       Object.keys(this.options.tools).map((toolName) => {
         const pythonName = this.pythonNames.get(toolName) ?? toolName
-        return [pythonName, async (...args: unknown[]) => this.callTool(toolName, pythonName, args, snippet, slots, toolOptions)]
+        return [pythonName, async (...args: unknown[]) => this.callTool(toolName, pythonName, args, snippet, toolOptions)]
       })
     )
   }
@@ -652,7 +653,6 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     pythonName: string,
     args: unknown[],
     snippet: Snippet,
-    slots: Slots,
     toolOptions: ToolExecutionOptions<unknown>
   ): Promise<unknown> {
     const { limits } = this
@@ -717,7 +717,17 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       )
     }
 
-    await slots.acquire(snippet.signal)
+    await this.slots.acquire(snippet.signal)
+    // A tool that ignores its abort signal keeps running after the sandbox stops waiting for it, so its slot is
+    // held until the tool itself settles, and the cap covers every run_code call of this instance.
+    let released = false
+    const releaseOnce = (): void => {
+      if (!released) {
+        released = true
+        this.slots.release()
+      }
+    }
+    const call: { running?: Promise<unknown> } = {}
     snippet.calls.push(record)
     try {
       return await logfire.span(
@@ -729,10 +739,10 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
           try {
             // Approval, validation or a free slot can take long enough for the snippet to stop meanwhile.
             snippet.signal.throwIfAborted()
-            output = await untilAborted(
-              this.execute(target, input, { ...toolOptions, toolCallId, context: toolContext, abortSignal: snippet.signal }),
-              snippet.signal
-            )
+            const running = this.execute(target, input, { ...toolOptions, toolCallId, context: toolContext, abortSignal: snippet.signal })
+            call.running = running
+            running.then(releaseOnce, releaseOnce)
+            output = await untilAborted(running, snippet.signal)
           } catch (error) {
             record.status = 'failed'
             // Inside the span callback, so the span records the replacement and never the original message.
@@ -753,7 +763,9 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
         }
       )
     } finally {
-      slots.release()
+      if (call.running === undefined) {
+        releaseOnce()
+      }
     }
   }
 

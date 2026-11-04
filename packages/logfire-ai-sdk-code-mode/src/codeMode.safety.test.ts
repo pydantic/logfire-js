@@ -162,24 +162,41 @@ describe('approval that takes time', () => {
 })
 
 describe('the call budget', () => {
-  test.each([
-    ['in sequence', 'for i in range(3):\n    await count(n=i)'],
-    ['through one gather', 'import asyncio\nawait asyncio.gather(count(n=0), count(n=1), count(n=2))'],
-  ])('stops the third call %s before it reaches the tool', async (how, source) => {
+  const BUDGET_MESSAGE =
+    'RuntimeError: Code mode allows 2 nested tool calls per `run_code` call and this snippet asked for more. Call fewer tools, for example by filtering the inputs first, or split the work across several `run_code` calls.'
+
+  test('stops the third call in sequence before it reaches the tool', async () => {
     const calls: unknown[] = []
     await using code = codeMode({ tools: { count: countingTool(calls) }, sandboxes: pool, limits: { toolCalls: 2 } })
-    const message = await runCodeError(code, { code: source })
-    expect(calls).toHaveLength(2)
+    const message = await runCodeError(code, { code: 'for i in range(3):\n    await count(n=i)' })
+    expect(calls).toEqual([0, 1])
+    expect(message).toContain(BUDGET_MESSAGE)
     expect(message).toContain(
-      'RuntimeError: Code mode allows 2 nested tool calls per `run_code` call and this snippet asked for more. Call fewer tools, for example by filtering the inputs first, or split the work across several `run_code` calls.'
+      "2 nested tool calls started before execution stopped:\n- count({'n': 0}) returned {'n': 0}\n- count({'n': 1}) returned {'n': 1}\nAccount for all 2 before retrying"
     )
-    // In a gather, the third call fails while the first two still run, and ending the snippet stops them.
-    const outcome =
-      how === 'in sequence'
-        ? (n: number) => `returned {'n': ${String(n)}}`
-        : () => 'did not finish, so it may have applied a partial change'
+  })
+
+  test('stops the third call through one gather before it reaches the tool', async () => {
+    // The first two calls wait until the snippet ends, so the third is always refused while they still run.
+    const calls: unknown[] = []
+    const hold = tool({
+      inputSchema: z.object({ n: z.number() }),
+      outputSchema: z.object({ n: z.number() }),
+      execute: async ({ n }, { abortSignal }) => {
+        calls.push(n)
+        await new Promise((resolve) => {
+          abortSignal?.addEventListener('abort', resolve)
+        })
+        return { n }
+      },
+    })
+    await using code = codeMode({ tools: { hold }, sandboxes: pool, limits: { toolCalls: 2 } })
+    const message = await runCodeError(code, { code: 'import asyncio\nawait asyncio.gather(hold(n=0), hold(n=1), hold(n=2))' })
+    expect(calls).toEqual([0, 1])
+    expect(message).toContain(BUDGET_MESSAGE)
+    // Ending the snippet stops the two calls that were still running.
     expect(message).toContain(
-      `2 nested tool calls started before execution stopped:\n- count({'n': 0}) ${outcome(0)}\n- count({'n': 1}) ${outcome(1)}\nAccount for all 2 before retrying`
+      "2 nested tool calls started before execution stopped:\n- hold({'n': 0}) did not finish, so it may have applied a partial change\n- hold({'n': 1}) did not finish, so it may have applied a partial change\nAccount for all 2 before retrying"
     )
   })
 })
@@ -276,6 +293,46 @@ describe('size and concurrency caps', () => {
       'ValueError: The arguments to take() are more than 1000000 bytes of JSON, over the limit for one call.'
     )
     expect(calls).toEqual([])
+  })
+
+  test('keep a slot until a tool that ignores its abort signal settles, across run_code calls', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    const stubborn = tool({
+      inputSchema: z.object({}),
+      outputSchema: z.object({}),
+      execute: async () => {
+        inFlight += 1
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        await delay(600)
+        inFlight -= 1
+        return {}
+      },
+    })
+    await using code = codeMode({ tools: { stubborn }, sandboxes: pool, limits: { timeout: 0.2, concurrentToolCalls: 1 } })
+    await runCodeError(code, { code: 'await stubborn()' })
+    await runCodeError(code, { code: 'await stubborn()' })
+    await runCodeError(code, { code: 'await stubborn()' })
+    await delay(700)
+    expect(maxInFlight).toBe(1)
+  })
+
+  test('keep a __proto__ key as data', async () => {
+    const seen: unknown[] = []
+    const take = tool({
+      inputSchema: z.object({ value: z.unknown() }),
+      outputSchema: z.object({}),
+      execute: ({ value }) => {
+        seen.push(value)
+        return {}
+      },
+    })
+    await using code = codeMode({ tools: { take }, sandboxes: pool, typeCheck: 'off' })
+    await runCode(code, { code: 'await take(value={"__proto__": {"admin": True}})' })
+    const [value] = seen as Record<string, unknown>[]
+    expect(Object.getPrototypeOf(value)).toBe(Object.prototype)
+    expect(value?.['admin']).toBeUndefined()
+    expect(JSON.stringify(value)).toBe('{"__proto__":{"admin":true}}')
   })
 
   test('run at most concurrentToolCalls host calls at once', async () => {

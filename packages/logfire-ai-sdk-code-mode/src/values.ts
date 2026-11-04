@@ -32,7 +32,8 @@ export function fromSandbox(value: unknown, maxBytes: number): unknown {
     for (const [key, item] of pairs) {
       const name = String(key)
       spend(byteLength(name) + 4)
-      out[name] = convert(item)
+      // Defined, not assigned: assigning a `__proto__` key would replace the object's prototype instead of adding data.
+      Object.defineProperty(out, name, { value: convert(item), enumerable: true, writable: true, configurable: true })
     }
     return out
   }
