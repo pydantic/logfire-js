@@ -317,6 +317,17 @@ describe('size and concurrency caps', () => {
     expect(maxInFlight).toBe(1)
   })
 
+  test('cut a long validation error before it reaches the sandbox', async () => {
+    const rows = tool({
+      inputSchema: z.object({ rows: z.array(z.object({ a: z.string(), b: z.string(), c: z.string() })).max(1) }),
+      outputSchema: z.object({}),
+      execute: () => ({}),
+    })
+    await using code = codeMode({ tools: { rows }, sandboxes: pool, typeCheck: 'off' })
+    const message = await runCode(code, { code: caught('rows(rows=[{} for _ in range(500)])') })
+    expect(message).toMatch(/^ValueError: Invalid arguments for rows\(\): [\s\S]{2000} \.\.\. \(\d+ chars total\)$/u)
+  })
+
   test('keep a __proto__ key as data', async () => {
     const seen: unknown[] = []
     const take = tool({

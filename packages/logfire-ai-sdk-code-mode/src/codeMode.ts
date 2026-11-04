@@ -103,6 +103,17 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+// A schema error lists every failing element, so small arguments can produce megabytes of text (zod before 4.6.6
+// validates each element of an oversized array, GHSA-mrhx-c7xc-m3w5). The model needs only the start of it.
+const VALIDATION_MESSAGE_CHARS = 2000
+
+function validationMessage(error: unknown): string {
+  const message = errorMessage(error)
+  return message.length > VALIDATION_MESSAGE_CHARS
+    ? `${message.slice(0, VALIDATION_MESSAGE_CHARS)} ... (${String(message.length)} chars total)`
+    : message
+}
+
 // Keyword arguments arrive as one trailing object without a prototype; anything before it is positional.
 function keywordArguments(name: string, args: unknown[], maxBytes: number): Record<string, unknown> {
   const last = args.at(-1)
@@ -678,7 +689,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     }
     const validated = await untilAborted(Promise.resolve(asSchema(target.inputSchema).validate?.(kwargs)), snippet.signal)
     if (validated !== undefined && !validated.success) {
-      throw pythonError('ValueError', `Invalid arguments for ${pythonName}(): ${errorMessage(validated.error)}`)
+      throw pythonError('ValueError', `Invalid arguments for ${pythonName}(): ${validationMessage(validated.error)}`)
     }
     const input: unknown = validated === undefined ? kwargs : (validated.value as unknown)
     const contexts = this.options.context
@@ -687,7 +698,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     if (target.contextSchema !== undefined) {
       const context = await untilAborted(Promise.resolve(asSchema(target.contextSchema).validate?.(toolContext)), snippet.signal)
       if (context !== undefined && !context.success) {
-        throw pythonError('ValueError', `Invalid context for tool "${toolName}": ${errorMessage(context.error)}`)
+        throw pythonError('ValueError', `Invalid context for tool "${toolName}": ${validationMessage(context.error)}`)
       }
       toolContext = context === undefined ? toolContext : context.value
     }

@@ -112,7 +112,9 @@ export async function askAgent(model: LanguageModel, prompt: string): Promise<st
 
 The model sees the tools only as Python signatures in the `run_code` description, so do not also pass them to
 `generateText`. Tools that should stay direct can be spread in next to `code.tools`. Give each tool an `outputSchema`,
-so the model knows what a call returns.
+so the model knows what a call returns. Sandbox code chooses the arguments, so define tool schemas with zod 4.6.6 or
+later: earlier versions validate every element of an oversized array before checking its length
+([GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)).
 
 One `codeMode()` object is one sandbox session, kept like a REPL for every `run_code` call it serves, so create one per
 agent run. It checks out the session on the first call, from `agentSandboxes()` unless you pass `sandboxes`, and
