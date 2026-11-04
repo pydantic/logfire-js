@@ -319,7 +319,8 @@ describe('size and concurrency caps', () => {
 
   test('cut a long validation error before it reaches the sandbox', async () => {
     const rows = tool({
-      inputSchema: z.object({ rows: z.array(z.object({ a: z.string(), b: z.string(), c: z.string() })).max(1) }),
+      // No length bound: zod 4.6.6+ rejects an oversized bounded array before it validates the elements.
+      inputSchema: z.object({ rows: z.array(z.object({ a: z.string(), b: z.string(), c: z.string() })) }),
       outputSchema: z.object({}),
       execute: () => ({}),
     })

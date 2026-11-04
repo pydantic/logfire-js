@@ -200,10 +200,10 @@ importers:
     dependencies:
       '@ai-sdk/openai':
         specifier: ^4.0.0
-        version: 4.0.106(zod@4.4.3)
+        version: 4.0.106(zod@4.6.7)
       '@ai-sdk/otel':
         specifier: ^1.0.0
-        version: 1.0.159(zod@4.4.3)
+        version: 1.0.159(zod@4.6.7)
       '@pydantic/logfire-agent-sandboxes':
         specifier: workspace:*
         version: link:../../packages/logfire-agent-sandboxes
@@ -218,13 +218,13 @@ importers:
         version: 1.4.0
       ai:
         specifier: ^7.0.0
-        version: 7.0.159(zod@4.4.3)
+        version: 7.0.159(zod@4.6.7)
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
       zod:
         specifier: 'catalog:'
-        version: 4.4.3
+        version: 4.6.7
     devDependencies:
       '@ai-sdk/provider':
         specifier: ^4.0.0
@@ -644,7 +644,7 @@ importers:
         version: 8.18.2
       ai:
         specifier: ^7.0.0
-        version: 7.0.159(zod@4.4.3)
+        version: 7.0.159(zod@4.6.7)
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@opentelemetry/api@1.9.1)(@types/node@22.19.5)(@vitest/browser-preview@5.0.1)(@vitest/ui@5.0.1)(esbuild@0.28.1)(jsdom@29.1.1)(tsx@4.22.4)(typescript@7.0.2)(yaml@2.9.0)
@@ -653,7 +653,7 @@ importers:
         version: 8.22.0
       zod:
         specifier: 'catalog:'
-        version: 4.4.3
+        version: 4.6.7
 
   packages/logfire-api:
     dependencies:
@@ -5624,35 +5624,35 @@ packages:
 
 snapshots:
 
-  '@ai-sdk/gateway@4.0.132(zod@4.4.3)':
+  '@ai-sdk/gateway@4.0.132(zod@4.6.7)':
     dependencies:
       '@ai-sdk/provider': 4.0.35
-      '@ai-sdk/provider-utils': 5.0.72(zod@4.4.3)
+      '@ai-sdk/provider-utils': 5.0.72(zod@4.6.7)
       '@vercel/oidc': 3.2.0
-      zod: 4.4.3
+      zod: 4.6.7
 
-  '@ai-sdk/openai@4.0.106(zod@4.4.3)':
+  '@ai-sdk/openai@4.0.106(zod@4.6.7)':
     dependencies:
       '@ai-sdk/provider': 4.0.35
-      '@ai-sdk/provider-utils': 5.0.72(zod@4.4.3)
-      zod: 4.4.3
+      '@ai-sdk/provider-utils': 5.0.72(zod@4.6.7)
+      zod: 4.6.7
 
-  '@ai-sdk/otel@1.0.159(zod@4.4.3)':
+  '@ai-sdk/otel@1.0.159(zod@4.6.7)':
     dependencies:
       '@ai-sdk/provider': 4.0.35
       '@opentelemetry/api': 1.9.1
-      ai: 7.0.159(zod@4.4.3)
+      ai: 7.0.159(zod@4.6.7)
     transitivePeerDependencies:
       - zod
 
-  '@ai-sdk/provider-utils@5.0.72(zod@4.4.3)':
+  '@ai-sdk/provider-utils@5.0.72(zod@4.6.7)':
     dependencies:
       '@ai-sdk/provider': 4.0.35
       '@standard-schema/spec': 1.1.0
       '@workflow/serde': 4.1.0
       eventsource-parser: 3.1.1
       undici: 7.29.1
-      zod: 4.4.3
+      zod: 4.6.7
 
   '@ai-sdk/provider@4.0.35':
     dependencies:
@@ -8501,12 +8501,12 @@ snapshots:
 
   agent-base@7.1.4: {}
 
-  ai@7.0.159(zod@4.4.3):
+  ai@7.0.159(zod@4.6.7):
     dependencies:
-      '@ai-sdk/gateway': 4.0.132(zod@4.4.3)
+      '@ai-sdk/gateway': 4.0.132(zod@4.6.7)
       '@ai-sdk/provider': 4.0.35
-      '@ai-sdk/provider-utils': 5.0.72(zod@4.4.3)
-      zod: 4.4.3
+      '@ai-sdk/provider-utils': 5.0.72(zod@4.6.7)
+      zod: 4.6.7
 
   ajv-formats@3.0.1:
     dependencies:
