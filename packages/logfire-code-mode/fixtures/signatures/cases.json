@@ -1507,5 +1507,58 @@
         ]
       }
     }
+  ],
+  "inline_title_matches_later_definition": [
+    {
+      "name": "t",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "$ref": "#/$defs/A"
+          },
+          "b": {
+            "$ref": "#/$defs/B"
+          }
+        },
+        "required": [
+          "a",
+          "b"
+        ],
+        "$defs": {
+          "A": {
+            "type": "object",
+            "properties": {
+              "inner": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "x"
+                ],
+                "title": "B"
+              }
+            },
+            "required": [
+              "inner"
+            ]
+          },
+          "B": {
+            "type": "object",
+            "properties": {
+              "y": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "y"
+            ]
+          }
+        }
+      }
+    }
   ]
 }

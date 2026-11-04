@@ -235,6 +235,16 @@
       ],
       "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass User(TypedDict):\n    name: str\n\nasync def t(*, author: User, reviewer: User, editor: User) -> Any:\n    \"\"\"\n    Args:\n        editor: Same shape as author, so it reuses author's type.\n    \"\"\"\n    raise NotImplementedError()"
     },
+    "inline_title_matches_later_definition": {
+      "typeDefinitions": [
+        "class A(TypedDict):\n    inner: B",
+        "class B(TypedDict):\n    x: str"
+      ],
+      "functions": [
+        "async def t(*, a: A, b: B) -> Any:\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass A(TypedDict):\n    inner: B\n\nclass B(TypedDict):\n    x: str\n\nasync def t(*, a: A, b: B) -> Any:\n    raise NotImplementedError()"
+    },
     "zod_expenses": {
       "typeDefinitions": [
         "class GetTeamMembersReturn(TypedDict):\n    department: str\n    members: list[GetTeamMembersReturnMembersitem]",

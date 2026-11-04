@@ -144,5 +144,20 @@
       ],
       "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass ToolData(TypedDict):\n    y: int\n\nclass ToolData_2(TypedDict):\n    x: str\n\nasync def tool(*, data: ToolData_2) -> Any:\n    raise NotImplementedError()"
     }
+  },
+  "inline_title_matches_later_definition": {
+    "kind": "wrong-types",
+    "reason": "While pydantic-ai builds definition A, its inline field titled B claims the name B, so definition B is skipped (function_signature.py:541) and the parameter b, a $ref to B, is described with x where its schema has y. Definition B is built first here, and the inline object becomes B_2.",
+    "expected": {
+      "typeDefinitions": [
+        "class A(TypedDict):\n    inner: B_2",
+        "class B(TypedDict):\n    y: int",
+        "class B_2(TypedDict):\n    x: str"
+      ],
+      "functions": [
+        "async def t(*, a: A, b: B) -> Any:\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass A(TypedDict):\n    inner: B_2\n\nclass B(TypedDict):\n    y: int\n\nclass B_2(TypedDict):\n    x: str\n\nasync def t(*, a: A, b: B) -> Any:\n    raise NotImplementedError()"
+    }
   }
 }

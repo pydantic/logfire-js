@@ -691,6 +691,13 @@ function typeToExpr(
       // A `title` that is a valid identifier keeps real class names like `User`; otherwise name it by path.
       const title = schema['title']
       const tdName = typeof title === 'string' && title !== '' && pyIsIdentifier(title) ? title : pathToTypename(toolName, path)
+      // Parity exception: definitions are built in order, so an inline object inside an earlier definition could
+      // claim a later definition's name, and every `$ref` to that definition would get the inline object's fields.
+      // The definition is built first, so the inline object is named against it.
+      const definition = Object.hasOwn(defs, tdName) ? normalizeSchemaNode(defs[tdName]) : undefined
+      if (definition !== undefined && isObjectWithProperties(definition) && !referencedTypes.has(tdName)) {
+        buildAndRegisterType(tdName, definition, defs, referencedTypes, toolName, tdName)
+      }
       if (!referencedTypes.has(tdName)) {
         return buildAndRegisterType(tdName, schema, defs, referencedTypes, toolName, path)
       }
