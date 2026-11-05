@@ -31,6 +31,22 @@ describe('CLI regions', () => {
     expect(getBaseUrlFromToken(undefined)).toBe('https://logfire-us.pydantic.dev')
   })
 
+  it('reads the region from a token whose suffix format it does not recognise', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      expect(getBaseUrlFromToken('pylf_v3_eu_new-token-format')).toBe('https://logfire-eu.pydantic.dev')
+      expect(getBaseUrlFromToken('pylf_v3_stagingus_new_token_format')).toBe('https://logfire-us.pydantic.info')
+      expect(warn.mock.calls).toEqual([])
+
+      expect(getBaseUrlFromToken('pylf_v3_apac_new-token-format')).toBe('https://logfire-us.pydantic.dev')
+      expect(warn.mock.calls).toEqual([
+        ['Unknown region "apac" in Logfire token, falling back to the US region. Known regions: eu, stagingeu, stagingus, us.'],
+      ])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('warns when a token names a region this version does not know', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     try {
