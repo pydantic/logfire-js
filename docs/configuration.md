@@ -178,6 +178,32 @@ This reduces the volume of data sent, but a long-running span does not show in
 the Logfire UI until it finishes. Console output still shows pending spans. The
 `configure()` option takes precedence over the environment variable.
 
+## Logfire Fleet
+
+Logfire Fleet lets you manage an application's telemetry from Logfire, without a redeploy: a Fleet
+policy sets sampling, which signals are sent, log levels, redaction and volume limits for
+everything the SDK sends, the console included. The SDK talks to Fleet over OpAMP (the Open Agent
+Management Protocol). In Node.js, install the Fleet client next to the SDK and turn on `fleet`:
+
+```bash
+npm install @pydantic/logfire-node @pydantic/logfire-fleet-otel
+```
+
+```ts
+logfire.configure({
+  fleet: true,
+  serviceName: 'payments-api',
+})
+```
+
+`fleet: true` (or `LOGFIRE_FLEET=true`) reads the Fleet server from the `OTEL_OPAMP_ENDPOINT` and
+`OTEL_OPAMP_HEADERS` environment variables that the Fleet setup page in Logfire gives you. Pass
+`fleet: { endpoint, headers, stateDir, heartbeatIntervalMs }` to give them in code instead.
+
+`configure()` never waits for Fleet. Until Fleet answers, the last policy the SDK saved is in force,
+else the SDK's own settings. If the Fleet client isn't installed, or no endpoint is set, the SDK
+warns and sends telemetry as it would without Fleet.
+
 ## Advanced Base URL
 
 Use `LOGFIRE_BASE_URL` or `advanced.baseUrl` for self-hosted or local Logfire-compatible endpoints:

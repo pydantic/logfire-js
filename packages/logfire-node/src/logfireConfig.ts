@@ -11,6 +11,7 @@ import * as logfireApi from 'logfire'
 import type { ConsoleConfig } from './consoleOptions'
 import { resolveConsoleOptions } from './consoleOptions'
 import { readLocalProjectCredentials, resolveCredentialsDir } from './credentials'
+import type { FleetOptions } from './fleet'
 import { start } from './sdk'
 
 export type { ConsoleConfig, ConsoleOptions } from './consoleOptions'
@@ -106,6 +107,17 @@ export interface LogfireConfigOptions {
    * including `--enable-source-maps`. Defaults to false.
    */
   enableSourceMaps?: boolean
+  /**
+   * Whether to manage this SDK from Logfire Fleet: the Fleet policy then applies to everything it sends (sampling,
+   * which signals are sent, log levels, redaction and volume limits, the console included). `true` takes the Fleet
+   * server from the `OTEL_OPAMP_*` environment variables; a `FleetOptions` gives it in code. Needs the
+   * `@pydantic/logfire-fleet-otel` package installed. It never blocks or throws: until Fleet answers, the last policy
+   * saved is in force, else the SDK's own settings, and where Fleet can't be joined it warns and the SDK runs
+   * unmanaged.
+   *
+   * Defaults to the `LOGFIRE_FLEET` environment variable, otherwise false.
+   */
+  fleet?: boolean | FleetOptions
   /**
    * The environment this service is running in, e.g. `staging` or `prod`. Sets the deployment.environment.name resource attribute. Useful for filtering within projects in the Logfire UI.
    * Defaults to the `LOGFIRE_ENVIRONMENT` environment variable.
@@ -240,6 +252,7 @@ function readServiceVersionEnv(env: NodeJS.ProcessEnv): string | undefined {
 
 export interface LogfireConfig {
   additionalSpanProcessors: SpanProcessor[]
+  fleet: FleetOptions | undefined
   apiKey: string | undefined
   authorizationHeaders: AuthorizationHeaders
   baggage: BaggageOptions
@@ -273,6 +286,7 @@ export interface LogfireConfig {
 
 const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   additionalSpanProcessors: [],
+  fleet: undefined,
   apiKey: undefined,
   authorizationHeaders: {},
   baggage: {
@@ -373,8 +387,11 @@ export function configure(config: LogfireConfigOptions = {}): void {
     throw new Error('Remote variables require an API key. Set LOGFIRE_API_KEY or pass apiKey to configure().')
   }
 
+  const fleet = cnf.fleet ?? parseBooleanEnv(env['LOGFIRE_FLEET'], 'LOGFIRE_FLEET')
+
   Object.assign(logfireConfig, {
     additionalSpanProcessors: cnf.additionalSpanProcessors ?? [],
+    fleet: fleet === true ? {} : fleet === false ? undefined : fleet,
     apiKey,
     authorizationHeaders: resolveAuthorizationHeaders(token),
     baggage: baggage !== undefined ? { spanAttributes: [...(baggage.spanAttributes ?? [])] } : logfireConfig.baggage,

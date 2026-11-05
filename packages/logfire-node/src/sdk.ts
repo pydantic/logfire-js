@@ -29,6 +29,9 @@ import { DebugIdSpanProcessor, logfireApiConfig, PendingSpanProcessor, reportErr
 import { getEvalsSpanProcessor } from 'logfire/evals'
 import { configureVariables, shutdownVariables } from 'logfire/vars'
 
+import type { FleetHook } from './fleet'
+
+import { loadFleet } from './fleet'
 import { logfireConfig } from './logfireConfig'
 import { logfireLogRecordProcessor } from './logsExporter'
 import { NoExtractPropagator } from './noExtractPropagator'
@@ -50,6 +53,8 @@ export interface LogfireShutdownOptions extends LogfireFlushOptions {
 interface ShutdownRuntimeOptions extends LogfireShutdownOptions {
   retainedInstrumentations?: ReadonlySet<Instrumentation>
   shutdownVariables?: boolean
+  /** Say goodbye to the Fleet server. Not when a new configuration takes over: it joins under the same client. */
+  stopFleet?: boolean
 }
 
 interface ProcessListeners {
@@ -62,6 +67,7 @@ interface ProcessListeners {
 type LogfireSignalListenerState = 'logfire-only' | 'user-listeners-present' | 'logfire-missing-no-others' | 'logfire-missing-with-others'
 
 interface ActiveRuntime {
+  fleet: FleetHook | undefined
   instrumentations: Instrumentation[]
   logRecordProcessors: LogRecordProcessor[]
   metricReaders: MetricReader[]
@@ -289,6 +295,14 @@ async function shutdownRuntime(runtime: ActiveRuntime, options: ShutdownRuntimeO
         }
       }
 
+      if (runtime.fleet !== undefined && options.stopFleet !== false) {
+        try {
+          // Before the SDK's own shutdown: goodbye to the Fleet server while the client still runs.
+          await withDeadline('Fleet shutdown', deadline, runtime.fleet.shutdown())
+        } catch (e: unknown) {
+          errors.push(e)
+        }
+      }
       const shutdownOperations = [runtime.sdk.shutdown()]
       if (options.shutdownVariables !== false) {
         shutdownOperations.push(shutdownVariables())
@@ -348,6 +362,7 @@ export function start(): void {
     shutdownRuntime(previousRuntime, {
       retainedInstrumentations: new Set(logfireConfig.instrumentations),
       shutdownVariables: false,
+      stopFleet: false,
     }).catch((e: unknown) => {
       diag.warn('logfire SDK: error shutting down previous SDK', e)
     })
@@ -357,8 +372,12 @@ export function start(): void {
     diag.setLogger(new DiagConsoleLogger(), logfireConfig.diagLogLevel)
   }
 
+  // The Fleet client, where `fleet` is set and it can run: it is called below where the policy acts.
+  const fleet = logfireConfig.fleet === undefined ? undefined : loadFleet(logfireConfig.fleet)
+
   // Low-precedence fallback, matching Python Logfire's `fallback_resource_attributes`: every
   // later merge wins, so `resourceAttributes` and `OTEL_RESOURCE_ATTRIBUTES` still override it.
+  // Under Fleet, the instance ID Fleet knows this process by is merged last.
   const resource = resourceFromAttributes({ [ATTR_SERVICE_INSTANCE_ID]: crypto.randomUUID().replaceAll('-', '') })
     .merge(resourceFromAttributes(logfireConfig.resourceAttributes))
     .merge(
@@ -378,6 +397,7 @@ export function start(): void {
       )
     )
     .merge(detectResources({ detectors: [envDetector] }))
+    .merge(resourceFromAttributes(fleet?.resourceAttributes ?? {}))
   configureVariables(logfireConfig.variables, {
     ...(logfireConfig.apiKey !== undefined && logfireConfig.apiKey !== '' ? { apiKey: logfireConfig.apiKey } : {}),
     ...(logfireConfig.variablesBaseUrl !== undefined ? { baseUrl: logfireConfig.variablesBaseUrl } : {}),
@@ -409,8 +429,10 @@ export function start(): void {
   spanProcessors.push(evalsSpanProcessor, ...logfireConfig.additionalSpanProcessors)
 
   const headRate = logfireConfig.sampling?.head
-  const sampler =
+  const headSampler =
     headRate !== undefined && headRate < 1.0 ? new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(headRate) }) : undefined
+  // Under Fleet, the live sampler: the SDK's own until the Fleet policy sets a sampling rate or rules.
+  const sampler = fleet === undefined ? headSampler : fleet.headSampler(headSampler)
 
   const logProcessor = logfireLogRecordProcessor()
   const logRecordProcessors = logProcessor === null ? [] : [logProcessor]
@@ -440,6 +462,7 @@ export function start(): void {
   })
 
   const runtime: ActiveRuntime = {
+    fleet,
     instrumentations,
     logRecordProcessors,
     metricReaders,
@@ -455,7 +478,32 @@ export function start(): void {
   // without throwing): last-configure-wins is the accepted policy even when the
   // host app pre-registered its own globals — see PRP 032, Unknowns & Risks.
   globalsRegistrant = runtime
-  sdk.start()
+  if (fleet === undefined) {
+    sdk.start()
+  } else {
+    // The Fleet client starts the SDK, so it knows the providers it registers, then puts the
+    // policy's gates on every exporter on them and joins the fleet.
+    const sdkStart: { started: boolean; threw: boolean } = { started: false, threw: false }
+    try {
+      fleet.start(() => {
+        sdkStart.started = true
+        try {
+          sdk.start()
+        } catch (e: unknown) {
+          sdkStart.threw = true
+          throw e
+        }
+      }, resource)
+    } catch (e: unknown) {
+      if (sdkStart.threw) {
+        throw e
+      }
+      diag.warn('logfire: Logfire Fleet could not start; the SDK runs unmanaged', e)
+      if (!sdkStart.started) {
+        sdk.start()
+      }
+    }
+  }
   // registerInstrumentations assumes instances arrive enabled from their
   // constructor, so one disabled by an earlier generation's teardown (reuse
   // after a generation gap, or a shutdown() racing this configure) stays

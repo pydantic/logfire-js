@@ -31,6 +31,7 @@ import { forceFlush, shutdown } from './sdk'
 
 export * from './logfireConfig'
 export type { LogfireFlushOptions, LogfireShutdownOptions } from './sdk'
+export type { FleetOptions } from './fleet'
 export { forceFlush, shutdown } from './sdk'
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from 'logfire'
