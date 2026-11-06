@@ -1,4 +1,5 @@
 import type { Context, HrTime } from '@opentelemetry/api'
+import { diag } from '@opentelemetry/api'
 import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
 import { ATTRIBUTES_SPAN_TYPE_KEY } from './constants'
@@ -249,7 +250,13 @@ export class TailSamplingProcessor implements SpanProcessor {
     const level = SpanLevel.fromSpan(span)
 
     const info: TailSamplingSpanInfo = { context, duration, event, level, span }
-    const rate = this.tail(info)
+    let rate: number
+    try {
+      rate = this.tail(info)
+    } catch (error) {
+      diag.error('logfire: tail sampling callback failed', error)
+      return false
+    }
 
     if (rate >= 1.0 || (rate > 0.0 && checkTraceIdRatio(span.spanContext().traceId, rate))) {
       this.flushBuffer(buffer)
