@@ -21,5 +21,9 @@ console.log(await session.feedRun('sum([20, 21, 1])')) // 42
 `agentSandboxes()` resolves to a `MontyRemote` pool from `@pydantic/monty`, set up with your API key, region URL,
 and the trace context active at each checkout. It accepts every `MontyRemote` option, plus `apiKey` and `url`.
 
+An explicit `url` or `LOGFIRE_BASE_URL` must have no path, query, or fragment. Remove the old `/monty-ws/` path;
+the client selects its gRPC session path itself. Checkout refusals keep their `MontyRefusedError` class and server
+details, with Logfire hints for project access, API key configuration, and capacity.
+
 See the [Agent Sandboxes docs](https://github.com/pydantic/logfire-js/blob/main/docs/agent-sandboxes.md) for host
 functions, sessions, snapshots, and options.

@@ -195,28 +195,132 @@ be executed. Session state is stored for up to 7 days unless the session is ephe
 
 `agentSandboxes()` accepts every `MontyRemote` pool option, plus:
 
-| Option   | Default                                             | Description                                                   |
-| -------- | --------------------------------------------------- | ------------------------------------------------------------- |
-| `apiKey` | `LOGFIRE_API_KEY`                                   | API key with the `project:execute_agent_sandboxes` scope.     |
-| `url`    | `https://<region host>`, or from `LOGFIRE_BASE_URL` | `https://` or `http://` URL of the sandboxes server, no path. |
+| Option   | Default                                             | Description                                                                       |
+| -------- | --------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `apiKey` | `LOGFIRE_API_KEY`                                   | API key with the `project:execute_agent_sandboxes` scope.                         |
+| `url`    | `https://<region host>`, or from `LOGFIRE_BASE_URL` | `https://` or `http://` URL of the sandboxes server, no path, query, or fragment. |
 
 The most common pool options:
 
 - `maxProcesses`: the maximum number of sessions open at once (defaults to the number of CPUs). Further checkouts wait.
 - `checkoutTimeout`: seconds `checkout()` waits for a free slot before rejecting. Defaults to waiting forever.
-- `requestTimeout`: the maximum number of seconds for one call, such as `feedRun()` (default 10). Pass `null` to wait
-  indefinitely.
+- `requestTimeout`: the maximum number of seconds for one call, such as `feedRun()` (default 10). Logfire requires a
+  finite value; do not pass `null`.
 - `metadata`: a function that returns extra gRPC request metadata (headers) for each checkout. Its entries are merged
   over the Logfire `authorization` entry and win on conflicts. Names are matched case-insensitively. `connectHeaders`,
   its former name, still works but is deprecated.
 
 ## Troubleshooting
 
-- **`Agent sandboxes require a Logfire API key with the project:execute_agent_sandboxes scope`**: no API key was found.
-  Set `LOGFIRE_API_KEY` or pass `apiKey`.
-- **`MontyRefusedError: failed to spawn monty worker: ...: UNAUTHENTICATED`**: the server rejected the API key. Check
-  that the key is correct, hasn't been deleted, and has the **Run code in this project's agent sandboxes** permission.
-- **`a URL path, query or fragment is not supported; the session path is fixed`**: `url` or `LOGFIRE_BASE_URL` has a
-  path, such as the `/monty-ws/` path that versions before 0.2.0 used. Pass only the scheme and host, such as
-  `https://logfire-us.pydantic.dev`.
-- **`MontyCrashedError` with `timedOut: true`**: the call took longer than `requestTimeout`. Pass a larger value.
+Pool creation checks the API key and URL configuration. The first connection is made at `pool.checkout()`, where
+authentication and capacity refusals include Logfire hints. The original server text and the `MontyRefusedError`
+class are kept, as are its `statusCode`, `statusMessage`, and `cause` fields. The `cause` field is a policy string
+(or `null`), not a nested `Error`.
+
+### API keys and project access
+
+If no API key is set, `agentSandboxes()` raises:
+
+```text
+Error: Agent sandboxes require a Logfire API key with the `project:execute_agent_sandboxes` scope. Set the LOGFIRE_API_KEY environment variable or pass `apiKey` to `agentSandboxes()`.
+```
+
+Set `LOGFIRE_API_KEY` or pass `apiKey`. If a key is present but the server refuses access, the error starts with:
+
+```text
+MontyRefusedError: RuntimeError: failed to spawn monty worker: https://logfire-us.pydantic.dev: UNAUTHENTICATED: unauthenticated
+```
+
+The same message can mean that the key is incorrect, belongs to another region, is a personal key, or belongs to a
+project that does not have Agent Sandboxes enabled. The message alone does not distinguish these cases. Check all
+of the following:
+
+- Use a **project API key**, not a personal key. Check that it is correct and has not been deleted.
+- Give it the **Run code in this project's agent sandboxes** permission (`project:execute_agent_sandboxes`).
+- Use the key's region. Remove an incorrect `url` or `LOGFIRE_BASE_URL` override to let the SDK select the region.
+- Check that Agent Sandboxes are enabled for the project.
+
+**Agent Sandboxes not enabled:** ask a project admin to enable Agent Sandboxes for the project. A valid key with the
+correct scope can still receive `UNAUTHENTICATED: unauthenticated` until the project has access.
+
+**`PERMISSION_DENIED`:** inspect `error.statusMessage` for the server's reason. Check the project key, scope, region,
+and project access listed above. This refusal has the same Logfire configuration hint as `UNAUTHENTICATED`.
+
+### URL and connection errors
+
+Both `url` and `LOGFIRE_BASE_URL` must contain only the scheme, host, and optional port. Trailing slashes are allowed.
+A path, query, or fragment raises this error before checkout:
+
+```text
+Error: Agent Sandboxes URL must use http://<host> or https://<host> with no path, query or fragment. Remove the old /monty-ws/ path from `url` or LOGFIRE_BASE_URL.
+```
+
+Use, for example, `https://logfire-us.pydantic.dev`, not `https://logfire-us.pydantic.dev/monty-ws/`. The `/monty-ws/`
+path was used before version 0.2.0. The current client selects its fixed gRPC session path itself.
+
+Connection errors can include these messages:
+
+```text
+Error: failed to spawn monty worker: https://logfire-us.pydantic.dev: connect timed out after 10s
+Error: failed to spawn monty worker: https://logfire-us.pydantic.dev: not a gRPC server, the response's content-type is text/html
+```
+
+- **`connect timed out`:** check the hostname, port, DNS, and network access. Check that a firewall or proxy permits
+  the HTTP/2 gRPC connection to the Logfire host. The timeout can also mean that the server did not accept the session
+  in time. If the URL and network are correct, retry after a delay or use a larger finite `requestTimeout` for slow
+  session setup. Retrying cannot fix an incorrect URL.
+- **`not a gRPC server`:** the response is not gRPC. Check `url` and `LOGFIRE_BASE_URL`, and use the Logfire region
+  host without an added path. A proxy or load balancer can also return an HTML error page during an outage, so check
+  for a temporary service or proxy failure before changing a known-correct URL. Connection failures can be plain
+  `Error` instances, not `MontyRefusedError`.
+
+### Capacity refusals
+
+A burst of checkouts can fail with:
+
+```text
+MontyRefusedError: RuntimeError: failed to spawn monty worker: https://logfire-us.pydantic.dev: RESOURCE_EXHAUSTED: assignment attempt rate exceeded
+```
+
+When `error.cause === 'caller_cap'`, too many sessions are being opened at once. Lower `maxProcesses` or retry after
+a delay. When `error.cause === 'capacity'`, the service is at capacity; retry after a delay. The SDK adds the
+corresponding hint without replacing the server text. A refused checkout did not create a session, so no sandbox
+code ran and retrying the checkout is safe.
+
+### Lost sessions and shutdown
+
+**`MontyDisconnectError: RuntimeError: monty worker connection closed while waiting for a reply`:** inspect `error.statusCode`,
+`error.statusMessage`, `error.cause`, and `error.transportError`. The short message alone does not explain why the
+session ended. `cause` can identify a policy limit, such as `idle_timeout`, `session_timeout`, `turn_timeout`, or
+`capacity`; it is a string, not an `Error`. A transport failure can leave the status and cause fields `null`.
+Check out a new session and restore saved state if available. Do not retry a feed blindly: the interrupted code or
+host function might already have run.
+
+**`MontyShutdown: RuntimeError: monty server is shutting down; the request did not run`:** the server is shutting down
+and the session is lost. The pool tries to resume it automatically when `autoResume` is enabled (the default). If
+shutdown still reaches your code, check out a new session. Use
+`error.dump`, when present, with `loadSession()` for an idle session or `loadSnapshot()` for a suspended feed. The
+request that raised `MontyShutdown` did not run, so retrying that request is safe. Restoring a suspended feed can
+call a host function again; account for repeated host calls.
+
+**`MontyCrashedError` with `timedOut: true`:** the call exceeded the client-side `requestTimeout`. Use a larger finite
+value if the operation is expected to take longer. The session is lost, so check out a new one. Increasing this
+timeout does not increase the project's sandbox limits below.
+
+### Project time and memory limits
+
+Hosted sandboxes have project limits, by default about **50 ms per feed** and **20 MiB of memory**. Errors can look
+like these (the measured values vary):
+
+```text
+MontyRuntimeError: TimeoutError: feed time limit exceeded: 60ms > 50ms
+MontyRuntimeError: MemoryError: memory limit exceeded: 21043973 bytes > 20971520 bytes
+```
+
+Reduce the work or memory used by the code, or ask a project admin to raise the sandbox limit in project settings.
+A larger limit requested at checkout does not override the project cap; it can be lowered to that cap without a
+warning. A `MemoryError` does not by itself end the session.
+
+Each `time.sleep()` call is capped at about **10 seconds**. A longer sleep can return early without an error. If the
+code needs a longer delay, split it into calls of at most 10 seconds and allow enough time in the finite
+`requestTimeout` for the whole operation. This sleep cap is separate from the project feed time and memory limits.
