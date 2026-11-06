@@ -892,6 +892,12 @@ promise rejections as error-level spans named `Uncaught error` and
 `unhandledrejection` listener. Resource load failures, such as a broken image,
 are not reported. Pass `captureGlobalErrors: false` to turn global capture off.
 
+Errors that the SDK raises about itself, such as an invalid configuration or a
+lost replay chunk, carry the span attribute `logfire.sdk.internal = true`. Use it
+to separate SDK failures from application errors in queries and alerts. Errors
+from application code never carry it, including an error that an application
+callback throws into the SDK.
+
 Report caught errors with `reportError()`:
 
 ```ts

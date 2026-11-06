@@ -18,6 +18,7 @@ import {
   ATTRIBUTES_MESSAGE_TEMPLATE_KEY,
   ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY,
   ATTRIBUTES_SCRUBBED_KEY,
+  ATTRIBUTES_SDK_INTERNAL_KEY,
   ATTRIBUTES_SPAN_TYPE_KEY,
   ATTRIBUTES_TAGS_KEY,
   INVALID_SPAN_ID,
@@ -34,6 +35,7 @@ import { beginScrubbedSpan, recordScrubbedAttributes } from './exportScrubbing'
 import { PendingSpanProcessor } from './PendingSpanProcessor'
 import { setPendingSpanSuppressed } from './pendingSpanSuppression'
 import { SpanLevel, checkTraceIdRatio, levelOrDuration } from './sampling'
+import { isSdkInternalError } from './sdkInternalError'
 import { TailSamplingProcessor } from './TailSamplingProcessor'
 import { ULIDGenerator } from './ULIDGenerator'
 
@@ -52,11 +54,12 @@ export type {
   MinLevel,
   ScrubbingOptions,
 } from './logfireApiConfig'
-export { ATTRIBUTES_DEBUG_IDS_KEY, ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY } from './constants'
+export { ATTRIBUTES_DEBUG_IDS_KEY, ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY, ATTRIBUTES_SDK_INTERNAL_KEY } from './constants'
 export { DebugIdSpanProcessor, debugIdsForStack, readInjectedRelease, stampSpanDebugIds } from './debugIds'
 export { Level } from './levels'
 export { PendingSpanProcessor } from './PendingSpanProcessor'
 export * from './sampling'
+export { isSdkInternalError, markSdkInternalError } from './sdkInternalError'
 export { serializeAttributes } from './serializeAttributes'
 export { TailSamplingProcessor, type TailSamplingProcessorOptions } from './TailSamplingProcessor'
 export * from './ULIDGenerator'
@@ -815,6 +818,9 @@ function recordSpanException(span: Span, thrown: unknown, spanSerializationAttri
   if (debugIds !== undefined) {
     safeSetSpanAttribute(span, ATTRIBUTES_DEBUG_IDS_KEY, debugIds)
   }
+  if (isSdkInternalError(thrown)) {
+    safeSetSpanAttribute(span, ATTRIBUTES_SDK_INTERNAL_KEY, true)
+  }
 
   if (causeValue !== undefined) {
     recordSerializedAttributes(span, { ...spanSerializationAttributes, [ATTR_EXCEPTION_CAUSE]: causeValue }, [
@@ -1041,6 +1047,9 @@ function reportErrorWithSettings(
   const debugIds = typeof stack === 'string' ? debugIdsAttributeForStack(stack) : undefined
   if (debugIds !== undefined) {
     attributes[ATTRIBUTES_DEBUG_IDS_KEY] = debugIds
+  }
+  if (isSdkInternalError(error)) {
+    attributes[ATTRIBUTES_SDK_INTERNAL_KEY] = true
   }
 
   const span = startSpanWithSettings(settings, message, attributes, reportErrorOptionsToLogOptions(options))

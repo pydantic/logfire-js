@@ -2,6 +2,7 @@ import type { Context, ContextManager, Span, SpanOptions, Tracer, TracerOptions,
 import { context, INVALID_SPAN_CONTEXT, propagation, trace } from '@opentelemetry/api'
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from '@opentelemetry/core'
 import { StackContextManager } from '@opentelemetry/sdk-trace-web'
+import { markSdkInternalError } from 'logfire'
 
 export const ACTIVE_CONFIGURATION_ERROR = 'logfire-browser: a configuration is already active; await its cleanup before configuring again'
 export const FAILED_CLEANUP_ERROR = 'logfire-browser: the previous cleanup failed; reload the page before configuring again'
@@ -122,10 +123,10 @@ class BrowserProviderLifecycle {
       throw this.contextOwnership.error
     }
     if (this.generation.status === 'failed') {
-      throw new Error(FAILED_CLEANUP_ERROR, { cause: this.generation.error })
+      throw markSdkInternalError(new Error(FAILED_CLEANUP_ERROR, { cause: this.generation.error }))
     }
     if (this.generation.status !== 'idle') {
-      throw new Error(ACTIVE_CONFIGURATION_ERROR)
+      throw markSdkInternalError(new Error(ACTIVE_CONFIGURATION_ERROR))
     }
   }
 
@@ -214,13 +215,13 @@ class BrowserProviderLifecycle {
     }
     if (this.contextOwnership.status === 'logfire') {
       if (requestedContextManager !== undefined && requestedContextManager !== this.contextOwnership.contextManager) {
-        throw new Error(CHANGED_CONTEXT_MANAGER_ERROR)
+        throw markSdkInternalError(new Error(CHANGED_CONTEXT_MANAGER_ERROR))
       }
       return
     }
     if (this.contextOwnership.status === 'external') {
       if (requestedContextManager !== undefined) {
-        throw new Error(EXTERNAL_CONTEXT_CONFLICT_ERROR)
+        throw markSdkInternalError(new Error(EXTERNAL_CONTEXT_CONFLICT_ERROR))
       }
       return
     }
@@ -229,7 +230,7 @@ class BrowserProviderLifecycle {
     if (!context.setGlobalContextManager(contextManager)) {
       this.contextOwnership = { status: 'external' }
       if (requestedContextManager !== undefined) {
-        throw new Error(EXTERNAL_CONTEXT_CONFLICT_ERROR)
+        throw markSdkInternalError(new Error(EXTERNAL_CONTEXT_CONFLICT_ERROR))
       }
       return
     }
@@ -242,9 +243,11 @@ class BrowserProviderLifecycle {
         context.disable()
         this.contextOwnership = { status: 'uninitialized' }
       } catch (rollbackError) {
-        const error = new Error(FAILED_CONTEXT_ROLLBACK_ERROR, {
-          cause: { enableError, rollbackError },
-        })
+        const error = markSdkInternalError(
+          new Error(FAILED_CONTEXT_ROLLBACK_ERROR, {
+            cause: { enableError, rollbackError },
+          })
+        )
         this.contextOwnership = { error, status: 'failed' }
         throw error
       }

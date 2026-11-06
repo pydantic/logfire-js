@@ -345,6 +345,7 @@ describe('public browser configure startup ordering', () => {
       const failures = exporter.getFinishedSpans().filter((span) => span.attributes['replay.upload.reason'] === 'unconfirmed')
       expect(failures).toHaveLength(1)
       expect(failures[0]?.attributes).toMatchObject({
+        'logfire.sdk.internal': true,
         'replay.recording_id': 'recording',
         'replay.chunk.seq': 7,
         'replay.upload.status_code': 503,

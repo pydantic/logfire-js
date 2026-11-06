@@ -1,3 +1,5 @@
+import { markSdkInternalError } from './sdkInternalError'
+
 /**
  * - `unconfirmed`: retries ended after a request reached the network; the server may hold the chunk.
  * - `rejected`: the server answered with a terminal HTTP status.
@@ -34,6 +36,7 @@ export class ReplayUploadError extends Error {
     this.seq = init.seq
     this.sessionId = init.sessionId
     this.status = init.status
+    markSdkInternalError(this)
   }
 }
 
