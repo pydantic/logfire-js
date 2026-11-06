@@ -53,6 +53,7 @@ function sandboxes(): CountingSandboxes {
 }
 
 describe('an agent run', () => {
+  /** Successful tool results keep their transport envelope while queued calls share one ordered sandbox session. */
   test('uses one session for every run_code call, in the order the model made them', async () => {
     const counted = sandboxes()
     const code = codeMode({ tools: { add }, sandboxes: counted })
@@ -79,9 +80,9 @@ describe('an agent run', () => {
 
     expect(text).toBe('done')
     expect(steps.flatMap((step) => step.toolResults.map((result) => [result.toolCallId, result.output]))).toEqual([
-      ['first', 3],
-      ['second', 30],
-      ['third', 33],
+      ['first', { result: 3 }],
+      ['second', { result: 30 }],
+      ['third', { result: 33 }],
     ])
     expect(counted.sessions).toHaveLength(1)
     await code.close()

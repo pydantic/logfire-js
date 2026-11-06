@@ -34,9 +34,14 @@ original error from `run_code.toModelOutput`, outside that conversion. Pass
 `code.tools` to the AI SDK without replacing that hook. An adapter that executes
 tools itself must also invoke `toModelOutput` before it sends results to a model.
 The failure result stores the original error in a JavaScript private field.
-Only the reserved marker `{ sandboxFailure: true }`, not the error details, is
-serialized into a UI stream. This differs from a successful empty result (`{}`).
-UI clients must treat that marker as a failed call, not a completed execution.
+Only the transport marker `{ sandboxFailure: true }`, not the error details, is
+serialized into a UI stream. Successful results always use a `{ result: value }`
+transport envelope, including `{ result: {} }` for a successful empty result.
+The output hook unwraps successful envelopes for the model, keeping its result
+format unchanged. No Python result shape is reserved: a snippet returning
+`{'sandboxFailure': True}` is a success, transported as
+`{ result: { sandboxFailure: true } }`. UI clients must read successful values
+from `result` and treat only the top-level failure marker as a failed call.
 When converting saved UI messages for a later turn, pass `code.tools` to
 `convertToModelMessages`. The output hook converts the saved marker to generic
 failure text, without exposing the original error or claiming that the call

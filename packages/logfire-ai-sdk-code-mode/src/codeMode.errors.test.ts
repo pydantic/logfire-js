@@ -138,7 +138,8 @@ describe('developer errors', () => {
 
   /** Persisted tool results must distinguish infrastructure failure from successful Python None without exposing developer errors. */
   test.each([
-    [{}, { type: 'json', value: {} }],
+    [{ result: {} }, { type: 'json', value: {} }],
+    [{ result: { sandboxFailure: true } }, { type: 'json', value: { sandboxFailure: true } }],
     [
       { sandboxFailure: true },
       {
@@ -158,6 +159,39 @@ describe('developer errors', () => {
       { tools: code.tools }
     )
     expect(messages[1]?.content).toEqual([{ type: 'tool-result', toolCallId: 'call', toolName: 'run_code', output: expected }])
+  })
+
+  /** Every successful result is wrapped for transport and unwrapped for the model, so Python dictionaries cannot collide with failure markers. */
+  test.each([
+    ['{"sandboxFailure": True}', { sandboxFailure: true }],
+    ['{"result": {"sandboxFailure": True}}', { result: { sandboxFailure: true } }],
+    ['None', {}],
+    ['"done"', 'done'],
+  ])('preserves successful Python output %s live and after UI persistence', async (source, expected) => {
+    await using code = codeMode({ tools: {}, sandboxes: pool })
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        { content: [{ ...call, input: JSON.stringify({ code: source }) }], finishReason, usage, warnings: [] },
+        { content: [{ type: 'text', text: 'done' }], finishReason: { unified: 'stop', raw: 'stop' }, usage, warnings: [] },
+      ],
+    })
+    const result = await generateText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })
+    expect(result.text).toBe('done')
+    const modelOutput = typeof expected === 'string' ? { type: 'text', value: expected } : { type: 'json', value: expected }
+    const content = [{ type: 'tool-result', toolCallId: 'call', toolName: 'run_code', output: modelOutput }]
+    expect(model.doGenerateCalls[1]?.prompt.filter((message) => message.role === 'tool')).toEqual([{ role: 'tool', content }])
+    const saved = JSON.parse(JSON.stringify(result.steps[0]?.toolResults[0]?.output)) as unknown
+    expect(saved).toEqual({ result: expected })
+    const messages = await convertToModelMessages(
+      [
+        {
+          role: 'assistant',
+          parts: [{ type: 'tool-run_code', toolCallId: 'call', state: 'output-available', input: { code: source }, output: saved }],
+        },
+      ],
+      { tools: code.tools }
+    )
+    expect(messages[1]?.content).toEqual(content)
   })
 
   /** Reporting failures must not mask the infrastructure error or turn a logger error into a model tool error. */

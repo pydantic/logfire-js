@@ -94,7 +94,7 @@ export interface RunCodeInput {
 }
 
 export interface CodeMode extends AsyncDisposable {
-  /** `{ run_code }`, to spread into generateText's or streamText's `tools`. */
+  /** `{ run_code }`, to spread into generateText's or streamText's `tools`. Successful outputs use `{ result: value }`; the output hook unwraps them for the model. */
   readonly tools: { run_code: Tool<RunCodeInput, unknown> }
   /** Ends the session and, if code mode created it, the sandbox pool. Safe to call more than once. */
   close(): Promise<void>
@@ -533,7 +533,10 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
             },
           }
         ),
-        execute: async (input, toolOptions) => this.enqueue(input, toolOptions),
+        execute: async (input, toolOptions): Promise<unknown> => {
+          const result = await this.enqueue(input, toolOptions)
+          return result instanceof SandboxFailure ? result : { result }
+        },
         toModelOutput: ({ output }) => {
           if (output instanceof SandboxFailure) {
             throw output.error
@@ -550,7 +553,8 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
               value: 'Sandbox infrastructure failed. This call did not complete; a developer must fix the sandbox before a new run.',
             }
           }
-          return typeof output === 'string' ? { type: 'text', value: output } : { type: 'json', value: output as JSONValue }
+          const { result } = output as { result: unknown }
+          return typeof result === 'string' ? { type: 'text', value: result } : { type: 'json', value: result as JSONValue }
         },
       }),
     }

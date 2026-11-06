@@ -60,7 +60,10 @@ With `streamText`, consume the stream and handle stream errors, then use
 messages. Use `onSandboxError` for developer-side reporting: infrastructure
 failures reject stream iteration or abort UI responses without calling the AI
 SDK's `onError` callbacks. UI clients must treat `{ sandboxFailure: true }` as a
-failed call. Pass `code.tools` to `convertToModelMessages` when restoring saved
+failed call and read successful results from the `{ result: value }` transport
+envelope. Python dictionaries are nested inside that envelope, so they cannot
+be mistaken for failures. The model still receives the unwrapped value.
+Pass `code.tools` to `convertToModelMessages` when restoring saved
 UI messages so that this marker becomes generic failure text, not a success.
 
 See [error routing and recovery](https://github.com/pydantic/logfire-js/blob/main/packages/logfire-ai-sdk-code-mode/docs/error-routing.md)
