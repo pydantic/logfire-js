@@ -103,7 +103,11 @@ independent branches. Saved sessions and snapshots are kept for 7 days.
 
 An agent can write one Python program that calls its tools, instead of calling them one model turn at a time.
 `codeMode()` from `@pydantic/logfire-ai-sdk-code-mode` turns AI SDK tools into typed async Python functions in a sandbox
-session and gives the model one `run_code` tool to call them from. The package is not on npm yet.
+session and gives the model one `run_code` tool to call them from.
+
+```bash
+npm install @pydantic/logfire-ai-sdk-code-mode ai zod
+```
 
 ```ts
 import type { LanguageModel } from 'ai'
