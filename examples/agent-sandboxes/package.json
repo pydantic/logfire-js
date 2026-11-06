@@ -12,14 +12,13 @@
     "@opentelemetry/api": "catalog:",
     "@pydantic/logfire-agent-sandboxes": "workspace:*",
     "@pydantic/logfire-node": "workspace:*",
-    "@pydantic/monty": "^1.4.0",
+    "@pydantic/monty": "^1.5.0",
     "dotenv": "^16.4.7"
   },
   "devDependencies": {
+    "@grpc/grpc-js": "^1.14.5",
     "@tsconfig/node22": "^22.0.0",
     "@types/node": "^22.5.1",
-    "@types/ws": "^8.18.1",
-    "typescript": "catalog:",
-    "ws": "^8.22.0"
+    "typescript": "catalog:"
   }
 }

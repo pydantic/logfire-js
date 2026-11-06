@@ -1,11 +1,8 @@
-/** Converts a Logfire HTTP(S) base URL into the agent sandboxes WebSocket URL. */
+/**
+ * Converts a Logfire HTTP(S) base URL into the agent sandboxes server URL.
+ *
+ * The client opens its gRPC session stream at the root of this URL, so the URL keeps no path.
+ */
 export function agentSandboxesUrl(baseUrl: string): string {
-  const url = new URL(baseUrl)
-  if (url.protocol === 'https:') {
-    url.protocol = 'wss:'
-  } else if (url.protocol === 'http:') {
-    url.protocol = 'ws:'
-  }
-  url.pathname = `${url.pathname.replace(/\/+$/u, '')}/monty-ws/`
-  return url.toString()
+  return baseUrl.replace(/\/+$/u, '')
 }

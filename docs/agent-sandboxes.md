@@ -10,7 +10,7 @@ Logfire Agent Sandboxes run Python code that your agents write in isolated, remo
 application. The code never runs in your process, and it can reach the outside world only through the host functions
 you pass to it.
 
-`@pydantic/logfire-agent-sandboxes` connects to them from Node.js. It returns a `MontyWebsocket` pool from
+`@pydantic/logfire-agent-sandboxes` connects to them from Node.js. It returns a `MontyRemote` pool from
 `@pydantic/monty` that is already set up with your API key, your Logfire region, and the current trace context.
 
 ## Before you start
@@ -30,10 +30,10 @@ The key also selects the data region your sandboxes run in, so you don't need to
 ## Install
 
 ```bash
-npm install @pydantic/logfire-agent-sandboxes @pydantic/monty@^1.4.0
+npm install @pydantic/logfire-agent-sandboxes @pydantic/monty@^1.5.0
 ```
 
-`@pydantic/monty` is a peer dependency. Version 1.4.0, the first with the WebSocket client, is published under the `next` tag, so name the version until it becomes `latest`. Import sessions, errors, and helpers such as `CollectString` from it directly.
+`@pydantic/monty` is a peer dependency. Version 1.5.0 or later is required, because Logfire serves Agent Sandboxes over gRPC and that is the first version with the gRPC client. Import sessions, errors, and helpers such as `CollectString` from it directly.
 
 ## Run your first snippet
 
@@ -192,12 +192,12 @@ be executed. Session state is stored for up to 7 days unless the session is ephe
 
 ## Options
 
-`agentSandboxes()` accepts every `MontyWebsocket` pool option, plus:
+`agentSandboxes()` accepts every `MontyRemote` pool option, plus:
 
-| Option   | Default                                                     | Description                                               |
-| -------- | ----------------------------------------------------------- | --------------------------------------------------------- |
-| `apiKey` | `LOGFIRE_API_KEY`                                           | API key with the `project:execute_agent_sandboxes` scope. |
-| `url`    | `wss://<region host>/monty-ws/`, or from `LOGFIRE_BASE_URL` | WebSocket URL of the sandboxes server.                    |
+| Option   | Default                                             | Description                                                   |
+| -------- | --------------------------------------------------- | ------------------------------------------------------------- |
+| `apiKey` | `LOGFIRE_API_KEY`                                   | API key with the `project:execute_agent_sandboxes` scope.     |
+| `url`    | `https://<region host>`, or from `LOGFIRE_BASE_URL` | `https://` or `http://` URL of the sandboxes server, no path. |
 
 The most common pool options:
 
@@ -205,13 +205,17 @@ The most common pool options:
 - `checkoutTimeout`: seconds `checkout()` waits for a free slot before rejecting. Defaults to waiting forever.
 - `requestTimeout`: the maximum number of seconds for one call, such as `feedRun()` (default 10). Pass `null` to wait
   indefinitely.
-- `connectHeaders`: extra headers for each connection. They are merged over the Logfire `Authorization` header and win
-  on conflicts.
+- `metadata`: a function that returns extra gRPC request metadata (headers) for each checkout. Its entries are merged
+  over the Logfire `authorization` entry and win on conflicts. Names are matched case-insensitively. `connectHeaders`,
+  its former name, still works but is deprecated.
 
 ## Troubleshooting
 
 - **`Agent sandboxes require a Logfire API key with the project:execute_agent_sandboxes scope`**: no API key was found.
   Set `LOGFIRE_API_KEY` or pass `apiKey`.
-- **`failed to spawn monty worker: ... HTTP error: 401 Unauthorized`**: the server rejected the API key. Check that the
-  key is correct, hasn't been deleted, and has the **Run code in this project's agent sandboxes** permission.
+- **`MontyRefusedError: failed to spawn monty worker: ...: UNAUTHENTICATED`**: the server rejected the API key. Check
+  that the key is correct, hasn't been deleted, and has the **Run code in this project's agent sandboxes** permission.
+- **`a URL path, query or fragment is not supported; the session path is fixed`**: `url` or `LOGFIRE_BASE_URL` has a
+  path, such as the `/monty-ws/` path that versions before 0.2.0 used. Pass only the scheme and host, such as
+  `https://logfire-us.pydantic.dev`.
 - **`MontyCrashedError` with `timedOut: true`**: the call took longer than `requestTimeout`. Pass a larger value.

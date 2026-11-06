@@ -52,7 +52,7 @@ pnpm run smoke
 ```
 
 Runs the agent with a mock model that replays four fixed `run_code` calls, against a local stand-in for the sandboxes
-server that relays each connection to a `monty subprocess` worker. The second step makes two calls in parallel, and one
+server that relays each gRPC session stream to a `monty subprocess` worker. The second step makes two calls in parallel, and one
 of them fails on the CHF rate. The test checks that:
 
 - the model sees only `run_code`, with typed function signatures;

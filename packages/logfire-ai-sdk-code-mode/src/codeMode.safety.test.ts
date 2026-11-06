@@ -1,16 +1,15 @@
+import type { ServerDuplexStream } from '@grpc/grpc-js'
 import type { ToolApprovalConfiguration } from 'ai'
-import type { WebSocket as RelaySocket } from 'ws'
 
+import { Metadata, Server, ServerCredentials, status } from '@grpc/grpc-js'
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
 import { context, trace } from '@opentelemetry/api'
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
-import { Monty, MontyWebsocket } from '@pydantic/monty'
+import { Monty, MontyRemote } from '@pydantic/monty'
 import { findMontyBinary } from '@pydantic/monty/node'
 import { tool } from 'ai'
 import { spawn } from 'node:child_process'
-import { once } from 'node:events'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
-import { WebSocketServer } from 'ws'
 import { z } from 'zod'
 
 import { codeMode } from './codeMode'
@@ -546,44 +545,70 @@ describe('onToolError', () => {
 
 describe('a lost connection', () => {
   test('replaces the session and lists the calls that started', async () => {
-    const sockets: RelaySocket[] = []
-    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 })
-    // The same relay as examples/agent-sandboxes/smoke.ts: each connection gets its own `monty subprocess` worker.
-    server.on('connection', (ws) => {
-      sockets.push(ws)
+    const streams: ServerDuplexStream<Buffer, Buffer>[] = []
+    const identity = (buffer: Buffer): Buffer => buffer
+    const server = new Server()
+    // The same relay as examples/agent-sandboxes/smoke.ts: each session stream gets its own `monty subprocess` worker.
+    const relay = (stream: ServerDuplexStream<Buffer, Buffer>): void => {
+      streams.push(stream)
+      stream.sendMetadata(new Metadata())
       const worker = spawn(findMontyBinary(), ['subprocess'], { stdio: ['pipe', 'pipe', 'inherit'] })
-      ws.on('message', (data: Buffer) => {
+      stream.on('data', (message: Buffer) => {
         const prefix = Buffer.alloc(4)
-        prefix.writeUInt32LE(data.length)
-        worker.stdin.write(Buffer.concat([prefix, data]))
+        prefix.writeUInt32LE(message.length)
+        worker.stdin.write(Buffer.concat([prefix, message]))
       })
       let pending = Buffer.alloc(0)
       worker.stdout.on('data', (chunk: Buffer) => {
         pending = Buffer.concat([pending, chunk])
         while (pending.length >= 4 && pending.length >= 4 + pending.readUInt32LE(0)) {
           const size = pending.readUInt32LE(0)
-          ws.send(pending.subarray(4, 4 + size))
+          stream.write(pending.subarray(4, 4 + size))
           pending = pending.subarray(4 + size)
         }
       })
-      ws.on('close', () => {
+      stream.on('end', () => {
+        worker.stdin.end()
+      })
+      stream.on('close', () => {
+        worker.kill()
+      })
+      stream.on('error', () => {
         worker.kill()
       })
       worker.on('exit', () => {
-        ws.close()
+        stream.end()
+      })
+    }
+    server.addService(
+      {
+        Session: {
+          path: '/monty.v1.MontySession/Session',
+          requestDeserialize: identity,
+          requestSerialize: identity,
+          requestStream: true,
+          responseDeserialize: identity,
+          responseSerialize: identity,
+          responseStream: true,
+        },
+      },
+      { Session: relay }
+    )
+    const port = await new Promise<number>((resolve, reject) => {
+      server.bindAsync('127.0.0.1:0', ServerCredentials.createInsecure(), (error, bound) => {
+        if (error === null) {
+          resolve(bound)
+        } else {
+          reject(error)
+        }
       })
     })
-    await once(server, 'listening')
-    const address = server.address()
-    if (address === null || typeof address !== 'object') {
-      throw new Error('the relay has no port')
-    }
-    const remote = await MontyWebsocket.create(`ws://127.0.0.1:${String(address.port)}/`)
+    const remote = await MontyRemote.create(`http://127.0.0.1:${String(port)}`)
     const drop = tool({
       inputSchema: z.object({}),
       outputSchema: z.object({ ok: z.boolean() }),
       execute: async () => {
-        sockets.at(-1)?.terminate()
+        streams.at(-1)?.emit('error', { code: status.UNAVAILABLE, details: 'relay dropped the session' })
         await delay(100)
         return { ok: true }
       },
@@ -600,7 +625,7 @@ describe('a lost connection', () => {
       expect(await runCode(code, { code: '(await count(n=3))["n"]' })).toBe(3)
     } finally {
       await remote.close()
-      server.close()
+      server.forceShutdown()
     }
   })
 })

@@ -1,5 +1,5 @@
 // Helpers shared by the codeMode tests. Not exported from the package.
-import type { MontySession, WebsocketCheckoutOptions } from '@pydantic/monty'
+import type { MontySession, RemoteCheckoutOptions } from '@pydantic/monty'
 import type { ToolExecutionOptions } from 'ai'
 
 import type { CodeMode, RunCodeInput, Sandboxes } from './codeMode'
@@ -30,7 +30,7 @@ export async function runCodeError(
 /** A pool wrapper that records every checkout, so tests can count sessions and reach the live one. */
 export class CountingSandboxes implements Sandboxes {
   readonly sessions: MontySession[] = []
-  readonly checkouts: (WebsocketCheckoutOptions | undefined)[] = []
+  readonly checkouts: (RemoteCheckoutOptions | undefined)[] = []
   closed = false
   private readonly pool: Sandboxes
 
@@ -38,7 +38,7 @@ export class CountingSandboxes implements Sandboxes {
     this.pool = pool
   }
 
-  async checkout(options?: WebsocketCheckoutOptions): Promise<MontySession> {
+  async checkout(options?: RemoteCheckoutOptions): Promise<MontySession> {
     this.checkouts.push(options)
     const session = await this.pool.checkout(options)
     this.sessions.push(session)

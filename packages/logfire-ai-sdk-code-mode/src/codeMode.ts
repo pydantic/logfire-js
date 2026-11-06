@@ -1,5 +1,5 @@
 import type { Context } from '@opentelemetry/api'
-import type { MontySession, WebsocketCheckoutOptions } from '@pydantic/monty'
+import type { MontySession, RemoteCheckoutOptions } from '@pydantic/monty'
 import type { Tool, ToolApprovalConfiguration, ToolExecutionOptions, ToolSet } from 'ai'
 
 import { context as otelContext } from '@opentelemetry/api'
@@ -19,9 +19,9 @@ import { CODE_DESCRIPTION, RESTART_DESCRIPTION, RUN_CODE_TOOL_NAME, runCodeDescr
 import { toolStubs } from './stubs'
 import { byteLength, cutMiddle, describeStartedCalls, forModel, fromSandbox, preview, ValueTooLargeError } from './values'
 
-/** Where code runs: a pool such as `agentSandboxes()`, `MontyWebsocket.create()` or `Monty.create()`. */
+/** Where code runs: a pool such as `agentSandboxes()`, `MontyRemote.create()` or `Monty.create()`. */
 export interface Sandboxes {
-  checkout(options?: WebsocketCheckoutOptions): Promise<MontySession>
+  checkout(options?: RemoteCheckoutOptions): Promise<MontySession>
   close(): Promise<void>
 }
 
