@@ -34,6 +34,8 @@ export const LOGFIRE_PUBLIC_REGIONS: Record<'us' | 'eu', RegionData> = {
 export const PYDANTIC_LOGFIRE_TOKEN_PATTERN: RegExp =
   /^(?<safePart>pylf_v(?<version>[0-9]+)_(?<region>[a-z]+)_(?:(?<organizationId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_)?)(?<token>[a-zA-Z0-9]+)$/u
 
+const LOGFIRE_TOKEN_REGION_PATTERN = /^pylf_v[0-9]+_(?<region>[a-z]+)_/u
+
 export function removeTrailingSlash(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url
 }
@@ -43,7 +45,7 @@ export function getBaseUrlFromToken(token: string | undefined): string {
   // Logfire token at all: neither carries a region to disagree with.
   let regionKey = 'us'
   if (token !== undefined && token !== '') {
-    const match = PYDANTIC_LOGFIRE_TOKEN_PATTERN.exec(token)
+    const match = LOGFIRE_TOKEN_REGION_PATTERN.exec(token)
     if (match) {
       const region = match.groups?.['region']
       if (region !== undefined) {
