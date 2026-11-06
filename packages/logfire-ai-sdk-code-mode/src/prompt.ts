@@ -1,4 +1,4 @@
-// Ported word for word from pydantic-ai CodeMode at commit abd4293f14d0d1923389e5358445144243c4c650,
+// Ported word for word from pydantic-ai CodeMode at commit c833840a95f4f7e7607091dcf7c98f9da5db784a,
 // src/pydantic_ai_harness/pydantic_ai_harness/code_mode/_toolset.py and _parts.py. The parity test compares the
 // rendered description with pydantic-ai's own, so copy changes from there rather than editing here.
 
@@ -12,7 +12,7 @@ const RUN_CODE_DESCRIPTION_HEAD = `Write and run Python code in a sandboxed envi
 
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No third-party libraries**: only the standard library modules listed below can be used
-- **Importable standard library modules**: \`sys\`, \`typing\`, \`asyncio\`, \`math\`, \`json\`, \`re\`, \`unicodedata\`, \`datetime\`, \`time\`, \`random\`, \`os\`, \`pathlib\`, \`collections\`, \`itertools\`, \`functools\`, \`dataclasses\`, \`copy\`, \`base64\`, \`binascii\`, \`bisect\`, \`csv\`, \`decimal\`, \`hashlib\`, \`os.path\`, \`tomllib\`. These must be imported before use, just like in regular Python.`
+- **Importable standard library modules**: \`sys\`, \`typing\`, \`asyncio\`, \`math\`, \`json\`, \`re\`, \`unicodedata\`, \`datetime\`, \`time\`, \`random\`, \`os\`, \`pathlib\`, \`collections\`, \`itertools\`, \`functools\`, \`dataclasses\`, \`copy\`, \`base64\`, \`binascii\`, \`bisect\`, \`csv\`, \`decimal\`, \`fnmatch\`, \`hashlib\`, \`os.path\`, \`tomllib\`, \`annotationlib\`. These must be imported before use, just like in regular Python.`
 
 const NO_OS_RESTRICTION =
   '- **No filesystem, environment, or clock**: `pathlib.Path` I/O, `os.getenv`/`os.environ`, ' +
