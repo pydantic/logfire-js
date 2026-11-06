@@ -97,6 +97,13 @@ describe('an agent run', () => {
     expect(counted.checkouts).toEqual([])
   })
 
+  test('takes milliseconds and gives Monty seconds', async () => {
+    const counted = sandboxes()
+    await using code = codeMode({ tools: {}, sandboxes: counted, limits: { timeout: 1500 } })
+    await runCode(code, { code: '1' })
+    expect(counted.checkouts[0]?.limits?.maxFeedDurationSecs).toBe(1.5)
+  })
+
   test('checks sessions out as ephemeral and type-checked, with the tool stubs', async () => {
     const counted = sandboxes()
     await using code = codeMode({ tools: { add }, sandboxes: counted })
@@ -354,7 +361,7 @@ describe('lifecycle', () => {
       },
       close: async () => Promise.resolve(),
     }
-    await using code = codeMode({ tools: {}, sandboxes: slow, limits: { timeout: 1 } })
+    await using code = codeMode({ tools: {}, sandboxes: slow, limits: { timeout: 1000 } })
     expect(await runCode(code, { code: '1 + 1' })).toBe(2)
   })
 
@@ -378,7 +385,7 @@ describe('lifecycle', () => {
 
   test('an oversized snippet keeps the idle timeout running', async () => {
     const counted = sandboxes()
-    await using code = codeMode({ tools: {}, sandboxes: counted, idleTimeout: 0.2, limits: { codeBytes: 50 } })
+    await using code = codeMode({ tools: {}, sandboxes: counted, idleTimeout: 200, limits: { codeBytes: 50 } })
     await runCode(code, { code: 'kept = 1' })
     await runCodeError(code, { code: `# ${'x'.repeat(100)}` })
     await delay(400)
@@ -387,7 +394,7 @@ describe('lifecycle', () => {
 
   test('the idle timeout releases the session and the next call says so if it fails', async () => {
     const counted = sandboxes()
-    await using code = codeMode({ tools: {}, sandboxes: counted, idleTimeout: 0.2 })
+    await using code = codeMode({ tools: {}, sandboxes: counted, idleTimeout: 200 })
     await runCode(code, { code: 'kept = 1' })
     await delay(400)
     expect(await runCodeError(code, { code: 'kept' })).toMatch(

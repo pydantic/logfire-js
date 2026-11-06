@@ -158,24 +158,25 @@ try {
 
 With `streamText`, the function returns before the stream is read, so a block-scoped close would end the session too
 early. Call `code.closeWhenDone(result)` instead, which closes once the stream finishes, fails or is aborted. A session
-also ends after `idleTimeout` seconds without a call (default 300).
+also ends after `idleTimeout` milliseconds without a call (default 300,000, five minutes).
 
 Calling a tool from the sandbox skips the AI SDK's own approval and context handling, so `codeMode()` takes them as
 options:
 
 - `context`: each tool's context, keyed by tool name, as `toolsContext`.
-- `approval`: the same shape as `toolApproval`. A call that needs a person's approval fails, because nothing in the
-  sandbox can wait for one. Tools with `needsApproval` are rejected.
+- `approval`: the same shape as `toolApproval`, without the `'user-approval'` status, because nothing in the sandbox
+  can wait for a person. An async function can ask one itself and return `'approved'` or `'denied'`, within
+  `limits.timeout`. Tools with `needsApproval` are rejected.
 - Sandbox code gets what `execute` returns, so a tool with `toModelOutput` is rejected rather than having its
   filtering bypassed.
-- `limits`: a wall-clock `timeout` per snippet that includes time spent waiting on tools (default 30 seconds), and caps
+- `limits`: a wall-clock `timeout` per snippet that includes time spent waiting on tools (in milliseconds, default 30,000), and caps
   on nested calls, concurrent calls, and the sizes of code, results and tool input and output.
 - `onToolError`: replaces a tool's error message before the sandbox, the model or a span sees it. Messages pass through
   unchanged by default. A result that has no JSON form, such as a bigint or a cycle, is not a tool error, so it does not
   go through `onToolError`.
 - A tool result is sent to the sandbox as JSON. A `Map` becomes a dict and a `Set` becomes a list.
 
-If you pass your own `sandboxes`, set its `requestTimeout` above `limits.timeout`, so that a long snippet gets the
+If you pass your own `sandboxes`, set its `requestTimeout`, which Monty takes in seconds, above `limits.timeout`, so that a long snippet gets the
 time-limit message instead of a dropped connection. `codeMode()` does this for the pool it creates.
 
 [`examples/agent-sandboxes-ai-sdk`](https://github.com/pydantic/logfire-js/tree/main/examples/agent-sandboxes-ai-sdk)
