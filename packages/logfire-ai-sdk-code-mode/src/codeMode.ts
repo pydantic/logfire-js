@@ -1,4 +1,4 @@
-/** AI SDK agents use `codeMode` and `CodeModeOptions` to run tool-calling Python while keeping infrastructure failures out of model messages. */
+/** AI SDK agents use `codeMode` and `CodeModeOptions` to run tool-calling Python; `onSandboxError` reports infrastructure failures without exposing their details to models or UI streams. */
 import type { Context } from '@opentelemetry/api'
 import type { MontySession, RemoteCheckoutOptions } from '@pydantic/monty'
 import type { JSONValue, Tool, ToolApprovalConfiguration, ToolExecutionOptions, ToolSet } from 'ai'
@@ -81,6 +81,11 @@ export interface CodeModeOptions<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknow
    * Sandbox configuration and infrastructure failures end the agent run instead and do not call this hook.
    */
   onToolError?: (error: unknown, call: ToolErrorCall) => Error | string | undefined
+  /**
+   * Reports the original sandbox infrastructure error once, including on UI streaming routes where AI SDK error
+   * callbacks do not run. This synchronous notification cannot replace the error; exceptions it throws are ignored.
+   */
+  onSandboxError?: (error: unknown) => void
 }
 
 export interface RunCodeInput {
@@ -119,6 +124,7 @@ export function codeMode<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknown>(optio
 
 /** Carries a developer error past the AI SDK's tool-error catch to `toModelOutput`, which ends the run. */
 class SandboxFailure {
+  readonly sandboxFailure = true
   readonly #error: unknown
 
   constructor(error: unknown) {
@@ -348,7 +354,7 @@ type StopReason = 'aborted' | 'closed' | 'deadline' | 'finished'
 /** One `run_code` call: its nested calls, printed output and deadline. */
 class Snippet {
   readonly calls: StartedCall[] = []
-  readonly printed: PrintCapture
+  printed: PrintCapture
   deadline = Number.POSITIVE_INFINITY
   callCount = 0
   budgetExhausted = false
@@ -532,6 +538,18 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
           if (output instanceof SandboxFailure) {
             throw output.error
           }
+          if (
+            typeof output === 'object' &&
+            output !== null &&
+            Object.keys(output).length === 1 &&
+            'sandboxFailure' in output &&
+            output.sandboxFailure === true
+          ) {
+            return {
+              type: 'text',
+              value: 'Sandbox infrastructure failed. This call did not complete; a developer must fix the sandbox before a new run.',
+            }
+          }
           return typeof output === 'string' ? { type: 'text', value: output } : { type: 'json', value: output as JSONValue }
         },
       }),
@@ -594,11 +612,11 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
   }
 
   private async run({ code, restart }: RunCodeInput, toolOptions: ToolExecutionOptions<unknown>): Promise<unknown> {
-    if (this.failure !== undefined) {
-      return this.failure
-    }
     if (this.closing !== undefined) {
       throw this.closedError()
+    }
+    if (this.failure !== undefined) {
+      return this.failure
     }
     toolOptions.abortSignal?.throwIfAborted()
     const codeBytes = byteLength(code)
@@ -641,6 +659,16 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     }
   }
 
+  private failSandbox(error: unknown): SandboxFailure {
+    this.failure = new SandboxFailure(error)
+    try {
+      this.options.onSandboxError?.(error)
+    } catch {
+      return this.failure
+    }
+    return this.failure
+  }
+
   private async feed(code: string, snippet: Snippet, toolOptions: ToolExecutionOptions<unknown>, replayed = false): Promise<unknown> {
     let session: MontySession
     try {
@@ -649,7 +677,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       if (snippet.stopped !== undefined) {
         throw this.stoppedError(snippet, false)
       }
-      return (this.failure = new SandboxFailure(error))
+      return this.failSandbox(error)
     }
     if (snippet.stopped !== undefined) {
       if (snippet.stopped === 'deadline') {
@@ -712,6 +740,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     if (!fed) {
       if (feedError instanceof MontyShutdown && !replayed && snippet.callCount === 0) {
         await this.releaseSession()
+        snippet.printed = new PrintCapture(this.limits.outputBytes)
         return this.feed(code, snippet, toolOptions, true)
       }
       snippet.stop('finished')
@@ -720,20 +749,21 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
         await this.releaseSession()
       }
       if (failure === undefined) {
-        return (this.failure = new SandboxFailure(feedError))
+        return this.failSandbox(feedError)
       }
       throw new Error(failure.message + (replayed ? `\n\n${SESSION_RESET_MESSAGE}` : ''), { cause: feedError })
     }
-    const result = this.shapeResult(value, snippet)
+    const result = this.shapeResult(value, snippet, replayed)
     return replayed ? { result, sessionReset: SESSION_RESET_MESSAGE } : result
   }
 
   /** pydantic-ai's result shapes (`RunCodeExecution.build_tool_return`), checked against `limits.outputBytes`. */
-  private shapeResult(value: unknown, snippet: Snippet): unknown {
+  private shapeResult(value: unknown, snippet: Snippet, replayed: boolean): unknown {
     const { outputBytes } = this.limits
     const tooLarge = new Error(
       `The result is more than ${String(outputBytes)} bytes of JSON, over the limit for what one snippet returns. ` +
-        'The code ran and its variables are still defined, so return a smaller value from them, such as a summary or fewer fields.'
+        'The code ran and its variables are still defined, so return a smaller value from them, such as a summary or fewer fields.' +
+        (replayed ? `\n\n${SESSION_RESET_MESSAGE}` : '')
     )
     let result: unknown
     try {
@@ -1068,7 +1098,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
         ) {
           throw error
         }
-        await sleep(100, undefined, { signal, ref: false })
+        await sleep(100, undefined, { signal })
         signal.throwIfAborted()
         return pool.checkout(options)
       }

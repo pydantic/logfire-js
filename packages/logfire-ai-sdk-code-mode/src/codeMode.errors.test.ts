@@ -3,7 +3,7 @@ import type { MontySession } from '@pydantic/monty'
 
 import { agentSandboxes } from '@pydantic/logfire-agent-sandboxes'
 import { Monty, MontyCrashedError, MontyDisconnectError, MontyRefusedError, MontyShutdown, ProtocolError } from '@pydantic/monty'
-import { generateText, stepCountIs, streamText, tool } from 'ai'
+import { convertToModelMessages, generateText, stepCountIs, streamText, tool } from 'ai'
 import { MockLanguageModelV4 } from 'ai/test'
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
 import { z } from 'zod'
@@ -72,7 +72,8 @@ describe('developer errors', () => {
   test.each(developerErrors)('generateText surfaces checkout failure: %s', async (error) => {
     const checkout = vi.fn<Sandboxes['checkout']>().mockRejectedValue(error)
     const onToolError = vi.fn<() => undefined>()
-    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() }, onToolError })
+    const onSandboxError = vi.fn<(error: unknown) => void>()
+    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() }, onToolError, onSandboxError })
     const model = callingModel()
     await expect(generateText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })).rejects.toBe(error)
     expect(model.doGenerateCalls).toHaveLength(1)
@@ -80,35 +81,41 @@ describe('developer errors', () => {
     expect(onToolError).not.toHaveBeenCalled()
     await expect(runCode(code, { code: '1' })).rejects.toBe(error)
     expect(checkout).toHaveBeenCalledTimes(1)
+    expect(onSandboxError.mock.calls).toEqual([[error]])
   })
 
-  /** Streaming has a different execution path; configuration errors must reach its error stream, never a second model call. */
+  /** Infrastructure failures reject stream iteration without an error part or AI SDK onError callback. */
   test.each(developerErrors)('streamText surfaces checkout failure: %s', async (error) => {
     const checkout = vi.fn<Sandboxes['checkout']>().mockRejectedValue(error)
     await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() } })
     const model = callingModel()
-    const result = streamText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })
+    const onError = vi.fn<() => void>()
+    const result = streamText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3), onError })
+    const parts: string[] = []
     const consume = async (): Promise<void> => {
       for await (const part of result.fullStream) {
-        if (part.type === 'error') {
-          throw part.error
-        }
+        parts.push(part.type)
       }
     }
     await expect(consume()).rejects.toBe(error)
+    expect(parts).toEqual(['start', 'start-step', 'tool-call', 'tool-result', 'finish-step'])
+    expect(onError).not.toHaveBeenCalled()
     expect(model.doStreamCalls).toHaveLength(1)
     expect(checkout).toHaveBeenCalledTimes(1)
     await code.closeWhenDone(result)
   })
 
-  /** The AI SDK streams tool results before model-output conversion, so infrastructure error details must not serialize to UI clients. */
+  /** UI routes abort without AI SDK error callbacks, so code mode must report the original error and serialize only a distinct marker. */
   test('keeps the original error out of UI message stream responses', async () => {
     const secret = 'synthetic-private-configuration'
     const error = new MontyRefusedError(secret, { statusCode: 'UNAUTHENTICATED', statusMessage: secret })
     const checkout = vi.fn<Sandboxes['checkout']>().mockRejectedValue(error)
-    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() } })
-    const result = streamText({ model: callingModel(), prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })
-    const response = result.toUIMessageStreamResponse({ onError: () => 'The agent run failed.' })
+    const onSandboxError = vi.fn<(error: unknown) => void>()
+    const onError = vi.fn<() => void>()
+    const onUIError = vi.fn<() => string>(() => 'The agent run failed.')
+    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() }, onSandboxError })
+    const result = streamText({ model: callingModel(), prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3), onError })
+    const response = result.toUIMessageStreamResponse({ onError: onUIError })
     const body = response.body
     if (body === null) {
       throw new Error('The UI response has no body')
@@ -120,10 +127,62 @@ describe('developer errors', () => {
         serialized += decoder.decode(chunk)
       }
     }
-    await consume().catch(() => undefined)
+    await expect(consume()).rejects.toBe(error)
+    expect(onSandboxError.mock.calls).toEqual([[error]])
+    expect(onError).not.toHaveBeenCalled()
+    expect(onUIError).not.toHaveBeenCalled()
     expect(serialized).not.toContain(secret)
-    expect(serialized).toContain('"type":"tool-output-available","toolCallId":"call","output":{}')
+    expect(serialized).toContain('"type":"tool-output-available","toolCallId":"call","output":{"sandboxFailure":true}')
     await code.closeWhenDone(result)
+  })
+
+  /** Persisted tool results must distinguish infrastructure failure from successful Python None without exposing developer errors. */
+  test.each([
+    [{}, { type: 'json', value: {} }],
+    [
+      { sandboxFailure: true },
+      {
+        type: 'text',
+        value: 'Sandbox infrastructure failed. This call did not complete; a developer must fix the sandbox before a new run.',
+      },
+    ],
+  ])('converts the saved UI output %j correctly', async (output, expected) => {
+    await using code = codeMode({ tools: {}, sandboxes: pool })
+    const messages = await convertToModelMessages(
+      [
+        {
+          role: 'assistant',
+          parts: [{ type: 'tool-run_code', toolCallId: 'call', state: 'output-available', input: { code: '1' }, output }],
+        },
+      ],
+      { tools: code.tools }
+    )
+    expect(messages[1]?.content).toEqual([{ type: 'tool-result', toolCallId: 'call', toolName: 'run_code', output: expected }])
+  })
+
+  /** Reporting failures must not mask the infrastructure error or turn a logger error into a model tool error. */
+  test('reports once even if the developer error handler throws', async () => {
+    const error = new Error('synthetic dial failure')
+    const checkout = vi.fn<Sandboxes['checkout']>().mockRejectedValue(error)
+    const onSandboxError = vi.fn<(error: unknown) => void>(() => {
+      throw new Error('synthetic logger failure')
+    })
+    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() }, onSandboxError })
+    await expect(runCode(code, { code: '1' })).rejects.toBe(error)
+    await expect(runCode(code, { code: '1' })).rejects.toBe(error)
+    expect(onSandboxError.mock.calls).toEqual([[error]])
+    expect(checkout).toHaveBeenCalledTimes(1)
+  })
+
+  /** Explicit close takes precedence over a latched infrastructure failure, as it does over normal execution. */
+  test('rejects calls after closing a failed run as closed', async () => {
+    const error = new Error('synthetic dial failure')
+    const checkout = vi.fn<Sandboxes['checkout']>().mockRejectedValue(error)
+    const code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() } })
+    await expect(runCode(code, { code: '1' })).rejects.toBe(error)
+    await code.close()
+    await expect(runCode(code, { code: '1' })).rejects.toEqual(new Error('Code mode is closed, so this code did not run.'))
+    expect(checkout).toHaveBeenCalledTimes(1)
   })
 
   /** The default pool can fail before checkout, including both synchronous and asynchronous factory failures. */
@@ -137,10 +196,12 @@ describe('developer errors', () => {
     } else {
       vi.mocked(agentSandboxes).mockRejectedValueOnce(error)
     }
-    await using code = codeMode({ tools: {} })
+    const onSandboxError = vi.fn<(error: unknown) => void>()
+    await using code = codeMode({ tools: {}, onSandboxError })
     const model = callingModel()
     await expect(generateText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })).rejects.toBe(error)
     expect(model.doGenerateCalls).toHaveLength(1)
+    expect(onSandboxError.mock.calls).toEqual([[error]])
   })
 
   /** Missing credentials already fail at construction, before the model can run. */
@@ -154,6 +215,22 @@ describe('developer errors', () => {
 })
 
 describe('capacity checkout retry', () => {
+  /** A pending capacity retry must keep a one-shot Node.js process alive even if the supplied pool has no active handles. */
+  test('keeps the retry timer referenced', async () => {
+    const error = new MontyRefusedError('Sandbox busy', { cause: 'capacity' })
+    const checkout = vi.fn<Sandboxes['checkout']>().mockRejectedValue(error)
+    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() } })
+    const before = process.getActiveResourcesInfo().filter((resource) => resource === 'Timeout').length
+    const failed = runCode(code, { code: '1' }).catch((failure: unknown) => failure)
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve)
+    })
+    const during = process.getActiveResourcesInfo().filter((resource) => resource === 'Timeout').length
+    expect(during).toBe(before + 1)
+    expect(await failed).toBe(error)
+    expect(checkout).toHaveBeenCalledTimes(2)
+  })
+
   /** Only the three known temporary refusal causes get a single delayed retry; no code has run yet. */
   test.each(['caller_cap', 'capacity', 'worker_unavailable'])('retries %s after 100 ms', async (cause) => {
     vi.useFakeTimers()
@@ -274,7 +351,8 @@ describe('feed failures', () => {
     [new MontyCrashedError('worker died'), 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'],
   ])('gives specific guidance for %s', async (error, message) => {
     const counted = new CountingSandboxes(pool)
-    await using code = codeMode({ tools: {}, sandboxes: counted })
+    const onSandboxError = vi.fn<(error: unknown) => void>()
+    await using code = codeMode({ tools: {}, sandboxes: counted, onSandboxError })
     await runCode(code, { code: 'kept = 1' })
     const session = firstSession(counted)
     const close = vi.spyOn(session, 'close')
@@ -283,6 +361,7 @@ describe('feed failures', () => {
     expect(close).toHaveBeenCalledTimes(1)
     expect(await runCodeError(code, { code: 'kept' })).toMatch(/Name `kept` used when not defined/u)
     expect(counted.sessions).toHaveLength(2)
+    expect(onSandboxError).not.toHaveBeenCalled()
   })
 
   /** Unknown disconnects and protocol failures cannot be fixed by changing Python and must not reach the model. */
@@ -290,7 +369,8 @@ describe('feed failures', () => {
     'ends the run for %s',
     async (error) => {
       const counted = new CountingSandboxes(pool)
-      await using code = codeMode({ tools: {}, sandboxes: counted })
+      const onSandboxError = vi.fn<(error: unknown) => void>()
+      await using code = codeMode({ tools: {}, sandboxes: counted, onSandboxError })
       await runCode(code, { code: '1' })
       const close = vi.spyOn(firstSession(counted), 'close')
       vi.spyOn(firstSession(counted), 'feedRun').mockRejectedValueOnce(error)
@@ -298,6 +378,7 @@ describe('feed failures', () => {
       await expect(generateText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })).rejects.toBe(error)
       expect(close).toHaveBeenCalledTimes(1)
       expect(model.doGenerateCalls).toHaveLength(1)
+      expect(onSandboxError.mock.calls).toEqual([[error]])
     }
   )
 
@@ -325,6 +406,41 @@ describe('feed failures', () => {
 })
 
 describe('server shutdown', () => {
+  /** Printing before a shutdown must not duplicate the final attempt's output, even if the first capture was truncated. */
+  test.each(['step 1\n', 'x'.repeat(1000)])('discards the first attempt output %#', async (printed) => {
+    const counted = new CountingSandboxes(pool)
+    await using code = codeMode({ tools: {}, sandboxes: counted, limits: { outputBytes: 200 } })
+    await runCode(code, { code: 'kept = 1' })
+    vi.spyOn(firstSession(counted), 'feedRun').mockImplementationOnce(async (_source, options) => {
+      const print = options?.printCallback
+      if (typeof print !== 'function') {
+        throw new Error('No print callback')
+      }
+      print('stdout', printed)
+      await delay(1)
+      throw new MontyShutdown('shutdown during sleep after printing')
+    })
+    expect(await runCode(code, { code: 'print("step 1")' })).toEqual({
+      result: { output: 'step 1\n' },
+      sessionReset: sessionResetMessage,
+    })
+    expect(counted.sessions).toHaveLength(2)
+  })
+
+  /** Both conversion-budget and exact JSON-size failures on replay must explain that earlier snippets' state is lost. */
+  test.each(['"x" * 1000', '"x" * 199'])('explains lost state for oversized replay result %s', async (source) => {
+    const counted = new CountingSandboxes(pool)
+    await using code = codeMode({ tools: {}, sandboxes: counted, limits: { outputBytes: 200 } })
+    await runCode(code, { code: 'kept = 1' })
+    vi.spyOn(firstSession(counted), 'feedRun').mockRejectedValueOnce(new MontyShutdown('server restarting'))
+    expect(await runCodeError(code, { code: source })).toBe(
+      'The result is more than 200 bytes of JSON, over the limit for what one snippet returns. ' +
+        'The code ran and its variables are still defined, so return a smaller value from them, such as a summary or fewer fields.' +
+        `\n\n${sessionResetMessage}`
+    )
+    expect(counted.sessions).toHaveLength(2)
+  })
+
   /** A shutdown before the snippet runs is safe to replay once, on a fresh type-checked session. */
   test('replays once on a fresh session', async () => {
     const counted = new CountingSandboxes(pool)
