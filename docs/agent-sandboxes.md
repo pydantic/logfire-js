@@ -171,7 +171,9 @@ options:
 - `limits`: a wall-clock `timeout` per snippet that includes time spent waiting on tools (default 30 seconds), and caps
   on nested calls, concurrent calls, and the sizes of code, results and tool input and output.
 - `onToolError`: replaces a tool's error message before the sandbox, the model or a span sees it. Messages pass through
-  unchanged by default.
+  unchanged by default. A result that has no JSON form, such as a bigint or a cycle, is not a tool error, so it does not
+  go through `onToolError`.
+- A tool result is sent to the sandbox as JSON. A `Map` becomes a dict and a `Set` becomes a list.
 
 If you pass your own `sandboxes`, set its `requestTimeout` above `limits.timeout`, so that a long snippet gets the
 time-limit message instead of a dropped connection. `codeMode()` does this for the pool it creates.

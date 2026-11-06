@@ -64,7 +64,8 @@ export interface CodeModeOptions<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknow
   idleTimeout?: number
   /**
    * Replaces the error the sandbox, the model and the trace see when a tool throws. Return a string or an error to
-   * replace it, or `undefined` to keep it. Messages pass through unchanged by default, as in pydantic-ai.
+   * replace it, or `undefined` to keep it. Messages pass through unchanged by default, as in pydantic-ai. A result
+   * that has no JSON form, such as a bigint or a cycle, is not a tool error, so this is not called for it.
    */
   onToolError?: (error: unknown, call: ToolErrorCall) => Error | string | undefined
 }
@@ -146,6 +147,20 @@ function keywordArguments(name: string, args: unknown[], maxBytes: number): Reco
 
 function toolInputTooLarge(name: string, maxBytes: number): string {
   return `The arguments to ${name}() are more than ${String(maxBytes)} bytes of JSON, over the limit for one call.`
+}
+
+// `JSON.stringify` writes a Map or a Set as `{}`. They become a dict and a list, as `fromSandbox` converts the
+// Python dicts and sets that sandbox code passes to a tool.
+function jsonCollections(_key: string, value: unknown): unknown {
+  if (value instanceof Map) {
+    return Object.fromEntries([...(value as Map<unknown, unknown>)].map(([key, item]) => [String(key), item]))
+  }
+  return value instanceof Set ? [...(value as Set<unknown>)] : value
+}
+
+/** The JSON a tool result is sent as. Throws for a value with no JSON form, such as a bigint or a cycle. */
+function toolOutputJson(output: unknown): string {
+  return JSON.stringify(output ?? null, jsonCollections)
 }
 
 function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
@@ -835,8 +850,20 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
             // Inside the span callback, so the span records the replacement and never the original message.
             throw snippet.stopped === undefined ? this.replaceToolError(error, { toolName, toolCallId, input }) : error
           }
-          const json = JSON.stringify(output ?? null)
+          // The tool returned, so a value that has no JSON form is reported as such and not as a tool error.
           record.status = 'returned'
+          let json: string
+          try {
+            json = toolOutputJson(output)
+          } catch (error) {
+            const reason = error instanceof RangeError ? 'it is nested too deeply or contains itself' : errorMessage(error)
+            record.outputPreview = '<not JSON>'
+            throw pythonError(
+              'ValueError',
+              `${pythonName}() returned a value that cannot be sent to the sandbox as JSON: ${reason}. ` +
+                'The call ran, so do not repeat it to get the same result.'
+            )
+          }
           // Sized before it is parsed or kept, so sandbox code that catches the error and calls again cannot pile
           // up rejected results on the host.
           const outputBytes = byteLength(json)
