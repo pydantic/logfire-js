@@ -636,10 +636,7 @@ function startBrowserInstrumentations(options: {
         // Normalized at capture, like the other error accumulators in this file: an unregister
         // callback is user supplied, so it can throw `undefined` or `null`, which the raw value
         // as the `??=` sentinel misread as no failure or overwrote with a later error.
-        firstError ??=
-          error instanceof Error
-            ? error
-            : markSdkInternalError(new Error('logfire-browser: instrumentation unregister failed', { cause: error }))
+        firstError ??= error instanceof Error ? error : new Error('logfire-browser: instrumentation unregister failed', { cause: error })
       }
     }
     if (firstError !== undefined) {

@@ -2593,6 +2593,8 @@ describe('browser cleanup', () => {
     // Wrapped once more by the cleanup-step reporter, the same as any other step failure.
     expect((rejection as Error).cause).toBeInstanceOf(Error)
     expect(((rejection as Error).cause as Error).message).toBe('logfire-browser: instrumentation unregister failed')
+    expect(isSdkInternalError(rejection)).toBe(false)
+    expect(isSdkInternalError((rejection as Error).cause)).toBe(false)
     cleanup = undefined
   })
 
