@@ -97,6 +97,15 @@ describe('tool names', () => {
     )
   })
 
+  test.each(['Any', 'TypedDict', 'NotRequired', 'Literal', 'asyncio'])(
+    'a tool that becomes %s, which the stubs import, is rejected',
+    (name) => {
+      expect(() => toolStubs({ [name]: tool({ inputSchema: noParameters }) })).toThrow(
+        `Tool "${name}" becomes the Python function "${name}", which the type-check stubs import, so the function would replace that import. Rename the tool.`
+      )
+    }
+  )
+
   test('two tools that become the same Python name are rejected', () => {
     silenceWarnings()
     expect(() => toolStubs({ 'get-user': tool({ inputSchema: noParameters }), get_user: tool({ inputSchema: noParameters }) })).toThrow(
