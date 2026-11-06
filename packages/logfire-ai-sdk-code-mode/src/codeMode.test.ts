@@ -382,6 +382,8 @@ describe('setup', () => {
     expect(() => codeMode({ tools: { open: add }, sandboxes: sandboxes() })).toThrow(
       'Tool "open" becomes the Python function "open", which is a Python builtin, so sandbox code would call the builtin instead. Rename the tool.'
     )
+    expect(() => codeMode({ tools: { Any: add }, sandboxes: sandboxes() })).toThrow(/"Any", which the type-check stubs import/u)
+    expect(() => codeMode({ tools: { asyncio: add }, sandboxes: sandboxes() })).toThrow(/"asyncio", which the type-check stubs import/u)
   })
 
   test('needs an API key when it creates the sandboxes itself', () => {

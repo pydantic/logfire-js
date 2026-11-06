@@ -433,6 +433,88 @@ describe('size and concurrency caps', () => {
   })
 })
 
+describe('tool results without a JSON form', () => {
+  const circular: Record<string, unknown> = { name: 'loop' }
+  circular['self'] = circular
+  const circularMap = new Map<string, unknown>([['payload', 'x'.repeat(65536)]])
+  circularMap.set('self', circularMap)
+  const circularSet = new Set<unknown>(['x'])
+  circularSet.add(circularSet)
+
+  test.each<[string, unknown, RegExp]>([
+    [
+      'a bigint',
+      { n: 10n ** 30n },
+      /^ValueError: odd\(\) returned a value that cannot be sent to the sandbox as JSON: Do not know how to serialize a BigInt\./u,
+    ],
+    [
+      'a circular value',
+      circular,
+      /^ValueError: odd\(\) returned a value that cannot be sent to the sandbox as JSON: Converting circular structure to JSON[\s\S]*\./u,
+    ],
+    [
+      'a function',
+      () => 1,
+      /^ValueError: odd\(\) returned a value that cannot be sent to the sandbox as JSON: the result, a function, has no JSON form\./u,
+    ],
+    [
+      'an object whose toJSON returns undefined',
+      { toJSON: () => undefined },
+      /^ValueError: odd\(\) returned a value that cannot be sent to the sandbox as JSON: the result, a value whose toJSON\(\) returns undefined, has no JSON form\./u,
+    ],
+    [
+      'a Map that contains itself',
+      { m: circularMap },
+      /^ValueError: odd\(\) returned a value that cannot be sent to the sandbox as JSON: Converting circular structure to JSON[\s\S]*\./u,
+    ],
+    [
+      'a Set that contains itself',
+      { s: circularSet },
+      /^ValueError: odd\(\) returned a value that cannot be sent to the sandbox as JSON: Converting circular structure to JSON[\s\S]*\./u,
+    ],
+  ])('report %s as a result that cannot be sent, not as a tool error', async (_label, value, message) => {
+    const odd = tool({ inputSchema: z.object({}), execute: () => value })
+    const toolErrors: unknown[] = []
+    await using code = codeMode({
+      tools: { odd },
+      sandboxes: pool,
+      typeCheck: 'off',
+      limits: { toolCalls: 1 },
+      onToolError: (error) => {
+        toolErrors.push(error)
+        return undefined
+      },
+    })
+    const result = await runCode(code, { code: caught('odd()') })
+    expect(result).toMatch(message)
+    expect(result).toMatch(/The call ran, so do not repeat it to get the same result\.$/u)
+    expect(toolErrors).toEqual([])
+    // The call returned, so the summary must not say it may have applied a partial change.
+    const summary = await runCodeError(code, { code: 'try:\n    await odd()\nexcept ValueError:\n    pass\nawait odd()' })
+    expect(summary).toContain('- odd({}) returned <not JSON>')
+    expect(summary).not.toContain('partial change')
+  })
+
+  test('send a Map as a dict and a Set as a list', async () => {
+    const collections = tool({
+      inputSchema: z.object({}),
+      execute: () => ({
+        counts: new Map<unknown, unknown>([
+          ['a', 1],
+          [2, new Map([['nested', new Set([3])]])],
+        ]),
+        tags: new Set(['x', 'y']),
+      }),
+    })
+    await using code = codeMode({ tools: { collections }, sandboxes: pool, typeCheck: 'off' })
+    expect(await runCode(code, { code: 'r = await collections()\n[r["counts"]["a"], r["counts"]["2"]["nested"], r["tags"]]' })).toEqual([
+      1,
+      [3],
+      ['x', 'y'],
+    ])
+  })
+})
+
 describe('onToolError', () => {
   test('replaces the message before the sandbox, the model or a span sees it', async () => {
     const leaky = tool({

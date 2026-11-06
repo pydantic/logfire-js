@@ -36,6 +36,12 @@ const RUN_CODE = 'run_code'
 
 const TYPE_CHECK_HEADER = 'import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal'
 
+// The names the type-check header binds. A tool function with one of these names would replace the import, so
+// later signatures in the stubs and the prompt's `import asyncio` advice would refer to the tool.
+const HEADER_NAMES: ReadonlySet<string> = new Set(
+  TYPE_CHECK_HEADER.split('\n').flatMap((line) => line.replace(/^(?:from \S+ )?import /u, '').split(', '))
+)
+
 /**
  * Render the Python catalog and type-check stubs for AI SDK tools, as pydantic-ai CodeMode renders them for
  * its tools.
@@ -55,6 +61,11 @@ export function pythonFunctions(tools: ToolSet): { functions: PythonFunction[]; 
     const name = sanitizeToolName(toolName)
     if (name === RUN_CODE) {
       throw new Error(`Tool "${toolName}" becomes the Python function "${name}", which code mode reserves for itself. Rename the tool.`)
+    }
+    if (HEADER_NAMES.has(name)) {
+      throw new Error(
+        `Tool "${toolName}" becomes the Python function "${name}", which the type-check stubs import, so the function would replace that import. Rename the tool.`
+      )
     }
     const existing = seen.get(name)
     if (existing !== undefined) {
