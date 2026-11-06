@@ -21,5 +21,20 @@ console.log(await session.feedRun('sum([20, 21, 1])')) // 42
 `agentSandboxes()` resolves to a `MontyRemote` pool from `@pydantic/monty`, set up with your API key, region URL,
 and the trace context active at each checkout. It accepts every `MontyRemote` option, plus `apiKey` and `url`.
 
+An explicit `url` or `LOGFIRE_BASE_URL` must have no path, query, or fragment. Remove the old `/monty-ws/` path;
+the client selects its gRPC session path itself.
+
+The package exports these errors:
+
+- `AgentSandboxError`: the base class, also used for SDK configuration errors.
+- `AgentSandboxRefusedError`: a refused checkout, with `statusCode`, `statusMessage`, and `reason` fields, plus
+  Logfire hints for project access, API key configuration, and capacity when applicable.
+- `AgentSandboxConnectionError`: any other failure to create the pool or check out a session.
+
+Refusal and connection errors preserve the original error as the standard `Error.cause`. For a refusal, the original
+`MontyRefusedError` is on `cause`; its policy string is copied to the outer error's `reason`, not `cause`. Error
+messages start with **Agent Sandboxes**. Errors from operations on an already checked-out session pass through
+unchanged, including user-code errors, `MontyCrashedError`, `MontyDisconnectError`, and `MontyShutdown`.
+
 See the [Agent Sandboxes docs](https://github.com/pydantic/logfire-js/blob/main/docs/agent-sandboxes.md) for host
 functions, sessions, snapshots, and options.
