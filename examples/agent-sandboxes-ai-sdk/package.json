@@ -1,0 +1,31 @@
+{
+  "name": "@pydantic/logfire-agent-sandboxes-ai-sdk-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-strip-types --disable-warning=ExperimentalWarning index.ts",
+    "smoke": "node --experimental-strip-types --disable-warning=ExperimentalWarning smoke.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.0",
+    "@ai-sdk/otel": "^1.0.0",
+    "@pydantic/logfire-agent-sandboxes": "workspace:*",
+    "@pydantic/logfire-ai-sdk-code-mode": "workspace:*",
+    "@pydantic/logfire-node": "workspace:*",
+    "@pydantic/monty": "^1.4.0",
+    "ai": "^7.0.0",
+    "dotenv": "^16.4.7",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-sdk/provider": "^4.0.0",
+    "@opentelemetry/sdk-trace-base": "catalog:",
+    "@tsconfig/node22": "^22.0.0",
+    "@types/node": "^22.5.1",
+    "@types/ws": "^8.18.1",
+    "typescript": "catalog:",
+    "ws": "^8.22.0"
+  }
+}

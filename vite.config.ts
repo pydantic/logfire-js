@@ -3,7 +3,14 @@ import { dirname, join } from 'node:path'
 
 import { defineConfig } from 'vite-plus'
 
-const generatedFiles = ['**/dist/**', '**/.next/**', '**/next-env.d.ts', '**/worker-configuration.d.ts']
+const generatedFiles = [
+  '**/dist/**',
+  '**/.next/**',
+  '**/next-env.d.ts',
+  '**/worker-configuration.d.ts',
+  // Written by the code mode tests and fixture script, which must reproduce them byte for byte.
+  'packages/logfire-ai-sdk-code-mode/fixtures/signatures/**',
+]
 
 // Browser fixtures type their virtual recorder module through a sibling
 // ambient declaration that a check of only the staged files would not load.

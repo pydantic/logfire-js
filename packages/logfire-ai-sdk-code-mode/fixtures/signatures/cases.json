@@ -1,0 +1,1564 @@
+{
+  "no_parameters": [
+    {
+      "name": "get_time",
+      "description": "Get the current time.",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+  "scalars": [
+    {
+      "name": "scalars",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "ratio": {
+            "type": "number"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "nothing": {
+            "type": "null"
+          },
+          "anything": {}
+        },
+        "required": [
+          "text",
+          "count",
+          "nothing",
+          "anything"
+        ]
+      }
+    }
+  ],
+  "defaults": [
+    {
+      "name": "defaults",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "single_quote": {
+            "type": "string",
+            "default": "it's"
+          },
+          "double_quote": {
+            "type": "string",
+            "default": "say \"hi\""
+          },
+          "both_quotes": {
+            "type": "string",
+            "default": "it's \"both\""
+          },
+          "escapes": {
+            "type": "string",
+            "default": "tab\there\nnew\\line"
+          },
+          "unicode": {
+            "type": "string",
+            "default": "caf\u00e9 \u2028 \u0007"
+          },
+          "integer": {
+            "type": "integer",
+            "default": 10
+          },
+          "negative": {
+            "type": "number",
+            "default": -3.25
+          },
+          "half": {
+            "type": "number",
+            "default": 0.5
+          },
+          "small": {
+            "type": "number",
+            "default": 1e-05
+          },
+          "tiny": {
+            "type": "number",
+            "default": 1.5e-07
+          },
+          "huge": {
+            "type": "number",
+            "default": 1e+21
+          },
+          "flag": {
+            "type": "boolean",
+            "default": true
+          },
+          "nullable": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "items": {
+            "type": "array",
+            "default": [
+              1,
+              "a",
+              null,
+              false
+            ]
+          },
+          "mapping": {
+            "type": "object",
+            "default": {
+              "k": [
+                true,
+                2.5
+              ],
+              "it's": {}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "optional_parameters": [
+    {
+      "name": "optional_parameters",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "late_required": {
+            "type": "string"
+          },
+          "plain": {
+            "type": "string"
+          },
+          "any_of_null": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "one_of_null": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type_list_null": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "first_required": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "first_required",
+          "late_required"
+        ]
+      }
+    }
+  ],
+  "arrays_and_tuples": [
+    {
+      "name": "arrays",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pair": {
+            "type": "array",
+            "items": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "bare": {
+            "type": "array"
+          },
+          "empty_items": {
+            "type": "array",
+            "items": {}
+          },
+          "boolean_items": {
+            "type": "array",
+            "items": false
+          },
+          "matrix": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            }
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y"
+              ]
+            }
+          }
+        },
+        "required": [
+          "names",
+          "pair",
+          "bare",
+          "empty_items",
+          "boolean_items",
+          "matrix",
+          "points"
+        ]
+      }
+    }
+  ],
+  "objects_and_dicts": [
+    {
+      "name": "objects",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "object",
+            "description": "Where to send it.",
+            "properties": {
+              "street": {
+                "type": "string",
+                "description": "Street and number."
+              },
+              "zip": {
+                "type": "string"
+              },
+              "geo": {
+                "type": "object",
+                "properties": {
+                  "lat": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "lat"
+                ]
+              }
+            },
+            "required": [
+              "street"
+            ]
+          },
+          "titled": {
+            "type": "object",
+            "title": "Customer",
+            "properties": {
+              "id": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          },
+          "bad_title": {
+            "type": "object",
+            "title": "not a name",
+            "properties": {
+              "id": {
+                "type": "integer"
+              }
+            }
+          },
+          "empty": {
+            "type": "object",
+            "properties": {}
+          },
+          "scores": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "loose": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "closed": {
+            "type": "object",
+            "additionalProperties": false
+          },
+          "bare": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "address",
+          "titled",
+          "bad_title",
+          "empty",
+          "scores",
+          "loose",
+          "closed",
+          "bare"
+        ]
+      }
+    }
+  ],
+  "refs_and_recursion": [
+    {
+      "name": "save_tree",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "root": {
+            "$ref": "#/$defs/Node"
+          },
+          "label": {
+            "$ref": "#/$defs/Label"
+          },
+          "status": {
+            "$ref": "#/$defs/Status"
+          },
+          "json_value": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "required": [
+          "root",
+          "label",
+          "status",
+          "json_value"
+        ],
+        "$defs": {
+          "Node": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "children": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/Node"
+                }
+              },
+              "parent": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Node"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "children"
+            ]
+          },
+          "Label": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "Status": {
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "type": "string"
+          },
+          "JsonValue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/JsonValue"
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "inline_object_reuses_definition_name": [
+    {
+      "name": "tool",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "x"
+            ]
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "$defs": {
+          "ToolData": {
+            "type": "object",
+            "properties": {
+              "y": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "y"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "literals_and_enums": [
+    {
+      "name": "literals",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "const": "fast"
+          },
+          "level": {
+            "enum": [
+              "low",
+              "mid",
+              "high"
+            ]
+          },
+          "mixed": {
+            "enum": [
+              1,
+              "two",
+              null,
+              true,
+              2.5
+            ]
+          },
+          "quoted": {
+            "enum": [
+              "it's",
+              "a \"b\""
+            ]
+          }
+        },
+        "required": [
+          "mode",
+          "level",
+          "mixed",
+          "quoted"
+        ]
+      }
+    }
+  ],
+  "unions": [
+    {
+      "name": "unions",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "either": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "one": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "duplicates": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string",
+                "minLength": 2
+              }
+            ]
+          },
+          "single": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "type_list": {
+            "type": [
+              "string",
+              "integer",
+              "null"
+            ]
+          },
+          "object_or_null": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "a": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "a"
+            ]
+          },
+          "object_type_list": {
+            "type": [
+              "object",
+              "string"
+            ],
+            "properties": {
+              "b": {
+                "type": "integer"
+              }
+            }
+          },
+          "empty_type_list": {
+            "type": []
+          },
+          "all_of_one": {
+            "allOf": [
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "all_of_many": {
+            "allOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "minimum": 0
+              }
+            ]
+          },
+          "boolean_any_of": {
+            "anyOf": [
+              true,
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "either",
+          "one",
+          "duplicates",
+          "single",
+          "type_list",
+          "object_or_null",
+          "object_type_list",
+          "empty_type_list",
+          "all_of_one",
+          "all_of_many",
+          "boolean_any_of"
+        ]
+      }
+    }
+  ],
+  "descriptions": [
+    {
+      "name": "search",
+      "description": "Search the catalog.\n\nReturns matching items, best first.",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Use `\"\"\"exact\"\"\"` text or C:\\queries.\u0000"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "How many to return.\nAt most 50.",
+            "default": 10
+          },
+          "filters": {
+            "type": "object",
+            "description": "Narrow the results.\n\nAll filters must match.",
+            "properties": {
+              "tag": {
+                "type": "string",
+                "description": "One tag.\nCase sensitive."
+              }
+            }
+          },
+          "undocumented": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "required": [
+          "query",
+          "filters",
+          "undocumented"
+        ]
+      }
+    }
+  ],
+  "return_types": [
+    {
+      "name": "get_user",
+      "description": "Get a user.",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        }
+      },
+      "returnSchema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/$defs/User"
+          },
+          "address": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "count_users",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "returnSchema": {
+        "type": "integer"
+      }
+    },
+    {
+      "name": "list_names",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "returnSchema": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "digit_prefixed_names": [
+    {
+      "name": "_3d_render",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "scene": {
+            "type": "object",
+            "properties": {
+              "w": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "required": [
+          "scene"
+        ]
+      }
+    }
+  ],
+  "shared_identical_type": [
+    {
+      "name": "tool_a",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "tool_b",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "description": "Descriptions do not count.",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "conflicting_types": [
+    {
+      "name": "tool_a",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "tool_b",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/User"
+            }
+          }
+        },
+        "required": [
+          "users"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "shared_and_conflicting_types": [
+    {
+      "name": "tool_a",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "tool_b",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "tool_c",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "conflicting_type_inside_shared_type": [
+    {
+      "name": "tool_a",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "order": {
+            "$ref": "#/$defs/Order"
+          }
+        },
+        "required": [
+          "order"
+        ],
+        "$defs": {
+          "Order": {
+            "type": "object",
+            "properties": {
+              "user": {
+                "$ref": "#/$defs/User"
+              }
+            },
+            "required": [
+              "user"
+            ]
+          },
+          "User": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "tool_b",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "parameter_and_return_types_with_one_name": [
+    {
+      "name": "sync_user",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        }
+      },
+      "returnSchema": {
+        "$ref": "#/$defs/RetWrap",
+        "$defs": {
+          "RetWrap": {
+            "type": "object",
+            "properties": {
+              "user": {
+                "$ref": "#/$defs/User"
+              }
+            },
+            "required": [
+              "user"
+            ]
+          },
+          "User": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "inline_object_union": [
+    {
+      "name": "operate",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "read"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "path"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "write"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "path",
+                  "content"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "bucket": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "bucket",
+                  "key"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "operation",
+          "target"
+        ]
+      }
+    }
+  ],
+  "return_type_shared_with_parameter": [
+    {
+      "name": "a",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "u": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "u"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "b",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "u": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "u"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      },
+      "returnSchema": {
+        "$ref": "#/$defs/User",
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "c",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "u": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "u"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "nested_type_conflict": [
+    {
+      "name": "a",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "u": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "u"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "$ref": "#/$defs/Address"
+              }
+            },
+            "required": [
+              "address"
+            ]
+          },
+          "Address": {
+            "type": "object",
+            "properties": {
+              "street": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "street"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "b",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "u": {
+            "$ref": "#/$defs/User"
+          }
+        },
+        "required": [
+          "u"
+        ],
+        "$defs": {
+          "User": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "$ref": "#/$defs/Address"
+              }
+            },
+            "required": [
+              "address"
+            ]
+          },
+          "Address": {
+            "type": "object",
+            "properties": {
+              "zip": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "zip"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "alias_definition": [
+    {
+      "name": "t",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "$ref": "#/$defs/Indirect"
+          },
+          "owner": {
+            "$ref": "#/$defs/OwnerRef"
+          },
+          "loop": {
+            "$ref": "#/$defs/LoopA"
+          }
+        },
+        "required": [
+          "x",
+          "owner",
+          "loop"
+        ],
+        "$defs": {
+          "Indirect": {
+            "$ref": "#/$defs/PageLimit"
+          },
+          "PageLimit": {
+            "type": "integer"
+          },
+          "OwnerRef": {
+            "$ref": "#/$defs/Owner"
+          },
+          "Owner": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "LoopA": {
+            "$ref": "#/$defs/LoopB"
+          },
+          "LoopB": {
+            "$ref": "#/$defs/LoopA"
+          }
+        }
+      }
+    }
+  ],
+  "union_labels_with_one_class_name": [
+    {
+      "name": "t",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "read-file"
+                  },
+                  "a": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "a"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "read_file"
+                  },
+                  "b": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "b"
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "op"
+        ]
+      }
+    }
+  ],
+  "inline_objects_with_one_title": [
+    {
+      "name": "t",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "author": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "User"
+          },
+          "reviewer": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "title": "User"
+          },
+          "editor": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "User",
+            "description": "Same shape as author, so it reuses author's type."
+          }
+        },
+        "required": [
+          "author",
+          "reviewer",
+          "editor"
+        ]
+      }
+    }
+  ],
+  "inline_title_matches_later_definition": [
+    {
+      "name": "t",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "$ref": "#/$defs/A"
+          },
+          "b": {
+            "$ref": "#/$defs/B"
+          }
+        },
+        "required": [
+          "a",
+          "b"
+        ],
+        "$defs": {
+          "A": {
+            "type": "object",
+            "properties": {
+              "inner": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "x"
+                ],
+                "title": "B"
+              }
+            },
+            "required": [
+              "inner"
+            ]
+          },
+          "B": {
+            "type": "object",
+            "properties": {
+              "y": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "y"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

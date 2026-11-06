@@ -48,6 +48,28 @@ console.log(await session.feedRun('sum([20, 21, 1])')) // 42
 No connection is made until `pool.checkout()`, which gives you a session with its own sandbox. Variables and functions
 defined in one `feedRun()` call are available in later calls on the same session.
 
+`await using` is JavaScript's
+[explicit resource management](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/await_using),
+supported in Node.js 24 and TypeScript 5.2 and later. It works like Python's `async with`: when the enclosing block
+exits, normally or by an exception, JavaScript awaits the value's `Symbol.asyncDispose` method. For a session, that
+returns its sandbox to the pool. For the pool, it closes the pool. Values are disposed in reverse order, so the session
+closes before the pool. The `await` is for that cleanup, not for creating the value: `await agentSandboxes()` and
+`await pool.checkout()` are separate awaits on the right-hand side. Without `await using`, close them in `finally`:
+
+```ts
+const pool = await agentSandboxes()
+try {
+  const session = await pool.checkout()
+  try {
+    console.log(await session.feedRun('sum([20, 21, 1])'))
+  } finally {
+    await session.close()
+  }
+} finally {
+  await pool.close()
+}
+```
+
 ## Let sandbox code call your functions
 
 Pass your own functions in `externalLookup`. Sandbox code calls them by name, and each call runs in your application.
@@ -76,6 +98,86 @@ Sessions are saved by the server under `session.sessionId` when the connection c
 `pool.checkout({ ephemeral: true })`. To continue from saved state, call `session.loadSession(id)` on a new session.
 `session.dump()` returns a snapshot ID you can load the same way, and loading one ID in several sessions forks it into
 independent branches. Saved sessions and snapshots are kept for 7 days.
+
+## Use with the Vercel AI SDK
+
+An agent can write one Python program that calls its tools, instead of calling them one model turn at a time.
+`codeMode()` from `@pydantic/logfire-ai-sdk-code-mode` turns AI SDK tools into typed async Python functions in a sandbox
+session and gives the model one `run_code` tool to call them from. The package is not on npm yet.
+
+```ts
+import type { LanguageModel } from 'ai'
+
+import { codeMode } from '@pydantic/logfire-ai-sdk-code-mode'
+import { generateText, stepCountIs, tool } from 'ai'
+import { z } from 'zod'
+
+const getWeather = tool({
+  description: 'Get the weather for a city.',
+  inputSchema: z.object({ city: z.string() }),
+  outputSchema: z.object({ city: z.string(), forecast: z.string() }),
+  execute: async ({ city }) => ({ city, forecast: 'Sunny' }),
+})
+
+export async function askAgent(model: LanguageModel, prompt: string): Promise<string> {
+  await using code = codeMode({ tools: { get_weather: getWeather } })
+  const { text } = await generateText({
+    model,
+    prompt,
+    tools: code.tools,
+    // The default is one step, which ends the run before the model sees the result of run_code.
+    stopWhen: stepCountIs(10),
+  })
+  return text
+}
+```
+
+The model sees the tools only as Python signatures in the `run_code` description, so do not also pass them to
+`generateText`. Tools that should stay direct can be spread in next to `code.tools`. Give each tool an `outputSchema`,
+so the model knows what a call returns. Sandbox code chooses the arguments, so define tool schemas with zod 4.6.6 or
+later: earlier versions validate every element of an oversized array before checking its length
+([GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)).
+
+One `codeMode()` object is one sandbox session, kept like a REPL for every `run_code` call it serves, so create one per
+agent run. The session joins the trace that is active when you call `codeMode()`.
+
+`codeMode()` is synchronous and starts nothing: it checks out the session on the first `run_code` call, from
+`agentSandboxes()` unless you pass `sandboxes`. `await using code = codeMode(...)` only means that when `askAgent`
+returns or throws, JavaScript awaits `code[Symbol.asyncDispose]()`, which closes the session, and the pool too if
+`codeMode()` created it. It is the same as calling `await code.close()` in a `finally` block:
+
+```ts
+const code = codeMode({ tools: { get_weather: getWeather } })
+try {
+  const { text } = await generateText({ model, prompt, tools: code.tools, stopWhen: stepCountIs(10) })
+  return text
+} finally {
+  await code.close()
+}
+```
+
+With `streamText`, the function returns before the stream is read, so a block-scoped close would end the session too
+early. Call `code.closeWhenDone(result)` instead, which closes once the stream finishes, fails or is aborted. A session
+also ends after `idleTimeout` seconds without a call (default 300).
+
+Calling a tool from the sandbox skips the AI SDK's own approval and context handling, so `codeMode()` takes them as
+options:
+
+- `context`: each tool's context, keyed by tool name, as `toolsContext`.
+- `approval`: the same shape as `toolApproval`. A call that needs a person's approval fails, because nothing in the
+  sandbox can wait for one. Tools with `needsApproval` are rejected.
+- Sandbox code gets what `execute` returns, so a tool with `toModelOutput` is rejected rather than having its
+  filtering bypassed.
+- `limits`: a wall-clock `timeout` per snippet that includes time spent waiting on tools (default 30 seconds), and caps
+  on nested calls, concurrent calls, and the sizes of code, results and tool input and output.
+- `onToolError`: replaces a tool's error message before the sandbox, the model or a span sees it. Messages pass through
+  unchanged by default.
+
+If you pass your own `sandboxes`, set its `requestTimeout` above `limits.timeout`, so that a long snippet gets the
+time-limit message instead of a dropped connection. `codeMode()` does this for the pool it creates.
+
+[`examples/agent-sandboxes-ai-sdk`](https://github.com/pydantic/logfire-js/tree/main/examples/agent-sandboxes-ai-sdk)
+is a complete agent over a larger data set, with a smoke test.
 
 ## Tracing
 
