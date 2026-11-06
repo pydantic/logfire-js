@@ -101,6 +101,31 @@ describe('developer errors', () => {
     await code.closeWhenDone(result)
   })
 
+  /** The AI SDK streams tool results before model-output conversion, so infrastructure error details must not serialize to UI clients. */
+  test('keeps the original error out of UI message stream responses', async () => {
+    const secret = 'synthetic-private-configuration'
+    const error = new MontyRefusedError(secret, { statusCode: 'UNAUTHENTICATED', statusMessage: secret })
+    const checkout = vi.fn<Sandboxes['checkout']>().mockRejectedValue(error)
+    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() } })
+    const result = streamText({ model: callingModel(), prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })
+    const response = result.toUIMessageStreamResponse({ onError: () => 'The agent run failed.' })
+    const body = response.body
+    if (body === null) {
+      throw new Error('The UI response has no body')
+    }
+    const decoder = new TextDecoder()
+    let serialized = ''
+    const consume = async (): Promise<void> => {
+      for await (const chunk of body) {
+        serialized += decoder.decode(chunk)
+      }
+    }
+    await consume().catch(() => undefined)
+    expect(serialized).not.toContain(secret)
+    expect(serialized).toContain('"type":"tool-output-available","toolCallId":"call","output":{}')
+    await code.closeWhenDone(result)
+  })
+
   /** The default pool can fail before checkout, including both synchronous and asynchronous factory failures. */
   test.each(['throw', 'reject'] as const)('surfaces a pool factory %s without a model retry', async (failure) => {
     vi.stubEnv('LOGFIRE_API_KEY', 'synthetic-key')
@@ -429,6 +454,55 @@ describe('server shutdown', () => {
     })
     await expect(runCode(code, { code: 'await perform()' })).rejects.toBe(error)
     expect(action).toHaveBeenCalledTimes(1)
+    expect(counted.sessions).toHaveLength(1)
+  })
+
+  /** A callback waiting for approval has already reserved a call, and must be cancelled rather than duplicated by shutdown replay. */
+  test('does not replay or execute a tool waiting for approval', async () => {
+    let approve: (status: 'approved') => void = () => undefined
+    const approval = new Promise<'approved'>((resolve) => {
+      approve = resolve
+    })
+    let requested: () => void = () => undefined
+    const approvalRequested = new Promise<void>((resolve) => {
+      requested = resolve
+    })
+    const counted = new CountingSandboxes(pool)
+    const action = vi.fn<() => object>(() => ({}))
+    const perform = tool({ inputSchema: z.object({}), outputSchema: z.object({}), execute: action })
+    await using code = codeMode({
+      tools: { perform },
+      sandboxes: counted,
+      approval: async () => {
+        requested()
+        return await approval
+      },
+    })
+    await runCode(code, { code: '1' })
+    const error = new MontyShutdown('shutdown while waiting for approval')
+    let pending: Promise<unknown> = Promise.resolve()
+    const session = firstSession(counted)
+    const close = session.close.bind(session)
+    vi.spyOn(session, 'close').mockImplementationOnce(async () => {
+      await delay(50)
+      await close()
+    })
+    vi.spyOn(session, 'feedRun').mockImplementationOnce(async (_source, options) => {
+      const callback = options?.externalLookup?.['perform']
+      if (typeof callback !== 'function') {
+        throw new Error('No host callback for perform')
+      }
+      pending = (callback as () => Promise<unknown>)().catch((error: unknown) => error)
+      await approvalRequested
+      throw error
+    })
+    const failed = runCode(code, { code: 'await perform()' }).catch((error: unknown) => error)
+    await approvalRequested
+    await delay(20)
+    approve('approved')
+    expect(await failed).toBe(error)
+    await pending
+    expect(action).not.toHaveBeenCalled()
     expect(counted.sessions).toHaveLength(1)
   })
 })

@@ -25,7 +25,7 @@ Code mode closes a pool it creates. You must close a pool you pass in.
 Python errors reach the model with guidance it can act on. Sandbox configuration
 and infrastructure errors end the agent run with the original error instead.
 Capacity refusals get one retry after 100 ms. A server shutdown gets one replay
-on a fresh session if no host tool has started. Earlier snippets are not replayed.
+on a fresh session if no host tool has been requested. Earlier snippets are not replayed.
 
 With `streamText`, consume the stream and handle stream errors, then use
 `code.closeWhenDone(result)` to close the session. Do not replace the

@@ -1,3 +1,4 @@
+/** AI SDK agents use `codeMode` and `CodeModeOptions` to run tool-calling Python while keeping infrastructure failures out of model messages. */
 import type { Context } from '@opentelemetry/api'
 import type { MontySession, RemoteCheckoutOptions } from '@pydantic/monty'
 import type { JSONValue, Tool, ToolApprovalConfiguration, ToolExecutionOptions, ToolSet } from 'ai'
@@ -118,10 +119,14 @@ export function codeMode<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknown>(optio
 
 /** Carries a developer error past the AI SDK's tool-error catch to `toModelOutput`, which ends the run. */
 class SandboxFailure {
-  readonly error: unknown
+  readonly #error: unknown
 
   constructor(error: unknown) {
-    this.error = error
+    this.#error = error
+  }
+
+  get error(): unknown {
+    return this.#error
   }
 }
 
@@ -705,10 +710,11 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       throw new Error(ran + this.stoppedError(snippet, true).message)
     }
     if (!fed) {
-      if (feedError instanceof MontyShutdown && !replayed && snippet.calls.length === 0) {
+      if (feedError instanceof MontyShutdown && !replayed && snippet.callCount === 0) {
         await this.releaseSession()
         return this.feed(code, snippet, toolOptions, true)
       }
+      snippet.stop('finished')
       const failure = this.describeFailure(feedError, snippet)
       if (failure === undefined || failure.reset) {
         await this.releaseSession()

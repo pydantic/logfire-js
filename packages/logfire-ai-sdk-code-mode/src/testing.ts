@@ -1,4 +1,5 @@
 // Helpers shared by the codeMode tests. Not exported from the package.
+/** Tests use `runCode` to execute the AI SDK tool and output hooks, and `CountingSandboxes` to inspect session lifetimes. */
 import type { MontySession, RemoteCheckoutOptions } from '@pydantic/monty'
 import type { ToolExecutionOptions } from 'ai'
 

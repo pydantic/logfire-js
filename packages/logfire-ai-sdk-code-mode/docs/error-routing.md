@@ -13,7 +13,7 @@ These failures end the agent run. They do not become model tool errors:
 - Capacity refusals that still fail after one retry.
 - Disconnects without a recognized timeout cause, protocol failures, and other
   unclassified infrastructure failures during execution.
-- A second server shutdown, or a shutdown after a host tool has started.
+- A second server shutdown, or a shutdown after a host tool has been requested.
 
 Code mode preserves the original error object, including its status and cause.
 The `onToolError` option only replaces errors from your nested tools. It does not
@@ -29,6 +29,8 @@ model tool errors. Code mode uses an internal failure result and throws its
 original error from `run_code.toModelOutput`, outside that conversion. Pass
 `code.tools` to the AI SDK without replacing that hook. An adapter that executes
 tools itself must also invoke `toModelOutput` before it sends results to a model.
+The failure result stores the original error in a JavaScript private field.
+Only an opaque marker, not the error details, can be serialized into a UI stream.
 
 With `generateText`, catch the rejected call. With `streamText`, handle errors
 when you consume the stream and close code mode even if consumption fails:
@@ -89,8 +91,10 @@ Sessions are ephemeral. A replacement does not recover variables, imports, or
 definitions from earlier snippets. Code mode does not replay earlier snippets,
 which could repeat side effects. A successful replay returns its output under
 `result`, with a `sessionReset` message that tells the model to recreate state.
-If the replay has a code error, its message also explains the lost state.
+If the replay has a Python error, its message also explains the lost state.
 A shutdown can also occur while answering a
-host callback, after part of a snippet has run. If any host tool has started in
-the current snippet, code mode ends the run instead of replaying it. A second
+host callback, after part of a snippet has run. If any host tool has been requested in
+the current snippet, including a call waiting for validation, approval, or a free
+execution slot, code mode ends the run instead of replaying it. Pending callbacks
+are cancelled before the lost session is released. A second
 shutdown or a failed replacement checkout also ends the run.
