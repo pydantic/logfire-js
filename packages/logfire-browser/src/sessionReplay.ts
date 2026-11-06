@@ -1,5 +1,5 @@
 import { diag } from '@opentelemetry/api'
-import { warning } from 'logfire'
+import { ATTRIBUTES_SDK_INTERNAL_KEY, markSdkInternalError, warning } from 'logfire'
 
 import type { BrowserSessionManager, BrowserUser } from './browserSession'
 import type { BrowserMetricsOptions } from './browserMetrics'
@@ -201,7 +201,7 @@ export async function startBrowserSessionReplay(
     browserSessionManager.touch()
     const initialSessionId = browserSessionManager.peekSessionId()
     if (initialSessionId === undefined) {
-      throw new Error('logfire-browser: sessionReplay requires an active browser session id')
+      throw markSdkInternalError(new Error('logfire-browser: sessionReplay requires an active browser session id'))
     }
 
     const replayModule = await options.load()
@@ -307,6 +307,7 @@ function createReplayConfig(
     try {
       if (error instanceof Error && error.name === 'ReplayUploadError' && 'reason' in error && 'sessionId' in error && 'seq' in error) {
         warning('Session replay upload was not confirmed', {
+          [ATTRIBUTES_SDK_INTERNAL_KEY]: true,
           'replay.upload.reason': error.reason,
           'replay.recording_id': error.sessionId,
           'replay.chunk.seq': error.seq,

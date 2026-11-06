@@ -57,14 +57,19 @@ on a fresh session if no host tool has been requested. Earlier snippets are not 
 With `streamText`, consume the stream and handle stream errors, then use
 `code.closeWhenDone(result)` to close the session. Do not replace the
 `run_code.toModelOutput` hook: it keeps infrastructure failures out of model
-messages. Use `onSandboxError` for developer-side reporting: infrastructure
-failures reject stream iteration or abort UI responses without calling the AI
-SDK's `onError` callbacks. UI clients must treat `{ sandboxFailure: true }` as a
+messages. Pass an `onError` handler to `codeMode` for developer-side reporting.
+Code mode calls it directly with `{ error }` and awaits it once per failed run.
+You can pass the same handler to `streamText`. Infrastructure failures reject
+stream iteration or abort UI responses without the AI SDK calling its own
+`onError` callbacks. UI clients must treat `{ sandboxFailure: true }` as a
 failed call and read successful results from the `{ result: value }` transport
 envelope. Python dictionaries are nested inside that envelope, so they cannot
 be mistaken for failures. The model still receives the unwrapped value.
 Pass `code.tools` to `convertToModelMessages` when restoring saved
 UI messages so that this marker becomes generic failure text, not a success.
+
+Routing also recognizes errors wrapped through standard `Error.cause` chains,
+up to eight error objects. The developer receives the original outer error.
 
 See [error routing and recovery](https://github.com/pydantic/logfire-js/blob/main/packages/logfire-ai-sdk-code-mode/docs/error-routing.md)
 for the full error policy and streaming cleanup examples.

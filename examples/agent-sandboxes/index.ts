@@ -33,7 +33,8 @@ await logfire.span('agent sandboxes demo', {}, {}, async () => {
     await using fork = await pool.checkout()
     await fork.loadSession(base)
     await fork.feedRun(`items.append(${JSON.stringify(value)})`)
-    return fork.feedRun('repr(items)')
+    // Awaited here because `await using` disposes before a returned promise settles, which would close the fork mid-feed.
+    return await fork.feedRun('repr(items)')
   }
   console.log('forks:', await Promise.all([branch('a'), branch('b')]))
 })

@@ -26,6 +26,10 @@ const mutation: RrwebEvent = {
 }
 const REPLAY_UPLOAD_TIMEOUT_MS = 10_000
 
+function isBranded(error: unknown): boolean {
+  return (error as Record<symbol, unknown>)[Symbol.for('logfire.sdk.internal')] === true
+}
+
 function makeConfig(fetchImpl: typeof fetch): ResolvedSessionReplayConfig {
   return {
     replayUrl: 'https://app.example.com/replay-proxy',
@@ -965,6 +969,8 @@ describe('ReplayTransport retries', () => {
       expect(reported).toBeInstanceOf(ReplayUploadError)
       expect(reported).toMatchObject({ reason: 'unconfirmed', seq: 0 })
       expect((reported.cause as Error).message).toBe('replay upload timed out after 10000ms')
+      expect(isBranded(reported)).toBe(true)
+      expect(isBranded(reported.cause)).toBe(true)
     } finally {
       vi.useRealTimers()
     }
@@ -2449,6 +2455,7 @@ describe('ReplayTransport upload recovery', () => {
       await vi.advanceTimersByTimeAsync(0)
       expect(takeFullSnapshot).toHaveBeenCalledTimes(1)
       expect(onError).toHaveBeenLastCalledWith(expect.objectContaining({ message: 'replay resync snapshot produced no full snapshot' }))
+      expect(isBranded(onError.mock.lastCall?.[0])).toBe(true)
 
       await vi.advanceTimersByTimeAsync(59_999)
       expect(takeFullSnapshot).toHaveBeenCalledTimes(1)

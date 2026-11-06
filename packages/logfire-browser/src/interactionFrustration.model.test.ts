@@ -50,6 +50,7 @@ function apply(detector: InteractionFrustrationDetector, command: Step, now: num
 }
 
 describe('generated frustration histories', () => {
+  // 500 histories took 1.2s at a load of 50 on 18 cores. CI runners have far fewer cores to share.
   it('matches an independent deadline-ticket model after every action', () => {
     fc.assert(
       fc.property(fc.array(step, { minLength: 20, maxLength: 200 }), (commands) => {
@@ -61,6 +62,7 @@ describe('generated frustration histories', () => {
         // A ticket is the first click on a target; repeats neither extend nor replace it.
         // No rage/observer/timer implementation is reproduced in this model.
         let tickets: { click: FrustrationClick; count: number }[] = []
+        let verified = 0
         let now = 0
         const settle = (response: boolean) => {
           const due = tickets.filter(({ click }) => response || now >= click.now + 7000)
@@ -100,13 +102,17 @@ describe('generated frustration histories', () => {
             }
           }
           apply(detector, command, now)
-          expect(actual).toEqual(expected)
+          // Both histories only grow, and re-comparing all of them at every step was over 90%
+          // of this test's time. The comparison after the loop catches a signal changed later.
+          expect(actual.slice(verified)).toEqual(expected.slice(verified))
+          verified = actual.length
           expect(detector.nextDeadline).toBe(tickets.length === 0 ? undefined : Math.min(...tickets.map(({ click }) => click.now + 7000)))
         }
+        expect(actual).toEqual(expected)
       }),
       parameters
     )
-  })
+  }, 10_000)
 
   it('makes any pre-reset history observationally irrelevant to subsequent clicks', () => {
     fc.assert(

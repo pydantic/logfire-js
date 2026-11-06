@@ -2,10 +2,12 @@
  * @vitest-environment jsdom
  */
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-web'
+import { ReplayUploadError } from '@pydantic/logfire-session-replay'
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
 
 import { configure, Level, reportError } from './index'
 import type { LogfireConfigOptions } from './index'
+import { ACTIVE_CONFIGURATION_ERROR } from './providerLifecycle'
 
 vi.mock('@opentelemetry/exporter-trace-otlp-http', () => ({
   OTLPTraceExporter: class {
@@ -32,6 +34,54 @@ function start(options: Partial<LogfireConfigOptions> = {}): void {
   exporter = new InMemorySpanExporter()
   cleanup = configure({ spanProcessors: [new SimpleSpanProcessor(exporter)], traceUrl: '/client-traces', ...options })
 }
+
+describe('SDK-internal exception marking', () => {
+  it('marks an SDK failure that reaches global capture', async () => {
+    start()
+    const failure = catchError(() => configure({ traceUrl: '/second-configure' }))
+    expect(failure).toMatchObject({ message: ACTIVE_CONFIGURATION_ERROR })
+
+    window.dispatchEvent(new ErrorEvent('error', { error: failure, message: 'uncaught' }))
+    await nextTask()
+
+    expect(exporter.getFinishedSpans().map((span) => [span.name, span.attributes['logfire.sdk.internal']])).toEqual([
+      ['Uncaught error', true],
+    ])
+  })
+
+  it('marks a replay failure that the application reports from sessionReplay.onError', () => {
+    start()
+
+    reportError(
+      'Replay failed',
+      new ReplayUploadError({ cause: new Error('network down'), reason: 'unconfirmed', seq: 7, sessionId: 'recording' })
+    )
+
+    const [span] = exporter.getFinishedSpans()
+    expect(span?.attributes['exception.message']).toBe('replay chunk seq=7 unconfirmed: network down')
+    expect(span?.attributes['logfire.sdk.internal']).toBe(true)
+  })
+
+  it('does not mark application errors', async () => {
+    start()
+    const sdkFailure = catchError(() => configure({ traceUrl: '/second-configure' }))
+
+    dispatchRejection(new Error('rejected'))
+    await nextTask()
+    reportError('Application report', new Error('boom'))
+    reportError('Wrapped by the application', new Error('save failed', { cause: sdkFailure }))
+    reportError('Thrown string', 'boom')
+
+    const spans = exporter.getFinishedSpans()
+    expect(spans.map((span) => span.name)).toEqual([
+      'Unhandled promise rejection',
+      'Application report',
+      'Wrapped by the application',
+      'Thrown string',
+    ])
+    expect(spans.filter((span) => 'logfire.sdk.internal' in span.attributes)).toEqual([])
+  })
+})
 
 describe('browser global error capture', () => {
   it('reports an uncaught error after the event dispatch completes', async () => {
@@ -139,6 +189,15 @@ describe('browser global error capture', () => {
     expect(errorSpans()).toEqual([])
   })
 })
+
+function catchError(callback: () => unknown): unknown {
+  try {
+    callback()
+  } catch (error) {
+    return error
+  }
+  throw new Error('expected the callback to throw')
+}
 
 function errorSpans(): { level: unknown; message: unknown; name: string }[] {
   return exporter.getFinishedSpans().map((span) => ({

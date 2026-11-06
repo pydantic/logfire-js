@@ -9,6 +9,7 @@ import {
   ATTRIBUTES_MESSAGE_KEY,
   ATTRIBUTES_MESSAGE_TEMPLATE_KEY,
   ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY,
+  ATTRIBUTES_SDK_INTERNAL_KEY,
   ATTRIBUTES_SPAN_TYPE_KEY,
   ATTRIBUTES_TAGS_KEY,
   INVALID_SPAN_ID,
@@ -33,6 +34,7 @@ import defaultExport, {
   withTags,
 } from './index'
 import { isPendingSpanSuppressed } from './pendingSpanSuppression'
+import { isSdkInternalError, markSdkInternalError } from './sdkInternalError'
 
 const sleep = async (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -573,6 +575,29 @@ describe('span', () => {
     mocks.reset()
   })
 
+  test('marks the span when its callback throws an SDK error, but not an application error', () => {
+    const sdkFailure = markSdkInternalError(new Error('sdk failure'))
+    expect(() =>
+      span('configuring', {
+        callback: () => {
+          throw sdkFailure
+        },
+      })
+    ).toThrow(sdkFailure)
+    expect(spanMock.setAttribute).toHaveBeenCalledWith(ATTRIBUTES_SDK_INTERNAL_KEY, true)
+
+    spanMock.setAttribute.mockClear()
+    const applicationError = new Error('boom')
+    expect(() =>
+      span('working', {
+        callback: () => {
+          throw applicationError
+        },
+      })
+    ).toThrow(applicationError)
+    expect(spanMock.setAttribute).not.toHaveBeenCalledWith(ATTRIBUTES_SDK_INTERNAL_KEY, true)
+  })
+
   test('sync callback succeeds - span ends normally', () => {
     const result = span('test {x}', { attributes: { x: 1 }, callback: () => 'ok' })
 
@@ -970,6 +995,35 @@ describe('reportError', () => {
     }
 
     expect(reported).toEqual([error, 'plain string'])
+  })
+
+  test('marks an error that the SDK branded', () => {
+    reportError('Caught error', markSdkInternalError(new Error('sdk failure')))
+
+    expect(getStartSpanAttributes()[ATTRIBUTES_SDK_INTERNAL_KEY]).toBe(true)
+  })
+
+  test.each([
+    ['an application error', new Error('boom')],
+    ['an application error that wraps an SDK error', new Error('boom', { cause: markSdkInternalError(new Error('sdk failure')) })],
+    ['a thrown string', 'boom'],
+  ])('does not mark %s', (_name, error) => {
+    reportError('Caught error', error)
+
+    expect(getStartSpanAttributes()).not.toHaveProperty([ATTRIBUTES_SDK_INTERNAL_KEY])
+  })
+
+  test('treats an error whose brand cannot be read as unmarked', () => {
+    const hostile = new Proxy(new Error('boom'), {
+      get(target, key) {
+        if (typeof key === 'symbol') {
+          throw new Error('hostile getter')
+        }
+        return Reflect.get(target, key) as unknown
+      },
+    })
+
+    expect(isSdkInternalError(hostile)).toBe(false)
   })
 
   test('keeps reporting when onReportError throws', () => {

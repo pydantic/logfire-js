@@ -37,6 +37,8 @@ import {
   log,
   logfireApiConfig,
   LogfireAttributeScrubber,
+  isSdkInternalError,
+  markSdkInternalError,
   NoopAttributeScrubber,
   notice,
   readInjectedRelease,
@@ -326,7 +328,7 @@ export interface FrontendConfigOptions extends Omit<
  */
 export function configureFrontend(options: FrontendConfigOptions): BrowserConfigureHandle {
   if (options.token.length === 0) {
-    throw new Error('logfire-browser: frontend application token must not be empty')
+    throw markSdkInternalError(new Error('logfire-browser: frontend application token must not be empty'))
   }
 
   const frontendOrigin = (url: string, label: string): URL => {
@@ -334,7 +336,7 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
     try {
       origin = new URL(url)
     } catch (error) {
-      throw new Error(`logfire-browser: ${label} must be an HTTP(S) origin`, { cause: error })
+      throw markSdkInternalError(new Error(`logfire-browser: ${label} must be an HTTP(S) origin`, { cause: error }))
     }
     if (
       (origin.protocol !== 'https:' && origin.protocol !== 'http:') ||
@@ -344,7 +346,7 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
       origin.search !== '' ||
       origin.hash !== ''
     ) {
-      throw new Error(`logfire-browser: ${label} must be an HTTP(S) origin`)
+      throw markSdkInternalError(new Error(`logfire-browser: ${label} must be an HTTP(S) origin`))
     }
     return origin
   }
@@ -369,7 +371,7 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
   if (sessionReplay !== undefined && sessionReplay !== false) {
     const { destination, ...replayOptions } = sessionReplay
     if (destination !== undefined && (typeof destination.token !== 'string' || destination.token.length === 0)) {
-      throw new Error('logfire-browser: session replay frontend application token must not be empty')
+      throw markSdkInternalError(new Error('logfire-browser: session replay frontend application token must not be empty'))
     }
     const replayOrigin = destination ? frontendOrigin(destination.baseUrl, 'session replay frontend application baseUrl') : baseUrl
     replay = {
@@ -442,12 +444,12 @@ function resolveBrowserResourceTimingOptions(resourceTiming: unknown): BrowserRe
     return undefined
   }
   if (typeof resourceTiming !== 'object' || resourceTiming === null || Array.isArray(resourceTiming)) {
-    throw new Error('logfire-browser: resourceTiming must be an object')
+    throw markSdkInternalError(new Error('logfire-browser: resourceTiming must be an object'))
   }
 
   const detail = (resourceTiming as { detail?: unknown }).detail ?? 'summary'
   if (detail !== 'summary' && detail !== 'full') {
-    throw new Error('logfire-browser: resourceTiming.detail must be "summary" or "full"')
+    throw markSdkInternalError(new Error('logfire-browser: resourceTiming.detail must be "summary" or "full"'))
   }
   return { detail }
 }
@@ -458,7 +460,7 @@ function resolveBrowserMetricsOptions(metrics: LogfireConfigOptions['metrics']):
   }
 
   if (metrics.metricUrl === '') {
-    throw new Error('logfire-browser: metrics.metricUrl must be a non-empty browser-safe metrics URL')
+    throw markSdkInternalError(new Error('logfire-browser: metrics.metricUrl must be a non-empty browser-safe metrics URL'))
   }
 
   return metrics
@@ -497,12 +499,14 @@ function resolveBrowserSessionOptions(
 
   if (rum?.session === false) {
     if (sessionReplayRequiresSession) {
-      throw new Error(
-        'logfire-browser: sessionReplay requires browser session attributes; remove rum.session: false or disable sessionReplay'
+      throw markSdkInternalError(
+        new Error('logfire-browser: sessionReplay requires browser session attributes; remove rum.session: false or disable sessionReplay')
       )
     }
     const feature = frustrationEnabled ? 'rum.frustration' : webVitalsOptions === undefined ? 'rum.longAnimationFrames' : 'rum.webVitals'
-    throw new Error(`logfire-browser: ${feature} requires browser session attributes; remove rum.session: false or disable ${feature}`)
+    throw markSdkInternalError(
+      new Error(`logfire-browser: ${feature} requires browser session attributes; remove rum.session: false or disable ${feature}`)
+    )
   }
 
   return rum?.session ?? true
@@ -681,7 +685,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   const resourceTimingOptions = resolveBrowserResourceTimingOptions(options.resourceTiming)
   const webVitalsMetricOptions = resolveBrowserWebVitalsMetricOptions(webVitalsOptions)
   if (webVitalsMetricOptions !== undefined && browserMetricsOptions === undefined) {
-    throw new Error('logfire-browser: rum.webVitals.metrics requires top-level metrics.metricUrl')
+    throw markSdkInternalError(new Error('logfire-browser: rum.webVitals.metrics requires top-level metrics.metricUrl'))
   }
   const browserSessionOptions = resolveBrowserSessionOptions(options.rum, sessionReplayOptions)
   const capturesGlobalErrors = options.captureGlobalErrors !== false
@@ -1102,6 +1106,10 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
       }
 
       const cleanupError = firstCleanupError === undefined ? undefined : new Error(firstCleanupError.message, { cause: firstCleanupError })
+      // The wrapper repeats the message of a step that can run application code, such as a span processor.
+      if (cleanupError !== undefined && isSdkInternalError(firstCleanupError)) {
+        markSdkInternalError(cleanupError)
+      }
       settleProviderCleanup(generationToken, cleanupError)
       if (cleanupError !== undefined) {
         throw cleanupError

@@ -1,5 +1,6 @@
 /** Error routing requirements for AI SDK runs, using local Monty sessions and synthetic remote failures. */
 import type { MontySession } from '@pydantic/monty'
+import type { StreamTextOnErrorCallback } from 'ai'
 
 import { agentSandboxes } from '@pydantic/logfire-agent-sandboxes'
 import { Monty, MontyCrashedError, MontyDisconnectError, MontyRefusedError, MontyShutdown, ProtocolError } from '@pydantic/monty'
@@ -72,8 +73,8 @@ describe('developer errors', () => {
   test.each(developerErrors)('generateText surfaces checkout failure: %s', async (error) => {
     const checkout = vi.fn<Sandboxes['checkout']>().mockRejectedValue(error)
     const onToolError = vi.fn<() => undefined>()
-    const onSandboxError = vi.fn<(error: unknown) => void>()
-    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() }, onToolError, onSandboxError })
+    const onError = vi.fn<StreamTextOnErrorCallback>()
+    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() }, onToolError, onError })
     const model = callingModel()
     await expect(generateText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })).rejects.toBe(error)
     expect(model.doGenerateCalls).toHaveLength(1)
@@ -81,7 +82,7 @@ describe('developer errors', () => {
     expect(onToolError).not.toHaveBeenCalled()
     await expect(runCode(code, { code: '1' })).rejects.toBe(error)
     expect(checkout).toHaveBeenCalledTimes(1)
-    expect(onSandboxError.mock.calls).toEqual([[error]])
+    expect(onError.mock.calls).toEqual([[{ error }]])
   })
 
   /** Infrastructure failures reject stream iteration without an error part or AI SDK onError callback. */
@@ -106,14 +107,14 @@ describe('developer errors', () => {
   })
 
   /** UI routes abort without AI SDK error callbacks, so code mode must report the original error and serialize only a distinct marker. */
-  test('keeps the original error out of UI message stream responses', async () => {
+  test.each(['raw', 'wrapped'])('keeps the original %s error out of UI message stream responses', async (kind) => {
     const secret = 'synthetic-private-configuration'
-    const error = new MontyRefusedError(secret, { statusCode: 'UNAUTHENTICATED', statusMessage: secret })
+    const refusal = new MontyRefusedError(secret, { statusCode: 'UNAUTHENTICATED', statusMessage: secret })
+    const error = kind === 'raw' ? refusal : new Error('Agent Sandboxes connection failed', { cause: refusal })
     const checkout = vi.fn<Sandboxes['checkout']>().mockRejectedValue(error)
-    const onSandboxError = vi.fn<(error: unknown) => void>()
-    const onError = vi.fn<() => void>()
+    const onError = vi.fn<StreamTextOnErrorCallback>()
     const onUIError = vi.fn<() => string>(() => 'The agent run failed.')
-    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() }, onSandboxError })
+    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() }, onError })
     const result = streamText({ model: callingModel(), prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3), onError })
     const response = result.toUIMessageStreamResponse({ onError: onUIError })
     const body = response.body
@@ -128,8 +129,7 @@ describe('developer errors', () => {
       }
     }
     await expect(consume()).rejects.toBe(error)
-    expect(onSandboxError.mock.calls).toEqual([[error]])
-    expect(onError).not.toHaveBeenCalled()
+    expect(onError.mock.calls).toEqual([[{ error }]])
     expect(onUIError).not.toHaveBeenCalled()
     expect(serialized).not.toContain(secret)
     expect(serialized).toContain('"type":"tool-output-available","toolCallId":"call","output":{"sandboxFailure":true}')
@@ -144,7 +144,7 @@ describe('developer errors', () => {
       { sandboxFailure: true },
       {
         type: 'text',
-        value: 'Sandbox infrastructure failed. This call did not complete; a developer must fix the sandbox before a new run.',
+        value: 'Agent Sandboxes infrastructure failed. This call did not complete; a developer must fix the sandbox before a new run.',
       },
     ],
   ])('converts the saved UI output %j correctly', async (output, expected) => {
@@ -165,6 +165,7 @@ describe('developer errors', () => {
   test.each([
     ['{"sandboxFailure": True}', { sandboxFailure: true }],
     ['{"result": {"sandboxFailure": True}}', { result: { sandboxFailure: true } }],
+    ['{}', {}],
     ['None', {}],
     ['"done"', 'done'],
   ])('preserves successful Python output %s live and after UI persistence', async (source, expected) => {
@@ -198,14 +199,58 @@ describe('developer errors', () => {
   test('reports once even if the developer error handler throws', async () => {
     const error = new Error('synthetic dial failure')
     const checkout = vi.fn<Sandboxes['checkout']>().mockRejectedValue(error)
-    const onSandboxError = vi.fn<(error: unknown) => void>(() => {
+    const onError = vi.fn<StreamTextOnErrorCallback>(() => {
       throw new Error('synthetic logger failure')
     })
-    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() }, onSandboxError })
+    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() }, onError })
     await expect(runCode(code, { code: '1' })).rejects.toBe(error)
     await expect(runCode(code, { code: '1' })).rejects.toBe(error)
-    expect(onSandboxError.mock.calls).toEqual([[error]])
+    expect(onError.mock.calls).toEqual([[{ error }]])
     expect(checkout).toHaveBeenCalledTimes(1)
+  })
+
+  /** A shared asynchronous onError handler must finish before the run rejects, and queued calls must not report the same failure again. */
+  test('awaits onError and reports one event for queued failures', async () => {
+    const error = new Error('Agent Sandboxes connection failed')
+    const checkout = vi.fn<Sandboxes['checkout']>().mockRejectedValue(error)
+    let release!: () => void
+    const reported = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const onError = vi.fn<StreamTextOnErrorCallback>(async () => {
+      await reported
+    })
+    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() }, onError })
+    let settled = false
+    const failed = runCode(code, { code: '1' }).catch((failure: unknown) => {
+      settled = true
+      return failure
+    })
+    const queued = runCode(code, { code: '2' }).catch((failure: unknown) => failure)
+    await vi.waitFor(() => {
+      expect(onError.mock.calls).toEqual([[{ error }]])
+    })
+    expect(settled).toBe(false)
+    release()
+    expect(await failed).toBe(error)
+    expect(await queued).toBe(error)
+    expect(onError.mock.calls).toEqual([[{ error }]])
+    expect(checkout).toHaveBeenCalledTimes(1)
+  })
+
+  /** An async reporting failure must not replace the original error or become a model-visible tool error. */
+  test('preserves the original error when onError rejects', async () => {
+    const error = new Error('Agent Sandboxes connection failed')
+    const checkout = vi.fn<Sandboxes['checkout']>().mockRejectedValue(error)
+    const onError = vi.fn<StreamTextOnErrorCallback>(async () => {
+      await Promise.resolve()
+      throw new Error('Agent Sandboxes error reporting failed')
+    })
+    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() }, onError })
+    const model = callingModel()
+    await expect(generateText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })).rejects.toBe(error)
+    expect(onError.mock.calls).toEqual([[{ error }]])
+    expect(model.doGenerateCalls).toHaveLength(1)
   })
 
   /** Explicit close takes precedence over a latched infrastructure failure, as it does over normal execution. */
@@ -230,12 +275,12 @@ describe('developer errors', () => {
     } else {
       vi.mocked(agentSandboxes).mockRejectedValueOnce(error)
     }
-    const onSandboxError = vi.fn<(error: unknown) => void>()
-    await using code = codeMode({ tools: {}, onSandboxError })
+    const onError = vi.fn<StreamTextOnErrorCallback>()
+    await using code = codeMode({ tools: {}, onError })
     const model = callingModel()
     await expect(generateText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })).rejects.toBe(error)
     expect(model.doGenerateCalls).toHaveLength(1)
-    expect(onSandboxError.mock.calls).toEqual([[error]])
+    expect(onError.mock.calls).toEqual([[{ error }]])
   })
 
   /** Missing credentials already fail at construction, before the model can run. */
@@ -385,8 +430,8 @@ describe('feed failures', () => {
     [new MontyCrashedError('worker died'), 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'],
   ])('gives specific guidance for %s', async (error, message) => {
     const counted = new CountingSandboxes(pool)
-    const onSandboxError = vi.fn<(error: unknown) => void>()
-    await using code = codeMode({ tools: {}, sandboxes: counted, onSandboxError })
+    const onError = vi.fn<StreamTextOnErrorCallback>()
+    await using code = codeMode({ tools: {}, sandboxes: counted, onError })
     await runCode(code, { code: 'kept = 1' })
     const session = firstSession(counted)
     const close = vi.spyOn(session, 'close')
@@ -395,7 +440,7 @@ describe('feed failures', () => {
     expect(close).toHaveBeenCalledTimes(1)
     expect(await runCodeError(code, { code: 'kept' })).toMatch(/Name `kept` used when not defined/u)
     expect(counted.sessions).toHaveLength(2)
-    expect(onSandboxError).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
   })
 
   /** Unknown disconnects and protocol failures cannot be fixed by changing Python and must not reach the model. */
@@ -403,8 +448,8 @@ describe('feed failures', () => {
     'ends the run for %s',
     async (error) => {
       const counted = new CountingSandboxes(pool)
-      const onSandboxError = vi.fn<(error: unknown) => void>()
-      await using code = codeMode({ tools: {}, sandboxes: counted, onSandboxError })
+      const onError = vi.fn<StreamTextOnErrorCallback>()
+      await using code = codeMode({ tools: {}, sandboxes: counted, onError })
       await runCode(code, { code: '1' })
       const close = vi.spyOn(firstSession(counted), 'close')
       vi.spyOn(firstSession(counted), 'feedRun').mockRejectedValueOnce(error)
@@ -412,7 +457,7 @@ describe('feed failures', () => {
       await expect(generateText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })).rejects.toBe(error)
       expect(close).toHaveBeenCalledTimes(1)
       expect(model.doGenerateCalls).toHaveLength(1)
-      expect(onSandboxError.mock.calls).toEqual([[error]])
+      expect(onError.mock.calls).toEqual([[{ error }]])
     }
   )
 
@@ -589,7 +634,7 @@ describe('server shutdown', () => {
   })
 
   /** Shutdown can reject a resume after a host callback, so blindly replaying feedRun would duplicate side effects. */
-  test('does not replay a snippet after a tool has started', async () => {
+  test.each(['raw', 'wrapped'])('does not replay a snippet after a tool has started on %s shutdown', async (kind) => {
     const counted = new CountingSandboxes(pool)
     const action = vi.fn<() => object>(() => ({}))
     const perform = tool({ inputSchema: z.object({}), outputSchema: z.object({}), execute: action })
@@ -597,7 +642,8 @@ describe('server shutdown', () => {
     await runCode(code, { code: '1' })
     const session = firstSession(counted)
     const feedRun = session.feedRun.bind(session)
-    const error = new MontyShutdown('shutdown while answering a callback')
+    const shutdown = new MontyShutdown('Agent Sandboxes shutdown while answering a callback')
+    const error = kind === 'raw' ? shutdown : new Error('Agent Sandboxes request failed', { cause: shutdown })
     vi.spyOn(session, 'feedRun').mockImplementationOnce(async (source, options) => {
       await feedRun(source, options)
       throw error

@@ -1,13 +1,14 @@
-/** AI SDK agents use `codeMode` and `CodeModeOptions` to run tool-calling Python; `onSandboxError` reports infrastructure failures without exposing their details to models or UI streams. */
+/** AI SDK agents use `codeMode` and `CodeModeOptions` to run tool-calling Python; `onError` reports Agent Sandboxes failures without exposing their details to models or UI streams. */
 import type { Context } from '@opentelemetry/api'
 import type { MontySession, RemoteCheckoutOptions } from '@pydantic/monty'
-import type { JSONValue, Tool, ToolApprovalConfiguration, ToolExecutionOptions, ToolSet } from 'ai'
+import type { JSONValue, StreamTextOnErrorCallback, Tool, ToolApprovalConfiguration, ToolExecutionOptions, ToolSet } from 'ai'
 
 import { context as otelContext } from '@opentelemetry/api'
 import { agentSandboxes } from '@pydantic/logfire-agent-sandboxes'
 import {
   MontyCrashedError,
   MontyDisconnectError,
+  MontyError,
   MontyRefusedError,
   MontyRuntimeError,
   MontyShutdown,
@@ -82,10 +83,11 @@ export interface CodeModeOptions<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknow
    */
   onToolError?: (error: unknown, call: ToolErrorCall) => Error | string | undefined
   /**
-   * Reports the original sandbox infrastructure error once, including on UI streaming routes where AI SDK error
-   * callbacks do not run. This synchronous notification cannot replace the error; exceptions it throws are ignored.
+   * Reports the original Agent Sandboxes infrastructure error once, including on UI routes where the AI SDK does
+   * not call its own error handler. Uses the AI SDK's `{ error }` event shape so one handler can be passed to both.
+   * The handler is awaited; its exceptions cannot replace the original error.
    */
-  onSandboxError?: (error: unknown) => void
+  onError?: StreamTextOnErrorCallback
 }
 
 export interface RunCodeInput {
@@ -145,6 +147,17 @@ function pythonError(name: string, message: string): Error {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function findMontyError(error: unknown): MontyError | undefined {
+  let current = error
+  for (let depth = 0; depth < 8 && current instanceof Error; depth += 1) {
+    if (current instanceof MontyError) {
+      return current
+    }
+    current = current.cause
+  }
+  return undefined
 }
 
 // A schema error lists every failing element, so small arguments can produce megabytes of text (zod before 4.6.6
@@ -550,7 +563,8 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
           ) {
             return {
               type: 'text',
-              value: 'Sandbox infrastructure failed. This call did not complete; a developer must fix the sandbox before a new run.',
+              value:
+                'Agent Sandboxes infrastructure failed. This call did not complete; a developer must fix the sandbox before a new run.',
             }
           }
           const { result } = output as { result: unknown }
@@ -663,10 +677,10 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     }
   }
 
-  private failSandbox(error: unknown): SandboxFailure {
+  private async failSandbox(error: unknown): Promise<SandboxFailure> {
     this.failure = new SandboxFailure(error)
     try {
-      this.options.onSandboxError?.(error)
+      await this.options.onError?.({ error })
     } catch {
       return this.failure
     }
@@ -692,6 +706,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
 
     let value: unknown
     let feedError: unknown
+    let montyFailure: MontyError | undefined
     let fed = false
     let abandoned = false
     if (!replayed) {
@@ -722,8 +737,9 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       this.passedTypeCheck = true
     } else {
       feedError = outcome.error
+      montyFailure = findMontyError(feedError)
       // A snippet that failed at run time still passed type checking.
-      this.passedTypeCheck ||= !(feedError instanceof MontyTypingError || feedError instanceof MontySyntaxError)
+      this.passedTypeCheck ||= !(montyFailure instanceof MontyTypingError || montyFailure instanceof MontySyntaxError)
     }
 
     // Read again: the feed can stop the snippet, which the narrowing above does not see.
@@ -736,19 +752,19 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
         await this.releaseSession()
       }
       const ran =
-        feedError instanceof MontyRuntimeError
-          ? `Runtime error:\n${snippet.printed.prependTo(this.cut(feedError.display('traceback')))}\n\n`
+        montyFailure instanceof MontyRuntimeError
+          ? `Runtime error:\n${snippet.printed.prependTo(this.cut(montyFailure.display('traceback')))}\n\n`
           : ''
       throw new Error(ran + this.stoppedError(snippet, true).message)
     }
     if (!fed) {
-      if (feedError instanceof MontyShutdown && !replayed && snippet.callCount === 0) {
+      if (montyFailure instanceof MontyShutdown && !replayed && snippet.callCount === 0) {
         await this.releaseSession()
         snippet.printed = new PrintCapture(this.limits.outputBytes)
         return this.feed(code, snippet, toolOptions, true)
       }
       snippet.stop('finished')
-      const failure = this.describeFailure(feedError, snippet)
+      const failure = this.describeFailure(montyFailure, snippet)
       if (failure === undefined || failure.reset) {
         await this.releaseSession()
       }
@@ -791,7 +807,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
   }
 
   /** The message the model gets for a failed snippet, from pydantic-ai `CodeModeToolset._execute_code`. */
-  private describeFailure(error: unknown, snippet: Snippet): Failure | undefined {
+  private describeFailure(error: MontyError | undefined, snippet: Snippet): Failure | undefined {
     const { printed } = snippet
     if (error instanceof MontySyntaxError) {
       return { message: `Syntax error in code:\n${printed.prependTo(this.cut(error.display('traceback')))}`, reset: false }
@@ -1094,11 +1110,12 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       try {
         return await pool.checkout(options)
       } catch (error) {
+        const refusal = findMontyError(error)
         if (
-          !(error instanceof MontyRefusedError) ||
-          error.statusCode === 'UNAUTHENTICATED' ||
-          error.statusCode === 'PERMISSION_DENIED' ||
-          !['caller_cap', 'capacity', 'worker_unavailable'].some((cause) => cause === error.cause)
+          !(refusal instanceof MontyRefusedError) ||
+          refusal.statusCode === 'UNAUTHENTICATED' ||
+          refusal.statusCode === 'PERMISSION_DENIED' ||
+          !['caller_cap', 'capacity', 'worker_unavailable'].some((cause) => cause === refusal.cause)
         ) {
           throw error
         }

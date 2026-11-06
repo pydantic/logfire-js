@@ -164,6 +164,7 @@ function stackFromChildProcess(generated: string, enableSourceMaps: boolean): st
 }
 
 describe('enableSourceMaps in a Node process', () => {
+  // Each child process loads the whole SDK: 2.4s in total on CI and 4.6s on a machine with 4x more work than cores.
   it('rewrites Error.stack to the original source file and line', () => {
     // Node reports the resolved path, and the macOS temp directory is a symlink.
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'logfire-node-source-maps-')))
@@ -178,5 +179,5 @@ describe('enableSourceMaps in a Node process', () => {
     } finally {
       rmSync(root, { force: true, recursive: true })
     }
-  })
+  }, 20_000)
 })

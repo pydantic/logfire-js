@@ -5,6 +5,7 @@ import { MAX_RECORDING_DURATION_MS, RECORDING_STORAGE_KEY, RecordingIdentity } f
 import { claimRecordingLock, recordingLockManager } from './recordingLock'
 import type { RecordingLock } from './recordingLock'
 import { decideSamplingMode } from './sampling'
+import { markSdkInternalError } from './sdkInternalError'
 import { SequenceRecords, writableLocalStorage } from './sequenceRecord'
 import { snapshotSessionAttributes } from './sessionAttributes'
 import { safeSessionStorage, SessionManager } from './session'
@@ -248,7 +249,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
         heldLock = { recordingId: candidate.id, lock: result.lock }
         return { recordingId: candidate.id, sequenceRecord: bindSequenceRecord(lockCoordination, candidate.id, initialSeq) }
       }
-      safeReportError(resolvedConfig.onError, new Error('logfire session replay: could not claim a replay recording'))
+      safeReportError(resolvedConfig.onError, markSdkInternalError(new Error('logfire session replay: could not claim a replay recording')))
       return undefined
     }
 
@@ -743,15 +744,15 @@ function createActiveRuntime(options: {
 
 function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig {
   if (config.replayUrl.length === 0) {
-    throw new Error('logfire session replay: `replayUrl` is required')
+    throw markSdkInternalError(new Error('logfire session replay: `replayUrl` is required'))
   }
   const replayUrl = new URL(config.replayUrl, 'https://logfire.invalid/')
   if (replayUrl.search !== '' || replayUrl.hash !== '') {
-    throw new Error('logfire session replay: `replayUrl` must not contain a query or fragment')
+    throw markSdkInternalError(new Error('logfire session replay: `replayUrl` must not contain a query or fragment'))
   }
   const fetchImpl = config.fetchImpl ?? (typeof fetch === 'function' ? fetch.bind(globalThis) : undefined)
   if (fetchImpl === undefined) {
-    throw new Error('logfire session replay: no `fetch` available; pass `fetchImpl`')
+    throw markSdkInternalError(new Error('logfire session replay: no `fetch` available; pass `fetchImpl`'))
   }
 
   return {
@@ -930,7 +931,7 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
 function acquireControllerLease(): () => void {
   const target = globalThis as Record<PropertyKey, unknown>
   if (target[CONTROLLER_LEASE_KEY] !== undefined) {
-    throw new Error('logfire session replay: a replay controller is already active in this page')
+    throw markSdkInternalError(new Error('logfire session replay: a replay controller is already active in this page'))
   }
   const owner = {}
   Object.defineProperty(target, CONTROLLER_LEASE_KEY, {
