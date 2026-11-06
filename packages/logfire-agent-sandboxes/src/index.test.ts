@@ -4,12 +4,20 @@ import { Metadata, Server, ServerCredentials, status } from '@grpc/grpc-js'
 import { context, propagation, ROOT_CONTEXT, trace, TraceFlags } from '@opentelemetry/api'
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
 import { W3CTraceContextPropagator } from '@opentelemetry/core'
-import { MontyRefusedError } from '@pydantic/monty'
+import {
+  MontyCrashedError,
+  MontyDisconnectError,
+  MontyRefusedError,
+  MontyRuntimeError,
+  MontySession,
+  MontyShutdown,
+  MontySyntaxError,
+} from '@pydantic/monty'
 import { findMontyBinary } from '@pydantic/monty/node'
 import { spawn } from 'node:child_process'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { agentSandboxes } from './index'
+import { AgentSandboxConnectionError, AgentSandboxError, AgentSandboxRefusedError, agentSandboxes } from './index'
 
 interface SessionRequest {
   metadata: Record<string, string>
@@ -111,6 +119,7 @@ afterAll(() => {
 afterEach(() => {
   requests.length = 0
   refusal = undefined
+  vi.restoreAllMocks()
   vi.unstubAllEnvs()
 })
 
@@ -123,7 +132,7 @@ async function runOneSession(options: Parameters<typeof agentSandboxes>[0]): Pro
 }
 
 describe('agentSandboxes', () => {
-  /** Real gRPC statuses and policy trailers must reach callers as typed Monty refusals with actionable Logfire hints. */
+  /** Real gRPC refusals must expose service-facing fields while retaining the original typed Monty error as cause. */
   it.each([
     ['UNAUTHENTICATED', 'unauthenticated', 'unauthenticated'],
     ['PERMISSION_DENIED', 'permission denied', 'permission_denied'],
@@ -135,19 +144,44 @@ describe('agentSandboxes', () => {
     refusal = Object.assign(new Error(details), { code: status[statusCode], details, metadata })
     await using pool = await agentSandboxes({ apiKey: 'test-key', url: serverUrl })
     const error = await pool.checkout().catch((error: unknown) => error)
-    expect(error).toBeInstanceOf(MontyRefusedError)
-    expect(error).toMatchObject({ cause, statusCode, statusMessage: details })
-    expect((error as Error).message.split('\n\n')[0]).toBe(
-      `RuntimeError: failed to spawn monty worker: ${serverUrl}: ${statusCode}: ${details}`
-    )
-    expect((error as Error).message.includes('\n\nLogfire Agent Sandboxes: ')).toBe(true)
+    expect(error).toBeInstanceOf(AgentSandboxRefusedError)
+    expect(error).toMatchObject({ reason: cause, statusCode, statusMessage: details })
+    const inner = (error as Error).cause
+    expect(inner).toBeInstanceOf(MontyRefusedError)
+    expect(inner).toMatchObject({ cause, statusCode, statusMessage: details })
+    expect((error as Error).message.split('\n')[0]).toBe(`Agent Sandboxes refused the session: ${details}`)
+  })
+
+  /** Real transport failures must use the public connection class and retain the underlying dial error. */
+  it('wraps a failed local connection', async () => {
+    await using pool = await agentSandboxes({ apiKey: 'test-key', requestTimeout: 0.1, url: 'http://127.0.0.1:1' })
+    const error = await pool.checkout().catch((error: unknown) => error)
+    expect(error).toBeInstanceOf(AgentSandboxConnectionError)
+    expect((error as Error).cause).toBeInstanceOf(Error)
+    expect(requests).toEqual([])
+  })
+
+  /** Wrapping must stop at checkout: user-code errors and session lifecycle errors preserve their original identity. */
+  it.each([
+    new MontyRuntimeError('ValueError', 'invalid input'),
+    new MontySyntaxError('invalid syntax'),
+    new MontyCrashedError('worker crashed'),
+    new MontyDisconnectError('connection closed while waiting for a reply', { cause: 'capacity' }),
+    new MontyShutdown('server is shutting down'),
+  ])('does not wrap $name from a checked-out session', async (original) => {
+    vi.spyOn(MontySession.prototype, 'feedRun').mockRejectedValue(original)
+    await using pool = await agentSandboxes({ apiKey: 'test-key', url: serverUrl })
+    await using session = await pool.checkout()
+    await expect(session.feedRun('1 + 1')).rejects.toBe(original)
   })
 
   it('throws without an API key', async () => {
     vi.stubEnv('LOGFIRE_API_KEY', '')
     await expect(agentSandboxes()).rejects.toThrow(
-      'Agent sandboxes require a Logfire API key with the `project:execute_agent_sandboxes` scope. ' +
-        'Set the LOGFIRE_API_KEY environment variable or pass `apiKey` to `agentSandboxes()`.'
+      new AgentSandboxError(
+        'Agent Sandboxes require a Logfire API key with the `project:execute_agent_sandboxes` scope. ' +
+          'Set the LOGFIRE_API_KEY environment variable or pass `apiKey` to `agentSandboxes()`.'
+      )
     )
   })
 
@@ -171,7 +205,7 @@ describe('agentSandboxes', () => {
     'rejects %s in url and LOGFIRE_BASE_URL before connecting',
     async (suffix) => {
       vi.stubEnv('LOGFIRE_BASE_URL', `${serverUrl}${suffix}`)
-      const expected = new Error(
+      const expected = new AgentSandboxError(
         'Agent Sandboxes URL must use http://<host> or https://<host> with no path, query or fragment. ' +
           'Remove the old /monty-ws/ path from `url` or LOGFIRE_BASE_URL.'
       )
@@ -205,7 +239,7 @@ describe('agentSandboxes', () => {
   it('rejects both metadata and connectHeaders', async () => {
     await expect(
       agentSandboxes({ apiKey: 'option-key', connectHeaders: () => ({}), metadata: () => ({}), url: serverUrl })
-    ).rejects.toThrow(new TypeError('pass metadata, not connectHeaders as well'))
+    ).rejects.toThrow(new AgentSandboxError('Agent Sandboxes require `metadata`, not `connectHeaders` as well.'))
   })
 
   it('sends the trace context active at checkout', async () => {

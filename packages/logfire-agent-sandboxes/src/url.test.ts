@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { AgentSandboxError } from './errors'
 import { agentSandboxesUrl } from './url'
 
 describe('agentSandboxesUrl', () => {
@@ -36,7 +37,7 @@ describe('agentSandboxesUrl', () => {
     'https://logfire.example.com:invalid',
   ])('rejects %j with configuration advice', (url) => {
     expect(() => agentSandboxesUrl(url)).toThrow(
-      new Error(
+      new AgentSandboxError(
         'Agent Sandboxes URL must use http://<host> or https://<host> with no path, query or fragment. ' +
           'Remove the old /monty-ws/ path from `url` or LOGFIRE_BASE_URL.'
       )

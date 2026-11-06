@@ -1,7 +1,8 @@
 /**
  * Connects Node.js applications to Logfire Agent Sandboxes through Monty's remote pool.
  * `agentSandboxes` accepts `AgentSandboxesOptions`, adds authentication and tracing,
- * validates the server URL, and adds Logfire troubleshooting hints to checkout refusals.
+ * validates the server URL, and wraps connection and checkout failures in exported
+ * `AgentSandboxError` subclasses with their original errors as causes.
  */
 import type { MontyRemoteOptions } from '@pydantic/monty'
 
@@ -9,7 +10,10 @@ import { context, propagation } from '@opentelemetry/api'
 import { MontyRefusedError, MontyRemote } from '@pydantic/monty'
 import { resolveBaseUrl } from 'logfire'
 
+import { AgentSandboxConnectionError, AgentSandboxError, AgentSandboxRefusedError } from './errors'
 import { agentSandboxesUrl } from './url'
+
+export { AgentSandboxConnectionError, AgentSandboxError, AgentSandboxRefusedError } from './errors'
 
 export interface AgentSandboxesOptions extends MontyRemoteOptions {
   /**
@@ -39,8 +43,10 @@ type Metadata = () => Record<string, string> | Promise<Record<string, string>>
  *
  * No connection is made until a session is checked out. The current trace context is sent
  * with each checkout, so the spans Logfire records for the session join the caller's trace.
- * Checkout refusals keep their `MontyRefusedError` class and server details, with Logfire hints
- * for authentication, permissions, and capacity. Invalid URLs are rejected before checkout.
+ * Checkout refusals raise `AgentSandboxRefusedError`, and other connection or checkout failures
+ * raise `AgentSandboxConnectionError`. Both preserve the original error as `cause`. Refusals add
+ * Logfire hints for authentication, permissions, and capacity. Configuration failures raise
+ * `AgentSandboxError`. Operations on a checked-out session keep their original error types.
  *
  * Omitted pool options use the defaults of the installed `@pydantic/monty` version.
  * `metadata` results (or those of `connectHeaders`, its deprecated former name) are merged over
@@ -50,13 +56,13 @@ export async function agentSandboxes(options: AgentSandboxesOptions = {}): Promi
   const { apiKey: passedApiKey, connectHeaders, metadata: passedMetadata, url: passedUrl, ...poolOptions } = options
   const apiKey = [passedApiKey, process.env['LOGFIRE_API_KEY']].find((key) => key !== undefined && key !== '')
   if (apiKey === undefined) {
-    throw new Error(
-      'Agent sandboxes require a Logfire API key with the `project:execute_agent_sandboxes` scope. ' +
+    throw new AgentSandboxError(
+      'Agent Sandboxes require a Logfire API key with the `project:execute_agent_sandboxes` scope. ' +
         'Set the LOGFIRE_API_KEY environment variable or pass `apiKey` to `agentSandboxes()`.'
     )
   }
   if (passedMetadata !== undefined && connectHeaders !== undefined) {
-    throw new TypeError('pass metadata, not connectHeaders as well')
+    throw new AgentSandboxError('Agent Sandboxes require `metadata`, not `connectHeaders` as well.')
   }
   const userMetadata: Metadata | undefined = passedMetadata ?? connectHeaders
   const url = agentSandboxesUrl(passedUrl ?? resolveBaseUrl(process.env, undefined, apiKey))
@@ -70,39 +76,22 @@ export async function agentSandboxes(options: AgentSandboxesOptions = {}): Promi
     return userMetadata === undefined ? result : { ...result, ...lowercaseNames(await userMetadata()) }
   }
 
-  const pool = await MontyRemote.create(url, { ...poolOptions, metadata })
+  const pool = await MontyRemote.create(url, { ...poolOptions, metadata }).catch((error: unknown) => {
+    throw wrapError(url, error)
+  })
   const checkout = pool.checkout.bind(pool)
   pool.checkout = async (...args) => {
     try {
       return await checkout(...args)
     } catch (error) {
-      throw logfireRefusal(error)
+      throw wrapError(url, error)
     }
   }
   return pool
 }
 
-function logfireRefusal(error: unknown): unknown {
-  if (!(error instanceof MontyRefusedError)) {
-    return error
-  }
-  const hint =
-    error.statusCode === 'UNAUTHENTICATED' || error.statusCode === 'PERMISSION_DENIED'
-      ? 'Use a project API key (not a personal API key) with the `project:execute_agent_sandboxes` scope. ' +
-        "Check that the key's region matches the URL and that Agent Sandboxes are enabled for the project."
-      : error.cause === 'caller_cap'
-        ? 'Too many sessions are being opened at once. Lower `maxProcesses` or retry after a delay.'
-        : error.cause === 'capacity'
-          ? 'The service is at capacity. Retry after a delay.'
-          : undefined
-  if (hint === undefined) {
-    return error
-  }
-  return new MontyRefusedError(`${error.display('msg')}\n\nLogfire Agent Sandboxes: ${hint}`, {
-    ...(error.statusCode === null ? {} : { statusCode: error.statusCode }),
-    ...(error.statusMessage === null ? {} : { statusMessage: error.statusMessage }),
-    ...(error.cause === null ? {} : { cause: error.cause }),
-  })
+function wrapError(url: string, error: unknown): AgentSandboxError {
+  return error instanceof MontyRefusedError ? new AgentSandboxRefusedError(error) : new AgentSandboxConnectionError(url, error)
 }
 
 function lowercaseNames(record: Record<string, string>): Record<string, string> {
