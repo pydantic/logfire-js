@@ -1,48 +1,4 @@
 {
-  "shared_and_conflicting_types": {
-    "reason": "tool_a and tool_b share one User and tool_c has a different User. pydantic-ai prefixes each function's annotation with that function's own name (function_signature.py:272), but defines the shared type under its first owner (function_signature.py:438-444), so tool_b refers to tool_b_User, which is never defined.",
-    "expected": {
-      "typeDefinitions": [
-        "class tool_a_User(TypedDict):\n    name: str",
-        "class tool_c_User(TypedDict):\n    id: int"
-      ],
-      "functions": [
-        "async def tool_a(*, user: tool_a_User) -> Any:\n    ...",
-        "async def tool_b(*, user: tool_a_User) -> Any:\n    ...",
-        "async def tool_c(*, user: tool_c_User) -> Any:\n    ..."
-      ],
-      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass tool_a_User(TypedDict):\n    name: str\n\nclass tool_c_User(TypedDict):\n    id: int\n\nasync def tool_a(*, user: tool_a_User) -> Any:\n    raise NotImplementedError()\n\nasync def tool_b(*, user: tool_a_User) -> Any:\n    raise NotImplementedError()\n\nasync def tool_c(*, user: tool_c_User) -> Any:\n    raise NotImplementedError()"
-    }
-  },
-  "conflicting_type_inside_shared_type": {
-    "reason": "Order does not conflict, so pydantic-ai renders it with no prefixes (function_signature.py:171-178), and its user field names a bare User. Only tool_a_User and tool_b_User are defined.",
-    "expected": {
-      "typeDefinitions": [
-        "class Order(TypedDict):\n    user: tool_a_User",
-        "class tool_a_User(TypedDict):\n    name: str",
-        "class tool_b_User(TypedDict):\n    id: int"
-      ],
-      "functions": [
-        "async def tool_a(*, order: Order) -> Any:\n    ...",
-        "async def tool_b(*, user: tool_b_User) -> Any:\n    ..."
-      ],
-      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass Order(TypedDict):\n    user: tool_a_User\n\nclass tool_a_User(TypedDict):\n    name: str\n\nclass tool_b_User(TypedDict):\n    id: int\n\nasync def tool_a(*, order: Order) -> Any:\n    raise NotImplementedError()\n\nasync def tool_b(*, user: tool_b_User) -> Any:\n    raise NotImplementedError()"
-    }
-  },
-  "parameter_and_return_types_with_one_name": {
-    "reason": "One tool's parameters and return type each define a different User (pydantic/pydantic-ai#8816, case 1). pydantic-ai names both sync_user_User, so two classes share one name and the second replaces the first, and the non-conflicting RetWrap refers to a bare User that is never defined.",
-    "expected": {
-      "typeDefinitions": [
-        "class sync_user_User(TypedDict):\n    id: int",
-        "class RetWrap(TypedDict):\n    user: sync_user_User_2",
-        "class sync_user_User_2(TypedDict):\n    name: str"
-      ],
-      "functions": [
-        "async def sync_user(*, user: sync_user_User) -> RetWrap:\n    ..."
-      ],
-      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass sync_user_User(TypedDict):\n    id: int\n\nclass RetWrap(TypedDict):\n    user: sync_user_User_2\n\nclass sync_user_User_2(TypedDict):\n    name: str\n\nasync def sync_user(*, user: sync_user_User) -> RetWrap:\n    raise NotImplementedError()"
-    }
-  },
   "inline_object_union": {
     "kind": "wrong-types",
     "reason": "Every branch of a union shares the union's path, so pydantic-ai names each inline object branch the same and keeps only the first: the write variant and its content field disappear. Each branch is named after its const discriminator, or its position when there is none.",
@@ -57,38 +13,6 @@
         "async def operate(*, operation: OperateOperationRead | OperateOperationWrite, target: OperateTarget_1 | OperateTarget_2 | None) -> Any:\n    ..."
       ],
       "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass OperateOperationRead(TypedDict):\n    kind: Literal['read']\n    path: str\n\nclass OperateOperationWrite(TypedDict):\n    kind: Literal['write']\n    path: str\n    content: str\n\nclass OperateTarget_1(TypedDict):\n    url: str\n\nclass OperateTarget_2(TypedDict):\n    bucket: str\n    key: str\n\nasync def operate(*, operation: OperateOperationRead | OperateOperationWrite, target: OperateTarget_1 | OperateTarget_2 | None) -> Any:\n    raise NotImplementedError()"
-    }
-  },
-  "return_type_shared_with_parameter": {
-    "reason": "b's return type is identical to its parameter type, so pydantic-ai drops the duplicate (function_signature.py:354-361) but the return annotation still points at it. With User conflicting across tools, b is annotated -> b_User, which is never defined.",
-    "expected": {
-      "typeDefinitions": [
-        "class a_User(TypedDict):\n    name: str",
-        "class c_User(TypedDict):\n    id: int"
-      ],
-      "functions": [
-        "async def a(*, u: a_User) -> Any:\n    ...",
-        "async def b(*, u: a_User) -> a_User:\n    ...",
-        "async def c(*, u: c_User) -> Any:\n    ..."
-      ],
-      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass a_User(TypedDict):\n    name: str\n\nclass c_User(TypedDict):\n    id: int\n\nasync def a(*, u: a_User) -> Any:\n    raise NotImplementedError()\n\nasync def b(*, u: a_User) -> a_User:\n    raise NotImplementedError()\n\nasync def c(*, u: c_User) -> Any:\n    raise NotImplementedError()"
-    }
-  },
-  "nested_type_conflict": {
-    "kind": "wrong-types",
-    "reason": "pydantic-ai compares field types by rendered name (function_signature.py:193-203), so both Users look equal although their Address types differ, and b's User replaces a's: b ends up taking a street where its schema has a zip.",
-    "expected": {
-      "typeDefinitions": [
-        "class a_User(TypedDict):\n    address: a_Address",
-        "class a_Address(TypedDict):\n    street: str",
-        "class b_User(TypedDict):\n    address: b_Address",
-        "class b_Address(TypedDict):\n    zip: int"
-      ],
-      "functions": [
-        "async def a(*, u: a_User) -> Any:\n    ...",
-        "async def b(*, u: b_User) -> Any:\n    ..."
-      ],
-      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass a_User(TypedDict):\n    address: a_Address\n\nclass a_Address(TypedDict):\n    street: str\n\nclass b_User(TypedDict):\n    address: b_Address\n\nclass b_Address(TypedDict):\n    zip: int\n\nasync def a(*, u: a_User) -> Any:\n    raise NotImplementedError()\n\nasync def b(*, u: b_User) -> Any:\n    raise NotImplementedError()"
     }
   },
   "alias_definition": {

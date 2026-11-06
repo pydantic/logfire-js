@@ -1,19 +1,12 @@
 // A port of pydantic-ai's `pydantic_ai_slim/pydantic_ai/function_signature.py`. Names and structure follow the
 // Python module so that a change upstream maps to a change here; `fixtures/signatures/expected.json` records the
-// pydantic-ai commit it matches. The one deliberate difference is marked `Parity exception` below.
+// pydantic-ai commit it matches. Each deliberate difference is marked `Parity exception` where it applies, and
+// `fixtures/signatures/parity-exceptions.json` holds a case for each one.
 //
-// Parity exception: pydantic-ai resolves conflicting types by name, prefixed with whatever is being rendered,
-// the function or the definition (pydantic/pydantic-ai#8816). So a type shared with an earlier tool is
-// annotated with a name that is never defined; a definition that is not itself conflicting renders
-// conflicting field types with no prefix; and one tool that defines two different types with the same name
-// emits two classes under one name, the second replacing the first. Here each conflicting type object gets its
-// own name, prefixed with its owner (the first signature that references it) and numbered when that is taken.
-// This matches pydantic-ai whenever its output is valid.
-//
-// Three more differences, each marked where it applies, fix output that is valid Python but has the wrong
-// types: structural equality, return types that duplicate a parameter type, and unions of inline objects.
+// Each conflicting type object gets its own name, prefixed with its owner (the first signature that references
+// it) and numbered when that is taken, as pydantic-ai does.
 
-import { pyIsIdentifier, pyRepr } from './python'
+import { pyIsIdentifier, pyIsKeyword, pyIsName, pyRepr } from './python'
 
 export type JsonSchema = Record<string, unknown>
 
@@ -106,8 +99,14 @@ const PY_STRIP = new RegExp(`^[${PY_WHITESPACE}]+|[${PY_WHITESPACE}]+$`, 'gu')
 // eslint-disable-next-line no-control-regex -- these are the separators str.splitlines() splits on
 const PY_LINE_BREAK = /\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/u
 
+const PY_RSTRIP = new RegExp(`[${PY_WHITESPACE}]+$`, 'u')
+
 function pyStrip(text: string): string {
   return text.replace(PY_STRIP, '')
+}
+
+function pyRstrip(text: string): string {
+  return text.replace(PY_RSTRIP, '')
 }
 
 function pySplitLines(text: string): string[] {
@@ -136,6 +135,24 @@ function renderDescription(text: string, indent = ''): string[] {
   return [`${indent}"""${escaped}"""`]
 }
 
+/** pydantic-ai `_to_python_identifier`: `from` becomes `from_`, `user-id` becomes `user_id`. */
+export function toPythonIdentifier(name: string): string {
+  let sanitized = name.replace(/[^a-zA-Z0-9_]/gu, '_')
+  if (/^[0-9]/u.test(sanitized)) {
+    sanitized = `_${sanitized}`
+  }
+  if (pyIsKeyword(sanitized)) {
+    sanitized = `${sanitized}_`
+  }
+  return sanitized || '_'
+}
+
+/** Render a description as indented `#` comment lines. */
+function renderComment(text: string, indent = ''): string[] {
+  // compile() rejects null bytes anywhere in the source, comments included.
+  return pySplitLines(pyStrip(text).replace(/\0/gu, '\\x00')).map((line) => pyRstrip(`${indent}# ${line}`))
+}
+
 export class TypeFieldSignature {
   readonly kind = 'field'
   readonly name: string
@@ -151,16 +168,25 @@ export class TypeFieldSignature {
   }
 
   toString(): string {
-    let typeStr = String(this.type)
-    if (!this.required) {
-      typeStr = `NotRequired[${typeStr}]`
-    }
-    const lines = [`    ${this.name}: ${typeStr}`]
+    const lines = [`    ${this.name}: ${fieldAnnotation(this)}`]
     if (nonEmpty(this.description)) {
       lines.push(...renderDescription(this.description, '    '))
     }
     return lines.join('\n')
   }
+}
+
+function fieldAnnotation(f: TypeFieldSignature): string {
+  const typeStr = String(f.type)
+  return f.required ? typeStr : `NotRequired[${typeStr}]`
+}
+
+// An entry of a functional `TypedDict(...)` definition's field dict. The key keeps the schema name, quoted. A
+// description cannot follow the entry as a docstring, so it goes in a comment above it.
+function renderFunctionalField(f: TypeFieldSignature): string {
+  const lines = nonEmpty(f.description) ? renderComment(f.description, '    ') : []
+  lines.push(`    ${pyRepr(f.name)}: ${fieldAnnotation(f)},`)
+  return lines.join('\n')
 }
 
 export class TypeSignature {
@@ -200,6 +226,9 @@ export class TypeSignature {
   }
 
   private renderDefinitionBody(): string {
+    if (![...this.fields.keys()].every(pyIsName)) {
+      return this.renderFunctionalDefinition()
+    }
     const lines = [`class ${this.displayName}(TypedDict):`]
     if (nonEmpty(this.description)) {
       lines.push(...renderDescription(this.description, '    '))
@@ -216,14 +245,23 @@ export class TypeSignature {
     return lines.join('\n')
   }
 
+  // The class syntax cannot declare a field that is a Python keyword (`from`) or not an identifier (`@type`).
+  // The sandbox sees such an object as a `dict`, so the keys keep their schema names.
+  private renderFunctionalDefinition(): string {
+    const lines = nonEmpty(this.description) ? renderComment(this.description) : []
+    lines.push(`${this.displayName} = TypedDict(${pyRepr(this.displayName)}, {`)
+    lines.push(...[...this.fields.values()].map(renderFunctionalField))
+    lines.push('})')
+    return lines.join('\n')
+  }
+
   structurallyEqual(other: TypeSignature): boolean {
     return fieldsEqual(this, other, new Map())
   }
 }
 
-// Parity exception: pydantic-ai compares field types by their rendered names, so two `User`s whose `address`
-// fields point at different `Address` shapes count as equal, and one tool's `User` replaces the other's. Field
-// types are compared by structure here. `assumed` holds pairs already being compared, so recursion stops.
+// Field types are compared by structure, so two `User`s whose `address` fields point at different `Address` shapes
+// are different types. `assumed` holds pairs already being compared, so recursion stops.
 type AssumedEqual = Map<TypeSignature, Set<TypeSignature>>
 
 function fieldsEqual(a: TypeSignature, b: TypeSignature, assumed: AssumedEqual): boolean {
@@ -268,6 +306,10 @@ function listsEqual(a: TypeExpr[], b: TypeExpr[], assumed: AssumedEqual): boolea
 
 export class FunctionParam {
   readonly kind = 'param'
+  /**
+   * The Python identifier the parameter renders as. It differs from its key in `FunctionSignature.params`, the
+   * JSON Schema property name, when that name is a Python keyword or not an identifier: `from` renders as `from_`.
+   */
   readonly name: string
   type: TypeExpr
   readonly defaultValue: string | undefined
@@ -298,6 +340,7 @@ export interface RenderOptions {
 export class FunctionSignature {
   readonly kind = 'function'
   readonly name: string
+  /** Parameters keyed by JSON Schema property name, all rendered as keyword-only. */
   params: Map<string, FunctionParam>
   returnType: TypeExpr
   referencedTypes: TypeSignature[]
@@ -390,8 +433,7 @@ export class FunctionSignature {
       }
       allReferenced.push(retType)
     }
-    // Parity exception: pydantic-ai drops the duplicate but keeps references to it, so a return annotation names
-    // a type that gets no definition of its own and no prefix of its own when the name conflicts.
+    // References to a dropped duplicate move to the type that replaces it, so every annotation names a defined type.
     resolvedReturnType = replaceInExpr(resolvedReturnType, duplicates)
     for (const typeSig of allReferenced) {
       for (const f of typeSig.fields.values()) {
@@ -571,25 +613,53 @@ function buildParamsFromSchema(
   toolName: string
 ): Map<string, FunctionParam> {
   const required = schemaRequired(schema)
+  const properties = schemaProperties(schema)
+  const paramNames = pythonParamNames(Object.keys(properties))
   const requiredParams = new Map<string, FunctionParam>()
   const optionalParams = new Map<string, FunctionParam>()
 
-  for (const [propName, propSchemaRaw] of Object.entries(schemaProperties(schema))) {
+  for (const [propName, propSchemaRaw] of Object.entries(properties)) {
     const propSchema = normalizeSchemaNode(propSchemaRaw)
     const typeExpr = schemaToTypeExpr(propSchema, defs, referencedTypes, toolName, propName)
     const description = optionalText(propSchema['description'])
+    const paramName = paramNames.get(propName) ?? propName
 
     if ('default' in propSchema) {
-      optionalParams.set(propName, new FunctionParam(propName, typeExpr, pyRepr(propSchema['default']), description))
+      optionalParams.set(propName, new FunctionParam(paramName, typeExpr, pyRepr(propSchema['default']), description))
     } else if (required.has(propName)) {
-      requiredParams.set(propName, new FunctionParam(propName, typeExpr, undefined, description))
+      requiredParams.set(propName, new FunctionParam(paramName, typeExpr, undefined, description))
     } else if (schemaAllowsNull(propSchema)) {
-      optionalParams.set(propName, new FunctionParam(propName, typeExpr, 'None', description))
+      optionalParams.set(propName, new FunctionParam(paramName, typeExpr, 'None', description))
     } else {
-      optionalParams.set(propName, new FunctionParam(propName, new UnionTypeExpr([typeExpr, NONE]), 'None', description))
+      optionalParams.set(propName, new FunctionParam(paramName, new UnionTypeExpr([typeExpr, NONE]), 'None', description))
     }
   }
   return new Map([...requiredParams, ...optionalParams])
+}
+
+/**
+ * pydantic-ai `_python_param_names`: the Python identifier each schema property name renders as. A valid name
+ * keeps it. Any other name goes through `toPythonIdentifier`, and then gets a number (`user_id_2`, `user_id_3`)
+ * if another parameter already has that name.
+ */
+export function pythonParamNames(propertyNames: Iterable<string>): Map<string, string> {
+  const names = [...propertyNames]
+  const taken = new Set(names.filter(pyIsName))
+  const paramNames = new Map<string, string>()
+  for (const name of names) {
+    if (pyIsName(name)) {
+      paramNames.set(name, name)
+      continue
+    }
+    const base = toPythonIdentifier(name)
+    let paramName = base
+    for (let suffix = 2; taken.has(paramName); suffix++) {
+      paramName = `${base}_${String(suffix)}`
+    }
+    taken.add(paramName)
+    paramNames.set(name, paramName)
+  }
+  return paramNames
 }
 
 function schemaAllowsNull(schema: JsonSchema): boolean {

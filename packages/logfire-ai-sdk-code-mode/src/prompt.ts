@@ -1,4 +1,4 @@
-// Ported word for word from pydantic-ai CodeMode at commit 7d1d3f0191fd5d500b02e58dee2bf6d7adc1b967,
+// Ported word for word from pydantic-ai CodeMode at commit abd4293f14d0d1923389e5358445144243c4c650,
 // src/pydantic_ai_harness/pydantic_ai_harness/code_mode/_toolset.py and _parts.py. The parity test compares the
 // rendered description with pydantic-ai's own, so copy changes from there rather than editing here.
 

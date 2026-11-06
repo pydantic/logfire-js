@@ -145,6 +145,15 @@ function keywordArguments(name: string, args: unknown[], maxBytes: number): Reco
   }
 }
 
+// Port of pydantic-ai `schema_arg_names`. A schema property such as `from` or `user-id` renders as the parameter
+// `from_` or `user_id`, which sandbox code passes as a keyword argument. The tool expects the schema name.
+function schemaArgNames(kwargs: Record<string, unknown>, renamed: ReadonlyMap<string, string> | undefined): Record<string, unknown> {
+  if (renamed === undefined) {
+    return kwargs
+  }
+  return Object.fromEntries(Object.entries(kwargs).map(([key, value]) => [renamed.get(key) ?? key, value]))
+}
+
 function toolInputTooLarge(name: string, maxBytes: number): string {
   return `The arguments to ${name}() are more than ${String(maxBytes)} bytes of JSON, over the limit for one call.`
 }
@@ -388,6 +397,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
   private readonly limits: ResolvedLimits
   private readonly idleTimeout: number
   private readonly pythonNames: Map<string, string>
+  private readonly schemaArgNames: ReadonlyMap<string, ReadonlyMap<string, string>>
   private readonly typeCheckStubs: string
   private queue: Promise<unknown> = Promise.resolve()
   private poolPromise: Promise<Sandboxes> | undefined
@@ -438,6 +448,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
 
     const stubs = toolStubs(tools)
     this.typeCheckStubs = stubs.typeCheckStubs
+    this.schemaArgNames = stubs.schemaArgNames
     this.pythonNames = new Map(Object.keys(tools).map((name) => [name, name]))
     for (const [pythonName, toolName] of stubs.toolNames) {
       this.pythonNames.set(toolName, pythonName)
@@ -792,7 +803,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     }
     snippet.callCount += 1
     const toolCallId = `${snippet.id}__${String(snippet.callCount)}`
-    const kwargs = keywordArguments(pythonName, args, limits.toolInputBytes)
+    const kwargs = schemaArgNames(keywordArguments(pythonName, args, limits.toolInputBytes), this.schemaArgNames.get(pythonName))
 
     if (byteLength(JSON.stringify(kwargs)) > limits.toolInputBytes) {
       throw pythonError('ValueError', toolInputTooLarge(pythonName, limits.toolInputBytes))

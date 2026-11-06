@@ -208,6 +208,14 @@ export function pyIsIdentifier(name: string): boolean {
   return /^[\p{XID_Start}_]\p{XID_Continue}*$/u.test(name)
 }
 
+/**
+ * pydantic-ai `_is_python_identifier`: a name that can be a parameter or a class attribute name. Soft keywords
+ * such as `match` and `type` count.
+ */
+export function pyIsName(name: string): boolean {
+  return pyIsIdentifier(name) && !pyIsKeyword(name)
+}
+
 /** `repr()` of a value parsed from JSON. */
 export function pyRepr(value: unknown): string {
   if (value === null || value === undefined) {
