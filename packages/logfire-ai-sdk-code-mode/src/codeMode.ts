@@ -172,7 +172,14 @@ function jsonCollections(): (key: string, value: unknown) => unknown {
 
 /** The JSON a tool result is sent as. Throws for a value with no JSON form, such as a bigint or a cycle. */
 function toolOutputJson(output: unknown): string {
-  return JSON.stringify(output ?? null, jsonCollections())
+  const json = JSON.stringify(output ?? null, jsonCollections()) as string | undefined
+  // A function, a symbol, or a `toJSON()` that returns undefined gives no JSON text, and no error.
+  if (json === undefined) {
+    throw new TypeError(
+      `the result, a ${typeof output === 'object' ? 'value whose toJSON() returns undefined' : typeof output}, has no JSON form`
+    )
+  }
+  return json
 }
 
 function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {

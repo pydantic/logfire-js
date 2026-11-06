@@ -453,6 +453,16 @@ describe('tool results without a JSON form', () => {
       /^ValueError: odd\(\) returned a value that cannot be sent to the sandbox as JSON: Converting circular structure to JSON[\s\S]*\./u,
     ],
     [
+      'a function',
+      () => 1,
+      /^ValueError: odd\(\) returned a value that cannot be sent to the sandbox as JSON: the result, a function, has no JSON form\./u,
+    ],
+    [
+      'an object whose toJSON returns undefined',
+      { toJSON: () => undefined },
+      /^ValueError: odd\(\) returned a value that cannot be sent to the sandbox as JSON: the result, a value whose toJSON\(\) returns undefined, has no JSON form\./u,
+    ],
+    [
       'a Map that contains itself',
       { m: circularMap },
       /^ValueError: odd\(\) returned a value that cannot be sent to the sandbox as JSON: Converting circular structure to JSON[\s\S]*\./u,
