@@ -1,0 +1,87 @@
+{
+  "inline_object_union": {
+    "kind": "wrong-types",
+    "reason": "Every branch of a union shares the union's path, so pydantic-ai names each inline object branch the same and keeps only the first: the write variant and its content field disappear. Each branch is named after its const discriminator, or its position when there is none.",
+    "expected": {
+      "typeDefinitions": [
+        "class OperateOperationRead(TypedDict):\n    kind: Literal['read']\n    path: str",
+        "class OperateOperationWrite(TypedDict):\n    kind: Literal['write']\n    path: str\n    content: str",
+        "class OperateTarget_1(TypedDict):\n    url: str",
+        "class OperateTarget_2(TypedDict):\n    bucket: str\n    key: str"
+      ],
+      "functions": [
+        "async def operate(*, operation: OperateOperationRead | OperateOperationWrite, target: OperateTarget_1 | OperateTarget_2 | None) -> Any:\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass OperateOperationRead(TypedDict):\n    kind: Literal['read']\n    path: str\n\nclass OperateOperationWrite(TypedDict):\n    kind: Literal['write']\n    path: str\n    content: str\n\nclass OperateTarget_1(TypedDict):\n    url: str\n\nclass OperateTarget_2(TypedDict):\n    bucket: str\n    key: str\n\nasync def operate(*, operation: OperateOperationRead | OperateOperationWrite, target: OperateTarget_1 | OperateTarget_2 | None) -> Any:\n    raise NotImplementedError()"
+    }
+  },
+  "alias_definition": {
+    "reason": "A def that is itself a $ref is left unresolved by pydantic-ai (test_ref_to_ref_def_keeps_alias_name), so x is annotated Indirect and owner OwnerRef, names that are never defined. The chain is followed here; a cycle of aliases renders as Any.",
+    "expected": {
+      "typeDefinitions": [
+        "class Owner(TypedDict):\n    name: str"
+      ],
+      "functions": [
+        "async def t(*, x: int, owner: Owner, loop: Any) -> Any:\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass Owner(TypedDict):\n    name: str\n\nasync def t(*, x: int, owner: Owner, loop: Any) -> Any:\n    raise NotImplementedError()"
+    }
+  },
+  "union_labels_with_one_class_name": {
+    "kind": "wrong-types",
+    "reason": "Both branches are inline objects that share the union's path, so pydantic-ai keeps only the first. Their discriminators read-file and read_file become the same class name, so the branches are numbered instead.",
+    "expected": {
+      "typeDefinitions": [
+        "class TOp_1(TypedDict):\n    kind: Literal['read-file']\n    a: str",
+        "class TOp_2(TypedDict):\n    kind: Literal['read_file']\n    b: int"
+      ],
+      "functions": [
+        "async def t(*, op: TOp_1 | TOp_2) -> Any:\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass TOp_1(TypedDict):\n    kind: Literal['read-file']\n    a: str\n\nclass TOp_2(TypedDict):\n    kind: Literal['read_file']\n    b: int\n\nasync def t(*, op: TOp_1 | TOp_2) -> Any:\n    raise NotImplementedError()"
+    }
+  },
+  "inline_objects_with_one_title": {
+    "kind": "wrong-types",
+    "reason": "Three inline objects are titled User, and the second has a different shape. pydantic-ai reuses the first User for all of them, so reviewer is described with a name where its schema has an id. A different shape gets the next free name, User_2; the same shape still reuses User.",
+    "expected": {
+      "typeDefinitions": [
+        "class User(TypedDict):\n    name: str",
+        "class User_2(TypedDict):\n    id: int"
+      ],
+      "functions": [
+        "async def t(*, author: User, reviewer: User_2, editor: User) -> Any:\n    \"\"\"\n    Args:\n        editor: Same shape as author, so it reuses author's type.\n    \"\"\"\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass User(TypedDict):\n    name: str\n\nclass User_2(TypedDict):\n    id: int\n\nasync def t(*, author: User, reviewer: User_2, editor: User) -> Any:\n    \"\"\"\n    Args:\n        editor: Same shape as author, so it reuses author's type.\n    \"\"\"\n    raise NotImplementedError()"
+    }
+  },
+  "inline_object_reuses_definition_name": {
+    "kind": "wrong-types",
+    "reason": "The inline data object's path name ToolData matches a definition with a different shape. pydantic-ai reuses the definition (test_schema_inline_object_reuses_existing_typename), so data is described with y where its schema has x. It gets the next free name, ToolData_2.",
+    "expected": {
+      "typeDefinitions": [
+        "class ToolData(TypedDict):\n    y: int",
+        "class ToolData_2(TypedDict):\n    x: str"
+      ],
+      "functions": [
+        "async def tool(*, data: ToolData_2) -> Any:\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass ToolData(TypedDict):\n    y: int\n\nclass ToolData_2(TypedDict):\n    x: str\n\nasync def tool(*, data: ToolData_2) -> Any:\n    raise NotImplementedError()"
+    }
+  },
+  "inline_title_matches_later_definition": {
+    "kind": "wrong-types",
+    "reason": "While pydantic-ai builds definition A, its inline field titled B claims the name B, so definition B is skipped (function_signature.py:541) and the parameter b, a $ref to B, is described with x where its schema has y. Definition B is built first here, and the inline object becomes B_2.",
+    "expected": {
+      "typeDefinitions": [
+        "class A(TypedDict):\n    inner: B_2",
+        "class B(TypedDict):\n    y: int",
+        "class B_2(TypedDict):\n    x: str"
+      ],
+      "functions": [
+        "async def t(*, a: A, b: B) -> Any:\n    ..."
+      ],
+      "typeCheckStubs": "import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal\n\nclass A(TypedDict):\n    inner: B_2\n\nclass B(TypedDict):\n    y: int\n\nclass B_2(TypedDict):\n    x: str\n\nasync def t(*, a: A, b: B) -> Any:\n    raise NotImplementedError()"
+    }
+  }
+}

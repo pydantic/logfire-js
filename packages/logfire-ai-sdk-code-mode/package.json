@@ -1,0 +1,76 @@
+{
+  "name": "@pydantic/logfire-ai-sdk-code-mode",
+  "private": true,
+  "description": "Let Vercel AI SDK agents call their tools from Python running in Logfire Agent Sandboxes - https://pydantic.dev/logfire",
+  "author": {
+    "name": "The Pydantic Team",
+    "email": "engineering@pydantic.dev",
+    "url": "https://pydantic.dev"
+  },
+  "repository": {
+    "url": "https://github.com/pydantic/logfire-js",
+    "directory": "packages/logfire-ai-sdk-code-mode"
+  },
+  "sideEffects": false,
+  "homepage": "https://pydantic.dev/logfire",
+  "license": "MIT",
+  "keywords": [
+    "logfire",
+    "monty",
+    "sandbox",
+    "agents",
+    "ai-sdk",
+    "code-mode",
+    "python"
+  ],
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "scripts": {
+    "dev": "vp pack --watch",
+    "build": "vp pack",
+    "lint": "vp lint",
+    "preview": "vp preview",
+    "typecheck": "tsc",
+    "test": "vp test",
+    "render-fixtures": "uv run --no-project --script scripts/render-fixtures.py"
+  },
+  "dependencies": {
+    "@pydantic/logfire-agent-sandboxes": "workspace:*",
+    "logfire": "workspace:*"
+  },
+  "peerDependencies": {
+    "@opentelemetry/api": "catalog:",
+    "@pydantic/monty": "^1.5.0",
+    "ai": "^7.0.0"
+  },
+  "devDependencies": {
+    "@grpc/grpc-js": "^1.14.5",
+    "@opentelemetry/api": "catalog:",
+    "@opentelemetry/context-async-hooks": "catalog:",
+    "@opentelemetry/sdk-trace-base": "catalog:",
+    "@pydantic/monty": "^1.5.0",
+    "@types/node": "^22.5.1",
+    "ai": "^7.0.0",
+    "vitest": "catalog:",
+    "zod": "catalog:"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ]
+}
