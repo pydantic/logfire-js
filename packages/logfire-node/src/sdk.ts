@@ -31,7 +31,7 @@ import { configureVariables, shutdownVariables } from 'logfire/vars'
 
 import type { FleetHook } from './fleet'
 
-import { loadFleet } from './fleet'
+import { loadFleet, warnUnmanaged } from './fleet'
 import { logfireConfig } from './logfireConfig'
 import { logfireLogRecordProcessor } from './logsExporter'
 import { NoExtractPropagator } from './noExtractPropagator'
@@ -53,7 +53,7 @@ export interface LogfireShutdownOptions extends LogfireFlushOptions {
 interface ShutdownRuntimeOptions extends LogfireShutdownOptions {
   retainedInstrumentations?: ReadonlySet<Instrumentation>
   shutdownVariables?: boolean
-  /** Say goodbye to the Fleet server. Not when a new configuration takes over: it joins under the same client. */
+  /** Say goodbye to the Fleet server. Not when a new configuration under Fleet takes over: it joins under the same client. */
   stopFleet?: boolean
 }
 
@@ -362,7 +362,8 @@ export function start(): void {
     shutdownRuntime(previousRuntime, {
       retainedInstrumentations: new Set(logfireConfig.instrumentations),
       shutdownVariables: false,
-      stopFleet: false,
+      // Kept where this configuration is under Fleet too: it governs the new SDK under the same client.
+      stopFleet: logfireConfig.fleet === undefined,
     }).catch((e: unknown) => {
       diag.warn('logfire SDK: error shutting down previous SDK', e)
     })
@@ -498,7 +499,7 @@ export function start(): void {
       if (sdkStart.threw) {
         throw e
       }
-      diag.warn('logfire: Logfire Fleet could not start; the SDK runs unmanaged', e)
+      warnUnmanaged(`Logfire Fleet could not start (${String(e)})`)
       if (!sdkStart.started) {
         sdk.start()
       }

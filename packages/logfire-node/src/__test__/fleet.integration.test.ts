@@ -1,5 +1,6 @@
 // `configure({ fleet })` against the real NodeSDK, with a fake Fleet client in place of
 // `@pydantic/logfire-fleet-otel`: what the SDK hands it, and how it runs when Fleet can't be joined.
+import type { ProxyTracerProvider } from '@opentelemetry/api'
 import type { Resource } from '@opentelemetry/resources'
 import type { Sampler, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
@@ -7,12 +8,17 @@ import { trace } from '@opentelemetry/api'
 import { AlwaysOffSampler } from '@opentelemetry/sdk-trace-base'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
-import type { FleetHook, FleetOptions } from '../fleet'
+import type { FleetClient, FleetHook, FleetOptions } from '../fleet'
 
 import { fleetLoader } from '../fleet'
 import { configure, info, shutdown } from '../index'
 
 const base = { metrics: false as const, sendToLogfire: false, serviceName: 'fleet-itest' }
+
+/** The tracer provider the SDK registered behind the global proxy: `NoopTracerProvider` before it starts. */
+function registeredProvider(): string {
+  return (trace.getTracerProvider() as ProxyTracerProvider).getDelegate().constructor.name
+}
 
 function recordingProcessor() {
   const names: string[] = []
@@ -34,7 +40,7 @@ interface FakeFleet {
   sampledWith: (Sampler | undefined)[]
 }
 
-function fakeFleet(sampler: Sampler = new AlwaysOffSampler()): FakeFleet {
+function fakeFleet(sampler: Sampler = new AlwaysOffSampler()): FakeFleet & { client: FleetClient } {
   const fake: FakeFleet = { calls: [], given: [], resources: [], sampledWith: [] }
   const hook: FleetHook = {
     contract: 1,
@@ -53,17 +59,18 @@ function fakeFleet(sampler: Sampler = new AlwaysOffSampler()): FakeFleet {
       fake.resources.push(resource)
       startSdk()
       // The providers are registered once the SDK has started.
-      fake.calls.push(trace.getTracerProvider().constructor.name)
+      fake.calls.push(registeredProvider())
     },
   }
-  vi.spyOn(fleetLoader, 'load').mockReturnValue({
+  const client: FleetClient = {
     LOGFIRE_FLEET_CONTRACT: 1,
-    logfireFleet: (options: FleetOptions) => {
+    logfireFleet: (options) => {
       fake.given.push(options)
       return hook
     },
-  })
-  return fake
+  }
+  vi.spyOn(fleetLoader, 'load').mockReturnValue(client)
+  return { ...fake, client }
 }
 
 describe('configure({ fleet })', () => {
@@ -88,7 +95,7 @@ describe('configure({ fleet })', () => {
     configure({ ...base, additionalSpanProcessors: [rec.processor], fleet: { endpoint: 'https://fleet.example/v1/opamp' } })
 
     expect(fake.given).toEqual([{ endpoint: 'https://fleet.example/v1/opamp' }])
-    expect(fake.calls).toEqual(['headSampler', 'start', 'ProxyTracerProvider'])
+    expect(fake.calls).toEqual(['headSampler', 'start', 'TracerProvider'])
     // No head sample rate: every trace, until Fleet says otherwise.
     expect(fake.sampledWith).toEqual([undefined])
     expect(fake.resources[0]?.attributes['service.instance.id']).toBe('fleet-uid')
@@ -127,6 +134,24 @@ describe('configure({ fleet })', () => {
     expect(fake.calls).not.toContain('shutdown')
   })
 
+  it('says goodbye when configure() again drops fleet', async () => {
+    const fake = fakeFleet()
+    configure({ ...base, fleet: { endpoint: 'https://fleet.example/v1/opamp' } })
+    configure(base)
+    await vi.waitFor(() => {
+      expect(fake.calls).toContain('shutdown')
+    })
+  })
+
+  it('uses the Fleet client passed in, without loading the package', () => {
+    const fake = fakeFleet()
+    configure({ ...base, fleet: { client: fake.client, endpoint: 'https://fleet.example/v1/opamp' } })
+    expect(fleetLoader.load).not.toHaveBeenCalled()
+    // The client itself isn't one of its options.
+    expect(fake.given).toEqual([{ endpoint: 'https://fleet.example/v1/opamp' }])
+    expect(fake.calls).toContain('start')
+  })
+
   it('runs unmanaged, with a warning, without the Fleet package', () => {
     vi.spyOn(fleetLoader, 'load').mockImplementation(() => {
       throw Object.assign(new Error('not found'), { code: 'MODULE_NOT_FOUND' })
@@ -134,6 +159,7 @@ describe('configure({ fleet })', () => {
     const rec = recordingProcessor()
     configure({ ...base, additionalSpanProcessors: [rec.processor], fleet: true })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('npm install @pydantic/logfire-fleet-otel'))
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('`fleet: { client }`'))
     info('still sent')
     expect(rec.names).toEqual(['still sent'])
   })
@@ -169,6 +195,7 @@ describe('configure({ fleet })', () => {
     // The client's sampler was handed to the SDK already: it samples nothing.
     info('not sampled')
     expect(rec.names).toEqual([])
-    expect(trace.getTracerProvider().constructor.name).toBe('ProxyTracerProvider')
+    expect(registeredProvider()).toBe('TracerProvider')
+    expect(warn).toHaveBeenCalledWith('logfire: Logfire Fleet could not start (Error: boom). The SDK runs unmanaged.')
   })
 })

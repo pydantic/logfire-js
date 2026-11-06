@@ -29,6 +29,13 @@ export interface FleetOptions {
    * the Fleet client's own; `'none'` keeps nothing.
    */
   stateDir?: string
+  /**
+   * The Fleet client, as `import * as fleetClient from '@pydantic/logfire-fleet-otel'`. Left out, the
+   * SDK loads the package itself, which a bundler or a file tracer (Vercel, Next.js standalone
+   * output) can't see, so it may leave the package out of the deployment. Passing it in makes the
+   * import one they see.
+   */
+  client?: FleetClient
 }
 
 /** What `@pydantic/logfire-fleet-otel` hands back: see its `LogfireFleet`. */
@@ -40,17 +47,19 @@ export interface FleetHook {
   start(startSdk: () => void, resource: Resource): void
 }
 
-interface FleetModule {
+/** What `@pydantic/logfire-fleet-otel` exports that the SDK uses. */
+export interface FleetClient {
   LOGFIRE_FLEET_CONTRACT?: number
-  logfireFleet?: (options: FleetOptions) => FleetHook | undefined
+  logfireFleet?: (options: Omit<FleetOptions, 'client'>) => FleetHook | undefined
 }
 
 /** Loads the Fleet package. Replaced in tests. */
 export const fleetLoader = {
-  load: (): FleetModule => createRequire(import.meta.url)(FLEET_PACKAGE) as FleetModule,
+  load: (): FleetClient => createRequire(import.meta.url)(FLEET_PACKAGE) as FleetClient,
 }
 
-function warn(reason: string): void {
+/** Says, on the console too, that Fleet can't be joined and the SDK runs unmanaged. */
+export function warnUnmanaged(reason: string): void {
   // Said on the console, not only on diag: a fleet that was asked for and isn't joined must not be silent.
   console.warn(`logfire: ${reason}. The SDK runs unmanaged.`)
   diag.warn(`logfire: ${reason}`)
@@ -61,33 +70,35 @@ function warn(reason: string): void {
  * throws: telemetry is sent either way, under the SDK's own settings.
  */
 export function loadFleet(options: FleetOptions, env: NodeJS.ProcessEnv = process.env): FleetHook | undefined {
-  let fleet: FleetModule
+  const { client, ...clientOptions } = options
+  let fleet: FleetClient
   try {
-    fleet = fleetLoader.load()
+    fleet = client ?? fleetLoader.load()
   } catch (e: unknown) {
     const missing = (e as { code?: string }).code === 'MODULE_NOT_FOUND'
-    warn(
+    warnUnmanaged(
       missing
-        ? `Logfire Fleet needs ${FLEET_PACKAGE}: \`npm install ${FLEET_PACKAGE}\``
+        ? `Logfire Fleet needs ${FLEET_PACKAGE}: \`npm install ${FLEET_PACKAGE}\`. If it is installed, a bundler or ` +
+            `file tracer left it out of the deployment: pass it in, as \`fleet: { client }\``
         : `${FLEET_PACKAGE} could not be loaded (${String(e)})`
     )
     return undefined
   }
   if (fleet.LOGFIRE_FLEET_CONTRACT !== FLEET_CONTRACT || typeof fleet.logfireFleet !== 'function') {
-    warn(
+    warnUnmanaged(
       `the installed ${FLEET_PACKAGE} speaks contract ${String(fleet.LOGFIRE_FLEET_CONTRACT)}, not ${String(FLEET_CONTRACT)}: install a matching version`
     )
     return undefined
   }
   const disabled = ['1', 'true', 'yes'].includes((env['OTEL_OPAMP_DISABLED'] ?? '').trim().toLowerCase())
   if ((options.endpoint ?? env['OTEL_OPAMP_ENDPOINT'] ?? '').trim() === '' && !disabled) {
-    warn('no Fleet endpoint is set: set `OTEL_OPAMP_ENDPOINT` or `fleet: { endpoint }`')
+    warnUnmanaged('no Fleet endpoint is set: set `OTEL_OPAMP_ENDPOINT` or `fleet: { endpoint }`')
     return undefined
   }
   try {
-    return fleet.logfireFleet(options)
+    return fleet.logfireFleet(clientOptions)
   } catch (e: unknown) {
-    warn(`the Fleet client could not start (${String(e)})`)
+    warnUnmanaged(`the Fleet client could not start (${String(e)})`)
     return undefined
   }
 }

@@ -200,6 +200,19 @@ logfire.configure({
 `OTEL_OPAMP_HEADERS` environment variables that the Fleet setup page in Logfire gives you. Pass
 `fleet: { endpoint, headers, stateDir, heartbeatIntervalMs }` to give them in code instead.
 
+If you bundle your app, or deploy it with a tool that traces which files it needs (Vercel, or
+Next.js `output: 'standalone'`), import the Fleet client yourself and pass it in. The SDK loads the
+package only when it's asked to, so those tools can't see that the app needs it and may leave it out:
+
+```ts
+import * as fleetClient from '@pydantic/logfire-fleet-otel'
+
+logfire.configure({
+  fleet: { client: fleetClient },
+  serviceName: 'payments-api',
+})
+```
+
 `configure()` never waits for Fleet. Until Fleet answers, the last policy the SDK saved is in force,
 else the SDK's own settings. If the Fleet client isn't installed, or no endpoint is set, the SDK
 warns and sends telemetry as it would without Fleet.
