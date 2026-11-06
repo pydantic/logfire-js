@@ -55,19 +55,18 @@
   },
   "peerDependencies": {
     "@opentelemetry/api": "catalog:",
-    "@pydantic/monty": "^1.4.0",
+    "@pydantic/monty": "^1.5.0",
     "ai": "^7.0.0"
   },
   "devDependencies": {
+    "@grpc/grpc-js": "^1.14.5",
     "@opentelemetry/api": "catalog:",
     "@opentelemetry/context-async-hooks": "catalog:",
     "@opentelemetry/sdk-trace-base": "catalog:",
-    "@pydantic/monty": "^1.4.0",
+    "@pydantic/monty": "^1.5.0",
     "@types/node": "^22.5.1",
-    "@types/ws": "^8.18.1",
     "ai": "^7.0.0",
     "vitest": "catalog:",
-    "ws": "^8.22.0",
     "zod": "catalog:"
   },
   "files": [

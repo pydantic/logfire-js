@@ -18,6 +18,6 @@ pnpm run start
 pnpm run smoke
 ```
 
-Runs `index.ts` against a local stand-in for the sandboxes server that relays each connection to a `monty subprocess`
-worker, with a fake API key. It checks the printed results and that every connection carried the bearer token and the
-demo span's trace context. CI runs it through `pnpm run test:examples` from the repository root.
+Runs `index.ts` against a local gRPC stand-in for the sandboxes server that relays each session stream to a
+`monty subprocess` worker, with a fake API key. It checks the printed results and that every session stream carried the
+bearer token and the demo span's trace context. CI runs it through `pnpm run test:examples` from the repository root.

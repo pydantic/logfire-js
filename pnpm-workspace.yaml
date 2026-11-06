@@ -7,6 +7,15 @@ strictPeerDependencies: true
 autoInstallPeers: false
 resolvePeersFromWorkspaceRoot: false
 
+# First-party Pydantic packages, exempt from the release-age wait so a Monty release can be adopted the day it ships.
+minimumReleaseAgeExclude:
+  - '@pydantic/monty'
+  - '@pydantic/monty-darwin-arm64'
+  - '@pydantic/monty-darwin-x64'
+  - '@pydantic/monty-linux-arm64-gnu'
+  - '@pydantic/monty-linux-x64-gnu'
+  - '@pydantic/monty-win32-x64-msvc'
+
 overrides:
   '@opentelemetry/core@<2.8.0': '2.8.0'
   '@opentelemetry/resources@<2.8.0': '2.8.0'

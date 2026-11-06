@@ -2,13 +2,14 @@
 // session, against a local stand-in for the Agent Sandboxes server, so CI needs neither an OpenAI key nor a
 // Logfire API key. It checks four things code mode must get right: state kept between calls, parallel calls,
 // recovery from a failing tool, and returning a small summary of a large dataset.
-// The relay is the same as in examples/agent-sandboxes/smoke.ts: each WebSocket connection goes to a local
+// The relay is the same as in examples/agent-sandboxes/smoke.ts: each gRPC session stream goes to a local
 // `monty subprocess` worker, which speaks protobuf frames with a little-endian 4-byte length prefix.
 import type { LanguageModelV4GenerateResult } from '@ai-sdk/provider'
+import type { ServerDuplexStream } from '@grpc/grpc-js'
 import type { ToolSet } from 'ai'
-import type { IncomingHttpHeaders } from 'node:http'
 
 import { OpenTelemetry } from '@ai-sdk/otel'
+import { Metadata, Server, ServerCredentials } from '@grpc/grpc-js'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as logfire from '@pydantic/logfire-node'
 import { findMontyBinary } from '@pydantic/monty/node'
@@ -16,9 +17,7 @@ import { registerTelemetry } from 'ai'
 import { MockLanguageModelV4 } from 'ai/test'
 import { spawn } from 'node:child_process'
 import { strict as assert } from 'node:assert'
-import { once } from 'node:events'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { WebSocketServer } from 'ws'
 
 import type { Report } from './expenses.ts'
 
@@ -86,17 +85,21 @@ over_budget.sort(key=lambda row: row["over_by_usd"], reverse=True)
 
 const ANSWER = 'Eight employees went over their Q3 travel budget; Grace Kim in Support by the most.'
 
-const upgrades: { headers: IncomingHttpHeaders; url: string | undefined }[] = []
-const server = new WebSocketServer({ host: '127.0.0.1', port: 0 })
+const SESSION_PATH = '/monty.v1.MontySession/Session'
+const identity = (buffer: Buffer): Buffer => buffer
 
-server.on('connection', (ws, req) => {
-  upgrades.push({ headers: req.headers, url: req.url })
+const streams: { metadata: Metadata; path: string }[] = []
+
+function relay(stream: ServerDuplexStream<Buffer, Buffer>): void {
+  streams.push({ metadata: stream.metadata, path: stream.getPath() })
+  // The client sends nothing until the server admits the stream with its response headers.
+  stream.sendMetadata(new Metadata())
   const worker = spawn(findMontyBinary(), ['subprocess'], { stdio: ['pipe', 'pipe', 'inherit'] })
 
-  ws.on('message', (data: Buffer) => {
+  stream.on('data', (message: Buffer) => {
     const prefix = Buffer.alloc(4)
-    prefix.writeUInt32LE(data.length)
-    worker.stdin.write(Buffer.concat([prefix, data]))
+    prefix.writeUInt32LE(message.length)
+    worker.stdin.write(Buffer.concat([prefix, message]))
   })
 
   let pending = Buffer.alloc(0)
@@ -104,21 +107,44 @@ server.on('connection', (ws, req) => {
     pending = Buffer.concat([pending, chunk])
     while (pending.length >= 4 && pending.length >= 4 + pending.readUInt32LE(0)) {
       const size = pending.readUInt32LE(0)
-      ws.send(pending.subarray(4, 4 + size))
+      stream.write(pending.subarray(4, 4 + size))
       pending = pending.subarray(4 + size)
     }
   })
 
-  ws.on('close', () => worker.kill())
-  worker.on('exit', () => ws.close())
+  stream.on('end', () => worker.stdin.end())
+  stream.on('close', () => worker.kill())
+  stream.on('error', () => worker.kill())
+  worker.on('exit', () => stream.end())
+}
+
+const server = new Server()
+server.addService(
+  {
+    Session: {
+      path: SESSION_PATH,
+      requestDeserialize: identity,
+      requestSerialize: identity,
+      requestStream: true,
+      responseDeserialize: identity,
+      responseSerialize: identity,
+      responseStream: true,
+    },
+  },
+  { Session: relay }
+)
+const port = await new Promise<number>((resolve, reject) => {
+  server.bindAsync('127.0.0.1:0', ServerCredentials.createInsecure(), (error, bound) => {
+    if (error === null) {
+      resolve(bound)
+    } else {
+      reject(error)
+    }
+  })
 })
 
-await once(server, 'listening')
-const address = server.address()
-assert(address !== null && typeof address === 'object')
-
 process.env['LOGFIRE_API_KEY'] = API_KEY
-process.env['LOGFIRE_BASE_URL'] = `http://127.0.0.1:${String(address.port)}`
+process.env['LOGFIRE_BASE_URL'] = `http://127.0.0.1:${String(port)}`
 
 const spans = new InMemorySpanExporter()
 logfire.configure({
@@ -183,7 +209,7 @@ const model = new MockLanguageModelV4({
 })
 
 assert.equal(await reviewTravel(model, tools), ANSWER)
-server.close()
+server.forceShutdown()
 // The exporter drops its spans on shutdown.
 const finished = spans.getFinishedSpans()
 await logfire.shutdown()
@@ -230,18 +256,18 @@ assert(bytesFetched > 20 * reportBytes, `fetched ${String(bytesFetched)} bytes f
 // Parallel calls: asyncio.gather runs host calls at the same time.
 assert(maxInFlight > 1, 'asyncio.gather should run tool calls concurrently')
 
-assert.equal(upgrades.length, 1)
-const [upgrade] = upgrades
-assert(upgrade !== undefined)
-assert.equal(upgrade.url, '/monty-ws/')
-assert.equal(upgrade.headers.authorization, `Bearer ${API_KEY}`)
+assert.equal(streams.length, 1)
+const [stream] = streams
+assert(stream !== undefined)
+assert.equal(stream.path, SESSION_PATH)
+assert.deepEqual(stream.metadata.get('authorization'), [`Bearer ${API_KEY}`])
 
 // The one sandbox session joins the trace under the agent run's span, where codeMode() was created, and the tool
 // calls each run_code call makes are nested under that call's span, failed ones marked as errors.
 const runSpan = finished.find((span) => span.name === 'review travel')
 assert(runSpan !== undefined, 'missing agent run span')
 const { spanId, traceId } = runSpan.spanContext()
-assert.equal(upgrade.headers['traceparent'], `00-${traceId}-${spanId}-01`)
+assert.deepEqual(stream.metadata.get('traceparent'), [`00-${traceId}-${spanId}-01`])
 const runCodeSpans = finished
   .filter((span) => span.name === 'execute_tool run_code')
   .sort((a, b) => a.startTime[0] - b.startTime[0] || a.startTime[1] - b.startTime[1])
