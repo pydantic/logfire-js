@@ -44,32 +44,5 @@ call in that run.
 See the [Agent Sandboxes docs](https://github.com/pydantic/logfire-js/blob/main/docs/agent-sandboxes.md#use-with-the-vercel-ai-sdk)
 for streaming, approval, tool context, limits, and error handling.
 
-You can pass your own pool as `sandboxes`. Code mode closes a pool it creates.
-You must close a pool you pass in.
-
-## Error routing and recovery
-
-Python errors reach the model with guidance it can act on. Sandbox configuration
-and infrastructure errors end the agent run with the original error instead.
-Capacity refusals get one retry after 100 ms. A server shutdown gets one replay
-on a fresh session if no host tool has been requested. Earlier snippets are not replayed.
-
-With `streamText`, consume the stream and handle stream errors, then use
-`code.closeWhenDone(result)` to close the session. Do not replace the
-`run_code.toModelOutput` hook: it keeps infrastructure failures out of model
-messages. Pass an `onError` handler to `codeMode` for developer-side reporting.
-Code mode calls it directly with `{ error }` and awaits it once per failed run.
-You can pass the same handler to `streamText`. Infrastructure failures reject
-stream iteration or abort UI responses without the AI SDK calling its own
-`onError` callbacks. UI clients must treat `{ sandboxFailure: true }` as a
-failed call and read successful results from the `{ result: value }` transport
-envelope. Python dictionaries are nested inside that envelope, so they cannot
-be mistaken for failures. The model still receives the unwrapped value.
-Pass `code.tools` to `convertToModelMessages` when restoring saved
-UI messages so that this marker becomes generic failure text, not a success.
-
-Routing also recognizes errors wrapped through standard `Error.cause` chains,
-up to eight error objects. The developer receives the original outer error.
-
-See [error routing and recovery](https://github.com/pydantic/logfire-js/blob/main/packages/logfire-ai-sdk-code-mode/docs/error-routing.md)
-for the full error policy and streaming cleanup examples.
+Agent Sandboxes setup and checkout errors end the run instead of reaching the model.
+Use `codeMode`'s `onError` handler for developer-side reporting, and handle thrown errors or rejected streams.
