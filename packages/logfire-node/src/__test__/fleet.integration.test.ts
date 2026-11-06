@@ -143,6 +143,18 @@ describe('configure({ fleet })', () => {
     })
   })
 
+  it('says goodbye when configure() again asks for fleet but it can no longer be joined', async () => {
+    const fake = fakeFleet()
+    vi.stubEnv('OTEL_OPAMP_ENDPOINT', 'https://fleet.example/v1/opamp')
+    configure({ ...base, fleet: true })
+    vi.stubEnv('OTEL_OPAMP_ENDPOINT', '')
+    configure({ ...base, fleet: true })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no Fleet endpoint is set'))
+    await vi.waitFor(() => {
+      expect(fake.calls).toContain('shutdown')
+    })
+  })
+
   it('uses the Fleet client passed in, without loading the package', () => {
     const fake = fakeFleet()
     configure({ ...base, fleet: { client: fake.client, endpoint: 'https://fleet.example/v1/opamp' } })

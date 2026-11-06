@@ -355,6 +355,13 @@ const LOGFIRE_ATTRIBUTES_NAMESPACE = 'logfire'
 const RESOURCE_ATTRIBUTES_CODE_ROOT_PATH = `${LOGFIRE_ATTRIBUTES_NAMESPACE}.code.root_path`
 
 export function start(): void {
+  if (logfireConfig.diagLogLevel !== undefined) {
+    diag.setLogger(new DiagConsoleLogger(), logfireConfig.diagLogLevel)
+  }
+
+  // The Fleet client, where `fleet` is set and it can run: it is called below where the policy acts.
+  const fleet = logfireConfig.fleet === undefined ? undefined : loadFleet(logfireConfig.fleet)
+
   const previousRuntime = activeRuntime
   if (previousRuntime !== undefined) {
     activeRuntime = undefined
@@ -362,19 +369,12 @@ export function start(): void {
     shutdownRuntime(previousRuntime, {
       retainedInstrumentations: new Set(logfireConfig.instrumentations),
       shutdownVariables: false,
-      // Kept where this configuration is under Fleet too: it governs the new SDK under the same client.
-      stopFleet: logfireConfig.fleet === undefined,
+      // Kept where the new SDK runs under Fleet too: it governs the new SDK under the same client.
+      stopFleet: fleet === undefined,
     }).catch((e: unknown) => {
       diag.warn('logfire SDK: error shutting down previous SDK', e)
     })
   }
-
-  if (logfireConfig.diagLogLevel !== undefined) {
-    diag.setLogger(new DiagConsoleLogger(), logfireConfig.diagLogLevel)
-  }
-
-  // The Fleet client, where `fleet` is set and it can run: it is called below where the policy acts.
-  const fleet = logfireConfig.fleet === undefined ? undefined : loadFleet(logfireConfig.fleet)
 
   // Low-precedence fallback, matching Python Logfire's `fallback_resource_attributes`: every
   // later merge wins, so `resourceAttributes` and `OTEL_RESOURCE_ATTRIBUTES` still override it.
