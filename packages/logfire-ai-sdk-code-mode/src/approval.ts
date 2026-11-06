@@ -1,5 +1,25 @@
 import type { ModelMessage, ToolApprovalConfiguration, ToolApprovalStatus, ToolSet } from 'ai'
 
+type AnyFunction = (...args: never[]) => unknown
+
+/** The AI SDK's statuses without `'user-approval'`: nothing in the sandbox can wait for a person. */
+type CodeModeApprovalStatus = Exclude<ToolApprovalStatus, 'user-approval' | { type: 'user-approval' }>
+
+type NarrowedEntry<ENTRY> = ENTRY extends (...args: infer ARGS) => unknown
+  ? (...args: ARGS) => CodeModeApprovalStatus | PromiseLike<CodeModeApprovalStatus>
+  : Extract<ENTRY, CodeModeApprovalStatus>
+
+type ApprovalMap<TOOLS extends ToolSet, RUNTIME_CONTEXT> = Exclude<ToolApprovalConfiguration<TOOLS, RUNTIME_CONTEXT>, AnyFunction>
+
+/**
+ * generateText's `toolApproval`, narrowed so that `'user-approval'` does not compile. Accepting it today would mean
+ * "fail the call", and the same config would change meaning if code mode ever supports pausing for a person. Leaving
+ * it out means real approval can be added by widening this type.
+ */
+export type CodeModeApproval<TOOLS extends ToolSet, RUNTIME_CONTEXT> =
+  | NarrowedEntry<Extract<ToolApprovalConfiguration<TOOLS, RUNTIME_CONTEXT>, AnyFunction>>
+  | { [NAME in keyof ApprovalMap<TOOLS, RUNTIME_CONTEXT>]: NarrowedEntry<ApprovalMap<TOOLS, RUNTIME_CONTEXT>[NAME]> }
+
 export interface ApprovalRequest {
   toolName: string
   toolCallId: string

@@ -1,5 +1,4 @@
 import type { ServerDuplexStream } from '@grpc/grpc-js'
-import type { ToolApprovalConfiguration } from 'ai'
 
 import { Metadata, Server, ServerCredentials, status } from '@grpc/grpc-js'
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks'
@@ -53,12 +52,17 @@ describe('approval', () => {
   test('a per-tool map applies to every nested call, also gathered ones', async () => {
     const calls: unknown[] = []
     const tools = { allowed: countingTool(calls), closed: countingTool(calls), person: countingTool(calls), checked: countingTool(calls) }
-    const approval: ToolApprovalConfiguration<typeof tools, unknown> = {
-      closed: { type: 'denied', reason: 'Closed for maintenance.' },
-      person: 'user-approval',
-      checked: (input) => (input.n > 1 ? 'denied' : 'approved'),
-    }
-    await using code = codeMode({ tools, sandboxes: pool, approval, typeCheck: 'off' })
+    await using code = codeMode({
+      tools,
+      sandboxes: pool,
+      typeCheck: 'off',
+      approval: {
+        closed: { type: 'denied', reason: 'Closed for maintenance.' },
+        // Does not compile (see below), but untyped code can still pass it.
+        person: 'user-approval' as never,
+        checked: (input) => (input.n > 1 ? 'denied' : 'approved'),
+      },
+    })
     expect(await runCode(code, { code: caught('closed(n=1)') })).toBe("RuntimeError: Tool 'closed' call denied: Closed for maintenance.")
     expect(await runCode(code, { code: caught('person(n=1)') })).toBe(
       "RuntimeError: Tool 'person' needs a person to approve it, and code mode cannot ask for approval from inside the sandbox."
@@ -71,6 +75,21 @@ describe('approval', () => {
     })
     expect(gathered).toEqual([1, 1])
     expect(calls).toEqual([1, 1])
+  })
+
+  test("rejects 'user-approval' at compile time, so that supporting it later only widens the type", () => {
+    const tools = { lookup: countingTool() }
+    const rejected = [
+      // @ts-expect-error 'user-approval' is not an approval status here
+      codeMode({ tools, sandboxes: pool, approval: { lookup: 'user-approval' } }),
+      // @ts-expect-error nor is its object form
+      codeMode({ tools, sandboxes: pool, approval: { lookup: { type: 'user-approval' } } }),
+      // @ts-expect-error nor can a function return it
+      codeMode({ tools, sandboxes: pool, approval: () => 'user-approval' as const }),
+      // @ts-expect-error nor can a per-tool function return it
+      codeMode({ tools, sandboxes: pool, approval: { lookup: () => 'user-approval' as const } }),
+    ]
+    expect(rejected).toHaveLength(4)
   })
 
   test('a generic function gets the call, the tools, the context and runtimeContext', async () => {
@@ -114,7 +133,7 @@ describe('approval that takes time', () => {
     await using code = codeMode({
       tools: { slow: countingTool(calls) },
       sandboxes: pool,
-      limits: { timeout: 0.3 },
+      limits: { timeout: 300 },
       approval: {
         slow: async () => {
           await delay(800)
@@ -159,7 +178,8 @@ describe('approval that takes time', () => {
     await using code = codeMode({
       tools,
       sandboxes: pool,
-      approval: { other: 'denied' } as ToolApprovalConfiguration<typeof tools, unknown>,
+      // `tools` has a key named like an Object method, which an object literal cannot satisfy for the compiler.
+      approval: { other: 'denied' } as never,
       context: {},
     })
     expect(await runCode(code, { code: '(await toString(n=4))["n"]' })).toBe(4)
@@ -234,7 +254,7 @@ describe('the wall-clock deadline', () => {
       },
     })
     const counted = new CountingSandboxes(pool)
-    await using code = codeMode({ tools: { stuck, after: countingTool(afterwards) }, sandboxes: counted, limits: { timeout: 1 } })
+    await using code = codeMode({ tools: { stuck, after: countingTool(afterwards) }, sandboxes: counted, limits: { timeout: 1000 } })
     await runCode(code, { code: 'kept = 1' })
     const started = Date.now()
     const message = await runCodeError(code, { code: 'try:\n    await stuck()\nexcept Exception:\n    pass\nawait after(n=1)' })
@@ -252,7 +272,7 @@ describe('the wall-clock deadline', () => {
   test('returns at the deadline even when the code keeps catching refused calls', async () => {
     const calls: unknown[] = []
     const counted = new CountingSandboxes(pool)
-    await using code = codeMode({ tools: { tick: countingTool(calls) }, sandboxes: counted, limits: { timeout: 0.3 } })
+    await using code = codeMode({ tools: { tick: countingTool(calls) }, sandboxes: counted, limits: { timeout: 300 } })
     const started = Date.now()
     const message = await runCodeError(code, {
       code: 'n = 0\nwhile True:\n    try:\n        await tick(n=n)\n    except Exception:\n        pass\n    n = n + 1',
@@ -267,7 +287,7 @@ describe('the wall-clock deadline', () => {
   })
 
   test('also bounds sleeps and pure computation', async () => {
-    await using code = codeMode({ tools: {}, sandboxes: pool, limits: { timeout: 1 } })
+    await using code = codeMode({ tools: {}, sandboxes: pool, limits: { timeout: 1000 } })
     expect(
       await runCode(code, { code: 'import time\ntry:\n    time.sleep(5)\n    r = "slept"\nexcept TimeoutError as e:\n    r = str(e)\nr' })
     ).toMatch(/^sleeping 5s would exceed the 1s this code may run; [01]\.\ds left$/u)
@@ -342,7 +362,7 @@ describe('size and concurrency caps', () => {
         return {}
       },
     })
-    await using code = codeMode({ tools: { stubborn }, sandboxes: pool, limits: { timeout: 0.2, concurrentToolCalls: 1 } })
+    await using code = codeMode({ tools: { stubborn }, sandboxes: pool, limits: { timeout: 200, concurrentToolCalls: 1 } })
     await runCodeError(code, { code: 'await stubborn()' })
     await runCodeError(code, { code: 'await stubborn()' })
     await runCodeError(code, { code: 'await stubborn()' })

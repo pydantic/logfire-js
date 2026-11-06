@@ -9,6 +9,7 @@ import { asSchema, jsonSchema, tool } from 'ai'
 import * as logfire from 'logfire'
 import { setTimeout as sleep } from 'node:timers/promises'
 
+import type { CodeModeApproval } from './approval'
 import type { CodeModeLimits, ResolvedLimits } from './limits'
 import type { StartedCall } from './values'
 
@@ -36,17 +37,18 @@ export interface CodeModeOptions<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknow
   tools: TOOLS
   /**
    * Where the code runs. Omitted, code mode creates `agentSandboxes()` on the first `run_code` call and closes it
-   * in `close()`. A pool you pass is yours to close. Its `requestTimeout` must be above `limits.timeout`, or a long
+   * in `close()`. A pool you pass is yours to close. Its `requestTimeout`, which Monty takes in seconds, must be above `limits.timeout`, or a long
    * snippet fails with a transport error instead of the time-limit message.
    */
   sandboxes?: Sandboxes
   /** Context for each tool, keyed by tool name, as generateText's `toolsContext`. */
   context?: { [NAME in keyof TOOLS]?: unknown }
   /**
-   * Which nested calls may run, in the shape of generateText's `toolApproval`. Nothing in the sandbox can wait for a
-   * person, so a call whose status is `'user-approval'` fails like a denied one.
+   * Which nested calls may run, in the shape of generateText's `toolApproval`, without `'user-approval'`: nothing in
+   * the sandbox can wait for a person. An async function can ask one itself and return `'approved'` or `'denied'`,
+   * within `limits.timeout`. From untyped code, a `'user-approval'` status fails the call.
    */
-  approval?: ToolApprovalConfiguration<TOOLS, RUNTIME_CONTEXT>
+  approval?: CodeModeApproval<TOOLS, RUNTIME_CONTEXT>
   /** Passed to `approval` functions; tool execution does not see generateText's `runtimeContext`. */
   runtimeContext?: RUNTIME_CONTEXT
   limits?: CodeModeLimits
@@ -57,7 +59,7 @@ export interface CodeModeOptions<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknow
    */
   typeCheck?: 'every-snippet' | 'first-snippet' | 'off'
   /**
-   * Seconds without a `run_code` call before the session is released (default 300; `Infinity` disables). It ends
+   * Milliseconds without a `run_code` call before the session is released (default 300,000; `Infinity` disables). It ends
    * sessions of runs that stopped without `close()`, such as a stream cancelled without an abort signal. A later
    * call gets a fresh session, and the model is told that earlier state is gone.
    */
@@ -311,6 +313,11 @@ class PrintCapture {
   }
 }
 
+// The API takes milliseconds, as JavaScript and the AI SDK do. The model reads seconds, as in pydantic-ai's messages.
+function timeoutSeconds(limits: ResolvedLimits): string {
+  return String(limits.timeout / 1000)
+}
+
 type StopReason = 'aborted' | 'closed' | 'deadline' | 'finished'
 
 /** One `run_code` call: its nested calls, printed output and deadline. */
@@ -334,10 +341,10 @@ class Snippet {
 
   /** Starts the clock once the session is ready, so a slow checkout does not count against the code's time. */
   start(): void {
-    this.deadline = Date.now() + this.limits.timeout * 1000
+    this.deadline = Date.now() + this.limits.timeout
     this.timer = setTimeout(() => {
       this.stop('deadline')
-    }, this.limits.timeout * 1000)
+    }, this.limits.timeout)
   }
 
   get signal(): AbortSignal {
@@ -352,7 +359,7 @@ class Snippet {
     this.stopped = reason
     const message =
       reason === 'deadline'
-        ? `the code passed its ${String(this.limits.timeout)}-second time limit`
+        ? `the code passed its ${timeoutSeconds(this.limits)}-second time limit`
         : reason === 'aborted'
           ? 'the agent run was aborted'
           : reason === 'closed'
@@ -414,7 +421,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
   constructor(options: CodeModeOptions<TOOLS, RUNTIME_CONTEXT>) {
     this.options = options
     this.traceContext = otelContext.active()
-    const { tools, sandboxes, idleTimeout = 300 } = options
+    const { tools, sandboxes, idleTimeout = 300_000 } = options
     for (const [name, candidate] of Object.entries(tools)) {
       if (typeof candidate.execute !== 'function') {
         throw new Error(
@@ -440,7 +447,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       )
     }
     if (!(idleTimeout > 0)) {
-      throw new RangeError(`idleTimeout must be a positive number of seconds or Infinity, not ${String(idleTimeout)}.`)
+      throw new RangeError(`idleTimeout must be a positive number of milliseconds or Infinity, not ${String(idleTimeout)}.`)
     }
     this.limits = resolveLimits(options.limits)
     this.slots = new Slots(this.limits.concurrentToolCalls)
@@ -572,7 +579,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     } catch (error) {
       throw expired && error instanceof Error
         ? new Error(
-            `${error.message}\n\nThe sandbox session had no run_code call for ${String(this.idleTimeout)} seconds and was replaced, ` +
+            `${error.message}\n\nThe sandbox session had no run_code call for ${String(this.idleTimeout / 1000)} seconds and was replaced, ` +
               'so variables, imports and definitions from earlier calls are gone.'
           )
         : error
@@ -648,7 +655,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
           ? `Runtime error:\n${snippet.printed.prependTo(this.cut(feedError.display('traceback')))}\n\n`
           : ''
       throw new Error(
-        `${ran}The code ran longer than its ${String(this.limits.timeout)}-second time limit, counting time spent waiting on tools, ` +
+        `${ran}The code ran longer than its ${timeoutSeconds(this.limits)}-second time limit, counting time spent waiting on tools, ` +
           'and was stopped, so the session was reset. Re-run any imports, recreate any state you need, and make the code do less work per call.' +
           snippet.startedCalls()
       )
@@ -757,7 +764,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       if (snippet.stopped !== undefined || seconds > left) {
         throw pythonError(
           'TimeoutError',
-          `sleeping ${String(seconds)}s would exceed the ${String(this.limits.timeout)}s this code may run; ${left.toFixed(1)}s left`
+          `sleeping ${String(seconds)}s would exceed the ${timeoutSeconds(this.limits)}s this code may run; ${left.toFixed(1)}s left`
         )
       }
       await untilAborted(sleep(seconds * 1000, undefined, { ref: false }), snippet.signal)
@@ -827,7 +834,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     const record: StartedCall = { toolName, inputPreview: preview(input), status: 'running' }
     const decision = await untilAborted(
       decideApproval(
-        this.options.approval,
+        this.options.approval as ToolApprovalConfiguration<TOOLS, RUNTIME_CONTEXT> | undefined,
         {
           tools: this.options.tools,
           toolsContext: this.options.context ?? {},
@@ -946,7 +953,8 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     const { sandboxes } = this.options
     // The transport's per-turn deadline must outlast the snippet's own limit, so the model gets the time-limit
     // message rather than a dropped connection (pydantic-ai `_REMOTE_TURN_SLACK_SECS`).
-    this.poolPromise ??= sandboxes === undefined ? agentSandboxes({ requestTimeout: this.limits.timeout + 10 }) : Promise.resolve(sandboxes)
+    this.poolPromise ??=
+      sandboxes === undefined ? agentSandboxes({ requestTimeout: this.limits.timeout / 1000 + 10 }) : Promise.resolve(sandboxes)
     try {
       return await this.poolPromise
     } catch (error) {
@@ -976,7 +984,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
         typeCheck,
         ...(typeCheck ? { typeCheckStubs: this.typeCheckStubs } : {}),
         limits: {
-          maxFeedDurationSecs: this.limits.timeout,
+          maxFeedDurationSecs: this.limits.timeout / 1000,
           maxMemory: this.limits.memory,
           maxSuspensions: this.limits.suspensions,
         },
@@ -1019,7 +1027,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
           this.releaseSession().catch(() => undefined)
         }
       },
-      Math.min(this.idleTimeout * 1000, 2 ** 31 - 1)
+      Math.min(this.idleTimeout, 2 ** 31 - 1)
     )
     this.idleTimer.unref()
   }

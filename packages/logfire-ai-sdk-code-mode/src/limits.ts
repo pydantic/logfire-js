@@ -1,7 +1,7 @@
 /** Caps on what one `codeMode()` instance lets sandbox code do. Every field is optional. */
 export interface CodeModeLimits {
   /**
-   * Seconds of wall-clock time per snippet, including time spent waiting on tools and sleeping (default 30).
+   * Milliseconds of wall-clock time per snippet, including time spent waiting on tools and sleeping (default 30,000).
    * Also Monty's execution-time limit for the snippet's own code.
    */
   timeout?: number
@@ -32,7 +32,7 @@ export interface CodeModeLimits {
 export type ResolvedLimits = Required<CodeModeLimits>
 
 const DEFAULT_LIMITS: ResolvedLimits = {
-  timeout: 30,
+  timeout: 30_000,
   toolCalls: 100,
   concurrentToolCalls: 8,
   outputBytes: 64_000,
