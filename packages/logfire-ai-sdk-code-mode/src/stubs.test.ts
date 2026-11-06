@@ -137,25 +137,43 @@ describe('type names', () => {
 })
 
 describe('property names', () => {
-  test.each<[string, ToolSet, string]>([
-    ['a keyword parameter', { search: tool({ inputSchema: z.object({ from: z.string() }) }) }, 'from'],
-    ['a parameter that is not an identifier', { search: tool({ inputSchema: z.object({ 'x-y': z.string() }) }) }, 'x-y'],
-    ['a nested field', { search: tool({ inputSchema: z.object({ filter: z.object({ 'not ok': z.string() }) }) }) }, 'filter.not ok'],
-  ])('%s is rejected with its path', (_label, tools, path) => {
+  test('a parameter that is not a Python name renders under a sanitized name', () => {
     silenceWarnings()
-    expect(() => toolStubs(tools)).toThrow(`Tool "search" has a property "${path}" that is not a valid Python name`)
+    const stubs = toolStubs({ search: tool({ inputSchema: z.object({ from: z.string(), 'user-id': z.string(), user_id: z.string() }) }) })
+    expect(stubs.functions).toEqual(['async def search(*, from_: str, user_id_2: str, user_id: str) -> Any:\n    ...'])
+    expect(stubs.schemaArgNames).toEqual(
+      new Map([
+        [
+          'search',
+          new Map([
+            ['from_', 'from'],
+            ['user_id_2', 'user-id'],
+          ]),
+        ],
+      ])
+    )
   })
 
-  test('return fields are checked too', () => {
-    expect(() => toolStubs({ search: tool({ inputSchema: noParameters, outputSchema: z.object({ 'hit-count': z.number() }) }) })).toThrow(
-      'Tool "search" has a property "hit-count" that is not a valid Python name'
-    )
+  test('a field that is not a Python name keeps its name in a functional TypedDict', () => {
+    silenceWarnings()
+    const stubs = toolStubs({
+      search: tool({
+        inputSchema: z.object({ filter: z.object({ '@type': z.string(), ok: z.boolean().optional() }) }),
+        outputSchema: z.object({ 'hit-count': z.number() }),
+      }),
+    })
+    expect(stubs.typeDefinitions).toEqual([
+      "SearchFilter = TypedDict('SearchFilter', {\n    '@type': str,\n    'ok': NotRequired[bool],\n})",
+      "SearchReturn = TypedDict('SearchReturn', {\n    'hit-count': float,\n})",
+    ])
+    expect(stubs.schemaArgNames).toEqual(new Map())
   })
 
   test('soft keywords and enum values are not property names', () => {
     silenceWarnings()
     const stubs = toolStubs({ search: tool({ inputSchema: z.object({ match: z.enum(['x-y', 'from']), type: z.string() }) }) })
     expect(stubs.functions).toEqual(["async def search(*, match: Literal['x-y', 'from'], type: str) -> Any:\n    ..."])
+    expect(stubs.schemaArgNames).toEqual(new Map())
   })
 })
 

@@ -1,13 +1,14 @@
 import type { JsonSchema } from './signature'
 
-import { pyIsIdentifier, pyIsKeyword } from './python'
+import { pyIsName } from './python'
 import { pathToTypename, toPascalCase } from './signature'
 
 export type SchemaKind = 'parameters' | 'return'
 
 /**
  * Rewrite a tool's JSON Schema into the form the signature generator reads, which is pydantic's: local refs
- * into `$defs`, definition names that are Python class names, and property names that are Python names.
+ * into `$defs` and definition names that are Python class names. Property names stay as they are: the generator
+ * renders each one as valid Python.
  */
 export function normalizeSchema(schema: JsonSchema, toolName: string, kind: SchemaKind): JsonSchema {
   const root = structuredClone(schema)
@@ -61,7 +62,6 @@ export function normalizeSchema(schema: JsonSchema, toolName: string, kind: Sche
     normalized['$defs'] = normalizedDefs
   }
 
-  checkPropertyNames(normalized, toolName, '')
   return normalized
 }
 
@@ -102,10 +102,6 @@ function containsRef(node: unknown, ref: string): boolean {
 // zod names the definitions it creates for recursion `__schema0`, `__schema1`, and so on.
 const SYNTHETIC_DEFINITION = /^__schema\d+$/u
 
-function isPythonName(name: string): boolean {
-  return pyIsIdentifier(name) && !pyIsKeyword(name)
-}
-
 // A TypedDict with one of these names would shadow the stub's imports or a builtin used in annotations, so that
 // `class str(TypedDict)` silently changes what every later `str` means.
 const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
@@ -124,7 +120,7 @@ const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
 ])
 
 function isTypeName(name: string): boolean {
-  return isPythonName(name) && !RESERVED_TYPE_NAMES.has(name)
+  return pyIsName(name) && !RESERVED_TYPE_NAMES.has(name)
 }
 
 function pythonTypeName(title: unknown, key: string | undefined, fallback: () => string): string {
@@ -238,34 +234,4 @@ function rewriteRef(ref: string, toolName: string, names: ReadonlyMap<string, st
     throw new Error(`Tool "${toolName}" has a schema reference "${ref}" that code mode cannot resolve`)
   }
   return `#/$defs/${name}`
-}
-
-// Property names become keyword-only parameters and TypedDict fields, which pydantic-ai copies unchanged.
-function checkPropertyNames(node: unknown, toolName: string, path: string): void {
-  if (Array.isArray(node)) {
-    for (const item of node) {
-      checkPropertyNames(item, toolName, path)
-    }
-    return
-  }
-  if (!isRecord(node)) {
-    return
-  }
-  for (const [key, value] of Object.entries(node)) {
-    if (key === 'properties' && isRecord(value)) {
-      for (const [name, child] of Object.entries(value)) {
-        const childPath = path ? `${path}.${name}` : name
-        if (!isPythonName(name)) {
-          throw new Error(`Tool "${toolName}" has a property "${childPath}" that is not a valid Python name`)
-        }
-        checkPropertyNames(child, toolName, childPath)
-      }
-    } else if (key === '$defs' && isRecord(value)) {
-      for (const [name, child] of Object.entries(value)) {
-        checkPropertyNames(child, toolName, name)
-      }
-    } else if (!DATA_KEYWORDS.has(key)) {
-      checkPropertyNames(value, toolName, path)
-    }
-  }
 }

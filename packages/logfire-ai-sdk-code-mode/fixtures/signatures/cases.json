@@ -65,7 +65,7 @@
           },
           "unicode": {
             "type": "string",
-            "default": "caf\u00e9 \u2028 \u0007"
+            "default": "café   \u0007"
           },
           "integer": {
             "type": "integer",
@@ -1558,6 +1558,164 @@
             ]
           }
         }
+      }
+    }
+  ],
+  "keyword_and_non_identifier_parameters": [
+    {
+      "name": "search",
+      "description": "Search the mailbox.",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The sender."
+          },
+          "user-id": {
+            "type": "string"
+          },
+          "filter": {
+            "type": "object",
+            "title": "Filter",
+            "description": "Narrows the search.\n\nAll fields combine.",
+            "properties": {
+              "@type": {
+                "type": "string",
+                "description": "The kind of record."
+              },
+              "from": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "@type"
+            ]
+          },
+          "page[size]": {
+            "type": "integer",
+            "default": 10
+          },
+          "match": {
+            "type": "string",
+            "description": "A soft keyword keeps its name."
+          }
+        },
+        "required": [
+          "from",
+          "user-id",
+          "filter"
+        ]
+      }
+    }
+  ],
+  "sanitized_parameter_collisions": [
+    {
+      "name": "lookup",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "user-id": {
+            "type": "string",
+            "description": "Renamed after the valid names."
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "user.id": {
+            "type": "string"
+          },
+          "user_id_2": {
+            "type": "string"
+          },
+          "2fa": {
+            "type": "string"
+          },
+          "class": {
+            "type": "string"
+          },
+          "": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "user-id",
+          "user_id",
+          "user.id",
+          "user_id_2",
+          "2fa",
+          "class",
+          ""
+        ]
+      }
+    }
+  ],
+  "functional_typed_dict_descriptions": [
+    {
+      "name": "get_event",
+      "parametersSchema": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "$ref": "#/$defs/Event"
+          }
+        },
+        "required": [
+          "event"
+        ],
+        "$defs": {
+          "Nested": {
+            "type": "object",
+            "properties": {
+              "$id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "$id"
+            ]
+          },
+          "Event": {
+            "type": "object",
+            "description": "  An event.  \n\n  Second paragraph.\u0000  ",
+            "properties": {
+              "event-type": {
+                "type": "string",
+                "description": "Line one.   \n\n    Line two\u0000."
+              },
+              "it's": {
+                "type": "boolean"
+              },
+              "plain": {
+                "type": "string",
+                "description": "A valid name in a functional definition."
+              },
+              "nested": {
+                "$ref": "#/$defs/Nested"
+              }
+            },
+            "required": [
+              "event-type",
+              "plain"
+            ]
+          }
+        }
+      },
+      "returnSchema": {
+        "type": "object",
+        "title": "Result",
+        "properties": {
+          "in": {
+            "type": "integer"
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "in",
+          "ok"
+        ]
       }
     }
   ]

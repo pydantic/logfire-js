@@ -136,6 +136,36 @@ describe('nested calls', () => {
     expect(seen[0]?.options.abortSignal).toBeInstanceOf(AbortSignal)
   })
 
+  test.each(['first-snippet', 'off'] as const)(
+    'restore schema property names that are not Python names, with type checking %s',
+    async (typeCheck) => {
+      const seen: unknown[] = []
+      const approved: unknown[] = []
+      const search = tool({
+        inputSchema: z.object({ from: z.string(), 'user-id': z.string(), filter: z.object({ '@type': z.string() }) }),
+        outputSchema: z.object({ ok: z.boolean() }),
+        execute: (input) => {
+          seen.push(input)
+          return { ok: true }
+        },
+      })
+      await using code = codeMode({
+        tools: { search },
+        sandboxes: sandboxes(),
+        typeCheck,
+        approval: ({ toolCall }) => {
+          approved.push(toolCall.input)
+          return 'approved'
+        },
+      })
+      const result = await runCode(code, { code: `(await search(from_="ana", user_id="u1", filter={'@type': 'mail'}))["ok"]` })
+      const input = { from: 'ana', 'user-id': 'u1', filter: { '@type': 'mail' } }
+      expect(result).toBe(true)
+      expect(seen).toEqual([input])
+      expect(approved).toEqual([input])
+    }
+  )
+
   test('raise in the sandbox for bad input, bad context, positional arguments and tool errors', async () => {
     const needsContext = tool({
       inputSchema: z.object({}),

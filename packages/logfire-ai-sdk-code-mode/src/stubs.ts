@@ -5,8 +5,7 @@ import { asSchema } from 'ai'
 import type { JsonSchema } from './signature'
 
 import { normalizeSchema } from './normalize'
-import { pyIsKeyword } from './python'
-import { FunctionSignature } from './signature'
+import { FunctionSignature, pythonParamNames, toPythonIdentifier } from './signature'
 
 /** A tool as the sandbox sees it: a Python function name and its normalized schemas. */
 export interface PythonFunction {
@@ -17,7 +16,7 @@ export interface PythonFunction {
 }
 
 export interface PythonStubs {
-  /** TypedDict definitions for the model-facing catalog, each one a Python class. */
+  /** TypedDict definitions for the model-facing catalog: a class, or a `TypedDict(...)` call when a key is not a Python name. */
   typeDefinitions: string[]
   /** One `async def` per tool for the model-facing catalog, with `...` as the body. */
   functions: string[]
@@ -28,6 +27,11 @@ export interface PythonStubs {
 export interface ToolStubs extends PythonStubs {
   /** The tool name behind each Python function name, for tools whose names had to change. */
   toolNames: ReadonlyMap<string, string>
+  /**
+   * For each Python function with a renamed parameter, the schema property name behind each Python parameter
+   * name that differs from it: `from_` to `from`.
+   */
+  schemaArgNames: ReadonlyMap<string, ReadonlyMap<string, string>>
 }
 
 type AnyTool = ToolSet[string]
@@ -42,7 +46,17 @@ const TYPE_CHECK_HEADER = 'import asyncio\nfrom typing import Any, TypedDict, No
  */
 export function toolStubs(tools: ToolSet): ToolStubs {
   const { functions, toolNames } = pythonFunctions(tools)
-  return { ...renderPythonStubs(functions), toolNames }
+  const schemaArgNames = new Map<string, ReadonlyMap<string, string>>()
+  for (const f of functions) {
+    const properties = f.parametersSchema['properties']
+    // The generator reads only an object of properties, as `schemaProperties` in signature.ts does.
+    const names = typeof properties === 'object' && properties !== null && !Array.isArray(properties) ? Object.keys(properties) : []
+    const renamed = new Map([...pythonParamNames(names)].filter(([name, param]) => param !== name).map(([name, param]) => [param, name]))
+    if (renamed.size > 0) {
+      schemaArgNames.set(f.name, renamed)
+    }
+  }
+  return { ...renderPythonStubs(functions), toolNames, schemaArgNames }
 }
 
 /** Python names and normalized schemas for AI SDK tools. */
@@ -102,16 +116,9 @@ export function renderPythonStubs(functions: PythonFunction[]): PythonStubs {
   }
 }
 
-/** Port of pydantic-ai's `sanitize_tool_name`. */
+/** Port of pydantic-ai's `sanitize_tool_name`, which has the same rules as its `_to_python_identifier`. */
 export function sanitizeToolName(name: string): string {
-  let sanitized = name.replace(/[^a-zA-Z0-9_]/gu, '_')
-  if (/^[0-9]/u.test(sanitized)) {
-    sanitized = `_${sanitized}`
-  }
-  if (pyIsKeyword(sanitized)) {
-    sanitized = `${sanitized}_`
-  }
-  return sanitized || '_'
+  return toPythonIdentifier(name)
 }
 
 function inputJsonSchema(toolName: string, tool: AnyTool): JsonSchema {

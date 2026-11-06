@@ -1,5 +1,7 @@
 import { Monty, MontyTypingError } from '@pydantic/monty'
+import { tool } from 'ai'
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
+import { z } from 'zod'
 
 import { toolStubs } from './stubs'
 import { expenses as expenseTools, shapes as shapeTools } from './zodToolSets.fixture'
@@ -66,6 +68,18 @@ for member in team["members"]:
         over_budget.append({"name": member["name"], "total": total})
 `)
     await expect(typeCheck(expenses, code)).resolves.toBe('checked')
+  })
+
+  test('renamed parameters and functional TypedDict fields are checked', async () => {
+    const search = toolStubs({
+      search: tool({
+        inputSchema: z.object({ from: z.string(), filter: z.object({ '@type': z.string() }) }),
+        outputSchema: z.object({ 'hit-count': z.number() }),
+      }),
+    }).typeCheckStubs
+    const call = (filter: string): string => unexecuted(`hits = (await search(from_="ana", filter=${filter}))["hit-count"] + 1`)
+    await expect(typeCheck(search, call(`{"@type": "mail"}`))).resolves.toBe('checked')
+    await expect(typeCheck(search, call(`{"@type": 5}`))).rejects.toThrow(MontyTypingError)
   })
 
   // Known Monty 1.4.0 behavior, recorded so that a change shows up here. Roadmap decision D-typecheck decides
