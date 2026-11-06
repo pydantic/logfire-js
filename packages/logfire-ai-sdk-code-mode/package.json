@@ -1,6 +1,5 @@
 {
   "name": "@pydantic/logfire-ai-sdk-code-mode",
-  "private": true,
   "description": "Let Vercel AI SDK agents call their tools from Python running in Logfire Agent Sandboxes - https://pydantic.dev/logfire",
   "author": {
     "name": "The Pydantic Team",
@@ -14,6 +13,9 @@
   "sideEffects": false,
   "homepage": "https://pydantic.dev/logfire",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "logfire",
     "monty",

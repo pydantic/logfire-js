@@ -29,8 +29,6 @@ In Logfire, the trace shows the agent run with the sandbox session under it, the
 `run_code` call, and under each one a span for every tool call its Python code made, with failed calls marked as
 errors.
 
-`@pydantic/logfire-ai-sdk-code-mode` is a private workspace package for now, so this example runs only inside this repository.
-
 ## Run against Logfire
 
 Copy `.env.example` to `.env` and set:
