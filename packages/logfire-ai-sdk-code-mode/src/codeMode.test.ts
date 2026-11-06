@@ -365,22 +365,23 @@ describe('lifecycle', () => {
     expect(await runCode(code, { code: '1 + 1' })).toBe(2)
   })
 
-  test('a failed checkout leaves the next session type-checked', async () => {
+  /** A checkout failure is not a code error; later queued calls must not retry a broken setup. */
+  test('a failed checkout ends the run with the original error', async () => {
     let refuse = true
+    const error = new MontyRuntimeError('RuntimeError', 'server refused the session')
     const flaky: Sandboxes = {
       checkout: async (options) => {
         if (refuse) {
           refuse = false
-          throw new MontyRuntimeError('RuntimeError', 'server refused the session')
+          throw error
         }
         return pool.checkout(options)
       },
       close: async () => Promise.resolve(),
     }
     await using code = codeMode({ tools: { add }, sandboxes: flaky })
-    // As in pydantic-ai, where the checkout sits inside the feed's `except MontyRuntimeError`.
-    expect(await runCodeError(code, { code: '1' })).toBe('Runtime error:\nRuntimeError: server refused the session')
-    expect(await runCodeError(code, { code: 'await add(a="one")' })).toMatch(/^Type error in code:\n/u)
+    await expect(runCode(code, { code: '1' })).rejects.toBe(error)
+    await expect(runCode(code, { code: 'await add(a="one")' })).rejects.toBe(error)
   })
 
   test('an oversized snippet keeps the idle timeout running', async () => {

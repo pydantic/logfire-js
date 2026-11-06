@@ -6,11 +6,13 @@ import type { CodeMode, RunCodeInput, Sandboxes } from './codeMode'
 
 /** Runs `run_code` the way the AI SDK does for one tool call. */
 export async function runCode(code: CodeMode, input: RunCodeInput, options: Partial<ToolExecutionOptions<unknown>> = {}): Promise<unknown> {
-  const { execute } = code.tools.run_code
+  const { execute, toModelOutput } = code.tools.run_code
   if (execute === undefined) {
     throw new Error('run_code has no execute function')
   }
-  return await execute(input, { toolCallId: 'call', messages: [], context: undefined, ...options })
+  const output = await execute(input, { toolCallId: 'call', messages: [], context: undefined, ...options })
+  await toModelOutput?.({ toolCallId: 'call', input, output })
+  return output
 }
 
 /** Error message of a rejected `run_code` call. */

@@ -564,7 +564,8 @@ describe('onToolError', () => {
 })
 
 describe('a lost connection', () => {
-  test('replaces the session and lists the calls that started', async () => {
+  /** An unclassified transport loss is a developer error, not a request for the model to repeat side effects. */
+  test('ends the run without replaying calls after a transport failure', async () => {
     const streams: ServerDuplexStream<Buffer, Buffer>[] = []
     const identity = (buffer: Buffer): Buffer => buffer
     const server = new Server()
@@ -637,12 +638,9 @@ describe('a lost connection', () => {
       await using code = codeMode({ tools: { drop, count: countingTool() }, sandboxes: remote })
       await runCode(code, { code: 'kept = (await count(n=1))["n"]' })
       const message = await runCodeError(code, { code: 'await count(n=2)\nawait drop()' })
-      expect(message).toMatch(
-        /^Code execution failed and the session was reset\. Re-run any imports, recreate any state you need, and try again\.\n/u
-      )
-      expect(message).toContain("2 nested tool calls started before execution stopped:\n- count({'n': 2}) returned {'n': 2}\n- drop({})")
-      expect(await runCodeError(code, { code: 'kept' })).toMatch(/Name `kept` used when not defined/u)
-      expect(await runCode(code, { code: '(await count(n=3))["n"]' })).toBe(3)
+      expect(message).toBe('RuntimeError: monty worker connection closed while waiting for a reply')
+      expect(await runCodeError(code, { code: '(await count(n=3))["n"]' })).toBe(message)
+      expect(streams).toHaveLength(1)
     } finally {
       await remote.close()
       server.forceShutdown()

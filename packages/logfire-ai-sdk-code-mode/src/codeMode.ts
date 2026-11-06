@@ -1,10 +1,19 @@
 import type { Context } from '@opentelemetry/api'
 import type { MontySession, RemoteCheckoutOptions } from '@pydantic/monty'
-import type { Tool, ToolApprovalConfiguration, ToolExecutionOptions, ToolSet } from 'ai'
+import type { JSONValue, Tool, ToolApprovalConfiguration, ToolExecutionOptions, ToolSet } from 'ai'
 
 import { context as otelContext } from '@opentelemetry/api'
 import { agentSandboxes } from '@pydantic/logfire-agent-sandboxes'
-import { MontyCrashedError, MontyRuntimeError, MontySyntaxError, MontyTypingError, NOT_HANDLED } from '@pydantic/monty'
+import {
+  MontyCrashedError,
+  MontyDisconnectError,
+  MontyRefusedError,
+  MontyRuntimeError,
+  MontyShutdown,
+  MontySyntaxError,
+  MontyTypingError,
+  NOT_HANDLED,
+} from '@pydantic/monty'
 import { asSchema, jsonSchema, tool } from 'ai'
 import * as logfire from 'logfire'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -68,6 +77,7 @@ export interface CodeModeOptions<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknow
    * Replaces the error the sandbox, the model and the trace see when a tool throws. Return a string or an error to
    * replace it, or `undefined` to keep it. Messages pass through unchanged by default, as in pydantic-ai. A result
    * that has no JSON form, such as a bigint or a cycle, is not a tool error, so this is not called for it.
+   * Sandbox configuration and infrastructure failures end the agent run instead and do not call this hook.
    */
   onToolError?: (error: unknown, call: ToolErrorCall) => Error | string | undefined
 }
@@ -100,9 +110,19 @@ export interface CodeMode extends AsyncDisposable {
  * ```
  *
  * With `streamText`, use `closeWhenDone(result)` instead, because the block exits before the stream is read.
+ * Sandbox configuration and infrastructure errors end the run with the original error, not a model tool error.
  */
 export function codeMode<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknown>(options: CodeModeOptions<TOOLS, RUNTIME_CONTEXT>): CodeMode {
   return new CodeModeRuntime(options)
+}
+
+/** Carries a developer error past the AI SDK's tool-error catch to `toModelOutput`, which ends the run. */
+class SandboxFailure {
+  readonly error: unknown
+
+  constructor(error: unknown) {
+    this.error = error
+  }
 }
 
 // Monty raises a host error in the sandbox as the Python exception its `name` names.
@@ -379,6 +399,12 @@ class Snippet {
 
 const SUSPENSION_LIMIT = /^suspension limit [0-9]+ exceeded$/u
 const SANDBOX_LIMIT_MARKERS = ['time limit exceeded', 'memory limit exceeded', 'suspension limit ']
+const TIME_LIMIT_MESSAGE =
+  'The code ran longer than its time limit and was stopped, so the session was reset. Re-run any imports, ' +
+  'recreate any state you need, and make the code do less work per call.'
+const SESSION_RESET_MESSAGE =
+  'The sandbox session was replaced. Variables, imports and definitions from earlier calls are gone. ' +
+  'Recreate any state you need, but do not replay completed side effects.'
 
 /** pydantic-ai's `_is_duration_exhausted`: Monty attaches no frame to the error that stops a snippet at its limit. */
 function isDurationExhausted(error: MontyRuntimeError): boolean {
@@ -414,6 +440,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
   private idleTimer: NodeJS.Timeout | undefined
   private current: Snippet | undefined
   private closing: Promise<void> | undefined
+  private failure: SandboxFailure | undefined
   private readonly options: CodeModeOptions<TOOLS, RUNTIME_CONTEXT>
   private readonly traceContext: Context
   private readonly slots: Slots
@@ -496,6 +523,12 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
           }
         ),
         execute: async (input, toolOptions) => this.enqueue(input, toolOptions),
+        toModelOutput: ({ output }) => {
+          if (output instanceof SandboxFailure) {
+            throw output.error
+          }
+          return typeof output === 'string' ? { type: 'text', value: output } : { type: 'json', value: output as JSONValue }
+        },
       }),
     }
   }
@@ -541,6 +574,13 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
   }
 
   private stoppedError(snippet: Snippet, ran: boolean): Error {
+    if (snippet.stopped === 'deadline') {
+      return new Error(
+        `The code ran longer than its ${timeoutSeconds(this.limits)}-second time limit, counting time spent waiting on tools, ` +
+          'and was stopped, so the session was reset. Re-run any imports, recreate any state you need, and make the code do less work per call.' +
+          snippet.startedCalls()
+      )
+    }
     const why = snippet.stopped === 'aborted' ? 'The agent run was aborted' : 'Code mode was closed'
     if (!ran) {
       return snippet.stopped === 'aborted' ? new Error(`${why}, so this code did not run.`) : this.closedError()
@@ -549,6 +589,9 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
   }
 
   private async run({ code, restart }: RunCodeInput, toolOptions: ToolExecutionOptions<unknown>): Promise<unknown> {
+    if (this.failure !== undefined) {
+      return this.failure
+    }
     if (this.closing !== undefined) {
       throw this.closedError()
     }
@@ -593,17 +636,20 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     }
   }
 
-  private async feed(code: string, snippet: Snippet, toolOptions: ToolExecutionOptions<unknown>): Promise<unknown> {
+  private async feed(code: string, snippet: Snippet, toolOptions: ToolExecutionOptions<unknown>, replayed = false): Promise<unknown> {
     let session: MontySession
     try {
-      session = await this.session()
+      session = await this.session(snippet.signal)
     } catch (error) {
-      // A failed checkout runs nothing, so it leaves the type-check state alone, as in pydantic-ai.
-      throw snippet.stopped === undefined
-        ? new Error(this.describeFailure(error, snippet).message, { cause: error })
-        : this.stoppedError(snippet, false)
+      if (snippet.stopped !== undefined) {
+        throw this.stoppedError(snippet, false)
+      }
+      return (this.failure = new SandboxFailure(error))
     }
     if (snippet.stopped !== undefined) {
+      if (snippet.stopped === 'deadline') {
+        await this.releaseSession()
+      }
       throw this.stoppedError(snippet, false)
     }
 
@@ -611,7 +657,9 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     let feedError: unknown
     let fed = false
     let abandoned = false
-    snippet.start()
+    if (!replayed) {
+      snippet.start()
+    }
     const skipTypeCheck = this.options.typeCheck === 'off' || (this.options.typeCheck !== 'every-snippet' && this.passedTypeCheck)
     const settled = session
       .feedRun(code, {
@@ -654,20 +702,24 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
         feedError instanceof MontyRuntimeError
           ? `Runtime error:\n${snippet.printed.prependTo(this.cut(feedError.display('traceback')))}\n\n`
           : ''
-      throw new Error(
-        `${ran}The code ran longer than its ${timeoutSeconds(this.limits)}-second time limit, counting time spent waiting on tools, ` +
-          'and was stopped, so the session was reset. Re-run any imports, recreate any state you need, and make the code do less work per call.' +
-          snippet.startedCalls()
-      )
+      throw new Error(ran + this.stoppedError(snippet, true).message)
     }
     if (!fed) {
+      if (feedError instanceof MontyShutdown && !replayed && snippet.calls.length === 0) {
+        await this.releaseSession()
+        return this.feed(code, snippet, toolOptions, true)
+      }
       const failure = this.describeFailure(feedError, snippet)
-      if (failure.reset) {
+      if (failure === undefined || failure.reset) {
         await this.releaseSession()
       }
-      throw new Error(failure.message, { cause: feedError })
+      if (failure === undefined) {
+        return (this.failure = new SandboxFailure(feedError))
+      }
+      throw new Error(failure.message + (replayed ? `\n\n${SESSION_RESET_MESSAGE}` : ''), { cause: feedError })
     }
-    return this.shapeResult(value, snippet)
+    const result = this.shapeResult(value, snippet)
+    return replayed ? { result, sessionReset: SESSION_RESET_MESSAGE } : result
   }
 
   /** pydantic-ai's result shapes (`RunCodeExecution.build_tool_return`), checked against `limits.outputBytes`. */
@@ -699,7 +751,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
   }
 
   /** The message the model gets for a failed snippet, from pydantic-ai `CodeModeToolset._execute_code`. */
-  private describeFailure(error: unknown, snippet: Snippet): Failure {
+  private describeFailure(error: unknown, snippet: Snippet): Failure | undefined {
     const { printed } = snippet
     if (error instanceof MontySyntaxError) {
       return { message: `Syntax error in code:\n${printed.prependTo(this.cut(error.display('traceback')))}`, reset: false }
@@ -717,9 +769,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       const timedOut = isDurationExhausted(error)
       const outOfMemory = isMemoryExhausted(error)
       if (timedOut) {
-        message +=
-          '\n\nThe code ran longer than its time limit and was stopped, so the session was reset. Re-run any imports, ' +
-          'recreate any state you need, and make the code do less work per call.'
+        message += `\n\n${TIME_LIMIT_MESSAGE}`
       }
       if (outOfMemory) {
         message +=
@@ -737,20 +787,28 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       }
       return { message, reset }
     }
+    if (
+      (error instanceof MontyCrashedError && error.timedOut) ||
+      (error instanceof MontyDisconnectError && error.cause === 'turn_timeout')
+    ) {
+      return { message: TIME_LIMIT_MESSAGE + snippet.startedCalls(), reset: true }
+    }
+    if (error instanceof MontyDisconnectError && (error.cause === 'session_timeout' || error.cause === 'idle_timeout')) {
+      return {
+        message:
+          'The sandbox session ended and its state is lost. Re-run any imports and recreate any state you need. ' +
+          'Check any tool calls already started before continuing, and do not replay completed side effects.' +
+          snippet.startedCalls(),
+        reset: true,
+      }
+    }
     if (error instanceof MontyCrashedError) {
       return {
         message: `The code crashed the sandbox worker and the session was reset. Revise the code and try again.${snippet.startedCalls()}`,
         reset: true,
       }
     }
-    // A lost connection, a protocol failure or a failed checkout: the session cannot be trusted.
-    const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
-    return {
-      message:
-        'Code execution failed and the session was reset. Re-run any imports, recreate any state you need, and try again.\n' +
-        `${printed.prependTo(this.cut(text))}${snippet.startedCalls()}`,
-      reset: true,
-    }
+    return undefined
   }
 
   // Sleeps come to the host (`sleep: 'call_host'`), so the snippet's deadline also bounds them.
@@ -963,8 +1021,8 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     }
   }
 
-  private async session(): Promise<MontySession> {
-    this.sessionPromise ??= this.checkout()
+  private async session(signal: AbortSignal): Promise<MontySession> {
+    this.sessionPromise ??= this.checkout(signal)
     try {
       return await this.sessionPromise
     } catch (error) {
@@ -973,11 +1031,13 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     }
   }
 
-  private async checkout(): Promise<MontySession> {
+  private async checkout(signal: AbortSignal): Promise<MontySession> {
     const typeCheck = this.options.typeCheck !== 'off'
-    // The checkout sends the active trace context, so the session's spans join the agent run's trace.
-    return otelContext.with(this.traceContext, async () =>
-      (await this.pool()).checkout({
+    return otelContext.with(this.traceContext, async () => {
+      signal.throwIfAborted()
+      const pool = await this.pool()
+      signal.throwIfAborted()
+      const options: RemoteCheckoutOptions = {
         // Without it, ASB keeps a closed session for 7 days, with any data the tools returned.
         ephemeral: true,
         scriptName: 'run_code.py',
@@ -990,8 +1050,23 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
         },
         // pydantic-ai's policy: no clock or randomness, and sleeps on the host.
         osPolicy: { datetime: 'call_host', sleep: 'call_host', randomStart: 'call_host' },
-      })
-    )
+      }
+      try {
+        return await pool.checkout(options)
+      } catch (error) {
+        if (
+          !(error instanceof MontyRefusedError) ||
+          error.statusCode === 'UNAUTHENTICATED' ||
+          error.statusCode === 'PERMISSION_DENIED' ||
+          !['caller_cap', 'capacity', 'worker_unavailable'].some((cause) => cause === error.cause)
+        ) {
+          throw error
+        }
+        await sleep(100, undefined, { signal, ref: false })
+        signal.throwIfAborted()
+        return pool.checkout(options)
+      }
+    })
   }
 
   /** Drops a session whose feed is still running; it closes itself once the feed settles. */
