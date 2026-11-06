@@ -150,17 +150,29 @@ function toolInputTooLarge(name: string, maxBytes: number): string {
 }
 
 // `JSON.stringify` writes a Map or a Set as `{}`. They become a dict and a list, as `fromSandbox` converts the
-// Python dicts and sets that sandbox code passes to a tool.
-function jsonCollections(_key: string, value: unknown): unknown {
-  if (value instanceof Map) {
-    return Object.fromEntries([...(value as Map<unknown, unknown>)].map(([key, item]) => [String(key), item]))
+// Python dicts and sets that sandbox code passes to a tool. Each collection converts to one object per
+// serialization, so the cycle check of `JSON.stringify` also sees a cycle that runs only through Maps and Sets.
+function jsonCollections(): (key: string, value: unknown) => unknown {
+  const converted = new Map<Map<unknown, unknown> | Set<unknown>, unknown>()
+  return (_key, value) => {
+    if (!(value instanceof Map || value instanceof Set)) {
+      return value
+    }
+    let json = converted.get(value)
+    if (json === undefined) {
+      json =
+        value instanceof Map
+          ? Object.fromEntries([...(value as Map<unknown, unknown>)].map(([key, item]) => [String(key), item]))
+          : [...(value as Set<unknown>)]
+      converted.set(value, json)
+    }
+    return json
   }
-  return value instanceof Set ? [...(value as Set<unknown>)] : value
 }
 
 /** The JSON a tool result is sent as. Throws for a value with no JSON form, such as a bigint or a cycle. */
 function toolOutputJson(output: unknown): string {
-  return JSON.stringify(output ?? null, jsonCollections)
+  return JSON.stringify(output ?? null, jsonCollections())
 }
 
 function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {

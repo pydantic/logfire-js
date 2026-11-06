@@ -436,6 +436,10 @@ describe('size and concurrency caps', () => {
 describe('tool results without a JSON form', () => {
   const circular: Record<string, unknown> = { name: 'loop' }
   circular['self'] = circular
+  const circularMap = new Map<string, unknown>([['payload', 'x'.repeat(65536)]])
+  circularMap.set('self', circularMap)
+  const circularSet = new Set<unknown>(['x'])
+  circularSet.add(circularSet)
 
   test.each<[string, unknown, RegExp]>([
     [
@@ -446,6 +450,16 @@ describe('tool results without a JSON form', () => {
     [
       'a circular value',
       circular,
+      /^ValueError: odd\(\) returned a value that cannot be sent to the sandbox as JSON: Converting circular structure to JSON[\s\S]*\./u,
+    ],
+    [
+      'a Map that contains itself',
+      { m: circularMap },
+      /^ValueError: odd\(\) returned a value that cannot be sent to the sandbox as JSON: Converting circular structure to JSON[\s\S]*\./u,
+    ],
+    [
+      'a Set that contains itself',
+      { s: circularSet },
       /^ValueError: odd\(\) returned a value that cannot be sent to the sandbox as JSON: Converting circular structure to JSON[\s\S]*\./u,
     ],
   ])('report %s as a result that cannot be sent, not as a tool error', async (_label, value, message) => {
