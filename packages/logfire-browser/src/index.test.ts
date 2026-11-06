@@ -391,7 +391,16 @@ vi.mock('./browserMetrics', () => ({
   startBrowserMetrics: async (options: unknown, resource: unknown) => mocks.startBrowserMetrics(options, resource),
 }))
 
-import { configureLogfireApi, DebugIdSpanProcessor, Level, logfireApiConfig, PendingSpanProcessor, TailSamplingProcessor } from 'logfire'
+import {
+  configureLogfireApi,
+  DebugIdSpanProcessor,
+  isSdkInternalError,
+  Level,
+  logfireApiConfig,
+  markSdkInternalError,
+  PendingSpanProcessor,
+  TailSamplingProcessor,
+} from 'logfire'
 
 import { BrowserSessionSpanProcessor } from './BrowserSessionSpanProcessor'
 import { BrowserUrlSpanProcessor } from './BrowserUrlSpanProcessor'
@@ -1293,6 +1302,19 @@ describe('browser span processors', () => {
     await waitForConfigureMicrotasks()
     cleanup = configure({ traceUrl: 'http://localhost:8989/retry-after-rollback' })
     expect(mocks.webTracerProviderInstances).toHaveLength(2)
+  })
+
+  it.each([
+    ['an SDK failure', markSdkInternalError(new Error('sdk cleanup failed')), true],
+    ['an application failure', new Error('processor shutdown failed'), false],
+  ])('keeps the origin of %s when cleanup wraps it', async (_name, failure, sdkInternal) => {
+    mocks.failStep('shutdown', failure)
+    const failingCleanup = configure({ traceUrl: 'http://localhost:8989/failing-cleanup' })
+
+    const cleanupError = await failingCleanup().catch((rejection: unknown) => rejection)
+
+    expect((cleanupError as Error).cause).toBe(failure)
+    expect(isSdkInternalError(cleanupError)).toBe(sdkInternal)
   })
 
   it('makes failed synchronous setup rollback terminal when provider shutdown rejects', async () => {

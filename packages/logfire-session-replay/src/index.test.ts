@@ -1618,6 +1618,7 @@ describe('startSessionReplay lifecycle', () => {
     expect(() => transformUrl?.('https://app.example.test/fail')).toThrow(transformError)
     expect(() => transformUrl?.('https://app.example.test/fail-again')).toThrow(transformError)
     expect(onError.mock.calls).toEqual([[transformError]])
+    expect(Symbol.for('logfire.sdk.internal') in transformError).toBe(false)
     await replay.stop()
   })
 

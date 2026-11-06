@@ -2,6 +2,7 @@ import { record } from '@rrweb/record'
 
 import { cutText, mayReferenceCssUrl, redactSrcset, redactUrl, redactUrlsInText, truncationSuffix } from './privacy'
 import type { UrlTransform } from './privacy'
+import { markSdkInternalError } from './sdkInternalError'
 import { CustomTag, EventType, IncrementalSource } from './types'
 import type { RrwebEvent } from './types'
 
@@ -166,7 +167,7 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
 
   const stop = record(recordOptions)
   if (stop === undefined) {
-    throw new Error('logfire session replay: rrweb failed to start recording')
+    throw markSdkInternalError(new Error('logfire session replay: rrweb failed to start recording'))
   }
 
   return {

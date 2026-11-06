@@ -2,6 +2,7 @@ import { gzip, gzipSync, strToU8 } from 'fflate'
 
 import { isUserActivityEvent, resolveFlushInterval } from './activity'
 import { computeChunkMeta, normalizeReplayUser } from './extract'
+import { markSdkInternalError } from './sdkInternalError'
 import { safeSessionStorage } from './session'
 import { CHUNK_ENVELOPE_VERSION, EventType } from './types'
 import type { ChunkEnvelope, ReplayUser, ResolvedSessionReplayConfig, RrwebEvent, SessionAttributes } from './types'
@@ -639,7 +640,12 @@ export class ReplayTransport {
       // The rejected batch gets no seq, so chunks already queued stay valid.
       safeReportError(
         this.config.onError,
-        new ReplayUploadError({ cause: new Error('replay upload queue is full'), reason: 'not-sent', seq: undefined, sessionId })
+        new ReplayUploadError({
+          cause: markSdkInternalError(new Error('replay upload queue is full')),
+          reason: 'not-sent',
+          seq: undefined,
+          sessionId,
+        })
       )
       this.beginResync()
       return undefined
@@ -836,10 +842,10 @@ export class ReplayTransport {
     if (!this.shuttingDown) {
       return
     }
-    this.deadlineAbort.abort(new Error('replay upload did not finish before shutdown'))
+    this.deadlineAbort.abort(markSdkInternalError(new Error('replay upload did not finish before shutdown')))
     for (const upload of [...this.queue]) {
       this.settle(upload, {
-        cause: new Error('replay upload did not finish before shutdown'),
+        cause: markSdkInternalError(new Error('replay upload did not finish before shutdown')),
         reason: upload.reachedFetch ? 'unconfirmed' : 'not-sent',
       })
     }
@@ -988,7 +994,7 @@ export class ReplayTransport {
       return
     }
     if (this.isResyncPending()) {
-      safeReportError(this.config.onError, new Error('replay resync snapshot produced no full snapshot'))
+      safeReportError(this.config.onError, markSdkInternalError(new Error('replay resync snapshot produced no full snapshot')))
       this.scheduleResyncSnapshot()
     }
   }
@@ -1173,7 +1179,7 @@ export class ReplayTransport {
     let responseComplete: boolean | undefined
     const controller = new AbortController()
     const timeout = setTimeout(() => {
-      controller.abort(new Error(`replay upload timed out after ${String(timeoutMs)}ms`))
+      controller.abort(markSdkInternalError(new Error(`replay upload timed out after ${String(timeoutMs)}ms`)))
     }, timeoutMs)
     const deadline = this.deadlineAbort.signal
     const onDeadline = (): void => {
@@ -1326,6 +1332,7 @@ class ReplayIngestError extends Error {
     this.status = status
     this.retryAfter = retryAfter
     this.name = 'ReplayIngestError'
+    markSdkInternalError(this)
   }
 }
 
@@ -1424,7 +1431,7 @@ async function gzipAsync(compression: Compression, input: Uint8Array): Promise<U
     const onPolicyViolation = (event: Event): void => {
       const violation = event as SecurityPolicyViolationEvent
       if (violation.effectiveDirective.includes('worker-src') || violation.violatedDirective.includes('worker-src')) {
-        finish(new Error('replay compression worker blocked by Content Security Policy'))
+        finish(markSdkInternalError(new Error('replay compression worker blocked by Content Security Policy')))
       }
     }
     for (const target of targets) {
