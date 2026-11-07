@@ -200,9 +200,9 @@ logfire.configure({
 `OTEL_OPAMP_HEADERS` environment variables that the Fleet setup page in Logfire gives you. Pass
 `fleet: { endpoint, headers, stateDir, heartbeatIntervalMs }` to give them in code instead.
 
-If you bundle your app, or deploy it with a tool that traces which files it needs (Vercel, or
-Next.js `output: 'standalone'`), import the Fleet client yourself and pass it in. The SDK loads the
-package only when it's asked to, so those tools can't see that the app needs it and may leave it out:
+If you deploy with a tool that traces which files your app needs (Vercel, or Next.js
+`output: 'standalone'`), import the Fleet client yourself and pass it in. The SDK loads the package
+only when it's asked to, so those tools can't see that the app needs it and may leave it out:
 
 ```ts
 import * as fleetClient from '@pydantic/logfire-fleet-otel'
@@ -213,9 +213,18 @@ logfire.configure({
 })
 ```
 
+If you bundle your app, do the same and also keep `@pydantic/logfire-fleet-otel` external (for
+esbuild, `--external:@pydantic/logfire-fleet-otel`). The package reads its WASM core from a path
+relative to its own files, so it can't run from inside a bundle: the SDK then warns and runs
+without Fleet.
+
 `configure()` never waits for Fleet. Until Fleet answers, the last policy the SDK saved is in force,
-else the SDK's own settings. If the Fleet client isn't installed, or no endpoint is set, the SDK
-warns and sends telemetry as it would without Fleet.
+else the SDK's own settings, `OTEL_TRACES_SAMPLER` included. If the Fleet client isn't installed, or
+no endpoint is set, the SDK warns and sends telemetry as it would without Fleet.
+
+A process has one Fleet client. A later `configure()` with `fleet` keeps it, so if the endpoint,
+headers, heartbeat or state directory changed, the SDK warns and the client keeps the ones it joined
+with.
 
 ## Advanced Base URL
 

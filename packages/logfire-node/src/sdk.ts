@@ -31,7 +31,7 @@ import { configureVariables, shutdownVariables } from 'logfire/vars'
 
 import type { FleetHook } from './fleet'
 
-import { loadFleet, warnUnmanaged } from './fleet'
+import { fleetTarget, loadFleet, samplerFromEnv, warnFleetOptionsKept, warnUnmanaged } from './fleet'
 import { logfireConfig } from './logfireConfig'
 import { logfireLogRecordProcessor } from './logsExporter'
 import { NoExtractPropagator } from './noExtractPropagator'
@@ -83,6 +83,8 @@ interface Deadline {
 
 let activeRuntime: ActiveRuntime | undefined
 let globalsRegistrant: ActiveRuntime | undefined
+// What the running Fleet client joined with: it is one per process, and a later hook shares it.
+let joinedFleetTarget: string | undefined
 
 function safelyDisable(disable: () => void): void {
   try {
@@ -295,10 +297,14 @@ async function shutdownRuntime(runtime: ActiveRuntime, options: ShutdownRuntimeO
         }
       }
 
-      if (runtime.fleet !== undefined && options.stopFleet !== false) {
+      // Read after the flush: a configure() during it may have put a newer runtime on the same client.
+      const clientInUse = activeRuntime !== runtime && activeRuntime?.fleet !== undefined
+      if (runtime.fleet !== undefined && options.stopFleet !== false && !clientInUse) {
+        joinedFleetTarget = undefined
+        // The try is for a hook that throws at once, which must not skip the SDK's own shutdown below.
         try {
           // Before the SDK's own shutdown: goodbye to the Fleet server while the client still runs.
-          await withDeadline('Fleet shutdown', deadline, runtime.fleet.shutdown())
+          errors.push(...(await settleWithDeadline('Fleet shutdown', deadline, [runtime.fleet.shutdown()])))
         } catch (e: unknown) {
           errors.push(e)
         }
@@ -361,6 +367,13 @@ export function start(): void {
 
   // The Fleet client, where `fleet` is set and it can run: it is called below where the policy acts.
   const fleet = logfireConfig.fleet === undefined ? undefined : loadFleet(logfireConfig.fleet)
+  if (fleet !== undefined && logfireConfig.fleet !== undefined) {
+    const target = fleetTarget(logfireConfig.fleet)
+    if (joinedFleetTarget !== undefined && joinedFleetTarget !== target) {
+      warnFleetOptionsKept()
+    }
+    joinedFleetTarget ??= target
+  }
 
   const previousRuntime = activeRuntime
   if (previousRuntime !== undefined) {
@@ -433,7 +446,7 @@ export function start(): void {
   const headSampler =
     headRate !== undefined && headRate < 1.0 ? new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(headRate) }) : undefined
   // Under Fleet, the live sampler: the SDK's own until the Fleet policy sets a sampling rate or rules.
-  const sampler = fleet === undefined ? headSampler : fleet.headSampler(headSampler)
+  const sampler = fleet === undefined ? headSampler : fleet.headSampler(headSampler ?? samplerFromEnv())
 
   const logProcessor = logfireLogRecordProcessor()
   const logRecordProcessors = logProcessor === null ? [] : [logProcessor]

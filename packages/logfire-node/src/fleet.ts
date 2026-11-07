@@ -2,6 +2,8 @@ import type { Resource } from '@opentelemetry/resources'
 import type { Sampler } from '@opentelemetry/sdk-trace-base'
 
 import { diag } from '@opentelemetry/api'
+import { getNumberFromEnv, getStringFromEnv } from '@opentelemetry/core'
+import { AlwaysOffSampler, AlwaysOnSampler, ParentBasedSampler, TraceIdRatioBasedSampler } from '@opentelemetry/sdk-trace-base'
 import { createRequire } from 'node:module'
 
 /** The contract version of `@pydantic/logfire-fleet-otel`'s `LogfireFleet` this SDK calls. */
@@ -33,7 +35,8 @@ export interface FleetOptions {
    * The Fleet client, as `import * as fleetClient from '@pydantic/logfire-fleet-otel'`. Left out, the
    * SDK loads the package itself, which a bundler or a file tracer (Vercel, Next.js standalone
    * output) can't see, so it may leave the package out of the deployment. Passing it in makes the
-   * import one they see.
+   * import one they see. A bundler must still keep the package external: it reads its WASM core
+   * from a path relative to its own files.
    */
   client?: FleetClient
 }
@@ -65,6 +68,61 @@ export function warnUnmanaged(reason: string): void {
   diag.warn(`logfire: ${reason}`)
 }
 
+/** Says, on the console too, that a running Fleet client keeps the options it joined with. */
+export function warnFleetOptionsKept(): void {
+  const message = 'logfire: the Fleet options changed, but the running Fleet client keeps the ones it joined with'
+  // On the console for the same reason as `warnUnmanaged`: the app believes it moved to the new options.
+  console.warn(`${message}.`)
+  diag.warn(message)
+}
+
+/** What `options` join with, the environment included, to tell whether a later `configure()` changes it. */
+export function fleetTarget(options: FleetOptions, env: NodeJS.ProcessEnv = process.env): string {
+  return JSON.stringify([
+    options.endpoint ?? env['OTEL_OPAMP_ENDPOINT'],
+    options.headers === undefined ? env['OTEL_OPAMP_HEADERS'] : Object.entries(options.headers).sort(([a], [b]) => a.localeCompare(b)),
+    options.heartbeatIntervalMs ?? env['OTEL_OPAMP_HEARTBEAT_INTERVAL'],
+    options.stateDir ?? env['OTEL_OPAMP_STATE_DIR'],
+  ])
+}
+
+function samplerRatioFromEnv(): number {
+  const ratio = getNumberFromEnv('OTEL_TRACES_SAMPLER_ARG')
+  if (ratio === undefined || ratio < 0 || ratio > 1) {
+    diag.error(`logfire: OTEL_TRACES_SAMPLER_ARG=${String(ratio)} is not a ratio in [0..1]: using 1`)
+    return 1
+  }
+  return ratio
+}
+
+/**
+ * The sampler `OTEL_TRACES_SAMPLER` names. NodeSDK builds it only when it is given none, and under
+ * Fleet it is always given one, so it is built here, with the same rules: without it the client's
+ * `headSampler(undefined)` would sample every trace. NodeSDK's own function isn't public.
+ */
+export function samplerFromEnv(): Sampler | undefined {
+  const name = getStringFromEnv('OTEL_TRACES_SAMPLER')
+  switch (name) {
+    case undefined:
+      return undefined
+    case 'always_off':
+      return new AlwaysOffSampler()
+    case 'always_on':
+      return new AlwaysOnSampler()
+    case 'parentbased_always_off':
+      return new ParentBasedSampler({ root: new AlwaysOffSampler() })
+    case 'parentbased_always_on':
+      return new ParentBasedSampler({ root: new AlwaysOnSampler() })
+    case 'parentbased_traceidratio':
+      return new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(samplerRatioFromEnv()) })
+    case 'traceidratio':
+      return new TraceIdRatioBasedSampler(samplerRatioFromEnv())
+    default:
+      diag.error(`logfire: unknown OTEL_TRACES_SAMPLER value "${name}", using the default`)
+      return undefined
+  }
+}
+
 /**
  * The Fleet client's hook for `options`, or undefined (with a warning) where it can't run. Never
  * throws: telemetry is sent either way, under the SDK's own settings.
@@ -79,7 +137,7 @@ export function loadFleet(options: FleetOptions, env: NodeJS.ProcessEnv = proces
     warnUnmanaged(
       missing
         ? `Logfire Fleet needs ${FLEET_PACKAGE}: \`npm install ${FLEET_PACKAGE}\`. If it is installed, a bundler or ` +
-            `file tracer left it out of the deployment: pass it in, as \`fleet: { client }\``
+            `file tracer left it out of the deployment: pass it in, as \`fleet: { client }\`, and keep it external to a bundle`
         : `${FLEET_PACKAGE} could not be loaded (${String(e)})`
     )
     return undefined
