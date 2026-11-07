@@ -567,7 +567,14 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
                 'Agent Sandboxes infrastructure failed. This call did not complete; a developer must fix the sandbox before a new run.',
             }
           }
-          const { result } = output as { result: unknown }
+          const result =
+            typeof output === 'object' &&
+            output !== null &&
+            !Array.isArray(output) &&
+            Reflect.ownKeys(output).length === 1 &&
+            Object.hasOwn(output, 'result')
+              ? (output as { result: unknown }).result
+              : output
           return typeof result === 'string' ? { type: 'text', value: result } : { type: 'json', value: result as JSONValue }
         },
       }),

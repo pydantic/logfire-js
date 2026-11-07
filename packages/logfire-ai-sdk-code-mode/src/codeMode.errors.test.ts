@@ -136,8 +136,31 @@ describe('developer errors', () => {
     await code.closeWhenDone(result)
   })
 
-  /** Persisted tool results must distinguish infrastructure failure from successful Python None without exposing developer errors. */
+  /** Saved outputs from old and new versions must preserve their values while keeping infrastructure failures distinct and private. */
   test.each([
+    ['legacy text', { type: 'text', value: 'legacy text' }],
+    ['', { type: 'text', value: '' }],
+    [42, { type: 'json', value: 42 }],
+    [0, { type: 'json', value: 0 }],
+    [false, { type: 'json', value: false }],
+    [{ a: 1 }, { type: 'json', value: { a: 1 } }],
+    [
+      { result: 42, extra: true },
+      { type: 'json', value: { result: 42, extra: true } },
+    ],
+    [{}, { type: 'json', value: {} }],
+    [[1, 2], { type: 'json', value: [1, 2] }],
+    [null, { type: 'json', value: null }],
+    [
+      { result: 42, sessionReset: 'State was lost.' },
+      { type: 'json', value: { result: 42, sessionReset: 'State was lost.' } },
+    ],
+    [{ result: 42 }, { type: 'json', value: 42 }],
+    [{ result: 'new text' }, { type: 'text', value: 'new text' }],
+    [{ result: { result: 42, sessionReset: 'State was lost.' } }, { type: 'json', value: { result: 42, sessionReset: 'State was lost.' } }],
+    [Object.assign(Object.create({ result: 42 }) as Record<string, unknown>, { a: 1 }), { type: 'json', value: { a: 1 } }],
+    [Object.defineProperty({}, 'result', { value: 42 }), { type: 'json', value: 42 }],
+    [Object.defineProperty({ result: 42 }, 'metadata', { value: true }), { type: 'json', value: { result: 42 } }],
     [{ result: {} }, { type: 'json', value: {} }],
     [{ result: { sandboxFailure: true } }, { type: 'json', value: { sandboxFailure: true } }],
     [
