@@ -469,6 +469,20 @@ describe('logfire config', () => {
     expect(logfireConfig.baseUrl).toBe('https://env.example.com')
   })
 
+  it('trims whitespace around a token before reading its region or sending it', () => {
+    process.env['LOGFIRE_TOKEN'] = 'pylf_v1_eu_abc123\n'
+    configure({})
+
+    expect(logfireConfig.token).toBe('pylf_v1_eu_abc123')
+    expect(logfireConfig.baseUrl).toBe('https://logfire-eu.pydantic.dev')
+    expect(logfireConfig.authorizationHeaders).toEqual({ Authorization: 'pylf_v1_eu_abc123' })
+
+    configure({ token: ' pylf_v1_eu_abc123 ' })
+
+    expect(logfireConfig.token).toBe('pylf_v1_eu_abc123')
+    expect(logfireConfig.baseUrl).toBe('https://logfire-eu.pydantic.dev')
+  })
+
   it('uses LOGFIRE_CREDENTIALS_DIR for local credentials', () => {
     const dataDir = makeCredentialsDir({
       logfire_api_url: 'https://env-dir.example.com',
