@@ -468,7 +468,8 @@ export function start(): void {
     idGenerator: new ULIDGenerator(),
     instrumentations,
     ...(logProcessor ? { logRecordProcessors: [logProcessor] } : {}),
-    ...(metricReaders.length === 0 ? {} : { metricReaders }),
+    // Always set: without it, NodeSDK builds an OTLP reader from OTEL_METRICS_EXPORTER even under `metrics: false`.
+    metricReaders,
     resource,
     ...(sampler ? { sampler } : {}),
     spanProcessors,

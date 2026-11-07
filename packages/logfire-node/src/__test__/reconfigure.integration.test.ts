@@ -3,6 +3,7 @@
 import type { Instrumentation } from '@opentelemetry/instrumentation'
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
+import { metrics } from '@opentelemetry/api'
 import { afterEach, describe, expect, it } from 'vite-plus/test'
 
 import { configure, info, shutdown } from '../index'
@@ -50,6 +51,12 @@ const base = { metrics: false as const, sendToLogfire: false, serviceName: 'reco
 describe('reconfigure integration', () => {
   afterEach(async () => {
     await shutdown()
+  })
+
+  it('registers no meter provider under metrics: false, whatever OTEL_METRICS_EXPORTER says', () => {
+    // NodeSDK falls back to an OTLP reader from the environment when it isn't given metricReaders.
+    configure(base)
+    expect(metrics.getMeterProvider().constructor.name).not.toBe('MeterProvider')
   })
 
   it('routes emissions to the latest configure() and stops feeding the previous one (CX-1)', () => {
