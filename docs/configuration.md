@@ -178,6 +178,54 @@ This reduces the volume of data sent, but a long-running span does not show in
 the Logfire UI until it finishes. Console output still shows pending spans. The
 `configure()` option takes precedence over the environment variable.
 
+## Logfire Fleet
+
+Logfire Fleet lets you manage an application's telemetry from Logfire, without a redeploy: a Fleet
+policy sets sampling, which signals are sent, log levels, redaction and volume limits for
+everything the SDK sends, the console included. The SDK talks to Fleet over OpAMP (the Open Agent
+Management Protocol). In Node.js, install the Fleet client next to the SDK and turn on `fleet`:
+
+```bash
+npm install @pydantic/logfire-node @pydantic/logfire-fleet-otel
+```
+
+```ts
+logfire.configure({
+  fleet: true,
+  serviceName: 'payments-api',
+})
+```
+
+`fleet: true` (or `LOGFIRE_FLEET=true`) reads the Fleet server from the `OTEL_OPAMP_ENDPOINT` and
+`OTEL_OPAMP_HEADERS` environment variables that the Fleet setup page in Logfire gives you. Pass
+`fleet: { endpoint, headers, stateDir, heartbeatIntervalMs }` to give them in code instead.
+
+If you deploy with a tool that traces which files your app needs (Vercel, or Next.js
+`output: 'standalone'`), import the Fleet client yourself and pass it in. The SDK loads the package
+only when it's asked to, so those tools can't see that the app needs it and may leave it out:
+
+```ts
+import * as fleetClient from '@pydantic/logfire-fleet-otel'
+
+logfire.configure({
+  fleet: { client: fleetClient },
+  serviceName: 'payments-api',
+})
+```
+
+If you bundle your app, do the same and also keep `@pydantic/logfire-fleet-otel` external (for
+esbuild, `--external:@pydantic/logfire-fleet-otel`). The package reads its WASM core from a path
+relative to its own files, so it can't run from inside a bundle: the SDK then warns and runs
+without Fleet.
+
+`configure()` never waits for Fleet. Until Fleet answers, the last policy the SDK saved is in force,
+else the SDK's own settings, `OTEL_TRACES_SAMPLER` included. If the Fleet client isn't installed, or
+no endpoint is set, the SDK warns and sends telemetry as it would without Fleet.
+
+A process has one Fleet client. A later `configure()` with `fleet` keeps it, so if the endpoint,
+headers, heartbeat or state directory changed, the SDK warns and the client keeps the ones it joined
+with.
+
 ## Advanced Base URL
 
 Use `LOGFIRE_BASE_URL` or `advanced.baseUrl` for self-hosted or local Logfire-compatible endpoints:
