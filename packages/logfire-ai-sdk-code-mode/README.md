@@ -43,3 +43,6 @@ call in that run.
 
 See the [Agent Sandboxes docs](https://github.com/pydantic/logfire-js/blob/main/docs/agent-sandboxes.md#use-with-the-vercel-ai-sdk)
 for streaming, approval, tool context, limits, and error handling.
+
+Agent Sandboxes setup and checkout errors end the run instead of reaching the model.
+Use `codeMode`'s `onError` handler for developer-side reporting, and handle thrown errors or rejected streams.

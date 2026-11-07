@@ -1,16 +1,22 @@
 // Helpers shared by the codeMode tests. Not exported from the package.
+/** Tests use `runCode` to execute the AI SDK tool and output hooks, and `CountingSandboxes` to inspect session lifetimes. */
 import type { MontySession, RemoteCheckoutOptions } from '@pydantic/monty'
 import type { ToolExecutionOptions } from 'ai'
 
 import type { CodeMode, RunCodeInput, Sandboxes } from './codeMode'
 
-/** Runs `run_code` the way the AI SDK does for one tool call. */
+/** Runs both `run_code` hooks and returns the unwrapped text or JSON value seen by the model. */
 export async function runCode(code: CodeMode, input: RunCodeInput, options: Partial<ToolExecutionOptions<unknown>> = {}): Promise<unknown> {
-  const { execute } = code.tools.run_code
-  if (execute === undefined) {
-    throw new Error('run_code has no execute function')
+  const { execute, toModelOutput } = code.tools.run_code
+  if (execute === undefined || toModelOutput === undefined) {
+    throw new Error('run_code requires execute and toModelOutput functions')
   }
-  return await execute(input, { toolCallId: 'call', messages: [], context: undefined, ...options })
+  const output = await execute(input, { toolCallId: 'call', messages: [], context: undefined, ...options })
+  const result = await toModelOutput({ toolCallId: 'call', input, output })
+  if (result.type === 'text' || result.type === 'json') {
+    return result.value
+  }
+  throw new Error('run_code did not return text or JSON for the model')
 }
 
 /** Error message of a rejected `run_code` call. */

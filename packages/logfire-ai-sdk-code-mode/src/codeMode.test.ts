@@ -53,6 +53,7 @@ function sandboxes(): CountingSandboxes {
 }
 
 describe('an agent run', () => {
+  /** Successful tool results keep their transport envelope while queued calls share one ordered sandbox session. */
   test('uses one session for every run_code call, in the order the model made them', async () => {
     const counted = sandboxes()
     const code = codeMode({ tools: { add }, sandboxes: counted })
@@ -79,9 +80,9 @@ describe('an agent run', () => {
 
     expect(text).toBe('done')
     expect(steps.flatMap((step) => step.toolResults.map((result) => [result.toolCallId, result.output]))).toEqual([
-      ['first', 3],
-      ['second', 30],
-      ['third', 33],
+      ['first', { result: 3 }],
+      ['second', { result: 30 }],
+      ['third', { result: 33 }],
     ])
     expect(counted.sessions).toHaveLength(1)
     await code.close()
@@ -365,22 +366,23 @@ describe('lifecycle', () => {
     expect(await runCode(code, { code: '1 + 1' })).toBe(2)
   })
 
-  test('a failed checkout leaves the next session type-checked', async () => {
+  /** A checkout failure is not a code error; later queued calls must not retry a broken setup. */
+  test('a failed checkout ends the run with the original error', async () => {
     let refuse = true
+    const error = new MontyRuntimeError('RuntimeError', 'server refused the session')
     const flaky: Sandboxes = {
       checkout: async (options) => {
         if (refuse) {
           refuse = false
-          throw new MontyRuntimeError('RuntimeError', 'server refused the session')
+          throw error
         }
         return pool.checkout(options)
       },
       close: async () => Promise.resolve(),
     }
     await using code = codeMode({ tools: { add }, sandboxes: flaky })
-    // As in pydantic-ai, where the checkout sits inside the feed's `except MontyRuntimeError`.
-    expect(await runCodeError(code, { code: '1' })).toBe('Runtime error:\nRuntimeError: server refused the session')
-    expect(await runCodeError(code, { code: 'await add(a="one")' })).toMatch(/^Type error in code:\n/u)
+    await expect(runCode(code, { code: '1' })).rejects.toBe(error)
+    await expect(runCode(code, { code: 'await add(a="one")' })).rejects.toBe(error)
   })
 
   test('an oversized snippet keeps the idle timeout running', async () => {
