@@ -1,5 +1,15 @@
 # logfire
 
+## 0.22.0
+
+### Minor Changes
+
+- 60b41cb: Add `configure({ fleet })` to manage the SDK from Logfire Fleet, with the optional `@pydantic/logfire-fleet-otel` peer dependency.
+
+### Patch Changes
+
+- bcd72a4: `metrics: false` no longer leaves the OpenTelemetry NodeSDK to build an OTLP metric reader from `OTEL_METRICS_EXPORTER`, which sent metrics to `localhost:4318` and could stall `shutdown()` for seconds.
+
 ## 0.21.2
 
 ### Patch Changes
