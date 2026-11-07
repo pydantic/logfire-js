@@ -126,6 +126,8 @@ describe('wrapped execution errors', () => {
     new MontyDisconnectError('Agent Sandboxes stream ended', { cause: 'turn_timeout' }),
     new MontyDisconnectError('Agent Sandboxes stream ended', { cause: 'session_timeout' }),
     new MontyDisconnectError('Agent Sandboxes stream ended', { cause: 'idle_timeout' }),
+    new MontyDisconnectError('Agent Sandboxes stream ended'),
+    new MontyDisconnectError('Agent Sandboxes stream ended', { cause: 'unknown_cause' }),
     new MontySyntaxError('invalid syntax'),
     new MontyTypingError('invalid type'),
     new MontyRuntimeError('ZeroDivisionError', 'division by zero'),
@@ -145,17 +147,33 @@ describe('wrapped execution errors', () => {
     expect(outcomes[1]).toEqual(outcomes[0])
   })
 
-  /** A wrapped unknown disconnect stays developer-fatal and preserves the wrapper's public error and cause chain. */
-  test('reports the original wrapped disconnect', async () => {
+  /** Missing and unrecognized disconnect causes, raw or wrapped, must lose the session without latching a developer failure or replaying. */
+  test.each([
+    { depth: 0, cause: undefined },
+    { depth: 0, cause: 'unknown_cause' },
+    { depth: 3, cause: undefined },
+    { depth: 3, cause: 'unknown_cause' },
+  ])('resets on disconnect cause $cause through $depth wrappers', async ({ depth, cause }) => {
     const counted = new CountingSandboxes(pool)
     const onError = vi.fn<StreamTextOnErrorCallback>()
     await using code = codeMode({ tools: {}, sandboxes: counted, onError })
-    await runCode(code, { code: '1' })
-    const error = wrap(new MontyDisconnectError('Agent Sandboxes stream ended'))
-    vi.spyOn(counted.sessions[0] as MontySession, 'feedRun').mockRejectedValueOnce(error)
-    await expect(runCode(code, { code: '2' })).rejects.toBe(error)
-    expect(onError.mock.calls).toEqual([[{ error }]])
+    await runCode(code, { code: 'kept = 1' })
+    const session = counted.sessions[0] as MontySession
+    const error = wrap(new MontyDisconnectError('Agent Sandboxes stream ended', cause === undefined ? undefined : { cause }), depth)
+    const close = vi.spyOn(session, 'close')
+    const feed = vi.spyOn(session, 'feedRun').mockRejectedValueOnce(error)
+    expect(await runCodeError(code, { code: '2' })).toBe(
+      'The sandbox session ended unexpectedly and its state was lost. Recreate any state you need. ' +
+        'Check any tool calls already started before continuing, and do not replay completed side effects.'
+    )
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(feed).toHaveBeenCalledTimes(1)
     expect(counted.sessions).toHaveLength(1)
+    expect(await runCodeError(code, { code: 'kept' })).toMatch(/Name `kept` used when not defined/u)
+    expect(counted.sessions).toHaveLength(2)
+    expect(counted.sessions[1]).not.toBe(session)
+    expect(await runCode(code, { code: '2' })).toBe(2)
+    expect(onError).not.toHaveBeenCalled()
   })
 
   /** A wrapped drain has the same did-not-run guarantee and must replay once without extending the snippet deadline. */

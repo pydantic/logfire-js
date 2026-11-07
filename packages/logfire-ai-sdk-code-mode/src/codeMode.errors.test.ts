@@ -401,6 +401,9 @@ const timeLimitMessage =
 const sessionEndedMessage =
   'The sandbox session ended and its state is lost. Re-run any imports and recreate any state you need. ' +
   'Check any tool calls already started before continuing, and do not replay completed side effects.'
+const unexpectedSessionEndMessage =
+  'The sandbox session ended unexpectedly and its state was lost. Recreate any state you need. ' +
+  'Check any tool calls already started before continuing, and do not replay completed side effects.'
 const sessionResetMessage =
   'The sandbox session was replaced. Variables, imports and definitions from earlier calls are gone. ' +
   'Recreate any state you need, but do not replay completed side effects.'
@@ -443,29 +446,82 @@ describe('feed failures', () => {
     expect(onError).not.toHaveBeenCalled()
   })
 
-  /** Unknown disconnects and protocol failures cannot be fixed by changing Python and must not reach the model. */
-  test.each([new MontyDisconnectError('stream closed'), new ProtocolError('invalid frame'), new Error('transport failed')])(
-    'ends the run for %s',
-    async (error) => {
-      const counted = new CountingSandboxes(pool)
-      const onError = vi.fn<StreamTextOnErrorCallback>()
-      await using code = codeMode({ tools: {}, sandboxes: counted, onError })
-      await runCode(code, { code: '1' })
-      const close = vi.spyOn(firstSession(counted), 'close')
-      vi.spyOn(firstSession(counted), 'feedRun').mockRejectedValueOnce(error)
-      const model = callingModel()
-      await expect(generateText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })).rejects.toBe(error)
-      expect(close).toHaveBeenCalledTimes(1)
-      expect(model.doGenerateCalls).toHaveLength(1)
-      expect(onError.mock.calls).toEqual([[{ error }]])
-    }
-  )
+  /** Protocol failures and unclassified errors remain developer errors rather than requests to repeat side effects. */
+  test.each([new ProtocolError('invalid frame'), new Error('transport failed')])('ends the run for %s', async (error) => {
+    const counted = new CountingSandboxes(pool)
+    const onError = vi.fn<StreamTextOnErrorCallback>()
+    await using code = codeMode({ tools: {}, sandboxes: counted, onError })
+    await runCode(code, { code: '1' })
+    const close = vi.spyOn(firstSession(counted), 'close')
+    vi.spyOn(firstSession(counted), 'feedRun').mockRejectedValueOnce(error)
+    const model = callingModel()
+    await expect(generateText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })).rejects.toBe(error)
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(model.doGenerateCalls).toHaveLength(1)
+    expect(onError.mock.calls).toEqual([[{ error }]])
+  })
 
-  /** Timeout guidance must preserve completed call information so the model does not repeat side effects. */
+  /** An unexpected disconnect is a model tool error; the model can explicitly retry on a fresh session without seeing connection details. */
+  test.each(['raw', 'wrapped'])('lets the model recover from a %s unknown disconnect', async (kind) => {
+    const counted = new CountingSandboxes(pool)
+    const onError = vi.fn<StreamTextOnErrorCallback>()
+    await using code = codeMode({ tools: {}, sandboxes: counted, onError })
+    await runCode(code, { code: 'kept = 1' })
+    const disconnect = new MontyDisconnectError('synthetic-private-connection-details')
+    const error = kind === 'raw' ? disconnect : new Error('Agent Sandboxes connection failed', { cause: disconnect })
+    const feed = vi.spyOn(firstSession(counted), 'feedRun').mockRejectedValueOnce(error)
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        { content: [call], finishReason, usage, warnings: [] },
+        { content: [{ ...call, toolCallId: 'retry' }], finishReason, usage, warnings: [] },
+        { content: [{ type: 'text', text: 'recovered' }], finishReason: { unified: 'stop', raw: 'stop' }, usage, warnings: [] },
+      ],
+    })
+    const result = await generateText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })
+    expect(result.text).toBe('recovered')
+    expect(result.steps[0]?.content.map((part) => part.type)).toEqual(['tool-call', 'tool-error'])
+    expect(result.steps[0]?.content[1]).toMatchObject({ type: 'tool-error', error: { message: unexpectedSessionEndMessage } })
+    expect(result.steps[1]?.toolResults[0]?.output).toEqual({ result: 2 })
+    expect(model.doGenerateCalls).toHaveLength(3)
+    expect(JSON.stringify(model.doGenerateCalls)).not.toContain(disconnect.message)
+    expect(feed).toHaveBeenCalledTimes(1)
+    expect(counted.sessions).toHaveLength(2)
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  /** Repeated unexpected disconnects must consume model steps, not trigger an internal replay loop beyond the caller's stop condition. */
+  test.each(['raw', 'wrapped'])('bounds repeated %s unknown disconnects by model steps', async (kind) => {
+    const disconnect = new MontyDisconnectError('Agent Sandboxes connection ended', { cause: 'unknown_cause' })
+    const error = kind === 'raw' ? disconnect : new Error('Agent Sandboxes connection failed', { cause: disconnect })
+    const checkout = vi.fn<Sandboxes['checkout']>(async (options) => {
+      const session = await pool.checkout(options)
+      vi.spyOn(session, 'feedRun').mockRejectedValue(error)
+      return session
+    })
+    const onError = vi.fn<StreamTextOnErrorCallback>()
+    await using code = codeMode({ tools: {}, sandboxes: { checkout, close: async () => Promise.resolve() }, onError })
+    const model = callingModel()
+    const result = await generateText({ model, prompt: 'go', tools: code.tools, stopWhen: stepCountIs(3) })
+    expect(result.steps.map((step) => step.content.map((part) => part.type))).toEqual([
+      ['tool-call', 'tool-error'],
+      ['tool-call', 'tool-error'],
+      ['tool-call', 'tool-error'],
+    ])
+    expect(model.doGenerateCalls).toHaveLength(3)
+    expect(checkout).toHaveBeenCalledTimes(3)
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  /** Timeout and lost-session guidance must preserve completed call information so the model does not repeat side effects. */
   test.each([
     [new MontyCrashedError('request timeout', { timedOut: true }), timeLimitMessage],
     [new MontyDisconnectError('stream closed', { cause: 'turn_timeout' }), timeLimitMessage],
     [new MontyDisconnectError('stream closed', { cause: 'session_timeout' }), sessionEndedMessage],
+    [new MontyDisconnectError('Agent Sandboxes connection ended'), unexpectedSessionEndMessage],
+    [
+      new Error('Agent Sandboxes connection failed', { cause: new MontyDisconnectError('Agent Sandboxes connection ended') }),
+      unexpectedSessionEndMessage,
+    ],
   ])('lists started calls for %s', async (error, message) => {
     const counted = new CountingSandboxes(pool)
     const perform = tool({ inputSchema: z.object({}), outputSchema: z.object({}), execute: () => ({}) })

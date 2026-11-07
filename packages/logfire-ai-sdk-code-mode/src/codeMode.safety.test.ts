@@ -564,8 +564,8 @@ describe('onToolError', () => {
 })
 
 describe('a lost connection', () => {
-  /** An unclassified transport loss is a developer error, not a request for the model to repeat side effects. */
-  test('ends the run without replaying calls after a transport failure', async () => {
+  /** A real unexpected disconnect must explain lost state and started calls, without replaying them before the next explicit call. */
+  test('resets the session without replaying calls after a transport failure', async () => {
     const streams: ServerDuplexStream<Buffer, Buffer>[] = []
     const identity = (buffer: Buffer): Buffer => buffer
     const server = new Server()
@@ -635,12 +635,23 @@ describe('a lost connection', () => {
       },
     })
     try {
-      await using code = codeMode({ tools: { drop, count: countingTool() }, sandboxes: remote })
+      const calls: unknown[] = []
+      await using code = codeMode({ tools: { drop, count: countingTool(calls) }, sandboxes: remote })
       await runCode(code, { code: 'kept = (await count(n=1))["n"]' })
       const message = await runCodeError(code, { code: 'await count(n=2)\nawait drop()' })
-      expect(message).toBe('RuntimeError: monty worker connection closed while waiting for a reply')
-      expect(await runCodeError(code, { code: '(await count(n=3))["n"]' })).toBe(message)
+      expect(message).toBe(
+        'The sandbox session ended unexpectedly and its state was lost. Recreate any state you need. ' +
+          'Check any tool calls already started before continuing, and do not replay completed side effects.\n\n' +
+          '2 nested tool calls started before execution stopped:\n' +
+          "- count({'n': 2}) returned {'n': 2}\n- drop({}) returned {'ok': True}\n" +
+          'Account for all 2 before retrying; repeating a call repeats whatever it already did.'
+      )
+      expect(calls).toEqual([1, 2])
       expect(streams).toHaveLength(1)
+      expect(await runCodeError(code, { code: 'kept' })).toMatch(/Name `kept` used when not defined/u)
+      expect(await runCode(code, { code: '(await count(n=3))["n"]' })).toBe(3)
+      expect(calls).toEqual([1, 2, 3])
+      expect(streams).toHaveLength(2)
     } finally {
       await remote.close()
       server.forceShutdown()

@@ -118,7 +118,7 @@ export interface CodeMode extends AsyncDisposable {
  * ```
  *
  * With `streamText`, use `closeWhenDone(result)` instead, because the block exits before the stream is read.
- * Sandbox configuration and infrastructure errors end the run with the original error, not a model tool error.
+ * Sandbox setup and checkout failures end the run with the original error; unexpected disconnects become retryable model tool errors.
  */
 export function codeMode<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknown>(options: CodeModeOptions<TOOLS, RUNTIME_CONTEXT>): CodeMode {
   return new CodeModeRuntime(options)
@@ -849,10 +849,12 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     ) {
       return { message: TIME_LIMIT_MESSAGE + snippet.startedCalls(), reset: true }
     }
-    if (error instanceof MontyDisconnectError && (error.cause === 'session_timeout' || error.cause === 'idle_timeout')) {
+    if (error instanceof MontyDisconnectError) {
       return {
         message:
-          'The sandbox session ended and its state is lost. Re-run any imports and recreate any state you need. ' +
+          (error.cause === 'session_timeout' || error.cause === 'idle_timeout'
+            ? 'The sandbox session ended and its state is lost. Re-run any imports and recreate any state you need. '
+            : 'The sandbox session ended unexpectedly and its state was lost. Recreate any state you need. ') +
           'Check any tool calls already started before continuing, and do not replay completed side effects.' +
           snippet.startedCalls(),
         reset: true,
