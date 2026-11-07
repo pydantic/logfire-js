@@ -1,5 +1,11 @@
 # @pydantic/logfire-ai-sdk-code-mode
 
+## 0.1.4
+
+### Patch Changes
+
+- 755c34d: Tool outputs saved by earlier package versions still convert correctly when restoring UI messages.
+
 ## 0.1.3
 
 ### Patch Changes
