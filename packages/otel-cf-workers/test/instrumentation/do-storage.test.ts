@@ -4,7 +4,7 @@ import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '
 import { beforeEach, describe, expect, test, vitest } from 'vitest'
 import { AsyncLocalStorageContextManager } from '../../src/context'
 import { instrumentStorage } from '../../src/instrumentation/do-storage'
-import { context, trace } from '@opentelemetry/api'
+import { context, SpanStatusCode, trace } from '@opentelemetry/api'
 
 const exporter = new InMemorySpanExporter()
 
@@ -36,7 +36,7 @@ const storage = {
   setAlarm: vitest.fn().mockResolvedValue(undefined),
   deleteAlarm: vitest.fn().mockResolvedValue(undefined),
   sync: vitest.fn().mockResolvedValue(undefined),
-  transactionSync: vitest.fn().mockResolvedValue(undefined),
+  transactionSync: vitest.fn(<T>(callback: () => T): T => callback()),
   getCurrentBookmark: vitest.fn().mockResolvedValue(''),
   getBookmarkForTime: vitest.fn().mockResolvedValue(''),
   onNextSessionRestoreBookmark: vitest.fn().mockResolvedValue(''),
@@ -46,6 +46,10 @@ const storage = {
 beforeEach(() => {
   exporter.reset()
   vitest.resetAllMocks()
+  // Resetting mocks clears mockResolvedValue, but these storage methods always return Promises.
+  storage.put.mockResolvedValue(undefined)
+  storage.deleteAll.mockResolvedValue(undefined)
+  storage.sync.mockResolvedValue(undefined)
 })
 
 describe('delete', () => {
@@ -480,4 +484,93 @@ test('sync', async () => {
 		  "operation": "sync",
 		}
 	`)
+})
+
+describe('transactionSync', () => {
+  test.each([undefined, false, 0, 'cached value'])('preserves the synchronous result %j', async (value) => {
+    storage.transactionSync.mockImplementation((callback) => callback())
+    const instrument = instrumentStorage(storage)
+
+    const result = instrument.transactionSync(() => value)
+    // Drain the broken implementation's Promise before checking the original return value.
+    await result
+
+    expect(result).toBe(value)
+    const spans = exporter.getFinishedSpans()
+    expect(spans).toHaveLength(1)
+    expect(spans[0]?.name).toBe('Durable Object Storage transactionSync')
+    expect(spans[0]?.attributes['db.cf.do.has_result']).toBe(Boolean(value))
+  })
+
+  test('keeps SQL cursor access synchronous inside the transaction', async () => {
+    const row = ['cached token', 5]
+    const cursor = {
+      raw: () => [row].values(),
+      toArray: () => [row],
+    }
+    const exec = vitest.fn().mockReturnValue(cursor)
+    storage.transactionSync.mockImplementation((callback) => callback())
+    const instrument = instrumentStorage({ ...storage, sql: { ...sqlMock, exec } })
+
+    const result = instrument.transactionSync(() => instrument.sql.exec('SELECT token, expires_at FROM cache').raw().next().value)
+    await result
+
+    expect(result).toBe(row)
+    expect(instrument.sql.exec('SELECT token, expires_at FROM cache').toArray()).toEqual([row])
+    expect(exporter.getFinishedSpans()).toHaveLength(1)
+  })
+
+  test('throws callback errors synchronously and ends the error span', async () => {
+    const error = new Error('transaction failed')
+    storage.transactionSync.mockImplementation((callback) => callback())
+    const instrument = instrumentStorage(storage)
+    let caught: unknown
+    let result: unknown
+
+    try {
+      result = instrument.transactionSync(() => {
+        throw error
+      })
+    } catch (thrown) {
+      caught = thrown
+    }
+    if (result instanceof Promise) await result.catch(() => undefined)
+
+    expect(caught).toBe(error)
+    const spans = exporter.getFinishedSpans()
+    expect(spans).toHaveLength(1)
+    expect(spans[0]?.status.code).toBe(SpanStatusCode.ERROR)
+    expect(spans[0]?.events.map((event) => event.name)).toEqual(['exception'])
+  })
+})
+
+test('keeps an asynchronous storage span open until its result settles', async () => {
+  const { promise, resolve } = Promise.withResolvers<string>()
+  storage.get.mockReturnValue(promise)
+  const instrument = instrumentStorage(storage)
+
+  const result = instrument.get('key')
+  expect(result).toBeInstanceOf(Promise)
+  expect(exporter.getFinishedSpans()).toEqual([])
+
+  resolve('cached value')
+  await expect(result).resolves.toBe('cached value')
+
+  const spans = exporter.getFinishedSpans()
+  expect(spans).toHaveLength(1)
+  expect(spans[0]?.attributes['db.cf.do.key']).toBe('key')
+  expect(spans[0]?.attributes['db.cf.do.has_result']).toBe(true)
+})
+
+test('records and rethrows an asynchronous storage rejection', async () => {
+  const error = new Error('storage failed')
+  storage.get.mockRejectedValue(error)
+  const instrument = instrumentStorage(storage)
+
+  await expect(instrument.get('key')).rejects.toBe(error)
+
+  const spans = exporter.getFinishedSpans()
+  expect(spans).toHaveLength(1)
+  expect(spans[0]?.status.code).toBe(SpanStatusCode.ERROR)
+  expect(spans[0]?.events.map((event) => event.attributes?.['exception.message'])).toEqual(['storage failed'])
 })
