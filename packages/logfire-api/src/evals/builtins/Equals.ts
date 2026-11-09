@@ -98,7 +98,7 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   }
   const ka = Object.keys(a)
   const kb = Object.keys(b as Record<string, unknown>)
-  if (ka.length !== kb.length) {
+  if (ka.length !== kb.length || ka.some((k) => !Object.prototype.propertyIsEnumerable.call(b, k))) {
     return false
   }
   for (const k of ka) {
