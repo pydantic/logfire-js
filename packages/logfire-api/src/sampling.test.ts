@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import type { IdGenerator, ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
-import { ROOT_CONTEXT, SpanKind, SpanStatusCode, TraceFlags } from '@opentelemetry/api'
+import { diag, ROOT_CONTEXT, SpanKind, SpanStatusCode, TraceFlags } from '@opentelemetry/api'
 import { describe, expect, test, vi } from 'vite-plus/test'
 
 import { ATTRIBUTES_LEVEL_KEY, ATTRIBUTES_SPAN_TYPE_KEY } from './constants'
@@ -877,6 +877,7 @@ describe('TailSamplingProcessor', () => {
   })
 
   test('a throwing callback reaches neither the caller nor the sampling decision', () => {
+    const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
     const downstream = makeProcessor()
     const processor = new TailSamplingProcessor(downstream, ({ event, span }) => {
       if (span.name === 'broken') {
@@ -885,26 +886,37 @@ describe('TailSamplingProcessor', () => {
       return span.name === 'keep' && event === 'end' ? 1.0 : 0.0
     })
 
-    const root = makeSpan({ name: 'broken' })
-    const child = makeSpan({ name: 'keep', parentSpanContext: root.spanContext(), spanId: 'child00000000000' })
+    const root = makeSpan({ name: 'root' })
+    const broken = makeSpan({ name: 'broken', parentSpanContext: root.spanContext(), spanId: 'broken0000000000' })
+    const keep = makeSpan({ name: 'keep', parentSpanContext: root.spanContext(), spanId: 'keep000000000000' })
 
+    processor.onStart(root, ROOT_CONTEXT)
     expect(() => {
-      processor.onStart(root, ROOT_CONTEXT)
+      processor.onStart(broken, ROOT_CONTEXT)
     }).not.toThrow()
-    processor.onStart(child, ROOT_CONTEXT)
+    // The broken span ends while the trace is still buffered, so the callback runs and throws on end too.
+    expect(() => {
+      processor.onEnd(broken)
+    }).not.toThrow()
+    processor.onStart(keep, ROOT_CONTEXT)
     expect(downstream.calls).toEqual([])
 
-    processor.onEnd(child)
-    expect(() => {
-      processor.onEnd(root)
-    }).not.toThrow()
+    processor.onEnd(keep)
+    processor.onEnd(root)
 
+    expect(diagError.mock.calls).toEqual([
+      ['logfire: tail sampling callback failed', new Error('tail failed on start')],
+      ['logfire: tail sampling callback failed', new Error('tail failed on end')],
+    ])
     expect(downstream.calls).toEqual([
       { event: 'start', span: root },
-      { event: 'start', span: child },
-      { event: 'end', span: child },
+      { event: 'start', span: broken },
+      { event: 'end', span: broken },
+      { event: 'start', span: keep },
+      { event: 'end', span: keep },
       { event: 'end', span: root },
     ])
+    diagError.mockRestore()
   })
 
   test('still reaches the deferred processor when the wrapped one rejects', async () => {
