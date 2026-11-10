@@ -1,5 +1,15 @@
 # @pydantic/logfire-api
 
+## 0.26.1
+
+### Patch Changes
+
+- 3a779ab: Report a timeout or dropped connection while reading a platform API response as a timeout or failed request, not as invalid JSON.
+- 1545bce: Fix equality evaluators accepting objects with different enumerable keys when the corresponding values are undefined.
+- 1cee829: Keep `reportError` and `span` from throwing when an error's `message`, `name` or `stack` getter throws, so the span still ends with an error status and the original error is rethrown.
+- 35edb41: Stop a throwing tail sampling callback from failing the application code that started or ended the span. The error goes to `diag.error` and that span makes no sampling decision.
+- 3f486ec: Read a token's region from its prefix, so a token whose suffix format this version does not recognise still goes to its own region instead of silently falling back to US.
+
 ## 0.26.0
 
 ### Minor Changes

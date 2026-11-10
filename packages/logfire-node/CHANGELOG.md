@@ -1,5 +1,21 @@
 # logfire
 
+## 0.23.0
+
+### Minor Changes
+
+- 2008307: `distributedTracing: false` now ignores all incoming context, including W3C baggage, instead of only trace context. Outgoing requests still carry trace context and baggage. This matches the Python SDK.
+
+### Patch Changes
+
+- f40d840: Trim whitespace around a string token from `configure({ token })` or `LOGFIRE_TOKEN`. A token with a trailing newline, as secret stores often write it, used to lose its region and fall back to the US endpoint, and its export requests failed with an invalid `Authorization` header. A blank `configure({ token })` now counts as unset, so `LOGFIRE_TOKEN` and local credentials apply, as they do for a blank `LOGFIRE_TOKEN`.
+- Updated dependencies [3a779ab]
+- Updated dependencies [1545bce]
+- Updated dependencies [1cee829]
+- Updated dependencies [35edb41]
+- Updated dependencies [3f486ec]
+  - logfire@0.26.1
+
 ## 0.22.0
 
 ### Minor Changes

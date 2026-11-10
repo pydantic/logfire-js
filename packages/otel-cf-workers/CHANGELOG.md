@@ -1,5 +1,11 @@
 # @pydantic/otel-cf-workers
 
+## 2.1.7
+
+### Patch Changes
+
+- d7a4f7f: Preserve synchronous return values and exceptions from Durable Object storage methods such as `transactionSync`, while retaining span completion and error recording for asynchronous methods.
+
 ## 2.1.6
 
 ### Patch Changes
