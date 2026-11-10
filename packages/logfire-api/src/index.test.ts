@@ -874,6 +874,31 @@ describe('span', () => {
     expect(spanMock.end).toHaveBeenCalledOnce()
   })
 
+  test('async callback rejects with an Error whose message getter throws - rejects with the original error', async () => {
+    spanMock.recordException.mockImplementationOnce((exception) => {
+      Reflect.get(exception as Error, 'message')
+    })
+    const error = new Error('boom')
+    error.stack = 'Error: boom\n    at handler (app.ts:8:1)'
+    Object.defineProperty(error, 'message', {
+      get() {
+        throw new Error('message getter failed')
+      },
+    })
+
+    // toBe, not toThrow: toThrow reads the message, which is the getter under test.
+    await expect(span('test', { callback: async () => Promise.reject(error) })).rejects.toBe(error)
+    await sleep(0)
+
+    expect(spanMock.recordException).toHaveBeenLastCalledWith({
+      message: 'Unknown error',
+      name: 'Error',
+      stack: 'Error: boom\n    at handler (app.ts:8:1)',
+    })
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: Unknown error' })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
   test('async callback rejects with string - records exception without fingerprint', async () => {
     // eslint-disable-next-line prefer-promise-reject-errors, @typescript-eslint/prefer-promise-reject-errors
     const result = span('test', { callback: async () => Promise.reject('async-oops') })
