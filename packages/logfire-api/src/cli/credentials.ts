@@ -17,7 +17,7 @@ import {
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
-import { LOGFIRE_REGIONS, PYDANTIC_LOGFIRE_TOKEN_PATTERN } from '../tokenBaseUrl'
+import { LOGFIRE_REGIONS, LOGFIRE_TOKEN_REGION_PATTERN, PYDANTIC_LOGFIRE_TOKEN_PATTERN } from '../tokenBaseUrl'
 import type { Prompt } from './interactivePrompt'
 import { LogfireCliError } from './errors'
 
@@ -113,14 +113,14 @@ export function isExpired(expiration: string): boolean {
 
 export function formatUserToken(userToken: UserToken): string {
   let region = 'us'
-  const match = PYDANTIC_LOGFIRE_TOKEN_PATTERN.exec(userToken.token)
-  if (match) {
-    const matchedRegion = match.groups?.['region']
-    if (matchedRegion !== undefined && Object.hasOwn(LOGFIRE_REGIONS, matchedRegion)) {
-      region = matchedRegion
-    }
+  // Read the region from the prefix alone, as getBaseUrlFromToken does, so the label matches where the token sends data.
+  const regionMatch = LOGFIRE_TOKEN_REGION_PATTERN.exec(userToken.token)
+  const matchedRegion = regionMatch?.groups?.['region']
+  if (matchedRegion !== undefined && Object.hasOwn(LOGFIRE_REGIONS, matchedRegion)) {
+    region = matchedRegion
   }
 
+  const match = PYDANTIC_LOGFIRE_TOKEN_PATTERN.exec(userToken.token)
   const safePrefix = match?.groups?.['safePart'] ?? ''
   const tokenPrefix = match?.groups?.['token']?.slice(0, 5) ?? userToken.token.slice(0, 5)
   return `${region.toUpperCase()} (${userToken.baseUrl}) - ${safePrefix}${tokenPrefix}****`

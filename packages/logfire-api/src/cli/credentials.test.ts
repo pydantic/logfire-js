@@ -72,6 +72,9 @@ token = "ignored"
 
     expect(await collection.getToken('https://logfire-us.pydantic.dev')).toEqual(token)
     expect(formatUserToken(token)).toBe('US (https://logfire-us.pydantic.dev) - pylf_v1_us_12345****')
+    expect(formatUserToken({ ...token, baseUrl: 'https://logfire-eu.pydantic.dev', token: 'pylf_v3_eu_new-token-format' })).toBe(
+      'EU (https://logfire-eu.pydantic.dev) - pylf_****'
+    )
     expect(collection.logout('https://logfire-us.pydantic.dev')).toEqual(['https://logfire-us.pydantic.dev'])
     expect(readFileSync(path, 'utf8')).toBe('')
   })
