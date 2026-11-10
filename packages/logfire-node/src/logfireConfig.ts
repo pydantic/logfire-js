@@ -374,7 +374,8 @@ export function configure(config: LogfireConfigOptions = {}): void {
   const envToken = readNonEmptyEnv(env, 'LOGFIRE_TOKEN')
   const dataDir = resolveCredentialsDir(cnf.dataDir, env)
   const localCredentials = shouldReadLocalCredentials ? readLocalProjectCredentials(dataDir) : undefined
-  const token = cnf.token ?? envToken ?? localCredentials?.token
+  const rawToken = cnf.token ?? envToken ?? localCredentials?.token
+  const token = typeof rawToken === 'string' ? rawToken.trim() : rawToken
   const apiKey = cnf.apiKey ?? env['LOGFIRE_API_KEY']
   const sendToLogfire = resolveSendToLogfire(cnf.sendToLogfire, token)
   const baseUrl = resolveBaseUrl(env, cnf.advanced?.baseUrl, token, sendToLogfire, localCredentials?.logfire_api_url)
