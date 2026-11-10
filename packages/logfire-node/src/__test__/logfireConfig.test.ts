@@ -483,6 +483,26 @@ describe('logfire config', () => {
     expect(logfireConfig.baseUrl).toBe('https://logfire-eu.pydantic.dev')
   })
 
+  it('treats a blank code token as unset and falls back to LOGFIRE_TOKEN, then local credentials', () => {
+    process.env['LOGFIRE_TOKEN'] = 'pylf_v1_eu_env123'
+    configure({ token: '  \n' })
+
+    expect(logfireConfig.token).toBe('pylf_v1_eu_env123')
+    expect(logfireConfig.baseUrl).toBe('https://logfire-eu.pydantic.dev')
+
+    delete process.env['LOGFIRE_TOKEN']
+    process.env['LOGFIRE_CREDENTIALS_DIR'] = makeCredentialsDir({
+      logfire_api_url: 'https://local.example.com',
+      project_name: 'local-project',
+      project_url: 'https://example.com/project',
+      token: 'local-token\n',
+    })
+    configure({ token: '' })
+
+    expect(logfireConfig.token).toBe('local-token')
+    expect(logfireConfig.baseUrl).toBe('https://local.example.com')
+  })
+
   it('uses LOGFIRE_CREDENTIALS_DIR for local credentials', () => {
     const dataDir = makeCredentialsDir({
       logfire_api_url: 'https://env-dir.example.com',
