@@ -91,7 +91,7 @@ export interface LogfireConfigOptions {
    */
   diagLogLevel?: DiagLogLevel
   /**
-   * Set to False to suppress extraction of incoming trace context. See [Unintentional Distributed Tracing](https://logfire.pydantic.dev/docs/how-to-guides/distributed-tracing/#unintentional-distributed-tracing) for more information.
+   * Set to false to ignore all incoming context, including trace context and W3C baggage. Outgoing requests still carry both. See [Unintentional Distributed Tracing](https://logfire.pydantic.dev/docs/how-to-guides/distributed-tracing/#unintentional-distributed-tracing) for more information.
    */
   distributedTracing?: boolean
   /**

@@ -1,7 +1,7 @@
 import type { Context, TextMapPropagator, TextMapSetter } from '@opentelemetry/api'
 
 /**
- * Keeps injecting trace context into outgoing requests while ignoring incoming trace context,
+ * Keeps injecting context into outgoing requests while ignoring all incoming context, baggage included,
  * matching Python's `NoExtractTraceContextPropagator` for `distributed_tracing=False`.
  */
 export class NoExtractPropagator implements TextMapPropagator {
