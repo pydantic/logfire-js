@@ -330,7 +330,19 @@ describe('hosted datasets API client', () => {
       timeoutMs: 5,
     })
 
-    await expect(client.listDatasets()).rejects.toBeInstanceOf(DatasetTimeoutError)
+    await expect(client.listDatasets()).rejects.toThrow(new DatasetTimeoutError('Logfire platform API request timed out'))
+  })
+
+  it('still reports a fully read body that is not JSON as invalid JSON', async () => {
+    const client = new LogfireAPIClient({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: fetchSequence([], [new Response('not json')]),
+    })
+
+    await expect(client.listDatasets()).rejects.toThrow(
+      new DatasetTransportError('Logfire platform API response was not valid JSON: Unexpected token \'o\', "not json" is not valid JSON')
+    )
   })
 
   it('reports a connection lost while reading the response body as a failed request', async () => {
