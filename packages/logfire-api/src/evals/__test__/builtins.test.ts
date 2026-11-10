@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/require-await */
 import { describe, expect, it } from 'vite-plus/test'
 
-import { Contains, deepEqual, Equals, EqualsExpected, IsInstance, LLMJudge, MaxDuration, SpanTree } from '../../evals'
+import { Case, Contains, Dataset, deepEqual, Equals, EqualsExpected, IsInstance, LLMJudge, MaxDuration, SpanTree } from '../../evals'
 import type { EvaluatorContext } from '../../evals'
 
 const ctx = (output: unknown, extra: Partial<EvaluatorContext> = {}): EvaluatorContext => ({
@@ -52,6 +52,48 @@ describe('built-in evaluator edge cases', () => {
     expect(deepEqual({ a: 1 }, { a: 1 })).toBe(true)
     expect(deepEqual({ a: 1 }, { a: 1, b: 2 })).toBe(false)
     expect(deepEqual({ a: 1 }, { a: 2 })).toBe(false)
+  })
+
+  it('deepEqual compares own enumerable key names even when values are undefined', () => {
+    const expected = { middleName: undefined }
+    const actual = { nickname: undefined }
+    expect(deepEqual(expected, actual)).toBe(false)
+    expect(deepEqual(actual, expected)).toBe(false)
+    expect(deepEqual(expected, { middleName: undefined })).toBe(true)
+    expect(deepEqual(expected, {})).toBe(false)
+    expect(deepEqual({}, expected)).toBe(false)
+    expect(deepEqual({ name: 'Alice', ...expected }, { ...expected, name: 'Alice' })).toBe(true)
+
+    const inherited = Object.assign(Object.create(expected) as Record<string, unknown>, actual)
+    const nonEnumerable = Object.defineProperty({ ...actual }, 'middleName', { value: undefined })
+    expect(deepEqual(expected, inherited)).toBe(false)
+    expect(deepEqual(expected, nonEnumerable)).toBe(false)
+    expect(deepEqual(actual, nonEnumerable)).toBe(true)
+  })
+
+  it('equality evaluators reject different optional fields through recursive comparisons', () => {
+    const expected = { middleName: undefined }
+    const actual = { nickname: undefined }
+    expect(deepEqual({ contact: actual }, { contact: expected })).toBe(false)
+    expect(deepEqual([actual], [expected])).toBe(false)
+    expect(deepEqual(new Map([['contact', actual]]), new Map([['contact', expected]]))).toBe(false)
+    expect(new Equals({ value: expected }).evaluate(ctx(actual))).toBe(false)
+    expect(new EqualsExpected().evaluate(ctx(actual, { expectedOutput: expected }))).toBe(false)
+    expect(new Contains({ value: expected }).evaluate(ctx([actual])).value).toBe(false)
+    expect(new Contains({ value: { contact: expected } }).evaluate(ctx({ contact: actual })).value).toBe(false)
+    expect(new Contains({ value: expected }).evaluate(ctx([{ middleName: undefined }])).value).toBe(true)
+  })
+
+  it('Dataset records different optional field names as a failed equality assertion', async () => {
+    const dataset = new Dataset<{ name: string }, Record<string, unknown>>({
+      cases: [new Case({ expectedOutput: { middleName: undefined, name: 'Alice' }, inputs: { name: 'Alice' } })],
+      evaluators: [new EqualsExpected()],
+      name: 'contact-dto-mapper',
+    })
+
+    const report = await dataset.evaluate(({ name }) => ({ name, nickname: undefined }))
+    expect(report.cases).toHaveLength(1)
+    expect(report.cases[0]?.assertions['EqualsExpected']?.value).toBe(false)
   })
 
   it('deepEqual compares the contents of Dates, RegExps, Sets and Maps', () => {
