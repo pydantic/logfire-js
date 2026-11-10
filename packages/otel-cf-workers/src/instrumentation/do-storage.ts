@@ -161,7 +161,7 @@ const StorageAttributes: Record<string | symbol, ExtraAttributeFn> = {
 function instrumentStorageFn(fn: Function, operation: string) {
   const tracer = trace.getTracer('do_storage')
   const fnHandler: ProxyHandler<any> = {
-    apply: async (target, thisArg, argArray) => {
+    apply: (target, thisArg, argArray) => {
       const attributes = {
         [ATTR_DB_SYSTEM_NAME]: dbSystem,
         [ATTR_DB_OPERATION_NAME]: operation,
@@ -174,20 +174,32 @@ function instrumentStorageFn(fn: Function, operation: string) {
           operation,
         },
       }
-      return tracer.startActiveSpan(`Durable Object Storage ${operation}`, options, async (span) => {
-        try {
-          const result = await Reflect.apply(target, thisArg, argArray)
+      return tracer.startActiveSpan(`Durable Object Storage ${operation}`, options, (span) => {
+        const onResult = (result: unknown) => {
           const extraAttrsFn = StorageAttributes[operation]
           const extraAttrs = extraAttrsFn ? extraAttrsFn(argArray, result) : {}
           span.setAttributes(extraAttrs)
           span.setAttribute('db.cf.do.has_result', !!result)
-          return result
-        } catch (error) {
-          span.recordException(error as Exception)
-          span.setStatus({ code: SpanStatusCode.ERROR })
-          throw error
-        } finally {
           span.end()
+          return result
+        }
+        const onError = (error: unknown): never => {
+          try {
+            span.recordException(error as Exception)
+            span.setStatus({ code: SpanStatusCode.ERROR })
+          } finally {
+            span.end()
+          }
+          throw error
+        }
+        try {
+          const result = Reflect.apply(target, thisArg, argArray)
+          if (result instanceof Promise) {
+            return result.then(onResult).catch(onError)
+          }
+          return onResult(result)
+        } catch (error) {
+          return onError(error)
         }
       })
     },
