@@ -876,6 +876,37 @@ describe('TailSamplingProcessor', () => {
     expect(downstream.shutdown).toHaveBeenCalledTimes(1)
   })
 
+  test('a throwing callback reaches neither the caller nor the sampling decision', () => {
+    const downstream = makeProcessor()
+    const processor = new TailSamplingProcessor(downstream, ({ event, span }) => {
+      if (span.name === 'broken') {
+        throw new Error(`tail failed on ${event}`)
+      }
+      return span.name === 'keep' && event === 'end' ? 1.0 : 0.0
+    })
+
+    const root = makeSpan({ name: 'broken' })
+    const child = makeSpan({ name: 'keep', parentSpanContext: root.spanContext(), spanId: 'child00000000000' })
+
+    expect(() => {
+      processor.onStart(root, ROOT_CONTEXT)
+    }).not.toThrow()
+    processor.onStart(child, ROOT_CONTEXT)
+    expect(downstream.calls).toEqual([])
+
+    processor.onEnd(child)
+    expect(() => {
+      processor.onEnd(root)
+    }).not.toThrow()
+
+    expect(downstream.calls).toEqual([
+      { event: 'start', span: root },
+      { event: 'start', span: child },
+      { event: 'end', span: child },
+      { event: 'end', span: root },
+    ])
+  })
+
   test('still reaches the deferred processor when the wrapped one rejects', async () => {
     const downstream = makeProcessor()
     const flushFailure = new Error('flush failed')
