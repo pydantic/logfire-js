@@ -1197,6 +1197,31 @@ describe('sdk lifecycle helpers', () => {
     expect(warnSpy).toHaveBeenCalledWith('logfire SDK: error handling uncaughtExceptionMonitor', handlerError)
   })
 
+  it('reports thrown values that are not usable errors under a fallback message', () => {
+    start()
+    const brokenMessage = new Error('hidden')
+    Object.defineProperty(brokenMessage, 'message', {
+      get() {
+        throw new Error('message getter failed')
+      },
+    })
+    const values = ['boom', null, new Error(''), brokenMessage]
+
+    const uncaught = getLatestProcessListener('uncaughtExceptionMonitor')
+    const rejection = getLatestProcessListener('unhandledRejection')
+    for (const value of values) {
+      uncaught(value)
+      rejection(value, Promise.resolve())
+    }
+
+    expect(mocks.reportErrorCalls).toEqual(
+      values.flatMap((value) => [
+        ['Uncaught error', value, {}],
+        ['Unhandled promise rejection', value, {}],
+      ])
+    )
+  })
+
   it('adds configured resource attributes to the NodeSDK resource', () => {
     Object.assign(logfireConfig, {
       resourceAttributes: {
