@@ -235,6 +235,15 @@ function runProcessHookBestEffort(operation: () => Promise<void>, errorMessage: 
   }
 }
 
+function crashReportMessage(value: unknown, fallback: string): string {
+  try {
+    const message: unknown = value instanceof Error ? value.message : undefined
+    return typeof message === 'string' && message !== '' ? message : fallback
+  } catch {
+    return fallback
+  }
+}
+
 async function shutdownBestEffort(runtime: ActiveRuntime, reason: string): Promise<void> {
   try {
     await shutdownRuntime(runtime, { timeoutMillis: PROCESS_HOOK_LIFECYCLE_TIMEOUT_MILLIS })
@@ -548,11 +557,12 @@ export function start(): void {
         diag.info('logfire SDK: shutting down')
       }, 'logfire SDK: error handling SIGTERM')
     },
-    uncaughtExceptionMonitor: (error: Error) => {
+    uncaughtExceptionMonitor: (error: unknown) => {
       try {
-        diag.info('logfire: caught uncaught exception', error.message)
+        const message = crashReportMessage(error, 'Uncaught error')
+        diag.info('logfire: caught uncaught exception', message)
         try {
-          reportError(error.message, error, {})
+          reportError(message, error, {})
         } catch (err: unknown) {
           diag.warn('logfire: failed to report error', err)
         }
@@ -568,13 +578,10 @@ export function start(): void {
       try {
         diag.error('unhandled rejection', reason)
 
-        if (reason instanceof Error) {
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-            reportError(reason.message ?? 'error', reason, {})
-          } catch (err: unknown) {
-            diag.warn('logfire: failed to report error', err)
-          }
+        try {
+          reportError(crashReportMessage(reason, 'Unhandled promise rejection'), reason, {})
+        } catch (err: unknown) {
+          diag.warn('logfire: failed to report error', err)
         }
         // eslint-disable-next-line no-void
         void forceFlushBestEffort(runtime, 'unhandledRejection')
