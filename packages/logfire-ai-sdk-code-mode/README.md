@@ -41,7 +41,7 @@ export async function askAgent(model: LanguageModel, prompt: string): Promise<st
 from. Create one `codeMode()` object per agent run: it is one sandbox session, kept like a REPL for every `run_code`
 call in that run.
 
-See the [Agent Sandboxes docs](https://github.com/pydantic/logfire-js/blob/main/docs/agent-sandboxes.md#use-with-the-vercel-ai-sdk)
+See the [Agent Sandboxes docs](https://pydantic.dev/docs/logfire/agent-sandboxes/#use-with-the-vercel-ai-sdk)
 for streaming, approval, tool context, limits, and error handling.
 
 Agent Sandboxes setup and checkout errors end the run instead of reaching the model.

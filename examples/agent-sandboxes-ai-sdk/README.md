@@ -1,7 +1,7 @@
 # Agent Sandboxes with the Vercel AI SDK
 
 An AI SDK agent that reviews a company's Q3 travel spending by writing Python that calls its tools, instead of calling
-them one model turn at a time. The code runs in [Logfire Agent Sandboxes](../../docs/agent-sandboxes.md). The scenario
+them one model turn at a time. The code runs in [Logfire Agent Sandboxes](https://pydantic.dev/docs/logfire/agent-sandboxes/). The scenario
 extends Monty's `expense_analysis` example, which follows Anthropic's programmatic tool calling cookbook.
 
 The data is generated from a fixed seed: 4 departments, 24 employees, and 368 travel line items in four currencies. The
