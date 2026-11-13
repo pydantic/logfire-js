@@ -128,10 +128,6 @@ navigation:
         slug: instrument/typescript/managed-variables
         aliases:
           - typescript-sdk/managed-variables
-      - page: Agent Sandboxes
-        path: agent-sandboxes.md
-        slug: instrument/typescript/agent-sandboxes
-        hidden: true
       - section: Reference
         contents:
           - page: CLI
