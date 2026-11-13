@@ -1,6 +1,6 @@
 # Agent Sandboxes example
 
-Runs Python in [Logfire Agent Sandboxes](https://pydantic.dev/docs/logfire/agent-sandboxes/) with `@pydantic/logfire-agent-sandboxes`: a first
+Runs Python in [Logfire Agent Sandboxes](https://pydantic.dev/docs/logfire/agent-sandboxes/typescript/) with `@pydantic/logfire-agent-sandboxes`: a first
 snippet, state kept across runs, a host function with captured `print()` output, and a session forked into two branches.
 
 ## Run against Logfire

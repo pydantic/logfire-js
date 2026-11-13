@@ -25,5 +25,5 @@ The package exports `AgentSandboxError`, `AgentSandboxRefusedError`, and `AgentS
 connection errors preserve the original error on `cause`. Errors from operations on a checked-out session pass
 through unchanged.
 
-See the [Agent Sandboxes docs](https://pydantic.dev/docs/logfire/agent-sandboxes/) for host
+See the [Agent Sandboxes docs](https://pydantic.dev/docs/logfire/agent-sandboxes/typescript/) for host
 functions, sessions, snapshots, and options.
