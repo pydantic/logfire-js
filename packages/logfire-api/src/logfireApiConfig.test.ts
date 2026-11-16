@@ -36,6 +36,12 @@ test('resolves staging base urls from the token', () => {
   expect(resolveBaseUrl({}, undefined, 'pylf_v1_stagingeu_1234567890')).toBe('https://logfire-eu.pydantic.info')
 })
 
+test('treats a blank LOGFIRE_BASE_URL as unset', () => {
+  const token = 'pylf_v1_eu_1234567890'
+  expect(resolveBaseUrl({ LOGFIRE_BASE_URL: '' }, undefined, token)).toBe('https://logfire-eu.pydantic.dev')
+  expect(resolveBaseUrl({ LOGFIRE_BASE_URL: ' ' }, undefined, token)).toBe('https://logfire-eu.pydantic.dev')
+})
+
 test('rejects a LOGFIRE_SEND_TO_LOGFIRE value that is neither a boolean nor the sentinel', () => {
   const token = 'pylf_v1_us_token'
 
