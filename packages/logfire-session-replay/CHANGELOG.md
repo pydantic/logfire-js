@@ -1,5 +1,11 @@
 # @pydantic/logfire-session-replay
 
+## 0.11.1
+
+### Patch Changes
+
+- 0eebb88: Compress replay uploads without blob workers so recording works under enforced Trusted Types. Use native gzip streams when available, with synchronous gzip for older browsers, compression failures, and page-exit uploads.
+
 ## 0.11.0
 
 ### Minor Changes
