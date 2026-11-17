@@ -1,5 +1,11 @@
 # @pydantic/logfire-browser
 
+## 0.37.0
+
+### Minor Changes
+
+- f317488: Accept `tracePersistence: true` to turn on trace recovery with default settings. An empty options object (`{}`) was the only way to turn it on, and it did not read as an opt-in. `{}` and `{ key }` still work.
+
 ## 0.36.0
 
 ### Minor Changes
