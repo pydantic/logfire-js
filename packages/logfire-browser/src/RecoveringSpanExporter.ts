@@ -15,6 +15,16 @@ export interface BrowserTracePersistenceOptions {
   key?: string
 }
 
+/** Returns the recovery options, or undefined when recovery is off. */
+export function resolveTracePersistence(
+  value: boolean | BrowserTracePersistenceOptions | undefined
+): BrowserTracePersistenceOptions | undefined {
+  if (value === undefined || value === false) {
+    return undefined
+  }
+  return value === true ? {} : value
+}
+
 interface ActiveExport {
   done: Promise<void>
   saved?: { storage: TraceExportStorage; key: string }

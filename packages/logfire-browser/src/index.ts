@@ -69,7 +69,7 @@ import type { BrowserSessionReplayControl, BrowserSessionReplayOptions } from '.
 import { observeDocumentPage, observeNavigatedPages, startBrowserWebVitals } from './webVitals'
 import type { BrowserWebVitalsOptions } from './webVitals'
 import { DocumentHideChunkingExporter } from './DocumentHideChunkingExporter'
-import { RecoveringSpanExporter } from './RecoveringSpanExporter'
+import { RecoveringSpanExporter, resolveTracePersistence } from './RecoveringSpanExporter'
 import type { BrowserTracePersistenceOptions } from './RecoveringSpanExporter'
 import { keepFailedTraces } from './errorsProfile'
 import type { FrontendProfile } from './errorsProfile'
@@ -271,11 +271,12 @@ export interface LogfireConfigOptions {
 
   /**
    * Retain unacknowledged, scrubbed trace requests in sessionStorage for recovery by the next
-   * same-origin document. Disabled by default. Set {} to opt in to possible duplicate delivery.
+   * same-origin document. Disabled by default. Set true to opt in to possible duplicate delivery.
    * Bounded to 2 MiB and five minutes. Requires Web Crypto, Web Locks, and sessionStorage.
-   * Set key when a proxy's destination depends on cookies or other state outside request headers.
+   * Pass { key } instead when a proxy's destination depends on cookies or other state outside
+   * request headers.
    */
-  tracePersistence?: false | BrowserTracePersistenceOptions
+  tracePersistence?: boolean | BrowserTracePersistenceOptions
 
   /**
    * Any additional HTTP headers to be sent with the trace exporter requests.
@@ -737,14 +738,15 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   const resolveHeaders = async () =>
     resolveTraceExporterHeaders(options.traceExporterConfig?.headers, options.traceExporterHeaders ?? defaultTraceExporterHeaders)
   const exporterConfig = { ...options.traceExporterConfig, url: options.traceUrl }
+  const tracePersistence = resolveTracePersistence(options.tracePersistence)
   const recoveringExporter =
-    options.tracePersistence === false || options.tracePersistence === undefined
+    tracePersistence === undefined
       ? undefined
       : new RecoveringSpanExporter(
           (headers, url) => new OTLPTraceExporter({ ...exporterConfig, url, headers }),
           exporterConfig,
           resolveHeaders,
-          options.tracePersistence
+          tracePersistence
         )
   const traceExporter = new DocumentHideChunkingExporter(
     recoveringExporter ?? new OTLPTraceExporter({ ...exporterConfig, headers: resolveHeaders }),

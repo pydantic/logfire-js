@@ -17,7 +17,7 @@ performance.setResourceTimingBufferSize(1_000)
 logfire.configure({
   serviceName: 'quick-redirect-example',
   traceUrl,
-  ...(params.get('persistence') === 'default' ? {} : { tracePersistence: params.get('persistence') === 'off' ? false : {} }),
+  ...(params.get('persistence') === 'default' ? {} : { tracePersistence: params.get('persistence') !== 'off' }),
   // The throttled control must finish before an exporter timeout can cancel it.
   traceExporterConfig: { timeoutMillis: 30_000 },
   autoInstrumentations: {

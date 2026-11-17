@@ -97,7 +97,7 @@ Only enable verbose diagnostic logging in development.
 
 ### Delivery across navigation
 
-Recovery is disabled by default. Set `tracePersistence: {}` in `configure()` or
+Recovery is disabled by default. Set `tracePersistence: true` in `configure()` or
 `configureFrontend()` to enable it. The SDK retains unacknowledged, scrubbed
 trace requests in `sessionStorage` and
 retries them when an instrumented same-origin page starts in the same tab. This
@@ -124,8 +124,8 @@ failures remain eligible for recovery in the next document.
 
 Set `tracePersistence: false` to disable storage and recovery. For a custom proxy
 that selects its destination from cookies or other state outside request headers,
-use `tracePersistence: { key: 'stable-destination-id' }` and change the key when
-that destination changes.
+use `tracePersistence: { key: 'stable-destination-id' }` in place of `true`, and
+change the key when that destination changes.
 
 ## Browser guides
 
