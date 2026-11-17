@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 runs = {}
 lock = threading.Lock()
+releases = {}
 
 
 class Server(ThreadingHTTPServer):
@@ -44,6 +45,23 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, runs.get(run, {'spans': [], 'uploads': []}))
 
     def do_POST(self):
+        if self.path.startswith('/scenario/'):
+            run, scenario = self.path.removeprefix('/scenario/').split('/')
+            if scenario not in ('interrupted', 'lost-ack'):
+                self.reply(400, {})
+                return
+            with lock:
+                runs[run] = {'spans': [], 'uploads': [], 'scenario': scenario}
+                releases[run] = threading.Event()
+            self.reply(200, {})
+            return
+        if self.path.startswith('/release/'):
+            with lock:
+                event = releases.pop(self.path.removeprefix('/release/'), None)
+            if event is not None:
+                event.set()
+            self.reply(200, {})
+            return
         if not self.path.startswith('/collector/'):
             self.reply(404, {})
             return
@@ -52,11 +70,14 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(413, {})
             return
         run = self.path.removeprefix('/collector/')
-        upload = {'bytes': 0, 'complete': False, 'aborted': False}
+        upload = {'bytes': 0, 'size': length, 'complete': False, 'aborted': False, 'spanIds': []}
         with lock:
             if run not in runs and len(runs) >= 20:
                 del runs[next(iter(runs))]
             receipts = runs.setdefault(run, {'spans': [], 'uploads': []})
+            first_large = length > 64 * 1024 and not any(item['size'] > 64 * 1024 for item in receipts['uploads'])
+            scenario = receipts.get('scenario') if first_large else None
+            release = releases.get(run)
             receipts['uploads'].append(upload)
         body = bytearray()
         try:
@@ -70,7 +91,15 @@ class Handler(BaseHTTPRequestHandler):
                 body.extend(chunk)
                 with lock:
                     upload['bytes'] = len(body)
-                time.sleep(0.04)
+                if scenario == 'interrupted':
+                    # Hold the failed connection until navigation, so transport retries cannot race it.
+                    with lock:
+                        upload['aborted'] = True
+                    release.wait(timeout=30)
+                    self.close_connection = True
+                    return
+                if scenario != 'lost-ack':
+                    time.sleep(0.04)
             payload = json.loads(gzip.decompress(body) if self.headers.get('Content-Encoding') == 'gzip' else body)
             spans = [
                 {'spanId': span['spanId'], 'name': span['name']}
@@ -81,6 +110,12 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 receipts['spans'].extend(spans)
                 upload['complete'] = True
+                upload['spanIds'] = [span['spanId'] for span in spans]
+            if scenario == 'lost-ack':
+                # Accept the payload, but withhold its acknowledgment until the old document is gone.
+                release.wait(timeout=30)
+                self.close_connection = True
+                return
             self.reply(200, {})
         except (ConnectionError, OSError):
             with lock:

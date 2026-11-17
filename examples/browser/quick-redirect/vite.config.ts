@@ -3,7 +3,7 @@ import { defineConfig } from 'vite-plus'
 
 export interface Receipts {
   spans: { spanId: string; name: string }[]
-  uploads: { bytes: number; complete: boolean; aborted: boolean }[]
+  uploads: { bytes: number; size: number; complete: boolean; aborted: boolean; spanIds: string[] }[]
 }
 
 export default defineConfig({

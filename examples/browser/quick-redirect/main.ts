@@ -83,7 +83,11 @@ if (destination) {
           const navigate = () => {
             location.assign(`/?run=${run}&destination=1`)
           }
-          if (params.get('mode') === 'in-flight') {
+          if (params.get('mode') === 'interrupted' || params.get('mode') === 'lost-ack') {
+            // The test navigates only after the collector reaches the selected failure boundary.
+            status.textContent = 'Waiting for controlled navigation'
+            void logfire.forceFlush().catch(() => undefined)
+          } else if (params.get('mode') === 'in-flight') {
             // The hide flush cannot see spans already removed from the batch processor's queue.
             void logfire.forceFlush().catch(() => undefined)
             setTimeout(navigate, 150)
