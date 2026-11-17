@@ -28,6 +28,10 @@ interface PendingExport {
   resultCallback: (result: ExportResult) => void
 }
 
+interface ConcurrentSpanExporter extends SpanExporter {
+  readonly pendingExports?: number
+}
+
 /**
  * Sends the newest spans of a document-hide flush or a public `forceFlush()` first, in one request
  * small enough to outlive a navigation, and the rest in a second request started at the same time.
@@ -61,13 +65,13 @@ interface PendingExport {
 export class DocumentHideChunkingExporter implements SpanExporter {
   private readonly concurrencyLimit: number
   private exportsInFlight = 0
-  private readonly inner: SpanExporter
+  private readonly inner: ConcurrentSpanExporter
   private readonly keepaliveBytes: number
   private newestFirstDepth = 0
   private pending: PendingExport[] = []
 
   constructor(
-    inner: SpanExporter,
+    inner: ConcurrentSpanExporter,
     keepaliveBytes: number = DEFAULT_DOCUMENT_HIDE_KEEPALIVE_BYTES,
     concurrencyLimit: number = DEFAULT_EXPORT_CONCURRENCY_LIMIT
   ) {
@@ -122,7 +126,7 @@ export class DocumentHideChunkingExporter implements SpanExporter {
       }
     }
     const spans = pending.flatMap(({ spans: batch }) => batch)
-    if (this.concurrencyLimit - this.exportsInFlight < 2) {
+    if (this.concurrencyLimit - (this.inner.pendingExports ?? this.exportsInFlight) < 2) {
       this.send(spans, settle)
       return
     }

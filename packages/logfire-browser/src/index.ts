@@ -69,6 +69,8 @@ import type { BrowserSessionReplayControl, BrowserSessionReplayOptions } from '.
 import { observeDocumentPage, observeNavigatedPages, startBrowserWebVitals } from './webVitals'
 import type { BrowserWebVitalsOptions } from './webVitals'
 import { DocumentHideChunkingExporter } from './DocumentHideChunkingExporter'
+import { RecoveringSpanExporter } from './RecoveringSpanExporter'
+import type { BrowserTracePersistenceOptions } from './RecoveringSpanExporter'
 import { keepFailedTraces } from './errorsProfile'
 import type { FrontendProfile } from './errorsProfile'
 import { installGlobalErrorCapture, ReportedErrors } from './globalErrors'
@@ -106,6 +108,7 @@ export type { FrontendProfile } from './errorsProfile'
 export type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
 export type { BrowserSessionReplayOptions } from './sessionReplay'
 export type { BrowserWebVitalsOptions } from './webVitals'
+export type { BrowserTracePersistenceOptions } from './RecoveringSpanExporter'
 
 type TraceExporterConfig = NonNullable<typeof OTLPTraceExporter extends new (config: infer T) => unknown ? T : never>
 export type BrowserInstrumentationInput = Instrumentation | Instrumentation[] | (() => Instrumentation | Instrumentation[])
@@ -265,6 +268,13 @@ export interface LogfireConfigOptions {
    * configures the trace exporter.
    */
   traceExporterConfig?: TraceExporterConfig
+
+  /**
+   * Retain unacknowledged, scrubbed trace requests in sessionStorage for recovery by the next
+   * same-origin document. Enabled by default, bounded to 2 MiB and five minutes. Set false to disable.
+   * Set key when a proxy's destination depends on cookies or other state outside request headers.
+   */
+  tracePersistence?: false | BrowserTracePersistenceOptions
 
   /**
    * Any additional HTTP headers to be sent with the trace exporter requests.
@@ -723,13 +733,20 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   // Browser configure intentionally does not install PendingSpanProcessor.
   // Use startPendingSpan() for explicit, per-span pending placeholders.
   const { documentHideKeepaliveBytes, ...batchSpanProcessorConfig } = options.batchSpanProcessorConfig ?? {}
+  const resolveHeaders = async () =>
+    resolveTraceExporterHeaders(options.traceExporterConfig?.headers, options.traceExporterHeaders ?? defaultTraceExporterHeaders)
+  const exporterConfig = { ...options.traceExporterConfig, url: options.traceUrl }
+  const recoveringExporter =
+    options.tracePersistence === false
+      ? undefined
+      : new RecoveringSpanExporter(
+          (headers) => new OTLPTraceExporter({ ...exporterConfig, headers }),
+          exporterConfig,
+          resolveHeaders,
+          options.tracePersistence
+        )
   const traceExporter = new DocumentHideChunkingExporter(
-    new OTLPTraceExporter({
-      ...options.traceExporterConfig,
-      headers: async () =>
-        resolveTraceExporterHeaders(options.traceExporterConfig?.headers, options.traceExporterHeaders ?? defaultTraceExporterHeaders),
-      url: options.traceUrl,
-    }),
+    recoveringExporter ?? new OTLPTraceExporter({ ...exporterConfig, headers: resolveHeaders }),
     documentHideKeepaliveBytes,
     options.traceExporterConfig?.concurrencyLimit
   )
@@ -771,7 +788,11 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   }
 
   const sharedApiConfigSnapshot = snapshotSharedLogfireApiConfig()
-  const flushNewestFirst = async () => traceExporter.withNewestFirstFlush(async () => tracerProvider.forceFlush())
+  const flushNewestFirst = async () =>
+    traceExporter.withNewestFirstFlush(async () => {
+      await tracerProvider.forceFlush()
+      await recoveringExporter?.forceFlush()
+    })
   const generationToken = activateProviderGeneration(tracerProvider, flushNewestFirst)
   const removeDocumentHideFlush =
     batchSpanProcessorConfig.disableAutoFlushOnDocumentHide === true
@@ -1126,6 +1147,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
       value: sessionReplayHandle,
     })
   }
+  recoveringExporter?.startRecovery()
   return cleanup
 }
 

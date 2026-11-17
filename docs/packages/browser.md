@@ -95,6 +95,24 @@ logfire.configureFrontend({
 
 Only enable verbose diagnostic logging in development.
 
+### Delivery across navigation
+
+The SDK retains unacknowledged, scrubbed trace requests in `sessionStorage` and
+retries them when an instrumented same-origin page starts in the same tab. This
+recovers page-load spans whose upload was cancelled by a quick redirect. Original
+span IDs and timestamps are preserved; a lost acknowledgment can cause duplicates.
+
+Retention is bounded to 32 requests, 2 MiB, and five minutes. Recovery is best
+effort and requires Web Crypto and available session storage. It cannot recover
+spans that were never created or guarantee delivery after the tab closes.
+Request headers and credentials are not stored. The destination and configured
+headers determine which requests can be recovered.
+
+Set `tracePersistence: false` to disable storage and recovery. For a custom proxy
+that selects its destination from cookies or other state outside request headers,
+use `tracePersistence: { key: 'stable-destination-id' }` and change the key when
+that destination changes.
+
 ## Browser guides
 
 <span id="errors"></span>

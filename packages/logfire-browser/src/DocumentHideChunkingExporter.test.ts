@@ -139,6 +139,16 @@ describe('DocumentHideChunkingExporter', () => {
     await flush
   })
 
+  it('includes recovery requests when counting available export slots', async () => {
+    const inner = Object.assign(new RecordingExporter(), { pendingExports: 1 })
+    const exporter = new DocumentHideChunkingExporter(inner, 3_000, 2)
+    await exporter.withNewestFirstFlush(async () => {
+      exporter.export(createSpans(['a', 'b', 'c', 'd', 'e', 'f'], 700), () => undefined)
+      await Promise.resolve()
+    })
+    expect(inner.batches).toEqual([['a', 'b', 'c', 'd', 'e', 'f']])
+  })
+
   it('reports a failure of either request to every batch of the flush', async () => {
     const inner = new RecordingExporter()
     inner.deferred = true
