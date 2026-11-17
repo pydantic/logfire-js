@@ -107,6 +107,12 @@ navigation can cause duplicates when an acknowledgment is lost. Enable this only
 if your application can accept duplicate spans; backend deduplication is not
 guaranteed.
 
+The newest chunk sized for keepalive is sent without a stored copy, to avoid
+replaying an upload that survives navigation. If keepalive is rejected or disabled
+because its shared budget is exhausted, that chunk can be lost. An oversized
+newest span remains eligible for recovery. Other requests can still be duplicated
+when an acknowledgment is lost.
+
 Retention is bounded to 32 requests, 2 MiB, and five minutes. Recovery is best
 effort and requires Web Crypto, Web Locks, and available session storage. It cannot recover
 spans that were never created or guarantee delivery after the tab closes.

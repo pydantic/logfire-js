@@ -15,10 +15,12 @@ import { LogfireSpanProcessor } from './LogfireSpanProcessor'
 
 class RecordingExporter implements SpanExporter {
   readonly batches: string[][] = []
+  readonly persistence: boolean[] = []
   readonly callbacks: ((result: ExportResult) => void)[] = []
   deferred = false
 
-  export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
+  export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void, options?: { persist: boolean }): void {
+    this.persistence.push(options?.persist !== false)
     this.batches.push(spans.map((span) => span.name))
     if (this.deferred) {
       this.callbacks.push(resultCallback)
@@ -65,7 +67,18 @@ describe('DocumentHideChunkingExporter', () => {
     })
 
     expect(inner.batches).toEqual([['a', 'b', 'c', 'd', 'e']])
+    expect(inner.persistence).toEqual([true])
     expect(result).toEqual({ code: ExportResultCode.SUCCESS })
+  })
+
+  it.each([100, 10_000])('only skips persistence when the newest chunk fits the budget: %s bytes of attributes', async (payloadLength) => {
+    const inner = new RecordingExporter()
+    const exporter = new DocumentHideChunkingExporter(inner, 3_000)
+    await exporter.withNewestFirstFlush(async () => {
+      exporter.export(createSpans(['newest'], payloadLength), () => undefined)
+      await Promise.resolve()
+    })
+    expect(inner.persistence).toEqual([payloadLength === 10_000])
   })
 
   it('sends the newest spans of the whole flush first and the rest in the same task', async () => {
@@ -85,6 +98,7 @@ describe('DocumentHideChunkingExporter', () => {
     })
     await drainMicrotasks()
 
+    expect(inner.persistence).toEqual([false, true])
     // A page that unloads never receives the first response, so the second request cannot wait for it.
     expect(inner.batches).toEqual([
       ['e', 'f'],

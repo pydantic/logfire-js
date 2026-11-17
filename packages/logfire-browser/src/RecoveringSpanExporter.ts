@@ -80,7 +80,7 @@ export class RecoveringSpanExporter implements SpanExporter {
     return this.live.size + this.recovering.size
   }
 
-  export(spans: ReadableSpan[], callback: (result: ExportResult) => void): void {
+  export(spans: ReadableSpan[], callback: (result: ExportResult) => void, options?: { persist: boolean }): void {
     if (this.closed) {
       callback({ code: ExportResultCode.FAILED, error: new Error('Trace exporter is closed') })
       return
@@ -112,6 +112,7 @@ export class RecoveringSpanExporter implements SpanExporter {
       spans,
       entry,
       accepted,
+      options?.persist !== false,
       preempted.map(async ([promise]) => promise),
       settle
     ).catch((error: unknown) => {
@@ -147,6 +148,7 @@ export class RecoveringSpanExporter implements SpanExporter {
     spans: ReadableSpan[],
     entry: ActiveExport,
     accepted: boolean,
+    persist: boolean,
     preempted: Promise<void>[],
     settle: (result: ExportResult) => void
   ): Promise<void> {
@@ -160,7 +162,7 @@ export class RecoveringSpanExporter implements SpanExporter {
       return
     }
     const { headers, storage } = await this.headers()
-    if (storage !== undefined) {
+    if (persist && storage !== undefined) {
       try {
         const bytes = JsonTraceSerializer.serializeRequest(spans)
         if (bytes !== undefined) {

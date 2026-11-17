@@ -43,6 +43,8 @@ for (const { mode, persistence } of [
       await expect
         .poll(received, { message: 'Every resource span created by the source page must reach the collector' })
         .toEqual([...expected].sort())
+      // The keepalive chunk must not be recovered after its acknowledgment is lost.
+      await expect.poll(async () => (await evidence()).spans.filter((span) => expected.includes(span.spanId)).length).toBe(250)
       if (mode === 'stay' || mode === 'iframe') {
         await expect(page.getByRole('status')).toHaveText('Export complete')
         expect((await evidence()).spans.filter((span) => expected.includes(span.spanId))).toHaveLength(250)
@@ -51,6 +53,7 @@ for (const { mode, persistence } of [
       await expect
         .poll(async () => page.evaluate(() => Object.keys(sessionStorage).filter((key) => key.startsWith('logfire:traces:')).length))
         .toBe(0)
+      expect((await evidence()).spans.filter((span) => expected.includes(span.spanId))).toHaveLength(250)
     } finally {
       const path = testInfo.outputPath('collector-receipts.json')
       const receipts = await evidence()

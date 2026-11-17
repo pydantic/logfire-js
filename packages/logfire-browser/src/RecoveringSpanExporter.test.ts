@@ -130,6 +130,21 @@ describe('RecoveringSpanExporter', () => {
     expect(sessionStorage.length).toBe(0)
   })
 
+  it('does not persist or recover the newest keepalive chunk, even after export failure', async () => {
+    const current = createExporter()
+    await ready(current.exporter)
+    current.exporter.export(createSpans(), () => undefined, { persist: false })
+    await vi.waitFor(() => {
+      expect(current.callbacks).toHaveLength(1)
+    })
+    expect(sessionStorage.length).toBe(0)
+    current.callbacks[0]?.(failure)
+    await current.exporter.shutdown()
+    await ready(createExporter().exporter)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(sessionStorage.length).toBe(0)
+  })
+
   it('keeps failed exports and removes only successful ones', async () => {
     const { exporter, callbacks } = createExporter()
     await ready(exporter)

@@ -30,6 +30,7 @@ interface PendingExport {
 
 interface ConcurrentSpanExporter extends SpanExporter {
   readonly pendingExports?: number
+  export(spans: ReadableSpan[], callback: (result: ExportResult) => void, options?: { persist: boolean }): void
 }
 
 /**
@@ -131,8 +132,11 @@ export class DocumentHideChunkingExporter implements SpanExporter {
       return
     }
     const { newest, older } = splitNewestSpans(spans, this.keepaliveBytes)
+    // A successful keepalive upload can outlive its acknowledgment callback. Do not replay it.
+    // splitNewestSpans always includes one span, even if that span exceeds the byte budget.
+    const persistNewest = serializedBytes(newest) > Math.min(this.keepaliveBytes, 60 * 1024)
     if (older.length === 0) {
-      this.send(newest, settle)
+      this.send(newest, settle, persistNewest)
       return
     }
     let newestResult: ExportResult | undefined
@@ -143,21 +147,29 @@ export class DocumentHideChunkingExporter implements SpanExporter {
       }
       settle(newestResult.code === ExportResultCode.SUCCESS ? olderResult : newestResult)
     }
-    this.send(newest, (result) => {
-      newestResult = result
-      settleWhenBoth()
-    })
+    this.send(
+      newest,
+      (result) => {
+        newestResult = result
+        settleWhenBoth()
+      },
+      persistNewest
+    )
     this.send(older, (result) => {
       olderResult = result
       settleWhenBoth()
     })
   }
 
-  private send(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
+  private send(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void, persist = true): void {
     this.exportsInFlight += 1
-    this.inner.export(spans, (result) => {
-      this.exportsInFlight -= 1
-      resultCallback(result)
-    })
+    this.inner.export(
+      spans,
+      (result) => {
+        this.exportsInFlight -= 1
+        resultCallback(result)
+      },
+      { persist }
+    )
   }
 }

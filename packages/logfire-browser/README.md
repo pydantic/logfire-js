@@ -1116,6 +1116,12 @@ navigation can cause duplicates if the collector accepted a request but its
 acknowledgment did not reach the old document. Only enable recovery if your
 application can accept duplicate spans; do not assume backend deduplication.
 
+The newest chunk sized for keepalive is sent without a stored copy, to avoid
+replaying an upload that survives navigation. If keepalive is rejected or disabled
+because its shared budget is exhausted, that chunk can be lost. An oversized
+newest span remains eligible for recovery. Other requests can still be duplicated
+when an acknowledgment is lost.
+
 The SDK stores the scrubbed OTLP payload, without request headers or credentials.
 Recovery is isolated by the absolute trace endpoint, a SHA-256 fingerprint of the
 configured request headers, and an optional `tracePersistence.key`. For a proxy

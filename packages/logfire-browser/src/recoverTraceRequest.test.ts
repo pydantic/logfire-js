@@ -47,6 +47,7 @@ it('uses the uninstrumented fetch with the original payload and headers', async 
     body: '{"resourceSpans":[]}',
     headers: new Headers({ authorization: 'token', 'content-type': 'application/json' }),
     keepalive: false,
+    mode: 'no-cors',
     signal: original.mock.calls[0]?.[1]?.signal,
   })
 })
@@ -71,4 +72,15 @@ it('aborts a timed-out request and retains it', async () => {
   expect(await result).toBe('retryable-failure')
   expect(signal?.aborted).toBe(true)
   expect(vi.getTimerCount()).toBe(0)
+})
+
+it.each([
+  ['https://app.example/traces', 'same-origin'],
+  ['https://collector.example/traces', 'cors'],
+])('matches the live exporter origin policy for %s', async (url, mode) => {
+  vi.stubGlobal('location', { origin: 'https://app.example' })
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(new Response('{}'))
+  vi.stubGlobal('fetch', transport)
+  await recoverTraceRequest(url, '{}', {}, 1_000, new AbortController().signal)
+  expect(transport.mock.calls[0]?.[1]?.mode).toBe(mode)
 })

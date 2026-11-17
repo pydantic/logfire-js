@@ -26,6 +26,7 @@ export async function recoverTraceRequest(
     const fetchApi = typeof instrumented.__original === 'function' ? instrumented.__original : instrumented
     const requestHeaders = new Headers(headers)
     requestHeaders.set('content-type', 'application/json')
+    const location = (globalThis as { location?: Location }).location
     const response = await fetchApi(url, {
       method: 'POST',
       body,
@@ -33,6 +34,8 @@ export async function recoverTraceRequest(
       signal: controller.signal,
       // Recovery runs in a live document and must not compete with unload traffic for keepalive quota.
       keepalive: false,
+      // Match the live exporter: a same-origin proxy must not redirect telemetry to another origin.
+      mode: location === undefined ? 'no-cors' : location.origin === new URL(url).origin ? 'same-origin' : 'cors',
     })
     // Release the connection even when the collector returns an error body.
     await response.body?.cancel().catch(() => undefined)
