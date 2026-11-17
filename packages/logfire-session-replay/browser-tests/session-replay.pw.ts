@@ -342,13 +342,51 @@ declare global {
   }
 }
 
-test.describe('session replay delivery in Chromium', () => {
-  for (const scenario of ['csp', 'retry-after', 'utf8'] as const) {
+test.describe('session replay delivery', () => {
+  for (const scenario of ['retry-after', 'utf8'] as const) {
     test(scenario, async ({ page }, testInfo) => {
       await page.goto(`http://127.0.0.1:4177/${scenario}/`)
       await expect(page.locator('#status')).toHaveText(/^(?:complete|failed)$/u)
       await expect(page.locator('#status')).toHaveText('complete')
       await runVerifier(deliveryVerifier, scenario, testInfo)
+    })
+  }
+
+  for (const nativeCompression of [true, false]) {
+    test(`CSP recording uses no workers (native compression: ${String(nativeCompression)})`, async ({ page }, testInfo) => {
+      await page.addInitScript((nativeCompression) => {
+        Reflect.set(globalThis, '__replayNativeCompressions', 0)
+        if (nativeCompression) {
+          Reflect.set(
+            globalThis,
+            'CompressionStream',
+            new Proxy(CompressionStream, {
+              construct(target, args) {
+                Reflect.set(globalThis, '__replayNativeCompressions', Number(Reflect.get(globalThis, '__replayNativeCompressions')) + 1)
+                return Reflect.construct(target, args) as CompressionStream
+              },
+            })
+          )
+        } else {
+          Reflect.set(globalThis, 'CompressionStream', undefined)
+        }
+        Reflect.set(globalThis, '__replayWorkerAttempts', 0)
+        Reflect.set(
+          globalThis,
+          'Worker',
+          new Proxy(Worker, {
+            construct(target, args) {
+              Reflect.set(globalThis, '__replayWorkerAttempts', Number(Reflect.get(globalThis, '__replayWorkerAttempts')) + 1)
+              return Reflect.construct(target, args) as Worker
+            },
+          })
+        )
+      }, nativeCompression)
+      await page.goto('http://127.0.0.1:4177/csp/')
+      await expect(page.locator('#status')).toHaveText('complete')
+      await runVerifier(deliveryVerifier, 'csp', testInfo)
+      expect(await page.evaluate(() => Number(Reflect.get(globalThis, '__replayWorkerAttempts')))).toBe(0)
+      expect(await page.evaluate(() => Number(Reflect.get(globalThis, '__replayNativeCompressions')))).toBe(nativeCompression ? 2 : 0)
     })
   }
 

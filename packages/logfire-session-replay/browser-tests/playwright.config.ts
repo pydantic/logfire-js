@@ -59,7 +59,7 @@ export default defineConfig({
       name: browserName,
       use: { browserName },
       testMatch: 'session-replay.pw.ts',
-      grep: /recording identity/u,
+      grep: /recording identity|CSP recording/u,
     })),
     ...identityBrowsers.map((browserName) => ({
       name: `frustration-${browserName}`,

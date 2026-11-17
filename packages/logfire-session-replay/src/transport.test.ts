@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion, @typescript-eslint/require-await, @typescript-eslint/strict-void-return, vitest/require-mock-type-parameters, vitest/expect-expect, vitest/no-conditional-expect */
-import type { gzip } from 'fflate'
 import { gzipSync, gunzipSync, strFromU8, strToU8 } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -110,9 +109,7 @@ it('does not flush a checkpoint Meta without its FullSnapshot at the byte thresh
 
 function immediateCompression() {
   return {
-    gzip: ((input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
-      callback(null, gzipSync(input))
-    }) as typeof gzip,
+    gzip: async (input: Uint8Array): Promise<Uint8Array> => gzipSync(input),
     gzipSync,
   }
 }
@@ -1033,8 +1030,8 @@ describe('ReplayTransport compression fallback', () => {
   it('recovers from an async gzip setup throw, memoizes it, and preserves both envelopes', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const asyncGzip = vi.fn(() => {
-      throw new Error('worker construction blocked')
-    }) as unknown as typeof gzip
+      throw new Error('native compression unavailable')
+    }) as (input: Uint8Array) => Promise<Uint8Array>
     const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-csp', 'full', null, { gzip: asyncGzip, gzipSync })
 
     transport.add(fullSnapshot)
@@ -1046,12 +1043,12 @@ describe('ReplayTransport compression fallback', () => {
     expect(calls.map((call) => decodeBody(call.init.body).events)).toEqual([[fullSnapshot], [click]])
   })
 
-  it('recovers from an async gzip callback error without reporting it', async () => {
+  it('recovers from an async gzip rejection without reporting it', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const onError = vi.fn()
-    const asyncGzip = vi.fn((_input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
-      callback(new Error('worker rejected'), new Uint8Array())
-    }) as unknown as typeof gzip
+    const asyncGzip = vi.fn(async () => {
+      throw new Error('native stream failed')
+    })
     const transport = new ReplayTransport({ ...makeConfig(fetchImpl), onError }, 'sess-csp', 'full', null, {
       gzip: asyncGzip,
       gzipSync,
@@ -1063,30 +1060,29 @@ describe('ReplayTransport compression fallback', () => {
     expect(onError).not.toHaveBeenCalled()
   })
 
-  it('recovers when CSP blocks the worker without an fflate callback', async () => {
-    const policyTarget = new EventTarget()
-    vi.stubGlobal('window', policyTarget)
+  it.each(['missing', 'constructor failure', 'stream failure'] as const)('falls back when native compression has %s', async (failure) => {
+    const native = vi.fn(function () {
+      if (failure === 'constructor failure') {
+        throw new Error('unsupported')
+      }
+      return new TransformStream({
+        transform() {
+          throw new Error('stream failed')
+        },
+      })
+    })
+    vi.stubGlobal('CompressionStream', failure === 'missing' ? undefined : native)
     try {
       const { calls, fetchImpl } = recordingFetch()
-      const asyncGzip = vi.fn(() => undefined) as unknown as typeof gzip
-      const transport = new ReplayTransport(makeConfig(fetchImpl), 'sess-csp-event', 'full', null, {
-        gzip: asyncGzip,
-        gzipSync,
-      })
+      const onError = vi.fn()
+      const transport = new ReplayTransport({ ...makeConfig(fetchImpl), onError }, 'sess-native', 'full', null)
       transport.add(fullSnapshot)
-      const flush = transport.flush()
-      await vi.waitFor(() => {
-        expect(asyncGzip).toHaveBeenCalledTimes(1)
-      })
-      const violation = new Event('securitypolicyviolation')
-      Object.defineProperties(violation, {
-        effectiveDirective: { value: 'worker-src' },
-        violatedDirective: { value: 'worker-src' },
-      })
-      policyTarget.dispatchEvent(violation)
-      await flush
-
-      expect(decodeBody(calls[0]!.init.body).events).toEqual([fullSnapshot])
+      await transport.flush()
+      transport.add(click)
+      await transport.flush()
+      expect(calls.map((call) => decodeBody(call.init.body).events)).toEqual([[fullSnapshot], [click]])
+      expect(onError).not.toHaveBeenCalled()
+      expect(native).toHaveBeenCalledTimes(failure === 'missing' ? 0 : 1)
     } finally {
       vi.unstubAllGlobals()
     }
@@ -1096,8 +1092,8 @@ describe('ReplayTransport compression fallback', () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch
     const onError = vi.fn()
     const asyncGzip = vi.fn(() => {
-      throw new Error('worker blocked')
-    }) as unknown as typeof gzip
+      throw new Error('native compression failed')
+    }) as (input: Uint8Array) => Promise<Uint8Array>
     const syncGzip = vi.fn(() => {
       throw new Error('sync compressor failed')
     }) as unknown as typeof gzipSync
@@ -2196,14 +2192,10 @@ describe('ReplayTransport upload recovery', () => {
           return accepted()
         })
         const compression = {
-          gzip: ((input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
-            gate.then(
-              () => {
-                callback(null, gzipSync(input))
-              },
-              () => undefined
-            )
-          }) as typeof gzip,
+          gzip: async (input: Uint8Array) => {
+            await gate
+            return gzipSync(input)
+          },
           gzipSync,
         }
         const { onError, takeFullSnapshot, transport } = recoveringTransport(
@@ -2258,21 +2250,22 @@ describe('ReplayTransport upload recovery', () => {
     expect(calls.map((call) => call.seq)).toEqual([0, 1])
   })
 
-  it('keeps flush order when compression callbacks finish in reverse order', async () => {
+  it('keeps flush order when compression promises finish in reverse order', async () => {
     vi.useFakeTimers()
     try {
       const { calls, fetchImpl } = scriptedFetch(() => accepted())
       let compressions = 0
       const compression = {
-        gzip: ((input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
-          compressions += 1
-          setTimeout(
-            () => {
-              callback(null, gzipSync(input))
-            },
-            compressions === 1 ? 300 : 1
-          )
-        }) as typeof gzip,
+        gzip: async (input: Uint8Array) =>
+          new Promise<Uint8Array>((resolve) => {
+            compressions += 1
+            setTimeout(
+              () => {
+                resolve(gzipSync(input))
+              },
+              compressions === 1 ? 300 : 1
+            )
+          }),
         gzipSync,
       }
       const { transport } = recoveringTransport(fetchImpl, {}, compression)
@@ -2363,11 +2356,12 @@ describe('ReplayTransport upload recovery', () => {
         return accepted()
       })
       const compression = {
-        gzip: ((input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
-          setTimeout(() => {
-            callback(null, gzipSync(input))
-          }, 100)
-        }) as typeof gzip,
+        gzip: async (input: Uint8Array) =>
+          new Promise<Uint8Array>((resolve) => {
+            setTimeout(() => {
+              resolve(gzipSync(input))
+            }, 100)
+          }),
         gzipSync,
       }
       const { onError, takeFullSnapshot, transport } = recoveringTransport(fetchImpl, {}, compression)
@@ -2647,14 +2641,15 @@ describe('ReplayTransport background delivery', () => {
     }
   })
 
-  it('sends a pagehide prefix without waiting for its compression worker', async () => {
+  it('sends a pagehide prefix without waiting for its native compression', async () => {
     let finishCompression!: () => void
     const compression = {
-      gzip: ((input: Uint8Array, _options: unknown, callback: (error: Error | null, data: Uint8Array) => void) => {
-        finishCompression = () => {
-          callback(null, gzipSync(input))
-        }
-      }) as typeof gzip,
+      gzip: async (input: Uint8Array) =>
+        new Promise<Uint8Array>((resolve) => {
+          finishCompression = () => {
+            resolve(gzipSync(input))
+          }
+        }),
       gzipSync,
     }
     const { calls, fetchImpl } = recordingFetch()

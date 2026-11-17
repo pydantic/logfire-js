@@ -28,10 +28,8 @@ run().catch(fail)
 async function run(): Promise<void> {
   await fetch(`/fixture/reset?scenario=${scenario}`, { method: 'POST' })
   if (scenario === 'csp') {
-    window.addEventListener('securitypolicyviolation', (event) => {
-      if (event.effectiveDirective === 'worker-src' || event.violatedDirective === 'worker-src') {
-        state.cspViolations += 1
-      }
+    window.addEventListener('securitypolicyviolation', () => {
+      state.cspViolations += 1
     })
   }
 
