@@ -2,11 +2,11 @@
 
 Reproduces [#448](https://github.com/pydantic/logfire-js/issues/448) against the built browser SDK. No token or external collector is needed.
 
-The page loads 250 small images. OpenTelemetry creates real `resourceFetch` spans, with extra attributes to model the large payload in the report. A processor records their IDs before export. The page navigates to another same-origin document 150 ms after `load` and collector warm-up finish; the destination also configures the SDK, so a future cross-document retry can run there.
+The page loads 250 small images. OpenTelemetry creates real `resourceFetch` spans, with extra attributes to model the large payload in the report. A processor records their IDs before export. The page navigates to another same-origin document 150 ms after `load` and collector warm-up finish; the destination also configures the SDK, with recovery explicitly enabled, so cross-document retries run there.
 
 The Python standard-library collector uses a small TCP receive window, waits 300 ms before reading, then reads at most 4 KiB every 40 ms. This prevents localhost socket buffers from accepting the entire upload before navigation. It records spans only after receiving and parsing a complete body. The exporter timeout is 30 seconds so it does not cancel the control's slow upload. The test checks collector receipt against the original IDs, not browser request events. Session replay is disabled to isolate trace delivery. A startup request warms the CORS preflight cache before navigation.
 
-Run from the repository root:
+Python 3 must be available for the collector, including in the normal browser acceptance suite. Run from the repository root:
 
 ```sh
 vp install
@@ -16,7 +16,7 @@ pnpm --filter @pydantic/logfire-session-replay exec playwright install chromium
 pnpm --filter @pydantic/logfire-session-replay exec playwright test --config browser-tests/quick-redirect.config.ts
 ```
 
-The `stay` control flushes the same spans without leaving the page. The `redirect` test asserts full delivery after navigation and recovery on the destination page. The `in-flight` case starts exporting before navigation, so recovery must also cover requests no longer in the batch processor's queue. A second `stay` control disables persistence and checks that live exports do not write SDK storage. All cases must pass and leave no acknowledged requests in SDK storage. They also run in the normal browser acceptance suite; the command above starts only the servers needed for this regression. The collector evidence and Playwright trace are in `test-results/quick-redirect/`.
+The `stay` control flushes the same spans without leaving the page. The `redirect` test asserts full delivery after navigation and recovery on the destination page. The `in-flight` case starts exporting before navigation, so recovery must also cover requests no longer in the batch processor's queue. Two more `stay` controls disable persistence or omit the option, and check that live exports do not write SDK storage. The `iframe` control starts another SDK instance in a same-origin iframe while the source upload is in flight; it must not duplicate resource spans. All cases must pass and leave no acknowledged requests in SDK storage. They also run in the normal browser acceptance suite; the command above starts only the servers needed for this regression. Evidence reports total, unique, and duplicate resource span counts. Navigation recovery is at least once: a lost acknowledgment can cause duplicates with the original IDs. Stay and iframe controls require exactly one copy of each resource span. The collector evidence and Playwright trace are in `test-results/quick-redirect/`.
 
 To inspect the example manually, start these commands in separate terminals from the repository root:
 

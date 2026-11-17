@@ -271,7 +271,8 @@ export interface LogfireConfigOptions {
 
   /**
    * Retain unacknowledged, scrubbed trace requests in sessionStorage for recovery by the next
-   * same-origin document. Enabled by default, bounded to 2 MiB and five minutes. Set false to disable.
+   * same-origin document. Disabled by default. Set {} to opt in to possible duplicate delivery.
+   * Bounded to 2 MiB and five minutes. Requires Web Crypto, Web Locks, and sessionStorage.
    * Set key when a proxy's destination depends on cookies or other state outside request headers.
    */
   tracePersistence?: false | BrowserTracePersistenceOptions
@@ -737,10 +738,10 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
     resolveTraceExporterHeaders(options.traceExporterConfig?.headers, options.traceExporterHeaders ?? defaultTraceExporterHeaders)
   const exporterConfig = { ...options.traceExporterConfig, url: options.traceUrl }
   const recoveringExporter =
-    options.tracePersistence === false
+    options.tracePersistence === false || options.tracePersistence === undefined
       ? undefined
       : new RecoveringSpanExporter(
-          (headers) => new OTLPTraceExporter({ ...exporterConfig, headers }),
+          (headers, url) => new OTLPTraceExporter({ ...exporterConfig, url, headers }),
           exporterConfig,
           resolveHeaders,
           options.tracePersistence
@@ -788,11 +789,10 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   }
 
   const sharedApiConfigSnapshot = snapshotSharedLogfireApiConfig()
-  const flushNewestFirst = async () =>
-    traceExporter.withNewestFirstFlush(async () => {
-      await tracerProvider.forceFlush()
-      await recoveringExporter?.forceFlush()
-    })
+  const flushNewestFirst = async () => {
+    await traceExporter.withNewestFirstFlush(async () => tracerProvider.forceFlush())
+    await recoveringExporter?.forceFlush()
+  }
   const generationToken = activateProviderGeneration(tracerProvider, flushNewestFirst)
   const removeDocumentHideFlush =
     batchSpanProcessorConfig.disableAutoFlushOnDocumentHide === true
@@ -1147,7 +1147,9 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
       value: sessionReplayHandle,
     })
   }
-  recoveringExporter?.startRecovery()
+  recoveringExporter?.startRecovery().catch((error: unknown) => {
+    diag.warn('logfire-browser: trace recovery unavailable', error)
+  })
   return cleanup
 }
 

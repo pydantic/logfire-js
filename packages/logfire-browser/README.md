@@ -1106,11 +1106,15 @@ second request. You can disable that OpenTelemetry behavior with
 `batchSpanProcessorConfig.disableAutoFlushOnDocumentHide`, but doing so means
 only explicit cleanup or normal batch timing will flush spans.
 
-Unacknowledged trace requests are retained in `sessionStorage` by default, including
+Recovery is disabled by default. Set `tracePersistence: {}` in `configure()` or
+`configureFrontend()` to retain unacknowledged trace requests in `sessionStorage`, including
 requests already in flight when navigation starts. When the SDK starts in the next
 same-origin document in that tab, it retries those requests with their original
 span IDs, timestamps, resource, and session attributes. It removes each copy after
-successful acknowledgment. A lost acknowledgment can cause duplicate delivery.
+successful acknowledgment. This is at-least-once delivery: even an ordinary
+navigation can cause duplicates if the collector accepted a request but its
+acknowledgment did not reach the old document. Only enable recovery if your
+application can accept duplicate spans; do not assume backend deduplication.
 
 The SDK stores the scrubbed OTLP payload, without request headers or credentials.
 Recovery is isolated by the absolute trace endpoint, a SHA-256 fingerprint of the
@@ -1121,12 +1125,18 @@ destination changes. Each request uses a snapshot of its resolved headers, inclu
 
 Storage is limited to 32 requests and 2 MiB of UTF-16 data across SDK destinations;
 the oldest copies are evicted first, and requests larger than the limit are not
-saved. Copies expire after five minutes. Recovery needs Web Crypto and writable
-session storage; it is best effort when those are unavailable, storage is full,
+saved. Copies expire after five minutes. Recovery needs Web Crypto, Web Locks,
+and writable session storage; it is best effort when those are unavailable, storage is full,
 the tab closes, or no instrumented same-origin page opens before expiry. Spans
 that were never created, such as resource spans on departures before `load`, are
-outside this recovery path. Initial exports can also precede completion of the
-asynchronous destination fingerprint, including after headers change.
+outside this recovery path. Each request waits for its destination fingerprint
+before it is saved and sent, including the first request after headers change.
+
+Web Locks prevent another live SDK instance or same-origin iframe from retrying
+requests still owned by a live document. Background recovery sends at most four
+requests concurrently, shares the export concurrency limit, and gives new exports
+priority. It does not delay `forceFlush()`. Successful requests and permanent
+HTTP failures are removed; transient failures are retained for the next document.
 
 Set `tracePersistence: false` in `configure()` or `configureFrontend()` to disable
 both storing and recovering requests. Existing copies then remain unused until

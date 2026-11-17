@@ -1,10 +1,11 @@
-const PREFIX = 'logfire:traces:v1:'
+const PREFIX = 'logfire:traces:v2:'
 const MAX_BYTES = 2 * 1024 * 1024
 const MAX_RECORDS = 32
 const MAX_AGE_MS = 5 * 60_000
 
 interface StoredRequest {
   body: string
+  owner: string
   createdAt: number
 }
 
@@ -16,19 +17,44 @@ export interface StoredTraceRequest extends StoredRequest {
 export class TraceExportStorage {
   private readonly prefix: string
   private readonly storage: Storage
+  readonly scope: string
+  private readonly owner: string
 
-  constructor(storage: Storage, scope: string) {
+  constructor(storage: Storage, scope: string, owner: string) {
     this.storage = storage
+    this.scope = scope
+    this.owner = owner
     this.prefix = `${PREFIX}${scope}:`
   }
 
   read(): StoredTraceRequest[] {
-    return this.readAll().filter(({ key }) => key.startsWith(this.prefix))
+    return this.readAll().filter(({ key, body }) => {
+      if (!key.startsWith(this.prefix)) {
+        return false
+      }
+      try {
+        if (Array.isArray((JSON.parse(body) as { resourceSpans?: unknown }).resourceSpans)) {
+          return true
+        }
+      } catch {
+        /* Remove malformed requests without parsing every body on each save. */
+      }
+      this.remove(key)
+      return false
+    })
+  }
+
+  has(key: string): boolean {
+    try {
+      return this.storage.getItem(key) !== null
+    } catch {
+      return false
+    }
   }
 
   save(body: string): string | undefined {
     try {
-      const value = JSON.stringify({ body, createdAt: Date.now() } satisfies StoredRequest)
+      const value = JSON.stringify({ body, owner: this.owner, createdAt: Date.now() } satisfies StoredRequest)
       const key = `${this.prefix}${crypto.randomUUID()}`
       // Web Storage stores UTF-16 strings. Include keys, envelopes, and escaped payloads.
       const bytes = (key.length + value.length) * 2
@@ -75,17 +101,18 @@ export class TraceExportStorage {
           if (
             record === null ||
             typeof record.body !== 'string' ||
+            typeof record.owner !== 'string' ||
+            record.owner.length === 0 ||
             typeof record.createdAt !== 'number' ||
             !Number.isFinite(record.createdAt) ||
             record.createdAt > now ||
             now - record.createdAt >= MAX_AGE_MS ||
-            record.body.length * 2 > MAX_BYTES ||
-            !Array.isArray((JSON.parse(record.body) as { resourceSpans?: unknown }).resourceSpans)
+            record.body.length * 2 > MAX_BYTES
           ) {
             this.remove(key)
             continue
           }
-          records.push({ key, body: record.body, createdAt: record.createdAt })
+          records.push({ key, body: record.body, owner: record.owner, createdAt: record.createdAt })
         } catch {
           this.remove(key)
         }

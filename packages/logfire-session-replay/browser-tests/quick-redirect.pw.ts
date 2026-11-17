@@ -10,6 +10,8 @@ for (const { mode, persistence } of [
   { mode: 'redirect', persistence: 'on' },
   { mode: 'in-flight', persistence: 'on' },
   { mode: 'stay', persistence: 'off' },
+  { mode: 'stay', persistence: 'default' },
+  { mode: 'iframe', persistence: 'on' },
 ]) {
   test(`resource spans reach the collector: ${mode}, persistence ${persistence}`, async ({ page, request }, testInfo) => {
     const run = randomUUID()
@@ -19,7 +21,7 @@ for (const { mode, persistence } of [
       return (await response.json()) as Receipts
     }
     await page.goto(`${origin}/?run=${run}&mode=${mode}&persistence=${persistence}`)
-    if (mode !== 'stay') {
+    if (mode === 'redirect' || mode === 'in-flight') {
       await page.waitForURL(`**/?run=${run}&destination=1`)
       await expect(page.getByRole('status')).toHaveText('Destination loaded')
     }
@@ -29,7 +31,7 @@ for (const { mode, persistence } of [
     const expected = await created()
     expect(expected).toHaveLength(250)
     expect(new Set(expected).size).toBe(250)
-    if (persistence === 'off') {
+    if (persistence !== 'on') {
       await expect(page.getByRole('status')).toHaveText('Exporting without navigation')
       expect(await page.evaluate(() => Object.keys(sessionStorage).filter((key) => key.startsWith('logfire:traces:')))).toEqual([])
     }
@@ -41,8 +43,9 @@ for (const { mode, persistence } of [
       await expect
         .poll(received, { message: 'Every resource span created by the source page must reach the collector' })
         .toEqual([...expected].sort())
-      if (mode === 'stay') {
+      if (mode === 'stay' || mode === 'iframe') {
         await expect(page.getByRole('status')).toHaveText('Export complete')
+        expect((await evidence()).spans.filter((span) => expected.includes(span.spanId))).toHaveLength(250)
         expect((await evidence()).uploads.some((upload) => upload.complete && upload.bytes > 64 * 1024)).toBe(true)
       }
       await expect
@@ -50,7 +53,15 @@ for (const { mode, persistence } of [
         .toBe(0)
     } finally {
       const path = testInfo.outputPath('collector-receipts.json')
-      await writeFile(path, JSON.stringify({ expected, received: await evidence() }, null, 2))
+      const receipts = await evidence()
+      const resourceSpans = receipts.spans.filter((span) => expected.includes(span.spanId))
+      const total = resourceSpans.length
+      const unique = new Set(resourceSpans.map((span) => span.spanId)).size
+      // Recovery preserves IDs but cannot prevent duplicates after an acknowledgment is lost.
+      await writeFile(
+        path,
+        JSON.stringify({ expected, delivery: { total, unique, duplicates: total - unique }, received: receipts }, null, 2)
+      )
       await testInfo.attach('collector-receipts', {
         path,
         contentType: 'application/json',

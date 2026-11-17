@@ -1,7 +1,7 @@
 ---
-'@pydantic/logfire-browser': patch
+'@pydantic/logfire-browser': minor
 ---
 
-Recover trace requests cancelled by quick same-origin navigation. The browser SDK now keeps scrubbed, unacknowledged requests in sessionStorage and retries them from the next instrumented document, preserving the original span IDs and timestamps. This includes requests already in flight before document hide.
+Add opt-in recovery for trace requests cancelled by same-origin navigation, including requests already in flight. Set `tracePersistence: {}` to retain scrubbed requests in sessionStorage and retry them from the next instrumented document with their original span IDs and timestamps.
 
-Retention is bounded to 32 requests, 2 MiB, and five minutes, and excludes request headers and credentials. Recovery is isolated by endpoint and configured headers. Use `tracePersistence: false` to disable it, or set `tracePersistence.key` to isolate proxy destinations selected by cookies or other state. Recovery is best effort; a lost acknowledgment can cause duplicate delivery.
+Recovery is disabled by default because lost acknowledgments can cause duplicate delivery, including during ordinary navigation. Retention is bounded to 32 requests, 2 MiB, and five minutes, and excludes request headers and credentials. Recovery requires Web Crypto, Web Locks, and available session storage. It is isolated by endpoint and configured headers; use `tracePersistence.key` to isolate proxy destinations selected by other state. Background retries do not delay forceFlush or take priority over new exports.

@@ -97,16 +97,24 @@ Only enable verbose diagnostic logging in development.
 
 ### Delivery across navigation
 
-The SDK retains unacknowledged, scrubbed trace requests in `sessionStorage` and
+Recovery is disabled by default. Set `tracePersistence: {}` in `configure()` or
+`configureFrontend()` to enable it. The SDK retains unacknowledged, scrubbed
+trace requests in `sessionStorage` and
 retries them when an instrumented same-origin page starts in the same tab. This
 recovers page-load spans whose upload was cancelled by a quick redirect. Original
-span IDs and timestamps are preserved; a lost acknowledgment can cause duplicates.
+span IDs and timestamps are preserved. Delivery is at least once: even ordinary
+navigation can cause duplicates when an acknowledgment is lost. Enable this only
+if your application can accept duplicate spans; backend deduplication is not
+guaranteed.
 
 Retention is bounded to 32 requests, 2 MiB, and five minutes. Recovery is best
-effort and requires Web Crypto and available session storage. It cannot recover
+effort and requires Web Crypto, Web Locks, and available session storage. It cannot recover
 spans that were never created or guarantee delivery after the tab closes.
 Request headers and credentials are not stored. The destination and configured
-headers determine which requests can be recovered.
+headers determine which requests can be recovered. Web Locks prevent live
+instances and iframes from retrying each other's requests. Background retries do
+not delay `forceFlush()`; permanent HTTP failures are discarded, while transient
+failures remain eligible for recovery in the next document.
 
 Set `tracePersistence: false` to disable storage and recovery. For a custom proxy
 that selects its destination from cookies or other state outside request headers,

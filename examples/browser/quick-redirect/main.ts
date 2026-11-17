@@ -17,7 +17,7 @@ performance.setResourceTimingBufferSize(1_000)
 logfire.configure({
   serviceName: 'quick-redirect-example',
   traceUrl,
-  tracePersistence: params.get('persistence') === 'off' ? false : {},
+  ...(params.get('persistence') === 'default' ? {} : { tracePersistence: params.get('persistence') === 'off' ? false : {} }),
   // The throttled control must finish before an exporter timeout can cancel it.
   traceExporterConfig: { timeoutMillis: 30_000 },
   autoInstrumentations: {
@@ -69,8 +69,13 @@ if (destination) {
     async () => {
       await collectorReady
       setTimeout(() => {
-        if (params.get('mode') === 'stay') {
+        if (params.get('mode') === 'stay' || params.get('mode') === 'iframe') {
           status.textContent = 'Exporting without navigation'
+          if (params.get('mode') === 'iframe') {
+            const frame = document.createElement('iframe')
+            frame.src = `/?run=${run}&destination=1`
+            document.body.append(frame)
+          }
           void logfire.forceFlush().then(() => {
             status.textContent = 'Export complete'
           })

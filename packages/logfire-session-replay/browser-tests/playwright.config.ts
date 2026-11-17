@@ -2,17 +2,11 @@ import { resolve } from 'node:path'
 
 import { defineConfig } from '@playwright/test'
 import { frustrationServers, frustrationTests } from './frustration-fixtures'
+import { quickRedirectServers } from './quick-redirect-fixtures'
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
 const fixtureServers: { command: string; env?: Record<string, string>; url: string }[] = [
-  {
-    command: 'python3 examples/browser/quick-redirect/collector.py',
-    url: 'http://127.0.0.1:4195/receipts/health',
-  },
-  {
-    command: 'pnpm exec vp dev --config examples/browser/quick-redirect/vite.config.ts',
-    url: 'http://127.0.0.1:4194/',
-  },
+  ...quickRedirectServers,
   {
     command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/privacy-defaults/vite.config.ts',
     url: 'http://127.0.0.1:4178/',
