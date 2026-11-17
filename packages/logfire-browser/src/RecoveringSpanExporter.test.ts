@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
 import { FakeLockManager } from '../../logfire-session-replay/src/fakeLockManager.testing'
 
-import { RecoveringSpanExporter } from './RecoveringSpanExporter'
+import { RecoveringSpanExporter, resolveTracePersistence } from './RecoveringSpanExporter'
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
 
 const success: ExportResult = { code: ExportResultCode.SUCCESS }
@@ -436,5 +436,15 @@ describe('RecoveringSpanExporter', () => {
     expect(result).toHaveBeenCalledExactlyOnceWith(success)
     expect(sessionStorage.length).toBe(1)
     await next.exporter.shutdown()
+  })
+})
+
+describe('resolveTracePersistence', () => {
+  it('turns recovery on for true and for an options object, and off otherwise', () => {
+    expect(resolveTracePersistence(true)).toEqual({})
+    expect(resolveTracePersistence({ key: 'proxy-a' })).toEqual({ key: 'proxy-a' })
+    expect(resolveTracePersistence({})).toEqual({})
+    expect(resolveTracePersistence(false)).toBeUndefined()
+    expect(resolveTracePersistence(undefined)).toBeUndefined()
   })
 })

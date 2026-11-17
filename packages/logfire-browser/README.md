@@ -1106,7 +1106,7 @@ second request. You can disable that OpenTelemetry behavior with
 `batchSpanProcessorConfig.disableAutoFlushOnDocumentHide`, but doing so means
 only explicit cleanup or normal batch timing will flush spans.
 
-Recovery is disabled by default. Set `tracePersistence: {}` in `configure()` or
+Recovery is disabled by default. Set `tracePersistence: true` in `configure()` or
 `configureFrontend()` to retain unacknowledged trace requests in `sessionStorage`, including
 requests already in flight when navigation starts. When the SDK starts in the next
 same-origin document in that tab, it retries those requests with their original
@@ -1124,10 +1124,10 @@ when an acknowledgment is lost.
 
 The SDK stores the scrubbed OTLP payload, without request headers or credentials.
 Recovery is isolated by the absolute trace endpoint, a SHA-256 fingerprint of the
-configured request headers, and an optional `tracePersistence.key`. For a proxy
-whose destination depends on cookies or other state outside those headers, set
-that key to a stable tenant or destination identifier and change it when the
-destination changes. Each request uses a snapshot of its resolved headers, including on retries.
+configured request headers, and an optional key. For a proxy whose destination
+depends on cookies or other state outside those headers, pass
+`tracePersistence: { key: 'stable-destination-id' }` in place of `true`, and
+change the key when the destination changes. Each request uses a snapshot of its resolved headers, including on retries.
 
 Storage is limited to 32 requests and 2 MiB of UTF-16 data across SDK destinations;
 the oldest copies are evicted first, and requests larger than the limit are not
