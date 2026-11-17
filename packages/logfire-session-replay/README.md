@@ -200,10 +200,12 @@ credentials. Before a controlled navigation, call `flush()` early enough to
 reach `minSessionDurationMs`, or explicitly set the minimum to `0` when delivery
 of shorter replays is critical.
 
-Ordinary uploads use asynchronous gzip when available. If a restrictive Content
-Security Policy blocks fflate's worker compressor, replay retries the same batch
-with synchronous gzip and remembers the fallback for that replay controller.
-This preserves the batch, but compression may briefly use the main thread.
+Ordinary uploads use the browser's `CompressionStream('gzip')`. Replay does not
+create blob workers or require a Trusted Types policy. If native compression is
+unavailable or fails, replay uses synchronous gzip and remembers the fallback
+for that transport. Lifecycle uploads also use synchronous gzip so the request
+can start before the page freezes. Synchronous compression uses the main thread.
+Both paths send the same gzip-compressed JSON envelope format.
 
 ## Upload Failures
 

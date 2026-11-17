@@ -80,8 +80,8 @@ function verifyUnload(evidence, decoded) {
 }
 
 function verifyCsp(evidence, decoded) {
-  assert(evidence.state.cspViolations === 1, `expected one blocked worker attempt, got ${String(evidence.state.cspViolations)}`)
-  assert(evidence.state.errors.length === 0, `CSP fallback reported errors: ${JSON.stringify(evidence.state.errors)}`)
+  assert(evidence.state.cspViolations === 0, `expected no CSP violations, got ${String(evidence.state.cspViolations)}`)
+  assert(evidence.state.errors.length === 0, `CSP recording reported errors: ${JSON.stringify(evidence.state.errors)}`)
   assert(decoded.length === 2, `expected two CSP replay batches, received ${String(decoded.length)}`)
   assert(JSON.stringify(decoded[0].envelope).includes('csp-marker-one'), 'first CSP batch marker missing')
   assert(JSON.stringify(decoded[1].envelope).includes('csp-marker-two'), 'second CSP batch marker missing')

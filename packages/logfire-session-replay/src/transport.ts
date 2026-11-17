@@ -1,4 +1,4 @@
-import { gzip, gzipSync, strToU8 } from 'fflate'
+import { gzipSync, strToU8 } from 'fflate'
 
 import { isUserActivityEvent, resolveFlushInterval } from './activity'
 import { computeChunkMeta, normalizeReplayUser } from './extract'
@@ -27,7 +27,7 @@ const KEEPALIVE_PACKING_HEADROOM = 0.9
 // Below this, more pagehide chunks would add requests and compression passes for little data.
 const MIN_KEEPALIVE_CHUNK_BYTES = MAX_KEEPALIVE_RESERVED_BYTES / 10
 interface Compression {
-  gzip: typeof gzip
+  gzip: (input: Uint8Array<ArrayBuffer>) => Promise<Uint8Array>
   gzipSync: typeof gzipSync
 }
 
@@ -102,7 +102,7 @@ export interface SequenceRecordBinding {
   onFailure(): void
 }
 
-const DEFAULT_COMPRESSION: Compression = { gzip, gzipSync }
+const DEFAULT_COMPRESSION: Compression = { gzip: gzipNative, gzipSync }
 
 export class ReplayTransport {
   private buffer: RrwebEvent[] = []
@@ -1161,12 +1161,12 @@ export class ReplayTransport {
     )
   }
 
-  private async compressOrdinary(input: Uint8Array): Promise<Uint8Array> {
+  private async compressOrdinary(input: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
     if (!this.asyncCompressionAvailable) {
       return this.compression.gzipSync(input)
     }
     try {
-      return await gzipAsync(this.compression, input)
+      return await this.compression.gzip(input)
     } catch {
       this.asyncCompressionAvailable = false
       return this.compression.gzipSync(input)
@@ -1406,46 +1406,17 @@ function prefixEnd(sizes: number[], start: number, maxBytes: number): number {
   return end
 }
 
-async function gzipAsync(compression: Compression, input: Uint8Array): Promise<Uint8Array> {
-  return new Promise((resolve, reject) => {
-    const targets: EventTarget[] = []
-    if (typeof window !== 'undefined') {
-      targets.push(window)
-    }
-    if (typeof document !== 'undefined') {
-      targets.push(document)
-    }
-    const removePolicyListeners = (): void => {
-      for (const target of targets) {
-        target.removeEventListener('securitypolicyviolation', onPolicyViolation)
-      }
-    }
-    const finish = (error: Error | null, data?: Uint8Array): void => {
-      removePolicyListeners()
-      if (error !== null) {
-        reject(error)
-        return
-      }
-      resolve(data as Uint8Array)
-    }
-    const onPolicyViolation = (event: Event): void => {
-      const violation = event as SecurityPolicyViolationEvent
-      if (violation.effectiveDirective.includes('worker-src') || violation.violatedDirective.includes('worker-src')) {
-        finish(markSdkInternalError(new Error('replay compression worker blocked by Content Security Policy')))
-      }
-    }
-    for (const target of targets) {
-      target.addEventListener('securitypolicyviolation', onPolicyViolation)
-    }
-    try {
-      compression.gzip(input, { level: 6 }, (error, data) => {
-        finish(error, data)
-      })
-    } catch (error) {
-      removePolicyListeners()
-      reject(error instanceof Error ? error : new Error(String(error)))
-    }
+async function gzipNative(input: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
+  // Native streaming compression needs no worker or Trusted Types policy. Older browsers
+  // and failed streams use the transport's synchronous fallback.
+  const source = new ReadableStream<BufferSource>({
+    start(controller) {
+      controller.enqueue(input)
+      controller.close()
+    },
   })
+  const compressed = source.pipeThrough(new CompressionStream('gzip'))
+  return new Uint8Array(await new Response(compressed).arrayBuffer())
 }
 
 async function confirmResponseEnd(response: Response): Promise<boolean> {

@@ -62,7 +62,7 @@ export default defineConfig({
           if (request.method === 'GET' && url.pathname === '/csp/') {
             response.setHeader(
               'content-security-policy',
-              "default-src 'self'; script-src 'self'; connect-src 'self'; worker-src 'none'; style-src 'self'"
+              "default-src 'self'; script-src 'self'; connect-src 'self'; worker-src 'none'; style-src 'self'; require-trusted-types-for 'script'; trusted-types 'none'"
             )
             next()
             return
