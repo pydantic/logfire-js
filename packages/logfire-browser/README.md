@@ -1106,6 +1106,48 @@ second request. You can disable that OpenTelemetry behavior with
 `batchSpanProcessorConfig.disableAutoFlushOnDocumentHide`, but doing so means
 only explicit cleanup or normal batch timing will flush spans.
 
+Recovery is disabled by default. Set `tracePersistence: {}` in `configure()` or
+`configureFrontend()` to retain unacknowledged trace requests in `sessionStorage`, including
+requests already in flight when navigation starts. When the SDK starts in the next
+same-origin document in that tab, it retries those requests with their original
+span IDs, timestamps, resource, and session attributes. It removes each copy after
+successful acknowledgment. This is at-least-once delivery: even an ordinary
+navigation can cause duplicates if the collector accepted a request but its
+acknowledgment did not reach the old document. Only enable recovery if your
+application can accept duplicate spans; do not assume backend deduplication.
+
+The newest chunk sized for keepalive is sent without a stored copy, to avoid
+replaying an upload that survives navigation. If keepalive is rejected or disabled
+because its shared budget is exhausted, that chunk can be lost. An oversized
+newest span remains eligible for recovery. Other requests can still be duplicated
+when an acknowledgment is lost.
+
+The SDK stores the scrubbed OTLP payload, without request headers or credentials.
+Recovery is isolated by the absolute trace endpoint, a SHA-256 fingerprint of the
+configured request headers, and an optional `tracePersistence.key`. For a proxy
+whose destination depends on cookies or other state outside those headers, set
+that key to a stable tenant or destination identifier and change it when the
+destination changes. Each request uses a snapshot of its resolved headers, including on retries.
+
+Storage is limited to 32 requests and 2 MiB of UTF-16 data across SDK destinations;
+the oldest copies are evicted first, and requests larger than the limit are not
+saved. Copies expire after five minutes. Recovery needs Web Crypto, Web Locks,
+and writable session storage; it is best effort when those are unavailable, storage is full,
+the tab closes, or no instrumented same-origin page opens before expiry. Spans
+that were never created, such as resource spans on departures before `load`, are
+outside this recovery path. Each request waits for its destination fingerprint
+before it is saved and sent, including the first request after headers change.
+
+Web Locks prevent another live SDK instance or same-origin iframe from retrying
+requests still owned by a live document. Background recovery sends at most four
+requests concurrently, shares the export concurrency limit, and gives new exports
+priority. It does not delay `forceFlush()`. Successful requests and permanent
+HTTP failures are removed; transient failures are retained for the next document.
+
+Set `tracePersistence: false` in `configure()` or `configureFrontend()` to disable
+both storing and recovering requests. Existing copies then remain unused until
+they expire on a later enabled startup or the browser clears the tab's storage.
+
 A record that must arrive even if the page unloads soon after, such as the start
 of a page-load measurement, can be exported at once with `forceFlush()`. The
 request leaves while the page is still alive, so the document-hide flush does

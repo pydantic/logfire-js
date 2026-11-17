@@ -28,6 +28,11 @@ interface PendingExport {
   resultCallback: (result: ExportResult) => void
 }
 
+interface ConcurrentSpanExporter extends SpanExporter {
+  readonly pendingExports?: number
+  export(spans: ReadableSpan[], callback: (result: ExportResult) => void, options?: { persist: boolean }): void
+}
+
 /**
  * Sends the newest spans of a document-hide flush or a public `forceFlush()` first, in one request
  * small enough to outlive a navigation, and the rest in a second request started at the same time.
@@ -61,13 +66,13 @@ interface PendingExport {
 export class DocumentHideChunkingExporter implements SpanExporter {
   private readonly concurrencyLimit: number
   private exportsInFlight = 0
-  private readonly inner: SpanExporter
+  private readonly inner: ConcurrentSpanExporter
   private readonly keepaliveBytes: number
   private newestFirstDepth = 0
   private pending: PendingExport[] = []
 
   constructor(
-    inner: SpanExporter,
+    inner: ConcurrentSpanExporter,
     keepaliveBytes: number = DEFAULT_DOCUMENT_HIDE_KEEPALIVE_BYTES,
     concurrencyLimit: number = DEFAULT_EXPORT_CONCURRENCY_LIMIT
   ) {
@@ -122,13 +127,16 @@ export class DocumentHideChunkingExporter implements SpanExporter {
       }
     }
     const spans = pending.flatMap(({ spans: batch }) => batch)
-    if (this.concurrencyLimit - this.exportsInFlight < 2) {
+    if (this.concurrencyLimit - (this.inner.pendingExports ?? this.exportsInFlight) < 2) {
       this.send(spans, settle)
       return
     }
     const { newest, older } = splitNewestSpans(spans, this.keepaliveBytes)
+    // A successful keepalive upload can outlive its acknowledgment callback. Do not replay it.
+    // splitNewestSpans always includes one span, even if that span exceeds the byte budget.
+    const persistNewest = serializedBytes(newest) > Math.min(this.keepaliveBytes, 60 * 1024)
     if (older.length === 0) {
-      this.send(newest, settle)
+      this.send(newest, settle, persistNewest)
       return
     }
     let newestResult: ExportResult | undefined
@@ -139,21 +147,29 @@ export class DocumentHideChunkingExporter implements SpanExporter {
       }
       settle(newestResult.code === ExportResultCode.SUCCESS ? olderResult : newestResult)
     }
-    this.send(newest, (result) => {
-      newestResult = result
-      settleWhenBoth()
-    })
+    this.send(
+      newest,
+      (result) => {
+        newestResult = result
+        settleWhenBoth()
+      },
+      persistNewest
+    )
     this.send(older, (result) => {
       olderResult = result
       settleWhenBoth()
     })
   }
 
-  private send(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
+  private send(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void, persist = true): void {
     this.exportsInFlight += 1
-    this.inner.export(spans, (result) => {
-      this.exportsInFlight -= 1
-      resultCallback(result)
-    })
+    this.inner.export(
+      spans,
+      (result) => {
+        this.exportsInFlight -= 1
+        resultCallback(result)
+      },
+      { persist }
+    )
   }
 }

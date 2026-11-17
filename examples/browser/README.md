@@ -1,5 +1,7 @@
 # Browser RUM Smoke Example
 
+For a local reproduction of span loss during navigation, see the [quick redirect regression example](quick-redirect/README.md).
+
 This example exercises the browser SDK from a real tab:
 
 - `rum.webVitals` reports LCP, INP, CLS, FCP, and TTFB spans.
