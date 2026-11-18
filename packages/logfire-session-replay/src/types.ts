@@ -150,6 +150,14 @@ export interface SessionReplayConfig {
   maskAllText?: boolean
   /** Mask the values of all inputs, including hidden inputs. Defaults to true. */
   maskAllInputs?: boolean
+  /**
+   * Replace image sources with a gray placeholder before upload, so playback loads no recorded
+   * image. Covers `img` and `input type="image"` sources, `srcset`, `<picture>` sources, SVG
+   * `<image>` links, video posters, `background` attributes, image preload links, and inline styles
+   * that could reference a URL. Stylesheets, video and audio sources, `<object>`, and `<embed>` are
+   * not covered. Defaults to the value of `maskAllText`.
+   */
+  maskAllImages?: boolean
   maskTextSelector?: string
   blockSelector?: string
 
@@ -208,6 +216,7 @@ export interface ResolvedSessionReplayConfig {
   onErrorSampleRate: number
   maskAllText: boolean
   maskAllInputs: boolean
+  maskAllImages: boolean
   maskTextSelector: string
   blockSelector: string
   flushIntervalMs: number

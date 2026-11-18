@@ -44,6 +44,16 @@ const UI_STATE_DATA_ATTRIBUTE_NAMES = new Set([
 // Flag values such as `data-expanded="true"` carry no personal data and are matched by selectors.
 const FLAG_DATA_ATTRIBUTE_VALUES = new Set(['', 'false', 'true'])
 const TEXT_VALUE_INPUT_TYPES = new Set(['button', 'reset', 'submit'])
+// Attributes that only ever load an image, whatever element carries them.
+const IMAGE_ONLY_ATTRIBUTE_NAMES = new Set(['background', 'imagesrcset', 'poster', 'srcset'])
+// A 1x1 gray PNG. It stretches to whatever size the element's attributes, CSS, or measured size give
+// it, and stays a single pixel when nothing sizes it, like an image that never loaded. A `data:` URL
+// loads nothing from the network during playback.
+export const MASKED_IMAGE_SOURCE =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4cuUGAAUAAoG6haGKAAAAAElFTkSuQmCC'
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
+// rrweb's serialized node type for an element.
+const SERIALIZED_ELEMENT_NODE_TYPE = 2
 const MAX_ERROR_MESSAGE_LENGTH = 1024
 const MAX_ERROR_STACK_LENGTH = 8192
 // One inaccessible node can make rrweb throw on every mutation, so each distinct message is reported
@@ -82,6 +92,8 @@ export interface RecorderOptions {
   beforeUserActivity?: () => void
   maskAllText: boolean
   maskAllInputs: boolean
+  /** Replace image sources with a placeholder. Defaults to false. */
+  maskAllImages?: boolean
   maskTextSelector?: string
   blockSelector?: string
   checkoutEveryNms?: number
@@ -92,8 +104,24 @@ export interface RecorderOptions {
 
 interface SanitizeOptions {
   maskTextAttributes: boolean
+  maskImages: boolean
   patterns: RegExp[]
   transformUrl: UrlTransform | undefined
+  /** The live node that rrweb recorded under a serialized id. */
+  findNode: (id: number) => Node | undefined
+  /** Record the rendered size of a masked image once it loads. */
+  sizeOnLoad: (image: Element) => void
+}
+
+/** What image masking needs to know about the element that carries a set of attributes. */
+interface ElementContext {
+  tagName: string
+  isSVG: boolean
+  getAttribute: (name: string) => string | undefined
+  /** The live element, used to measure a masked image. */
+  findNode: () => Element | undefined
+  /** Whether the attributes describe a whole serialized element rather than an attribute mutation. */
+  serialized: boolean
 }
 
 export function startRecording(options: RecorderOptions): RecorderHandle {
@@ -102,8 +130,64 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
   }
   const sanitizeOptions: SanitizeOptions = {
     maskTextAttributes: options.maskAllText,
+    maskImages: options.maskAllImages ?? false,
     patterns: options.redactUrlPatterns,
     transformUrl: options.transformUrl,
+    findNode: (id) => {
+      try {
+        return record.mirror.getNode(id) ?? undefined
+      } catch {
+        return undefined
+      }
+    },
+    sizeOnLoad: (image) => {
+      sizeOnLoad(image)
+    },
+  }
+  // A masked image that loads after it was recorded, such as a lazy image or one a script adds, has
+  // no size to record until then. Its size reaches playback as a style mutation once it loads.
+  const pendingImages = new Map<Element, () => void>()
+  let recording = true
+  const sizeOnLoad = (image: Element): void => {
+    if (pendingImages.has(image)) {
+      return
+    }
+    const finish = (event: Event): void => {
+      image.removeEventListener('load', finish)
+      image.removeEventListener('error', finish)
+      pendingImages.delete(image)
+      if (recording && event.type === 'load') {
+        emitImageSize(image)
+      }
+    }
+    image.addEventListener('load', finish)
+    image.addEventListener('error', finish)
+    pendingImages.set(image, () => {
+      image.removeEventListener('load', finish)
+      image.removeEventListener('error', finish)
+    })
+  }
+  const emitImageSize = (image: Element): void => {
+    try {
+      const id = record.mirror.getId(image)
+      const { width, height } = image.getBoundingClientRect()
+      if (id < 0 || width <= 0 || height <= 0) {
+        return
+      }
+      options.emit({
+        type: EventType.IncrementalSnapshot,
+        timestamp: Date.now(),
+        data: {
+          source: IncrementalSource.Mutation,
+          texts: [],
+          attributes: [{ id, attributes: { style: { width: `${String(width)}px`, height: `${String(height)}px` } } }],
+          removes: [],
+          adds: [],
+        },
+      })
+    } catch (error) {
+      options.onError?.(error)
+    }
   }
   const reportedErrors = new Set<string>()
   const recordOptions: RrwebRecordOptions = {
@@ -172,6 +256,11 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
 
   return {
     stop: () => {
+      recording = false
+      for (const removeListeners of pendingImages.values()) {
+        removeListeners()
+      }
+      pendingImages.clear()
       stop()
     },
     addCustomEvent: (tag, payload) => {
@@ -280,11 +369,14 @@ function sanitizeSnapshotValue(value: unknown, options: SanitizeOptions): unknow
     return value
   }
 
-  const record = value as Record<string, unknown>
+  const node = value as Record<string, unknown>
   let changed = false
   const sanitized: Record<string, unknown> = {}
-  for (const [key, item] of Object.entries(record)) {
-    const next = key === 'attributes' && !Array.isArray(item) ? sanitizeAttributes(item, options) : sanitizeSnapshotValue(item, options)
+  for (const [key, item] of Object.entries(node)) {
+    const next =
+      key === 'attributes' && !Array.isArray(item)
+        ? sanitizeAttributes(item, options, options.maskImages ? describeElement(node, item, options) : undefined)
+        : sanitizeSnapshotValue(item, options)
     if (next !== item) {
       changed = true
     }
@@ -293,7 +385,7 @@ function sanitizeSnapshotValue(value: unknown, options: SanitizeOptions): unknow
   return changed ? sanitized : value
 }
 
-function sanitizeAttributes(value: unknown, options: SanitizeOptions): unknown {
+function sanitizeAttributes(value: unknown, options: SanitizeOptions, element: ElementContext | undefined): unknown {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return value
   }
@@ -302,14 +394,26 @@ function sanitizeAttributes(value: unknown, options: SanitizeOptions): unknown {
   const masksValue =
     options.maskTextAttributes && typeof attributes['type'] === 'string' && TEXT_VALUE_INPUT_TYPES.has(attributes['type'].toLowerCase())
   let changed = false
+  let maskedImageSource = false
   const sanitized: Record<string, unknown> = {}
   for (const [name, attributeValue] of Object.entries(attributes)) {
     const lowerName = name.toLowerCase()
-    const next = masksValue && lowerName === 'value' ? maskText(attributeValue) : sanitizeAttribute(lowerName, attributeValue, options)
+    let next: unknown
+    if (element !== undefined && typeof attributeValue === 'string' && attributeValue.length > 0 && loadsImage(element, lowerName)) {
+      next = IMAGE_ONLY_ATTRIBUTE_NAMES.has(lowerName) ? '' : MASKED_IMAGE_SOURCE
+      maskedImageSource ||= lowerName === 'src'
+    } else if (masksValue && lowerName === 'value') {
+      next = maskText(attributeValue)
+    } else {
+      next = sanitizeAttribute(lowerName, attributeValue, options)
+    }
     if (next !== attributeValue) {
       changed = true
     }
     sanitized[name] = next
+  }
+  if (maskedImageSource && element !== undefined) {
+    changed = sizeMaskedImage(sanitized, element, options) || changed
   }
   return changed ? sanitized : value
 }
@@ -317,8 +421,9 @@ function sanitizeAttributes(value: unknown, options: SanitizeOptions): unknown {
 function sanitizeAttribute(name: string, value: unknown, options: SanitizeOptions): unknown {
   const redact = (url: string) => redactUrl(url, options.patterns, window.location.href, options.transformUrl)
   if (name === 'style') {
-    // `redactUrlPatterns: []` without a transform keeps raw URLs, so styles are kept too.
-    return options.patterns.length > 0 || options.transformUrl !== undefined ? sanitizeStyle(value) : value
+    // `redactUrlPatterns: []` without a transform keeps raw URLs, so styles are kept too, unless
+    // images are masked: a style URL can load a background image.
+    return options.maskImages || options.patterns.length > 0 || options.transformUrl !== undefined ? sanitizeStyle(value) : value
   }
   if (typeof value !== 'string') {
     return value
@@ -333,6 +438,84 @@ function sanitizeAttribute(name: string, value: unknown, options: SanitizeOption
     return maskText(value)
   }
   return value
+}
+
+function describeElement(node: Record<string, unknown>, attributes: unknown, options: SanitizeOptions): ElementContext | undefined {
+  const id = node['id']
+  const findNode = (): Element | undefined => {
+    const live = typeof id === 'number' ? options.findNode(id) : undefined
+    return live?.nodeType === 1 ? (live as Element) : undefined
+  }
+  if (node['type'] === SERIALIZED_ELEMENT_NODE_TYPE && typeof node['tagName'] === 'string') {
+    const serializedAttributes = attributes as Record<string, unknown>
+    return {
+      tagName: node['tagName'].toLowerCase(),
+      isSVG: node['isSVG'] === true,
+      getAttribute: (name) => {
+        const attributeValue = serializedAttributes[name]
+        return typeof attributeValue === 'string' ? attributeValue : undefined
+      },
+      findNode,
+      serialized: true,
+    }
+  }
+  const liveElement = findNode()
+  if (liveElement !== undefined) {
+    return {
+      tagName: liveElement.localName.toLowerCase(),
+      isSVG: liveElement.namespaceURI === SVG_NAMESPACE,
+      getAttribute: (name) => liveElement.getAttribute(name) ?? undefined,
+      findNode: () => liveElement,
+      serialized: false,
+    }
+  }
+  // An attribute mutation whose element rrweb no longer maps. Its `src` is masked, because it may
+  // load an image.
+  return { tagName: '', isSVG: false, getAttribute: () => undefined, findNode: () => undefined, serialized: false }
+}
+
+function loadsImage(element: ElementContext, name: string): boolean {
+  if (IMAGE_ONLY_ATTRIBUTE_NAMES.has(name)) {
+    return true
+  }
+  const { tagName } = element
+  if (name === 'src') {
+    return tagName === 'img' || tagName === '' || (tagName === 'input' && element.getAttribute('type')?.toLowerCase() === 'image')
+  }
+  if (name === 'href' || name === 'xlink:href') {
+    return (
+      (element.isSVG && (tagName === 'image' || tagName === 'feimage')) ||
+      (tagName === 'link' && element.getAttribute('as')?.toLowerCase() === 'image')
+    )
+  }
+  return false
+}
+
+// A masked image keeps the size it had when it was recorded. rrweb playback applies `rr_width` and
+// `rr_height` as inline styles, as for a blocked element, but only on a newly serialized element:
+// playback writes an attribute mutation verbatim. An image without a size yet, or one whose `src`
+// changes, is sized once it loads.
+function sizeMaskedImage(attributes: Record<string, unknown>, element: ElementContext, options: SanitizeOptions): boolean {
+  const node = element.isSVG || 'rr_width' in attributes ? undefined : element.findNode()
+  if (node === undefined) {
+    return false
+  }
+  try {
+    if (element.serialized) {
+      const { width, height } = node.getBoundingClientRect()
+      if (width > 0 && height > 0) {
+        attributes['rr_width'] = `${String(width)}px`
+        attributes['rr_height'] = `${String(height)}px`
+        return true
+      }
+    }
+    if (node.localName === 'img' && !(node as HTMLImageElement).complete) {
+      options.sizeOnLoad(node)
+    }
+  } catch {
+    // A node that the page cannot measure keeps the size playback gives it.
+  }
+  return false
 }
 
 function isTextAttribute(name: string, value: string): boolean {

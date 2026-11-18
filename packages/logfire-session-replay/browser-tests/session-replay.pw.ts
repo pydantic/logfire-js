@@ -517,6 +517,43 @@ test.describe('session replay privacy', () => {
       await runVerifier(privacyVerifier, scenario, testInfo)
     })
   }
+
+  test('masked images keep their recorded size in playback', async ({ page, context, request }) => {
+    await page.goto('http://127.0.0.1:4178/default/')
+    await expect(page.locator('#status')).toHaveText('complete')
+    const response = await request.get('http://127.0.0.1:4178/receipts')
+    const { receipts } = parseRecord(await response.text(), 'privacy receipts') as { receipts: unknown[] }
+    const envelopes = receipts
+      .filter((receipt) => isRecord(receipt) && receipt['kind'] === 'replay' && typeof receipt['body'] === 'string')
+      .map((receipt) =>
+        parseRecord(gunzipSync(Buffer.from(String((receipt as Record<string, unknown>)['body']), 'base64')).toString('utf8'), 'envelope')
+      )
+      .sort(
+        (left, right) =>
+          Number((left['meta'] as Record<string, unknown>)['seq']) - Number((right['meta'] as Record<string, unknown>)['seq'])
+      )
+    const events = envelopes.flatMap((envelope) => (Array.isArray(envelope['events']) ? (envelope['events'] as unknown[]) : []))
+    const playback = await context.newPage()
+    try {
+      await playback.goto('http://127.0.0.1:4177/playback.html')
+      await playback.evaluate(async (recordedEvents) => window.logfireReplayPlayback.load(recordedEvents), events)
+      const frame = playback.frameLocator('iframe')
+      for (const [selector, width, height] of [
+        ['#private-image', 40, 30],
+        ['#late-image', 4, 2],
+      ] as const) {
+        // eslint-disable-next-line no-await-in-loop -- each image is measured on the same played-back page.
+        const rendered = await frame.locator(selector).evaluate((image: HTMLImageElement) => ({
+          height: image.getBoundingClientRect().height,
+          source: image.getAttribute('src')?.slice(0, 22),
+          width: image.getBoundingClientRect().width,
+        }))
+        expect(rendered).toEqual({ height, source: 'data:image/png;base64,', width })
+      }
+    } finally {
+      await playback.close()
+    }
+  })
 })
 
 function replayEvents(serializedEvidence: string): unknown[] {

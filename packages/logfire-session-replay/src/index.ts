@@ -587,6 +587,7 @@ function createActiveRuntime(options: {
       },
       maskAllText: config.maskAllText,
       maskAllInputs: config.maskAllInputs,
+      maskAllImages: config.maskAllImages,
       maskTextSelector: config.maskTextSelector,
       blockSelector: config.blockSelector,
       // A periodic replacement anchor must not reset a longer minimum-duration gate.
@@ -755,6 +756,7 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     throw markSdkInternalError(new Error('logfire session replay: no `fetch` available; pass `fetchImpl`'))
   }
 
+  const maskAllText = config.maskAllText ?? DEFAULTS.maskAllText
   return {
     replayUrl: config.replayUrl,
     headers: config.headers,
@@ -763,8 +765,10 @@ function resolveConfig(config: SessionReplayConfig): ResolvedSessionReplayConfig
     getSessionAttributes: config.getSessionAttributes,
     sessionSampleRate: config.sessionSampleRate ?? DEFAULTS.sessionSampleRate,
     onErrorSampleRate: config.onErrorSampleRate ?? DEFAULTS.onErrorSampleRate,
-    maskAllText: config.maskAllText ?? DEFAULTS.maskAllText,
+    maskAllText,
     maskAllInputs: config.maskAllInputs ?? DEFAULTS.maskAllInputs,
+    // Recording visible text but not images, or the reverse, is a deliberate choice, so images follow text.
+    maskAllImages: config.maskAllImages ?? maskAllText,
     maskTextSelector: config.maskTextSelector ?? DEFAULTS.maskTextSelector,
     blockSelector: config.blockSelector ?? DEFAULTS.blockSelector,
     flushIntervalMs: config.flushIntervalMs ?? DEFAULTS.flushIntervalMs,

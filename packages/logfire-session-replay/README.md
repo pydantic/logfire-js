@@ -40,6 +40,7 @@ const replay = startSessionReplay({
   // These are the privacy-safe defaults; they are shown for emphasis.
   maskAllText: true,
   maskAllInputs: true,
+  maskAllImages: true,
   blockSelector: '[data-logfire-block]',
 
   distinctId: currentUser?.id,
@@ -282,6 +283,30 @@ can lose background images or other styling in replays. This also applies when
 only `transformUrl` is set, and not with `redactUrlPatterns: []` alone. Replay envelope `meta.urls` contains those same sanitized captured
 URLs. Error messages and stacks in replay error events are limited to 1,024 and
 8,192 characters.
+
+`maskAllImages` defaults to the value of `maskAllText`, so images are masked by
+default. Before upload, the recorder replaces the image sources of `img`
+(`src`), `input type="image"` (`src`), SVG `<image>` and `<feImage>` (`href` and
+`xlink:href`), and `link rel="preload" as="image"` (`href`) with a 1x1 gray PNG
+`data:` URL, and empties `srcset`, `imagesrcset`, `poster`, and `background`,
+so `<picture>` sources are covered too. This applies to full snapshots, added
+nodes, and attribute mutations. An attribute mutation finds its element through
+rrweb's mirror; when the element is unknown, its `src` is masked anyway.
+
+A masked HTML image keeps its rendered size. When it is serialized with a size,
+the recorder adds `rr_width` and `rr_height`, which rrweb playback applies as
+inline styles. An image that is still loading, such as a lazy image or one a
+script adds, gets a style mutation with its `width` and `height` once it loads.
+Until then, and for an image that never loads, the placeholder takes the size
+the image's attributes and CSS give it, or 1x1 pixel. An SVG `<image>` keeps
+its own `width` and `height` attributes.
+
+With `maskAllImages`, an inline `style` that could reference a URL is removed
+whole, as described below, even with `redactUrlPatterns: []`. Not covered:
+stylesheets (including `<style>` elements), `<video>`, `<audio>`, and `<source>`
+`src`, `<object>`, and `<embed>`; block them with `blockSelector` when their
+URLs are private. Set `maskAllImages: false` to keep image URLs (still subject
+to `redactUrlPatterns`) while text stays masked.
 
 Paths can also carry private values, such as reset tokens or email addresses.
 Use `transformUrl` to rewrite them. It runs after `redactUrlPatterns` on page

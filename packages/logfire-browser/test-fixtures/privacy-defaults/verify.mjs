@@ -67,13 +67,15 @@ assertEqual('UI state data attribute', imageNode.attributes?.['data-state'], 'op
 const serializedEvents = JSON.stringify(snapshot.events)
 assert(!serializedEvents.includes('hidden-value-secret'), 'hidden input value was recorded')
 assert(!serializedEvents.includes('hidden-event-secret'), 'hidden input value change was recorded')
-const urlSecrets = ['src_secret', 'srcset_secret', 'style_secret', 'mutation_style_secret']
+const urlSecrets = ['src_secret', 'srcset_secret', 'style_secret', 'mutation_style_secret', 'mutation_src_secret']
+const maskedImageSource =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4cuUGAAUAAoG6haGKAAAAAElFTkSuQmCC'
 const textAttributeSecrets = ['alt-secret', 'title-secret', 'aria-secret', 'data-secret', 'title-mutation-secret']
-const mutationStyles = snapshot.events
+const attributeMutations = snapshot.events
   .filter((event) => event?.type === 3 && event?.data?.source === 0)
   .flatMap((event) => event.data.attributes ?? [])
-  .map((item) => item.attributes?.style?.['background-image'])
-  .filter((value) => value !== undefined)
+const mutationStyles = attributeMutations.map((item) => item.attributes?.style?.['background-image']).filter((value) => value !== undefined)
+const mutationSources = attributeMutations.map((item) => item.attributes?.src).filter((value) => value !== undefined)
 
 const inputValues = snapshot.events
   .filter((event) => event?.type === 3 && event?.data?.source === 5)
@@ -84,8 +86,21 @@ assert(!inputValues.includes('input-event-secret'), 'input value was not masked'
 
 if (scenario === 'default') {
   assertEqual('masked data attribute', privateInputNode.attributes?.['data-query-bearing'], '*'.repeat('?attribute_secret=visible'.length))
-  assertEqual('image src', imageNode.attributes?.src, 'http://127.0.0.1:4178/api/image')
-  assertEqual('image srcset', imageNode.attributes?.srcset, 'http://127.0.0.1:4178/api/image 1x')
+  assertEqual('image src', imageNode.attributes?.src, maskedImageSource)
+  assertEqual('image srcset', imageNode.attributes?.srcset, '')
+  assertEqual('masked image width', imageNode.attributes?.rr_width, '40px')
+  assertEqual('masked image height', imageNode.attributes?.rr_height, '30px')
+  assertDeepEqual('mutated image src', mutationSources, [maskedImageSource])
+  const lateImageId = snapshot.events
+    .filter((event) => event?.type === 3 && event?.data?.source === 0)
+    .flatMap((event) => event.data.adds ?? [])
+    .find((add) => add.node?.attributes?.id === 'late-image')?.node.id
+  assert(lateImageId !== undefined, 'missing added late image')
+  assertDeepEqual(
+    'late image size',
+    attributeMutations.filter((item) => item.id === lateImageId).map((item) => item.attributes?.style),
+    [{ width: '4px', height: '2px' }]
+  )
   assertEqual('image title', imageNode.attributes?.title, '*'.repeat('title-secret'.length))
   assertEqual('image style', imageNode.attributes?.style, '')
   assertDeepEqual('mutated style URL', mutationStyles, [''])
@@ -97,6 +112,7 @@ if (scenario === 'default') {
   assert(mutationText.includes('*'.repeat('mutated-visible-secret'.length)), 'mutated rendered text was not masked')
 } else {
   assertEqual('raw data attribute', privateInputNode.attributes?.['data-query-bearing'], '?attribute_secret=visible')
+  assertEqual('unmasked image width', imageNode.attributes?.rr_width, undefined)
   for (const secret of [...urlSecrets, ...textAttributeSecrets]) {
     assert(serializedEvents.includes(secret), `${secret} opt-in marker missing`)
   }

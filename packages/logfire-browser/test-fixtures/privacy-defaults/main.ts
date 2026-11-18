@@ -99,6 +99,17 @@ async function run(): Promise<void> {
   hiddenInput.value = 'hidden-event-secret'
   image.setAttribute('title', 'title-mutation-secret')
   image.style.backgroundImage = "url('/api/image?mutation_style_secret=visible')"
+  image.setAttribute('src', '/api/image?mutation_src_secret=visible')
+  // An image added before it loads has no rendered size to record yet.
+  image.insertAdjacentHTML(
+    'afterend',
+    '<img id="late-image" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAIAAADwyuo0AAAAEElEQVR42mM4IScHRwzIHABvCggh7qR9+QAAAABJRU5ErkJggg==">'
+  )
+  const lateImage = document.querySelector<HTMLImageElement>('#late-image')
+  if (lateImage === null) {
+    throw new Error('missing late image')
+  }
+  await lateImage.decode()
   await delay(50)
 
   console.warn('privacy-console-secret', { scenario })

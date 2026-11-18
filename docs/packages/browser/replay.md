@@ -60,7 +60,7 @@ logfire.configureFrontend({
 
 ## Privacy controls
 
-Replay masks all rendered text and input values by default, leaves console
+Replay masks all rendered text, input values, and images by default, leaves console
 capture off, and removes query strings and fragments from captured page,
 fetch/XHR, and navigation URLs, from DOM URL attributes such as `href`, `src`,
 and `srcset`, and from the URLs in error messages, sources, and stacks and in
@@ -71,6 +71,20 @@ lose background images or other styling in replays. Error messages and stacks ar
 limited to 1,024 and 8,192 characters. Network and navigation capture remain
 enabled. These replay-package defaults are inherited when browser options are
 omitted.
+
+Images follow text masking: with the default `maskAllText: true`, replay also
+masks images (`maskAllImages` defaults to the value of `maskAllText`). Before
+upload, it replaces the sources of `img` elements, `input type="image"`, SVG
+`<image>` (`href` and `xlink:href`), and image preload links with a gray
+placeholder, and empties `srcset` (which covers `<picture>` sources), video
+`poster`, and `background` attributes. This applies to the full snapshot and to
+later DOM changes. A masked image keeps the size it rendered at, including one
+that loads after it was recorded. Inline styles that could reference a URL,
+such as a CSS background, are removed whole, even with `redactUrlPatterns: []`.
+Stylesheets, video and audio sources, `<object>`, and `<embed>` are not
+covered, so their URLs are recorded and load in playback; use `blockSelector`
+for them. Set `maskAllImages: false` to record image URLs while text stays
+masked.
 
 Input masking also covers hidden inputs. Text masking also covers the
 text-bearing attributes `title`, `alt`, `aria-label`, `placeholder`, and
