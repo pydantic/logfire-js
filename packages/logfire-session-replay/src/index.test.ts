@@ -1836,6 +1836,39 @@ describe('consent-gated start', () => {
     await Promise.all(flushes.slice(1))
   })
 
+  it.each(['flush', 'pagehide'] as const)(
+    'starts no request when consent is withdrawn while upload headers resolve (%s)',
+    async (trigger) => {
+      let releaseHeaders!: () => void
+      const headersGate = new Promise<void>((resolve) => {
+        releaseHeaders = resolve
+      })
+      const headers = vi.fn(async () => {
+        await headersGate
+        return { 'X-Test': 'consent' }
+      })
+      const { calls, fetchImpl } = recordingFetch()
+      const onError = vi.fn<(error: unknown) => void>()
+      const replay = startSessionReplay(baseConfig(fetchImpl, { headers, onError }))
+      emit(fullSnapshot)
+      const flushed = trigger === 'flush' ? replay.flush() : Promise.resolve()
+      if (trigger === 'pagehide') {
+        window.dispatchEvent(new PageTransitionEvent('pagehide'))
+      }
+      await vi.waitFor(() => {
+        expect(headers).toHaveBeenCalled()
+      })
+
+      const stopped = replay.stop({ discard: true })
+      releaseHeaders()
+      await Promise.all([flushed, stopped])
+      await drainMicrotasks()
+
+      expect(calls).toHaveLength(0)
+      expect(onError).not.toHaveBeenCalled()
+    }
+  )
+
   it('drops what a graceful stop() has not sent yet when a discarding stop() follows', async () => {
     const seqs: string[] = []
     const fetchImpl = vi.fn(async (url: string | URL) => {

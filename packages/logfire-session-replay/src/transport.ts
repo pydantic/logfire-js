@@ -876,13 +876,16 @@ export class ReplayTransport {
     upload.body = undefined
     upload.events = undefined
     upload.resolve()
-    // A withdrawn recording drops its chunks on purpose, so their loss is not reported.
-    if (failure !== undefined && !this.withdrawn) {
+    if (failure !== undefined) {
       this.handleSequencedLoss(upload.seq, upload.sessionId, failure)
     }
   }
 
   private handleSequencedLoss(seq: number, sessionId: string, failure: UploadFailure): void {
+    // A withdrawn recording drops its chunks on purpose, so their loss is not reported or resynced.
+    if (this.withdrawn) {
+      return
+    }
     const droppedSeqs: number[] = []
     const permanent = isPermanentRejection(failure)
     if (permanent) {
@@ -1202,6 +1205,10 @@ export class ReplayTransport {
       const url = `${this.config.replayUrl.replace(/\/+$/u, '')}/${encodeURIComponent(upload.sessionId)}?seq=${String(upload.seq)}`
       // A stalled header or token callback would otherwise hold the queue head forever.
       const headers = await raceAbort(this.getUploadHeaders(), controller.signal)
+      // Consent can be withdrawn while the headers or token resolve, and then no request may start.
+      if (this.withdrawn) {
+        throw markSdkInternalError(new Error('replay upload withdrawn before it started'))
+      }
       onRequestStarted()
       const responsePromise = this.config.fetchImpl(url, {
         method: 'POST',
