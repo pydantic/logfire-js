@@ -137,16 +137,30 @@ function createDeferredReplay(resolvedConfig: ResolvedSessionReplayConfig, relea
   let controller: SessionReplay | undefined
   let startPromise: Promise<void> | undefined
   let stopped = false
+  let starting = false
+  // Building the controller runs application callbacks, such as `getSessionId`, which can call
+  // stop(), for example to withdraw consent. That stop() applies once the controller exists.
+  let pendingStop: { discard: boolean; done: Promise<void>; finish: () => void } | undefined
   // The controller is created synchronously, so a stop() right after start() stops it.
   const startOnce = async (): Promise<void> =>
     new Promise<void>((resolve) => {
-      if (!stopped) {
+      if (!stopped && !starting) {
+        starting = true
+        let started: SessionReplay
         try {
-          controller = startController(resolvedConfig, releaseLease)
+          started = startController(resolvedConfig, releaseLease)
         } catch (error) {
           // startController() released the lease, so the handle cannot start again.
           stopped = true
+          pendingStop?.finish()
           throw error
+        } finally {
+          starting = false
+        }
+        controller = started
+        if (pendingStop !== undefined) {
+          const { discard, finish } = pendingStop
+          started.stop(discard ? { discard: true } : undefined).then(finish, finish)
         }
       }
       resolve()
@@ -175,6 +189,17 @@ function createDeferredReplay(resolvedConfig: ResolvedSessionReplayConfig, relea
       stopped = true
       if (controller !== undefined) {
         return controller.stop(options)
+      }
+      if (starting) {
+        if (pendingStop === undefined) {
+          let finish!: () => void
+          const done = new Promise<void>((resolve) => {
+            finish = resolve
+          })
+          pendingStop = { discard: false, done, finish }
+        }
+        pendingStop.discard ||= options?.discard === true
+        return pendingStop.done
       }
       releaseLease()
       return Promise.resolve()

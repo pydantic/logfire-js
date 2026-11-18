@@ -1767,6 +1767,36 @@ describe('consent-gated start', () => {
     expect(calls).toHaveLength(0)
   })
 
+  it.each([{ discard: true }, undefined])('applies a stop(%o) that an application callback makes during start()', async (stopOptions) => {
+    const { calls, fetchImpl } = recordingFetch()
+    let stoppedDuringStart: Promise<void> | undefined
+    const replay = startSessionReplay(
+      baseConfig(fetchImpl, {
+        autoStart: false,
+        // Building the controller reads the session id, before start() returns.
+        getSessionId: () => {
+          stoppedDuringStart ??= replay.stop(stopOptions)
+          return 'consent-session'
+        },
+      })
+    )
+
+    await replay.start()
+    expect(stoppedDuringStart).toBeDefined()
+    await stoppedDuringStart
+    emit(fullSnapshot)
+    await replay.flush()
+    await drainMicrotasks()
+
+    expect(handle.stop).toHaveBeenCalledTimes(1)
+    expect(replay.recording).toBe(false)
+    expect(replay.mode).toBe('off')
+    expect(calls).toHaveLength(0)
+    // The stopped replay released the page, so another one can start.
+    const next = startSessionReplay(baseConfig(fetchImpl))
+    await next.stop()
+  })
+
   it('reports a failed start() and stays stopped', async () => {
     const { fetchImpl } = recordingFetch()
     vi.mocked(recorderMod.startRecording).mockImplementationOnce(() => {
