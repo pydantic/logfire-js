@@ -46,11 +46,32 @@ const FLAG_DATA_ATTRIBUTE_VALUES = new Set(['', 'false', 'true'])
 const TEXT_VALUE_INPUT_TYPES = new Set(['button', 'reset', 'submit'])
 // Attributes that only ever load an image, whatever element carries them.
 const IMAGE_ONLY_ATTRIBUTE_NAMES = new Set(['background', 'imagesrcset', 'poster', 'srcset'])
-// A 1x1 gray PNG. It stretches to whatever size the element's attributes, CSS, or measured size give
-// it, and stays a single pixel when nothing sizes it, like an image that never loaded. A `data:` URL
-// loads nothing from the network during playback.
+// A 1x1 gray PNG for an image whose natural size is not known yet. It stretches to whatever size the
+// element's attributes and CSS give it, and stays a single pixel when nothing sizes it, like an image
+// that has not loaded. A `data:` URL loads nothing from the network during playback.
 export const MASKED_IMAGE_SOURCE =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4cuUGAAUAAoG6haGKAAAAAElFTkSuQmCC'
+
+/**
+ * A gray placeholder with the natural size of the image it replaces. Playback then lays it out as
+ * the page laid out the image: authored `width` and `height`, CSS, and later changes to either still
+ * resize it, which fixed inline sizes would prevent.
+ */
+export function sizedImagePlaceholder(width: number, height: number): string {
+  const w = String(width)
+  const h = String(height)
+  return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}' viewBox='0 0 ${w} ${h}' preserveAspectRatio='none'%3E%3Crect width='100%25' height='100%25' fill='%23d4d4d8'/%3E%3C/svg%3E`
+}
+
+function imagePlaceholder(image: HTMLImageElement): string {
+  try {
+    return image.complete && image.naturalWidth > 0 && image.naturalHeight > 0
+      ? sizedImagePlaceholder(image.naturalWidth, image.naturalHeight)
+      : MASKED_IMAGE_SOURCE
+  } catch {
+    return MASKED_IMAGE_SOURCE
+  }
+}
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
 // rrweb's serialized node type for an element.
 const SERIALIZED_ELEMENT_NODE_TYPE = 2
@@ -109,8 +130,8 @@ interface SanitizeOptions {
   transformUrl: UrlTransform | undefined
   /** The live node that rrweb recorded under a serialized id. */
   findNode: (id: number) => Node | undefined
-  /** Record the rendered size of a masked image once it loads. */
-  sizeOnLoad: (image: Element) => void
+  /** Send a sized placeholder for a masked image once it loads. */
+  sizeOnLoad: (image: HTMLImageElement) => void
 }
 
 /** What image masking needs to know about the element that carries a set of attributes. */
@@ -145,10 +166,10 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
     },
   }
   // A masked image that loads after it was recorded, such as a lazy image or one a script adds, has
-  // no size to record until then. Its size reaches playback as a style mutation once it loads.
-  const pendingImages = new Map<Element, () => void>()
+  // no natural size until then. Its sized placeholder reaches playback as a `src` mutation on load.
+  const pendingImages = new Map<HTMLImageElement, () => void>()
   let recording = true
-  const sizeOnLoad = (image: Element): void => {
+  const sizeOnLoad = (image: HTMLImageElement): void => {
     if (pendingImages.has(image)) {
       return
     }
@@ -157,7 +178,7 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
       image.removeEventListener('error', finish)
       pendingImages.delete(image)
       if (recording && event.type === 'load') {
-        emitImageSize(image)
+        emitImageSource(image)
       }
     }
     image.addEventListener('load', finish)
@@ -167,11 +188,21 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
       image.removeEventListener('error', finish)
     })
   }
-  const emitImageSize = (image: Element): void => {
+  // An image removed before it loads may never fire `load` or `error`, so it is released when it
+  // leaves the document rather than kept for the rest of the recording.
+  const releaseDetachedImages = (): void => {
+    for (const [image, removeListeners] of pendingImages) {
+      if (!image.isConnected) {
+        removeListeners()
+        pendingImages.delete(image)
+      }
+    }
+  }
+  const emitImageSource = (image: HTMLImageElement): void => {
     try {
       const id = record.mirror.getId(image)
-      const { width, height } = image.getBoundingClientRect()
-      if (id < 0 || width <= 0 || height <= 0) {
+      const source = imagePlaceholder(image)
+      if (id < 0 || source === MASKED_IMAGE_SOURCE) {
         return
       }
       options.emit({
@@ -180,7 +211,7 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
         data: {
           source: IncrementalSource.Mutation,
           texts: [],
-          attributes: [{ id, attributes: { style: { width: `${String(width)}px`, height: `${String(height)}px` } } }],
+          attributes: [{ id, attributes: { src: source } }],
           removes: [],
           adds: [],
         },
@@ -193,6 +224,9 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
   const recordOptions: RrwebRecordOptions = {
     emit: (event) => {
       options.emit(sanitizeRecorderEvent(event, sanitizeOptions))
+      if (pendingImages.size > 0 && removesNodes(event)) {
+        releaseDetachedImages()
+      }
     },
     // rrweb catches errors in its observer callbacks only when an error handler is registered.
     // Without one, they reach the page's global error handler. Firefox throws `Permission denied to
@@ -394,14 +428,14 @@ function sanitizeAttributes(value: unknown, options: SanitizeOptions, element: E
   const masksValue =
     options.maskTextAttributes && typeof attributes['type'] === 'string' && TEXT_VALUE_INPUT_TYPES.has(attributes['type'].toLowerCase())
   let changed = false
-  let maskedImageSource = false
+  let maskedImage = false
   const sanitized: Record<string, unknown> = {}
   for (const [name, attributeValue] of Object.entries(attributes)) {
     const lowerName = name.toLowerCase()
     let next: unknown
     if (element !== undefined && typeof attributeValue === 'string' && attributeValue.length > 0 && loadsImage(element, lowerName)) {
       next = IMAGE_ONLY_ATTRIBUTE_NAMES.has(lowerName) ? '' : MASKED_IMAGE_SOURCE
-      maskedImageSource ||= lowerName === 'src'
+      maskedImage = true
     } else if (masksValue && lowerName === 'value') {
       next = maskText(attributeValue)
     } else {
@@ -412,8 +446,10 @@ function sanitizeAttributes(value: unknown, options: SanitizeOptions, element: E
     }
     sanitized[name] = next
   }
-  if (maskedImageSource && element !== undefined) {
-    changed = sizeMaskedImage(sanitized, element, options) || changed
+  // An image can get its source from `srcset` or a `<picture>` source alone, so every serialized
+  // image, and every image whose source changes, gets a placeholder `src`.
+  if (element?.tagName === 'img' && !element.isSVG && (element.serialized || maskedImage)) {
+    changed = setImagePlaceholder(sanitized, element, options) || changed
   }
   return changed ? sanitized : value
 }
@@ -491,31 +527,28 @@ function loadsImage(element: ElementContext, name: string): boolean {
   return false
 }
 
-// A masked image keeps the size it had when it was recorded. rrweb playback applies `rr_width` and
-// `rr_height` as inline styles, as for a blocked element, but only on a newly serialized element:
-// playback writes an attribute mutation verbatim. An image without a size yet, or one whose `src`
-// changes, is sized once it loads.
-function sizeMaskedImage(attributes: Record<string, unknown>, element: ElementContext, options: SanitizeOptions): boolean {
-  const node = element.isSVG || 'rr_width' in attributes ? undefined : element.findNode()
-  if (node === undefined) {
+function setImagePlaceholder(attributes: Record<string, unknown>, element: ElementContext, options: SanitizeOptions): boolean {
+  const node = element.findNode()
+  const image = node?.localName === 'img' ? (node as HTMLImageElement) : undefined
+  const source = image === undefined ? MASKED_IMAGE_SOURCE : imagePlaceholder(image)
+  // The final size of an image that is still loading, even one with a provisional size from its alt
+  // text or padding, is only known once it loads.
+  if (image !== undefined && !image.complete) {
+    options.sizeOnLoad(image)
+  }
+  if (attributes['src'] === source) {
     return false
   }
-  try {
-    if (element.serialized) {
-      const { width, height } = node.getBoundingClientRect()
-      if (width > 0 && height > 0) {
-        attributes['rr_width'] = `${String(width)}px`
-        attributes['rr_height'] = `${String(height)}px`
-        return true
-      }
-    }
-    if (node.localName === 'img' && !(node as HTMLImageElement).complete) {
-      options.sizeOnLoad(node)
-    }
-  } catch {
-    // A node that the page cannot measure keeps the size playback gives it.
+  attributes['src'] = source
+  return true
+}
+
+function removesNodes(event: RrwebEvent): boolean {
+  if (event.type !== EventType.IncrementalSnapshot || typeof event.data !== 'object' || event.data === null) {
+    return false
   }
-  return false
+  const data = event.data as { source?: unknown; removes?: unknown }
+  return data.source === IncrementalSource.Mutation && Array.isArray(data.removes) && data.removes.length > 0
 }
 
 function isTextAttribute(name: string, value: string): boolean {

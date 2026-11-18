@@ -287,19 +287,22 @@ URLs. Error messages and stacks in replay error events are limited to 1,024 and
 `maskAllImages` defaults to the value of `maskAllText`, so images are masked by
 default. Before upload, the recorder replaces the image sources of `img`
 (`src`), `input type="image"` (`src`), SVG `<image>` and `<feImage>` (`href` and
-`xlink:href`), and `link rel="preload" as="image"` (`href`) with a 1x1 gray PNG
-`data:` URL, and empties `srcset`, `imagesrcset`, `poster`, and `background`,
-so `<picture>` sources are covered too. This applies to full snapshots, added
+`xlink:href`), and `link rel="preload" as="image"` (`href`) with a gray `data:`
+placeholder, and empties `srcset`, `imagesrcset`, `poster`, and `background`.
+Every recorded `img` gets a placeholder `src`, also one whose source came from
+`srcset` or a `<picture>` source alone. This applies to full snapshots, added
 nodes, and attribute mutations. An attribute mutation finds its element through
 rrweb's mirror; when the element is unknown, its `src` is masked anyway.
 
-A masked HTML image keeps its rendered size. When it is serialized with a size,
-the recorder adds `rr_width` and `rr_height`, which rrweb playback applies as
-inline styles. An image that is still loading, such as a lazy image or one a
-script adds, gets a style mutation with its `width` and `height` once it loads.
-Until then, and for an image that never loads, the placeholder takes the size
-the image's attributes and CSS give it, or 1x1 pixel. An SVG `<image>` keeps
-its own `width` and `height` attributes.
+An `img` placeholder is a gray SVG with the image's natural size, so playback
+lays it out as the page laid out the image: its `width` and `height`
+attributes, CSS, responsive layout, and later changes to them still apply. An
+image that is still loading, such as a lazy image or one a script adds, gets a
+`src` mutation with its sized placeholder once it loads. Until then, and for an
+image that never loads, the placeholder is a 1x1 gray PNG, which takes the size
+the image's attributes and CSS give it. `input type="image"` and SVG `<image>`
+placeholders are always the 1x1 PNG; an SVG `<image>` is sized by its own
+`width` and `height` attributes.
 
 With `maskAllImages`, an inline `style` that could reference a URL is removed
 whole, as described below, even with `redactUrlPatterns: []`. Not covered:

@@ -538,9 +538,12 @@ test.describe('session replay privacy', () => {
       await playback.goto('http://127.0.0.1:4177/playback.html')
       await playback.evaluate(async (recordedEvents) => window.logfireReplayPlayback.load(recordedEvents), events)
       const frame = playback.frameLocator('iframe')
-      for (const [selector, width, height] of [
-        ['#private-image', 40, 30],
-        ['#late-image', 4, 2],
+      // The late image was resized to width 8 after it loaded, and keeps its 4:2 aspect ratio. The
+      // srcset image is 4x2 pixels at 2x density.
+      for (const [selector, width, height, source] of [
+        ['#private-image', 40, 30, 'data:image/png;base64,'],
+        ['#late-image', 8, 4, 'data:image/svg+xml,%3C'],
+        ['#srcset-image', 2, 1, 'data:image/svg+xml,%3C'],
       ] as const) {
         // eslint-disable-next-line no-await-in-loop -- each image is measured on the same played-back page.
         const rendered = await frame.locator(selector).evaluate((image: HTMLImageElement) => ({
@@ -548,7 +551,7 @@ test.describe('session replay privacy', () => {
           source: image.getAttribute('src')?.slice(0, 22),
           width: image.getBoundingClientRect().width,
         }))
-        expect(rendered).toEqual({ height, source: 'data:image/png;base64,', width })
+        expect(rendered).toEqual({ height, source, width })
       }
     } finally {
       await playback.close()

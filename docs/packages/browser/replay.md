@@ -78,8 +78,9 @@ upload, it replaces the sources of `img` elements, `input type="image"`, SVG
 `<image>` (`href` and `xlink:href`), and image preload links with a gray
 placeholder, and empties `srcset` (which covers `<picture>` sources), video
 `poster`, and `background` attributes. This applies to the full snapshot and to
-later DOM changes. A masked image keeps the size it rendered at, including one
-that loads after it was recorded. Inline styles that could reference a URL,
+later DOM changes. A masked image has the natural size of the image it
+replaces, including one that loads after it was recorded, so playback lays it
+out as the page did, and later size changes still apply. Inline styles that could reference a URL,
 such as a CSS background, are removed whole, even with `redactUrlPatterns: []`.
 Stylesheets, video and audio sources, `<object>`, and `<embed>` are not
 covered, so their URLs are recorded and load in playback; use `blockSelector`

@@ -75,7 +75,15 @@ const attributeMutations = snapshot.events
   .filter((event) => event?.type === 3 && event?.data?.source === 0)
   .flatMap((event) => event.data.attributes ?? [])
 const mutationStyles = attributeMutations.map((item) => item.attributes?.style?.['background-image']).filter((value) => value !== undefined)
-const mutationSources = attributeMutations.map((item) => item.attributes?.src).filter((value) => value !== undefined)
+const sourcesOf = (id) =>
+  attributeMutations.filter((item) => item.id === id && item.attributes?.src !== undefined).map((item) => item.attributes.src)
+const sizedImagePlaceholder = (width, height) =>
+  `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='${width}' height='${height}' viewBox='0 0 ${width} ${height}' preserveAspectRatio='none'%3E%3Crect width='100%25' height='100%25' fill='%23d4d4d8'/%3E%3C/svg%3E`
+const addedImageId = (elementId) =>
+  snapshot.events
+    .filter((event) => event?.type === 3 && event?.data?.source === 0)
+    .flatMap((event) => event.data.adds ?? [])
+    .find((add) => add.node?.attributes?.id === elementId)?.node.id
 
 const inputValues = snapshot.events
   .filter((event) => event?.type === 3 && event?.data?.source === 5)
@@ -88,19 +96,12 @@ if (scenario === 'default') {
   assertEqual('masked data attribute', privateInputNode.attributes?.['data-query-bearing'], '*'.repeat('?attribute_secret=visible'.length))
   assertEqual('image src', imageNode.attributes?.src, maskedImageSource)
   assertEqual('image srcset', imageNode.attributes?.srcset, '')
-  assertEqual('masked image width', imageNode.attributes?.rr_width, '40px')
-  assertEqual('masked image height', imageNode.attributes?.rr_height, '30px')
-  assertDeepEqual('mutated image src', mutationSources, [maskedImageSource])
-  const lateImageId = snapshot.events
-    .filter((event) => event?.type === 3 && event?.data?.source === 0)
-    .flatMap((event) => event.data.adds ?? [])
-    .find((add) => add.node?.attributes?.id === 'late-image')?.node.id
-  assert(lateImageId !== undefined, 'missing added late image')
-  assertDeepEqual(
-    'late image size',
-    attributeMutations.filter((item) => item.id === lateImageId).map((item) => item.attributes?.style),
-    [{ width: '4px', height: '2px' }]
-  )
+  assertDeepEqual('mutated image src', sourcesOf(imageNode.id), [maskedImageSource])
+  const lateImageId = addedImageId('late-image')
+  const srcsetImageId = addedImageId('srcset-image')
+  assert(lateImageId !== undefined && srcsetImageId !== undefined, 'missing added late images')
+  assertDeepEqual('late image size', sourcesOf(lateImageId), [sizedImagePlaceholder(4, 2)])
+  assertDeepEqual('srcset image size', sourcesOf(srcsetImageId), [sizedImagePlaceholder(2, 1)])
   assertEqual('image title', imageNode.attributes?.title, '*'.repeat('title-secret'.length))
   assertEqual('image style', imageNode.attributes?.style, '')
   assertDeepEqual('mutated style URL', mutationStyles, [''])
@@ -112,7 +113,6 @@ if (scenario === 'default') {
   assert(mutationText.includes('*'.repeat('mutated-visible-secret'.length)), 'mutated rendered text was not masked')
 } else {
   assertEqual('raw data attribute', privateInputNode.attributes?.['data-query-bearing'], '?attribute_secret=visible')
-  assertEqual('unmasked image width', imageNode.attributes?.rr_width, undefined)
   for (const secret of [...urlSecrets, ...textAttributeSecrets]) {
     assert(serializedEvents.includes(secret), `${secret} opt-in marker missing`)
   }
