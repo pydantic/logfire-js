@@ -177,6 +177,46 @@ remains the fallback while the selected live getter returns `undefined`.
 
 See [Routes, users, and sessions](identity.md) to configure `getUser` and session attributes.
 
+## Consent
+
+If your application needs consent before it collects any browser telemetry,
+call `configureFrontend()` only after the user consents. Nothing is loaded,
+recorded, or sent before that call.
+
+If tracing may start at once and only replay needs consent, set
+`autoStart: false`. Replay then does not load its package, records nothing,
+writes nothing to storage, and keeps no reported errors until you call
+`sessionReplay.start()` on the configuration handle:
+
+```ts
+const cleanup = logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  sessionReplay: sessionReplayIntegration({ autoStart: false }),
+})
+
+// When the user consents to replay:
+await cleanup.sessionReplay?.start()
+
+// When the user withdraws consent:
+await cleanup.sessionReplay?.stop({ discard: true })
+```
+
+`start()` is safe to call more than once and while the replay package is still
+loading. A `stop()` before replay has loaded keeps the recorder from starting.
+`stop({ discard: true })` drops buffered events and queued chunks instead of
+uploading them, even after an earlier `stop()` that is still uploading; a
+request already on the wire completes. Replay's own identifiers, such as the
+recording id, stay in `sessionStorage` and `localStorage`; they hold no recorded
+content. A stopped replay does not restart in that page, so a later consent
+takes effect on the next page load, or after `await cleanup()` and a new
+`configureFrontend()` call.
+
+Upgrade `@pydantic/logfire-browser` and `@pydantic/logfire-session-replay`
+together. An older browser SDK ignores `autoStart: false` and records at once,
+and an older replay package ignores `discard` and uploads the buffered events
+as `stop()` does.
+
 ## Flush and stop
 
 Use the cleanup handle returned by configuration when you need to flush or stop

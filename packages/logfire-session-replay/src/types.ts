@@ -138,6 +138,12 @@ export interface SessionReplayConfig {
    */
   getSessionAttributes?: () => SessionAttributesInput
 
+  /**
+   * Start recording at once. Defaults to true. With `false`, nothing is recorded, sampled, stored, or
+   * uploaded until `start()` is called, for example after the user consents to replay.
+   */
+  autoStart?: boolean
+
   /** Probability of recording each new browser session in full. */
   sessionSampleRate?: number
   /** Probability of buffering each otherwise-unsampled session for uncaught error promotion. */

@@ -20,7 +20,16 @@ export interface BrowserSessionReplayRuntime {
   /** Present in replay packages that separate a DOM recording from its RUM session. */
   getRecordingId?(): string
   flush(): Promise<void>
-  stop(): Promise<void>
+  /** Replay packages without `start()` ignore `discard` and upload buffered events. */
+  stop(options?: BrowserSessionReplayStopOptions): Promise<void>
+}
+
+export interface BrowserSessionReplayStopOptions {
+  /**
+   * Drop buffered events and queued chunks instead of uploading them, for withdrawn consent. A
+   * request already on the wire completes. An older replay package without `start()` ignores it.
+   */
+  discard?: boolean
 }
 
 export interface BrowserSessionReplayControl {
@@ -30,7 +39,7 @@ export interface BrowserSessionReplayControl {
   captureError(error: unknown, options?: { timestamp?: number }): void
   getRecordingId?(): string
   flush(): Promise<void>
-  stop(): Promise<void>
+  stop(options?: BrowserSessionReplayStopOptions): Promise<void>
 }
 
 export interface BrowserSessionReplayPackageConfig {
@@ -97,6 +106,13 @@ export interface BrowserSessionReplayOptions {
    * Only restricted frontend application tokens are safe in browsers.
    */
   token?: string | (() => MaybePromise<string>)
+  /**
+   * Load and start replay with the rest of the SDK. Defaults to true. With
+   * `false`, replay is not loaded, records nothing, and keeps no reported
+   * errors until `sessionReplay.start()` is called on the configure handle, for
+   * example after the user consents to replay.
+   */
+  autoStart?: boolean
 
   sessionSampleRate?: number
   onErrorSampleRate?: number
@@ -185,6 +201,8 @@ export class BrowserSessionReplayState {
 interface BrowserSessionReplayTelemetryOptions {
   /** The browser SDK captures global errors and forwards them through `captureError()`. */
   capturesGlobalErrors?: boolean
+  /** Whether replay was stopped while the package loaded, in which case it must not start. */
+  isStopped?: () => boolean
   metricUrl?: BrowserMetricsOptions['metricUrl'] | undefined
   traceUrl: string
 }
@@ -211,6 +229,9 @@ export async function startBrowserSessionReplay(
     }
 
     const replayModule = await options.load()
+    if (telemetryOptions.isStopped?.() === true) {
+      return undefined
+    }
     const replayConfig = createReplayConfig(options, browserSessionManager, telemetryOptions)
     const replay = replayModule.startSessionReplay(replayConfig)
     const wrappedReplay = wrapReplayRuntime(replay, replayState, options.onError)
@@ -433,16 +454,22 @@ function wrapReplayRuntime(
         safeReportError(onError, error)
       }
     },
-    stop: async () => {
-      stopPromise ??= (async () => {
+    stop: async (options) => {
+      const stopReplay = async (): Promise<void> => {
         try {
-          await replay.stop()
+          await (options === undefined ? replay.stop() : replay.stop(options))
         } catch (error) {
           safeReportError(onError, error)
         } finally {
           replayState.clear()
         }
-      })()
+      }
+      if (stopPromise === undefined) {
+        stopPromise = stopReplay()
+      } else if (options?.discard === true) {
+        // A discard can follow a graceful stop that is still uploading.
+        await stopReplay()
+      }
       return stopPromise
     },
   }
