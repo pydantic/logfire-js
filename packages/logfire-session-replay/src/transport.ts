@@ -151,6 +151,7 @@ export class ReplayTransport {
   private bindingBufferIncomplete = false
   private readonly onPermanentRejection: (() => void) | undefined
   private permanentlyRejected = false
+  private withdrawn = false
 
   constructor(
     config: ResolvedSessionReplayConfig,
@@ -436,6 +437,16 @@ export class ReplayTransport {
    * another transport. Requests already on the wire settle with their own responses.
    */
   abandon(): void {
+    this.closeAfterPermanentRejection([])
+  }
+
+  /**
+   * Drop every buffered event and queued chunk and start no further request, for withdrawn consent.
+   * A request already on the wire cannot be recalled, and settles with its own response.
+   */
+  withdraw(): void {
+    this.withdrawn = true
+    this.shuttingDown = true
     this.closeAfterPermanentRejection([])
   }
 
@@ -865,7 +876,8 @@ export class ReplayTransport {
     upload.body = undefined
     upload.events = undefined
     upload.resolve()
-    if (failure !== undefined) {
+    // A withdrawn recording drops its chunks on purpose, so their loss is not reported.
+    if (failure !== undefined && !this.withdrawn) {
       this.handleSequencedLoss(upload.seq, upload.sessionId, failure)
     }
   }

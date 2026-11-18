@@ -133,6 +133,35 @@ snapshot's `id` is also sent as `meta.distinctId`. With `getDistinctId`, the
 two values are reported independently. Receivers that do not recognize
 `meta.user` can ignore it; the envelope version is unchanged.
 
+## Consent
+
+To record only after the user consents, create the replay with
+`autoStart: false`. Until `start()` is called, the replay attaches no rrweb
+observers or listeners, makes no sampling decision, writes nothing to
+`sessionStorage` or `localStorage`, drops errors passed to `captureError()`, and
+sends nothing.
+
+```ts
+const replay = startSessionReplay({ replayUrl: '/logfire/replay', autoStart: false })
+
+// When the user consents:
+await replay.start()
+
+// When the user withdraws consent:
+await replay.stop({ discard: true })
+```
+
+`start()` is idempotent, and a no-op on a replay that started automatically or
+was stopped. `stop()` is final: the replay does not restart, and a new
+`startSessionReplay()` call can take over the page. `stop({ discard: true })`
+detaches the recorder, drops buffered events and queued chunks, and starts no
+further upload or retry; a request already on the wire completes, and the
+dropped chunks are not reported to `onError`. It also withdraws a recording
+that an earlier graceful `stop()`, a page hide, or a session change is still
+uploading. The replay's own identifiers (recording id, sampling mode, sequence
+record) stay in `sessionStorage` and `localStorage`; they hold no recorded
+content.
+
 ## Direct Token Escape Hatch
 
 For trusted runtimes or explicitly accepted advanced browser usage, you can

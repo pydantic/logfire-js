@@ -65,7 +65,7 @@ import type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './bro
 import { startBrowserLongAnimationFrames } from './longAnimationFrames'
 import type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
 import { BrowserSessionReplayState, snapshotErrorForReplay, startBrowserSessionReplay } from './sessionReplay'
-import type { BrowserSessionReplayControl, BrowserSessionReplayOptions } from './sessionReplay'
+import type { BrowserSessionReplayControl, BrowserSessionReplayOptions, BrowserSessionReplayStopOptions } from './sessionReplay'
 import { observeDocumentPage, observeNavigatedPages, startBrowserWebVitals } from './webVitals'
 import type { BrowserWebVitalsOptions } from './webVitals'
 import { DocumentHideChunkingExporter } from './DocumentHideChunkingExporter'
@@ -106,7 +106,7 @@ export type {
 export type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
 export type { FrontendProfile } from './errorsProfile'
 export type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
-export type { BrowserSessionReplayOptions } from './sessionReplay'
+export type { BrowserSessionReplayOptions, BrowserSessionReplayStopOptions } from './sessionReplay'
 export type { BrowserWebVitalsOptions } from './webVitals'
 export type { BrowserTracePersistenceOptions } from './RecoveringSpanExporter'
 
@@ -133,7 +133,17 @@ export interface BrowserSessionReplayHandle {
   readonly mode: 'full' | 'buffer' | 'off'
   readonly recording: boolean
   flush(): Promise<void>
-  stop(): Promise<void>
+  /**
+   * Load and start replay configured with `autoStart: false`, for example once the user consents.
+   * Calling it again, after an automatic start, or after `stop()` changes nothing.
+   */
+  start(): Promise<void>
+  /**
+   * Stop replay for this configuration; tracing continues. Replay does not restart. Pass
+   * `{ discard: true }` when consent is withdrawn, so buffered events are dropped instead of
+   * uploaded.
+   */
+  stop(options?: BrowserSessionReplayStopOptions): Promise<void>
 }
 
 export interface BrowserConfigureHandle {
@@ -869,9 +879,9 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
 
   let readySessionReplay: BrowserSessionReplayControl | undefined
   // Errors reported while replay loads, forwarded once it starts so that a startup error still
-  // promotes an error-sampled replay. Undefined once replay has settled or when it is not configured.
-  let pendingReplayErrors: { error: unknown; timestamp: number }[] | undefined =
-    sessionReplayOptions === undefined || browserSessionManager === undefined ? undefined : []
+  // promotes an error-sampled replay. Undefined before replay starts loading, once it has settled,
+  // and when it is not configured, so no error is kept before consent.
+  let pendingReplayErrors: { error: unknown; timestamp: number }[] | undefined
   const forwardPendingReplayErrors = (sessionReplay: BrowserSessionReplayControl | undefined) => {
     const pending = pendingReplayErrors ?? []
     pendingReplayErrors = undefined
@@ -881,24 +891,41 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
       }
     }
   }
-  const sessionReplayStartupPromise =
-    sessionReplayOptions === undefined || browserSessionManager === undefined
-      ? undefined
-      : startBrowserSessionReplay(sessionReplayOptions, browserSessionManager, browserSessionReplayState, {
-          capturesGlobalErrors,
-          metricUrl: browserMetricsOptions?.metricUrl,
-          traceUrl: options.traceUrl,
-        }).then((sessionReplay) => {
-          readySessionReplay = sessionReplay
-          forwardPendingReplayErrors(sessionReplay)
-          return sessionReplay
-        })
+  let replayStopped = false
+  let replayDiscarded = false
+  let sessionReplayStartupPromise: Promise<BrowserSessionReplayControl | undefined> | undefined
+  const startSessionReplayOnce = (): Promise<BrowserSessionReplayControl | undefined> | undefined => {
+    if (
+      sessionReplayStartupPromise !== undefined ||
+      replayStopped ||
+      sessionReplayOptions === undefined ||
+      browserSessionManager === undefined
+    ) {
+      return sessionReplayStartupPromise
+    }
+    pendingReplayErrors = []
+    sessionReplayStartupPromise = startBrowserSessionReplay(sessionReplayOptions, browserSessionManager, browserSessionReplayState, {
+      capturesGlobalErrors,
+      // A stop() while the package loads, such as withdrawn consent, must not attach the recorder.
+      isStopped: () => replayStopped,
+      metricUrl: browserMetricsOptions?.metricUrl,
+      traceUrl: options.traceUrl,
+    }).then((sessionReplay) => {
+      readySessionReplay = sessionReplay
+      forwardPendingReplayErrors(sessionReplay)
+      return sessionReplay
+    })
+    return sessionReplayStartupPromise
+  }
+  if (sessionReplayOptions?.autoStart !== false) {
+    // Startup reports its own failures and never rejects.
+    startSessionReplayOnce()?.catch(() => undefined)
+  }
 
   let replayOperationTail = Promise.resolve()
   let replayStopPromise: Promise<void> | undefined
-  let replayStopped = false
   const sessionReplayHandle: BrowserSessionReplayHandle | undefined =
-    sessionReplayStartupPromise === undefined
+    sessionReplayOptions === undefined || browserSessionManager === undefined
       ? undefined
       : {
           get mode() {
@@ -920,8 +947,16 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
             replayOperationTail = flushPromise
             return flushPromise
           },
+          start: async () => {
+            await startSessionReplayOnce()
+          },
           // eslint-disable-next-line @typescript-eslint/promise-function-async
-          stop() {
+          stop(stopOptions) {
+            if (stopOptions?.discard === true && !replayDiscarded) {
+              replayDiscarded = true
+              // Withdrawn consent does not wait behind a pending flush or a graceful stop.
+              readySessionReplay?.stop({ discard: true }).catch(() => undefined)
+            }
             if (replayStopPromise !== undefined) {
               return replayStopPromise
             }
@@ -930,7 +965,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
             browserSessionReplayState.clear()
             replayStopPromise = replayOperationTail.then(async () => {
               const sessionReplay = await sessionReplayStartupPromise
-              await sessionReplay?.stop()
+              await (replayDiscarded ? sessionReplay?.stop({ discard: true }) : sessionReplay?.stop())
             })
             replayOperationTail = replayStopPromise
             return replayStopPromise
