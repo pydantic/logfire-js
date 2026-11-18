@@ -199,6 +199,7 @@ describe('same-document references through rrweb serialization', () => {
       '<div data-private><span id="jane-doe"></span></div>',
       '<a id="selector" href="#jane-doe">Jane</a><a id="missing" href="#not-on-page">Missing</a><a id="top" href="#">Top</a>',
       '<script type="application/json" id="patient-987-65-4321">{}</script><a id="ignored" href="#patient-987-65-4321">Ignored</a>',
+      '<h2 id="public-heading">Public</h2><div class="rr-block" id="vault"></div>',
     ].join('')
     const events = record({ blockSelector: '[data-private]' })
 
@@ -217,6 +218,18 @@ describe('same-document references through rrweb serialization', () => {
       document.getElementById('top')?.setAttribute('href', '#patient-987-65-4321')
     })
     expect(mutations).toEqual([{ href: 'http://localhost:3000/page' }, { href: 'http://localhost:3000/page' }])
+
+    const heading = document.getElementById('public-heading')
+    const moved = await mutationAttributes(events, () => {
+      if (heading !== null) {
+        document.getElementById('vault')?.append(heading)
+        heading.id = 'patient-555-12-3456'
+      }
+    })
+    const relinked = await mutationAttributes(events, () => {
+      document.getElementById('missing')?.setAttribute('href', '#patient-555-12-3456')
+    })
+    expect(relinked.slice(moved.length)).toEqual([{ href: 'http://localhost:3000/page' }])
   })
 })
 

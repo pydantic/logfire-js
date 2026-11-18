@@ -180,12 +180,19 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
         if (target === null || isBlockedElement(target, options.blockSelector)) {
           return false
         }
-        // rrweb records no child of a blocked element, and keeps metadata with a negative id for a
-        // node that slimDOM leaves out, such as a script. A blocked element is recorded with only
-        // its size, in `rr_width`. The metadata keeps the attributes from when the node was
-        // recorded, so an `id` set later is not checked against it.
+        // rrweb keeps metadata with a negative id for a node that slimDOM leaves out, such as a
+        // script, and keeps the metadata of a node it no longer records, such as one moved into
+        // blocked content. A blocked element is recorded with only its size, in `rr_width`. The
+        // metadata keeps the attributes from when the node was recorded, so an `id` set later is
+        // not checked against it.
         const meta = record.mirror.getMeta(target)
-        return meta !== null && meta.id >= 0 && 'attributes' in meta && !('rr_width' in meta.attributes)
+        return (
+          meta !== null &&
+          meta.id >= 0 &&
+          record.mirror.getNode(meta.id) === target &&
+          'attributes' in meta &&
+          !('rr_width' in meta.attributes)
+        )
       } catch {
         return false
       }
@@ -533,10 +540,12 @@ function keptElementReference(value: string, options: SanitizeOptions): string |
   return page.includes('#') ? page : `${page}${fragment}`
 }
 
-// Mirrors rrweb's check for the default `rr-block` class and `blockSelector`.
+// Mirrors rrweb's check for the default `rr-block` class and `blockSelector`, on the element and
+// its ancestors.
 function isBlockedElement(element: Element, blockSelector: string | undefined): boolean {
   return (
-    element.classList.contains('rr-block') || (blockSelector !== undefined && blockSelector.length > 0 && element.matches(blockSelector))
+    element.closest('.rr-block') !== null ||
+    (blockSelector !== undefined && blockSelector.length > 0 && element.closest(blockSelector) !== null)
   )
 }
 
