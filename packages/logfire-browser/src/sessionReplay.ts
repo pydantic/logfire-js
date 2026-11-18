@@ -52,6 +52,7 @@ export interface BrowserSessionReplayPackageConfig {
   onErrorSampleRate?: number
   maskAllText?: boolean
   maskAllInputs?: boolean
+  maskAllImages?: boolean
   maskTextSelector?: string
   blockSelector?: string
   flushIntervalMs?: number
@@ -118,6 +119,11 @@ export interface BrowserSessionReplayOptions {
 
   maskAllText?: boolean
   maskAllInputs?: boolean
+  /**
+   * Replace recorded image sources with a placeholder before upload. Defaults to the value of
+   * `maskAllText`. An older replay package ignores it and records image URLs.
+   */
+  maskAllImages?: boolean
   maskTextSelector?: string
   blockSelector?: string
 
@@ -279,6 +285,9 @@ function createReplayConfig(
   }
   if (options.maskAllInputs !== undefined) {
     config.maskAllInputs = options.maskAllInputs
+  }
+  if (options.maskAllImages !== undefined) {
+    config.maskAllImages = options.maskAllImages
   }
   if (options.maskTextSelector !== undefined) {
     config.maskTextSelector = options.maskTextSelector

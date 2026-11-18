@@ -40,6 +40,7 @@ function makeConfig(fetchImpl: typeof fetch): ResolvedSessionReplayConfig {
     onErrorSampleRate: 1,
     maskAllText: true,
     maskAllInputs: true,
+    maskAllImages: true,
     maskTextSelector: '',
     blockSelector: '',
     flushIntervalMs: 5_000,

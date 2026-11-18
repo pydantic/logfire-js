@@ -1568,6 +1568,7 @@ describe('startSessionReplay lifecycle', () => {
     const defaultReplay = startSessionReplay(defaultConfig)
 
     expect(captured).toMatchObject({
+      maskAllImages: true,
       maskAllInputs: true,
       maskAllText: true,
       maskTextSelector: '',
@@ -1584,11 +1585,22 @@ describe('startSessionReplay lifecycle', () => {
       })
     )
     expect(captured).toMatchObject({
+      maskAllImages: false,
       maskAllText: false,
       maskTextSelector: '.secret',
       redactUrlPatterns: [],
     })
     await selectiveReplay.stop()
+  })
+
+  it.each([
+    { maskAllText: true, maskAllImages: false },
+    { maskAllText: false, maskAllImages: true },
+  ])('keeps an explicit maskAllImages ($maskAllImages) over maskAllText ($maskAllText)', async (options) => {
+    const { fetchImpl } = recordingFetch()
+    const replay = startSessionReplay(baseConfig(fetchImpl, options))
+    expect(captured).toMatchObject(options)
+    await replay.stop()
   })
 
   it('passes the URL transform to the recorder and captures and reports its errors', async () => {
