@@ -1,5 +1,16 @@
 # @pydantic/logfire-browser
 
+## 0.39.0
+
+### Minor Changes
+
+- 68d4231: Let applications start session replay only after the user consents. With `autoStart: false`, replay records, stores, and sends nothing, and keeps no reported errors, until `start()` is called; the browser SDK does not load the replay package before then either (`cleanup.sessionReplay.start()`). `stop({ discard: true })` handles withdrawn consent: it detaches the recorder and drops buffered and queued replay data instead of uploading it. A `stop()` while the replay package is still loading now keeps the recorder from starting at all, where it previously attached and then stopped it.
+
+### Patch Changes
+
+- Updated dependencies [68d4231]
+  - @pydantic/logfire-session-replay@0.13.0
+
 ## 0.38.0
 
 ### Minor Changes
