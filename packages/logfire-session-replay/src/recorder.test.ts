@@ -644,36 +644,6 @@ describe('startRecording', () => {
     })
   })
 
-  it('keeps same-document element references in href and xlink:href', () => {
-    const emitted: RrwebEvent[] = []
-    startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [/.+/u] })
-    const fullSnapshot = {
-      type: EventType.FullSnapshot,
-      data: {
-        node: {
-          childNodes: [
-            { tagName: 'use', attributes: { href: '#icon-home' } },
-            { tagName: 'use', attributes: { 'xlink:href': '#icon:close' } },
-            { tagName: 'a', attributes: { href: '#section-2' } },
-            { tagName: 'a', attributes: { href: '#' } },
-          ],
-        },
-      },
-      timestamp: 7,
-    } satisfies RrwebEvent
-    const mutation = {
-      type: EventType.IncrementalSnapshot,
-      data: { source: IncrementalSource.Mutation, attributes: [{ id: 1, attributes: { href: '#icon-user' } }] },
-      timestamp: 8,
-    } satisfies RrwebEvent
-
-    emitFromRrweb(fullSnapshot)
-    emitFromRrweb(mutation)
-
-    expect(emitted[0]).toBe(fullSnapshot)
-    expect(emitted[1]).toBe(mutation)
-  })
-
   it('still redacts fragment-only values that are not plain element ids', () => {
     const emitted: RrwebEvent[] = []
     startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [/.+/u] })
@@ -707,24 +677,6 @@ describe('startRecording', () => {
         },
       },
     })
-  })
-
-  it('applies the URL transform to same-document element references', () => {
-    const emitted: RrwebEvent[] = []
-    startRecordingForTest({
-      emit: (event) => emitted.push(event),
-      redactUrlPatterns: [/.+/u],
-      transformUrl: (url) => url.replace('#user-jane', '#user'),
-    })
-    const fullSnapshot = {
-      type: EventType.FullSnapshot,
-      data: { node: { attributes: { href: '#user-jane' } } },
-      timestamp: 7,
-    } satisfies RrwebEvent
-
-    emitFromRrweb(fullSnapshot)
-
-    expect(emitted[0]).toEqual({ ...fullSnapshot, data: { node: { attributes: { href: '#user' } } } })
   })
 
   it('keeps styles without URL tokens, and all styles when URL redaction is off', () => {

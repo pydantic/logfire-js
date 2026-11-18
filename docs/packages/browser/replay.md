@@ -66,8 +66,9 @@ fetch/XHR, and navigation URLs, from DOM URL attributes such as `href`, `src`,
 and `srcset`, and from the URLs in error messages, sources, and stacks and in
 console arguments. URLs with an opaque scheme, such as `mailto:` and `data:`,
 keep only the scheme. An `href` that points to a plain element id in the same page,
-such as SVG `<use href="#icon">` or `<a href="#section">`, keeps that fragment so
-that sprite icons and anchors replay; hash routes such as `#/reset?token=...` are still redacted. Inline styles that could reference a URL (through `url`,
+such as SVG `<use href="#icon">` or `<a href="#section">`, keeps that fragment
+when the recording holds that element, so that sprite icons and anchors replay;
+references into blocked content and hash routes such as `#/reset?token=...` are still redacted. Inline styles that could reference a URL (through `url`,
 `image-set`, `src(`, or a CSS escape) are removed whole, so such elements can
 lose background images or other styling in replays. Error messages and stacks are
 limited to 1,024 and 8,192 characters. Network and navigation capture remain

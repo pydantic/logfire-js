@@ -141,6 +141,8 @@ interface SanitizeOptions {
   transformUrl: UrlTransform | undefined
   /** The live node that rrweb recorded under a serialized id. */
   findNode: (id: number) => Node | undefined
+  /** Whether the recording holds an element with this `id`, so a reference to it reveals nothing new. */
+  recordsElementId: (elementId: string) => boolean
   /** Send a sized placeholder for a masked image once it loads. */
   sizeOnLoad: (image: HTMLImageElement) => void
 }
@@ -170,6 +172,16 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
         return record.mirror.getNode(id) ?? undefined
       } catch {
         return undefined
+      }
+    },
+    recordsElementId: (elementId) => {
+      try {
+        const target = document.getElementById(elementId)
+        // rrweb records no child of a blocked element and drops a blocked element's own `id`.
+        const meta = target === null ? null : record.mirror.getMeta(target)
+        return meta !== null && 'attributes' in meta && meta.attributes['id'] === elementId
+      } catch {
+        return false
       }
     },
     sizeOnLoad: (image) => {
@@ -476,16 +488,10 @@ function sanitizeAttribute(name: string, value: unknown, options: SanitizeOption
     return value
   }
   if (ELEMENT_REFERENCE_ATTRIBUTE_NAMES.has(name)) {
-    if (isElementIdReference(value)) {
-      // Resolving `#icon` against the page and removing the fragment leaves the page URL, so SVG
-      // sprite icons render blank. Only the pattern step is skipped; `transformUrl` still applies.
-      return redactUrl(value, [], window.location.href, options.transformUrl)
-    }
-    const fragment = sameDocumentFragment(value, window.location.href)
-    if (fragment !== undefined) {
-      // The page part is redacted as usual, so a query on the page URL is still removed.
-      const redacted = redact(value)
-      return redacted.includes('#') ? redacted : `${redacted}${fragment}`
+    const reference = keptElementReference(value, options)
+    if (reference !== undefined) {
+      // `transformUrl` runs last and its result is used as is, so it stays the final privacy control.
+      return redactUrl(reference, [], window.location.href, options.transformUrl)
     }
   }
   if (URL_ATTRIBUTE_NAMES.has(name)) {
@@ -498,6 +504,27 @@ function sanitizeAttribute(name: string, value: unknown, options: SanitizeOption
     return maskText(value)
   }
   return value
+}
+
+// Removing the fragment of `#icon` leaves the page URL, so SVG sprite icons render blank. rrweb
+// keeps `#icon` as written on `<use>` but makes an anchor's `#section` absolute, so both forms keep
+// their fragment when the recording holds the element it names.
+function keptElementReference(value: string, options: SanitizeOptions): string | undefined {
+  const baseUrl = window.location.href
+  const fragment = isElementIdReference(value) ? value : sameDocumentFragment(value, baseUrl)
+  if (fragment === undefined) {
+    return undefined
+  }
+  const elementId = fragment.slice(1)
+  if (elementId !== '' && !options.recordsElementId(elementId)) {
+    return undefined
+  }
+  if (fragment === value) {
+    return value
+  }
+  // The page part goes through the patterns as usual, so a query on the page URL is still removed.
+  const page = redactUrl(value, options.patterns, baseUrl)
+  return page.includes('#') ? page : `${page}${fragment}`
 }
 
 function describeElement(node: Record<string, unknown>, attributes: unknown, options: SanitizeOptions): ElementContext | undefined {

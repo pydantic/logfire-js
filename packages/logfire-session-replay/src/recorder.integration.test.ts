@@ -115,13 +115,7 @@ describe('same-document references through rrweb serialization', () => {
     window.history.replaceState(null, '', '/')
   })
 
-  it('keeps element id fragments of anchors and SVG use in full snapshots and attribute mutations', async () => {
-    window.history.replaceState(null, '', '/page?token=secret')
-    document.body.innerHTML = [
-      '<a id="anchor" href="#section-2">Section</a>',
-      '<a id="route" href="#/reset-password?token=secret">Reset</a>',
-      '<svg><use id="icon" href="#icon-home"></use></svg>',
-    ].join('')
+  function record(options: Partial<Parameters<typeof startRecording>[0]> = {}): RrwebEvent[] {
     const events: RrwebEvent[] = []
     const recorder = startRecording({
       emit: (event) => {
@@ -130,28 +124,90 @@ describe('same-document references through rrweb serialization', () => {
       maskAllInputs: true,
       maskAllText: false,
       redactUrlPatterns: [/.+/u],
+      ...options,
     })
     stopRecording = () => {
       recorder.stop()
     }
+    return events
+  }
+
+  // rrweb reports attribute changes from a MutationObserver, which runs after this task.
+  async function mutationAttributes(events: RrwebEvent[], change: () => void): Promise<unknown[]> {
+    change()
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    return events.flatMap((event) =>
+      event.type === EventType.IncrementalSnapshot && (event.data as { source?: unknown }).source === IncrementalSource.Mutation
+        ? ((event.data as { attributes?: { attributes: unknown }[] }).attributes?.map((entry) => entry.attributes) ?? [])
+        : []
+    )
+  }
+
+  const PAGE = [
+    '<h2 id="section-2">Two</h2><h2 id="section-3">Three</h2>',
+    '<a id="anchor" href="#section-2">Section</a>',
+    '<a id="route" href="#/reset-password?token=secret">Reset</a>',
+    '<svg><symbol id="icon-home"></symbol><use id="icon" href="#icon-home"></use></svg>',
+  ].join('')
+
+  it('keeps element id fragments of anchors and SVG use in full snapshots and attribute mutations', async () => {
+    window.history.replaceState(null, '', '/page?token=secret')
+    document.body.innerHTML = PAGE
+    const events = record()
 
     const snapshot = events.find((event) => event.type === EventType.FullSnapshot)
     expect(attributesOf(snapshot?.data, 'anchor')).toEqual({ id: 'anchor', href: 'http://localhost:3000/page#section-2' })
     expect(attributesOf(snapshot?.data, 'route')).toEqual({ id: 'route', href: 'http://localhost:3000/page' })
     expect(attributesOf(snapshot?.data, 'icon')).toEqual({ id: 'icon', href: '#icon-home' })
 
-    document.getElementById('anchor')?.setAttribute('href', '#section-3')
-    // rrweb reports attribute changes from a MutationObserver, which runs after this task.
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 0)
+    const mutations = await mutationAttributes(events, () => {
+      document.getElementById('anchor')?.setAttribute('href', '#section-3')
     })
+    expect(mutations).toEqual([{ href: 'http://localhost:3000/page#section-3' }])
+  })
 
-    const mutation = events.find(
-      (event) => event.type === EventType.IncrementalSnapshot && (event.data as { source?: unknown }).source === IncrementalSource.Mutation
-    )
-    expect((mutation?.data as { attributes?: { attributes: unknown }[] }).attributes?.map((entry) => entry.attributes)).toEqual([
-      { href: 'http://localhost:3000/page#section-3' },
+  it('uses the URL transform result as is for kept references', async () => {
+    window.history.replaceState(null, '', '/page')
+    document.body.innerHTML = PAGE
+    const events = record({ transformUrl: (url) => (url.includes('section-3') ? '' : '[redacted]') })
+
+    const snapshot = events.find((event) => event.type === EventType.FullSnapshot)
+    expect(attributesOf(snapshot?.data, 'anchor')).toEqual({ id: 'anchor', href: '[redacted]' })
+    expect(attributesOf(snapshot?.data, 'icon')).toEqual({ id: 'icon', href: '[redacted]' })
+
+    const mutations = await mutationAttributes(events, () => {
+      document.getElementById('anchor')?.setAttribute('href', '#section-3')
+      document.getElementById('icon')?.setAttribute('href', '#section-2')
+    })
+    expect(mutations).toEqual([{ href: '' }, { href: '[redacted]' }])
+  })
+
+  it('redacts references to elements that the recording omits', async () => {
+    window.history.replaceState(null, '', '/page')
+    document.body.innerHTML = [
+      '<svg><g class="rr-block"><symbol id="patient-123-45-6789"></symbol></g>',
+      '<symbol id="blocked-self" class="rr-block"></symbol>',
+      '<use id="nested" href="#patient-123-45-6789"></use><use id="self" href="#blocked-self"></use></svg>',
+      '<div data-private><span id="jane-doe"></span></div>',
+      '<a id="selector" href="#jane-doe">Jane</a><a id="missing" href="#not-on-page">Missing</a><a id="top" href="#">Top</a>',
+    ].join('')
+    const events = record({ blockSelector: '[data-private]' })
+
+    const snapshot = events.find((event) => event.type === EventType.FullSnapshot)
+    expect(['nested', 'self', 'selector', 'missing', 'top'].map((id) => attributesOf(snapshot?.data, id))).toEqual([
+      { id: 'nested', href: 'http://localhost:3000/page' },
+      { id: 'self', href: 'http://localhost:3000/page' },
+      { id: 'selector', href: 'http://localhost:3000/page' },
+      { id: 'missing', href: 'http://localhost:3000/page' },
+      { id: 'top', href: 'http://localhost:3000/page' },
     ])
+
+    const mutations = await mutationAttributes(events, () => {
+      document.getElementById('nested')?.setAttribute('href', '#blocked-self')
+    })
+    expect(mutations).toEqual([{ href: 'http://localhost:3000/page' }])
   })
 })
 
