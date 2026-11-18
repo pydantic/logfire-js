@@ -10,6 +10,19 @@ export function redactUrl(url: string, patterns: readonly RegExp[], baseUrl: str
   return transformUrl === undefined ? redacted : applyUrlTransform(redacted, transformUrl)
 }
 
+// Hash-routed apps put paths and queries in the fragment, such as `#/reset?token=...`, so only a
+// plain element id is allowed through, not any value that starts with `#`.
+const ELEMENT_ID_REFERENCE_PATTERN = /^#[\w.:-]*$/u
+
+/**
+ * Whether `value` is a same-document element reference, such as SVG `<use href="#icon">` or an
+ * `<a href="#section">` anchor. It loads nothing and names an element id that the recorded DOM
+ * already holds, so stripping its fragment only breaks playback.
+ */
+export function isElementIdReference(value: string): boolean {
+  return ELEMENT_ID_REFERENCE_PATTERN.test(value)
+}
+
 // A failing transform keeps the built-in result, so a bug in it never restores a stripped query.
 function applyUrlTransform(url: string, transformUrl: UrlTransform): string {
   try {

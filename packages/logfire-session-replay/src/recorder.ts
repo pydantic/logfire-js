@@ -1,6 +1,6 @@
 import { record } from '@rrweb/record'
 
-import { cutText, mayReferenceCssUrl, redactSrcset, redactUrl, redactUrlsInText, truncationSuffix } from './privacy'
+import { cutText, isElementIdReference, mayReferenceCssUrl, redactSrcset, redactUrl, redactUrlsInText, truncationSuffix } from './privacy'
 import type { UrlTransform } from './privacy'
 import { markSdkInternalError } from './sdkInternalError'
 import { CustomTag, EventType, IncrementalSource } from './types'
@@ -9,6 +9,8 @@ import type { RrwebEvent } from './types'
 // rrweb stores an iframe `src` as `rr_src` when it does not record the frame's document.
 const URL_ATTRIBUTE_NAMES = new Set(['action', 'background', 'cite', 'data', 'formaction', 'href', 'poster', 'rr_src', 'src', 'xlink:href'])
 const SRCSET_ATTRIBUTE_NAMES = new Set(['imagesrcset', 'srcset'])
+// SVG `<use>` and anchors point at elements of the same document through these attributes.
+const ELEMENT_REFERENCE_ATTRIBUTE_NAMES = new Set(['href', 'xlink:href'])
 const TEXT_ATTRIBUTE_NAMES = new Set([
   'alt',
   'aria-description',
@@ -322,6 +324,11 @@ function sanitizeAttribute(name: string, value: unknown, options: SanitizeOption
   }
   if (typeof value !== 'string') {
     return value
+  }
+  if (ELEMENT_REFERENCE_ATTRIBUTE_NAMES.has(name) && isElementIdReference(value)) {
+    // Resolving `#icon` against the page and removing the fragment leaves the page URL, so SVG
+    // sprite icons render blank. Only the pattern step is skipped; `transformUrl` still applies.
+    return redactUrl(value, [], window.location.href, options.transformUrl)
   }
   if (URL_ATTRIBUTE_NAMES.has(name)) {
     return redact(value)

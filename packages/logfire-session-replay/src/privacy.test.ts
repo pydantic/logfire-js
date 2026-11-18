@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vite-plus/test'
 
-import { cutText, matchesUrlPatterns, mayReferenceCssUrl, redactSrcset, redactUrl, redactUrlsInText, truncateText } from './privacy'
+import {
+  cutText,
+  isElementIdReference,
+  matchesUrlPatterns,
+  mayReferenceCssUrl,
+  redactSrcset,
+  redactUrl,
+  redactUrlsInText,
+  truncateText,
+} from './privacy'
 
 const baseUrl = 'https://app.example.test/current/page'
 
@@ -54,6 +63,34 @@ describe('redactUrl', () => {
     expect(matchesUrlPatterns('https://example.test/?token=three', [sticky])).toBe(true)
     expect(global.lastIndex).toBe(3)
     expect(sticky.lastIndex).toBe(2)
+  })
+})
+
+describe('isElementIdReference', () => {
+  it('accepts plain element ids and a bare fragment', () => {
+    expect(['#icon-home', '#icon_home', '#icon:home', '#sprite.close', '#'].map(isElementIdReference)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+    ])
+  })
+
+  it('rejects values that are not fragment-only or that look like hash routes or parameters', () => {
+    const values = [
+      'icon',
+      '/sprite.svg#icon',
+      'https://app.example.test/#icon',
+      '#/reset-password/abc123',
+      '#!/orders',
+      '#/orders?token=secret',
+      '#access_token=secret&state=1',
+      '#jane%40example.test',
+      '#icon home',
+      '##icon',
+    ]
+    expect(values.map(isElementIdReference)).toEqual(values.map(() => false))
   })
 })
 

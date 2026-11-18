@@ -65,7 +65,9 @@ capture off, and removes query strings and fragments from captured page,
 fetch/XHR, and navigation URLs, from DOM URL attributes such as `href`, `src`,
 and `srcset`, and from the URLs in error messages, sources, and stacks and in
 console arguments. URLs with an opaque scheme, such as `mailto:` and `data:`,
-keep only the scheme. Inline styles that could reference a URL (through `url`,
+keep only the scheme. An `href` that is only a plain element id, such as SVG
+`<use href="#icon">` or `<a href="#section">`, is kept so that sprite icons and
+anchors replay; hash routes such as `#/reset?token=...` are still redacted. Inline styles that could reference a URL (through `url`,
 `image-set`, `src(`, or a CSS escape) are removed whole, so such elements can
 lose background images or other styling in replays. Error messages and stacks are
 limited to 1,024 and 8,192 characters. Network and navigation capture remain
