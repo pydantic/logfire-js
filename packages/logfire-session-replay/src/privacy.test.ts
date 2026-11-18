@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vite-plus/test'
 
-import { cutText, matchesUrlPatterns, mayReferenceCssUrl, redactSrcset, redactUrl, redactUrlsInText, truncateText } from './privacy'
+import {
+  cutText,
+  isElementIdReference,
+  matchesUrlPatterns,
+  mayReferenceCssUrl,
+  redactSrcset,
+  redactUrl,
+  redactUrlsInText,
+  sameDocumentFragment,
+  truncateText,
+} from './privacy'
 
 const baseUrl = 'https://app.example.test/current/page'
 
@@ -54,6 +64,57 @@ describe('redactUrl', () => {
     expect(matchesUrlPatterns('https://example.test/?token=three', [sticky])).toBe(true)
     expect(global.lastIndex).toBe(3)
     expect(sticky.lastIndex).toBe(2)
+  })
+})
+
+describe('isElementIdReference', () => {
+  it('accepts plain element ids and a bare fragment', () => {
+    expect(['#icon-home', '#icon_home', '#icon:home', '#sprite.close', '#'].map(isElementIdReference)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+    ])
+  })
+
+  it('rejects values that are not fragment-only or that look like hash routes or parameters', () => {
+    const values = [
+      'icon',
+      '/sprite.svg#icon',
+      'https://app.example.test/#icon',
+      '#/reset-password/abc123',
+      '#!/orders',
+      '#/orders?token=secret',
+      '#access_token=secret&state=1',
+      '#jane%40example.test',
+      '#icon home',
+      '##icon',
+    ]
+    expect(values.map(isElementIdReference)).toEqual(values.map(() => false))
+  })
+})
+
+describe('sameDocumentFragment', () => {
+  const pageUrl = 'https://app.example.test/current/page?tab=1#top'
+
+  it('returns the element id fragment of a URL that points into the page', () => {
+    expect(sameDocumentFragment('https://app.example.test/current/page?tab=1#section-2', pageUrl)).toBe('#section-2')
+    expect(sameDocumentFragment('#section-2', pageUrl)).toBe('#section-2')
+  })
+
+  it('returns nothing for other documents, route-like fragments, and no fragment', () => {
+    const values = [
+      'https://app.example.test/current/page#section-2',
+      'https://app.example.test/other#section-2',
+      'https://other.example.test/current/page?tab=1#section-2',
+      'https://app.example.test/current/page?tab=1#/reset?token=secret',
+      'https://app.example.test/current/page?tab=1#access_token=secret',
+      'https://app.example.test/current/page?tab=1#',
+      'https://app.example.test/current/page?tab=1',
+      'https://[invalid]#section',
+    ]
+    expect(values.map((value) => sameDocumentFragment(value, pageUrl))).toEqual(values.map(() => undefined))
   })
 })
 

@@ -644,6 +644,41 @@ describe('startRecording', () => {
     })
   })
 
+  it('still redacts fragment-only values that are not plain element ids', () => {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [/.+/u] })
+    const fullSnapshot = {
+      type: EventType.FullSnapshot,
+      data: {
+        node: {
+          attributes: {
+            href: '#/reset-password?token=secret',
+            'xlink:href': '#access_token=secret',
+            src: '#frame',
+            srcset: '#a 1x',
+          },
+        },
+      },
+      timestamp: 7,
+    } satisfies RrwebEvent
+
+    emitFromRrweb(fullSnapshot)
+
+    expect(emitted[0]).toEqual({
+      ...fullSnapshot,
+      data: {
+        node: {
+          attributes: {
+            href: 'http://localhost:3000/',
+            'xlink:href': 'http://localhost:3000/',
+            src: 'http://localhost:3000/',
+            srcset: 'http://localhost:3000/ 1x',
+          },
+        },
+      },
+    })
+  })
+
   it('keeps styles without URL tokens, and all styles when URL redaction is off', () => {
     const emitted: RrwebEvent[] = []
     startRecordingForTest({ emit: (event) => emitted.push(event), redactUrlPatterns: [/.+/u] })

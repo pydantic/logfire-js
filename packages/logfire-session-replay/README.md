@@ -305,7 +305,16 @@ Network and navigation capture remain on, but query strings and fragments are
 removed from rrweb page metadata, captured network/navigation URLs, and URL
 attributes (`href`, `src`, `srcset`, `poster`, `data`, `xlink:href`, and
 similar) by the default `redactUrlPatterns` value. URLs with an opaque scheme,
-such as `mailto:`, `tel:`, `data:`, and `blob:`, keep only the scheme. An inline
+such as `mailto:`, `tel:`, `data:`, and `blob:`, keep only the scheme. An
+`href` or `xlink:href` that points to a plain element id in the same page,
+such as SVG `<use href="#icon">` or `<a href="#section">`, keeps that fragment,
+when the recording holds the element with that id, because it loads nothing
+and reveals no more than the recorded DOM does. A reference to a missing
+element, or to one inside `blockSelector` or `rr-block` content, is redacted.
+An anchor is recorded as the page URL, with its query removed, plus the
+fragment. Fragments with `/`, `?`, `=`, or other characters, such as hash
+routes, are still redacted. `transformUrl` runs on the result, fragment
+included. An inline
 `style` value that could reference a URL, because it contains `url`,
 `image-set`, `src(`, or a backslash escape, is removed whole, so such elements
 can lose background images or other styling in replays. This also applies when

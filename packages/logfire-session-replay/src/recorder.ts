@@ -1,6 +1,15 @@
 import { record } from '@rrweb/record'
 
-import { cutText, mayReferenceCssUrl, redactSrcset, redactUrl, redactUrlsInText, truncationSuffix } from './privacy'
+import {
+  cutText,
+  isElementIdReference,
+  mayReferenceCssUrl,
+  redactSrcset,
+  redactUrl,
+  redactUrlsInText,
+  sameDocumentFragment,
+  truncationSuffix,
+} from './privacy'
 import type { UrlTransform } from './privacy'
 import { markSdkInternalError } from './sdkInternalError'
 import { CustomTag, EventType, IncrementalSource } from './types'
@@ -9,6 +18,8 @@ import type { RrwebEvent } from './types'
 // rrweb stores an iframe `src` as `rr_src` when it does not record the frame's document.
 const URL_ATTRIBUTE_NAMES = new Set(['action', 'background', 'cite', 'data', 'formaction', 'href', 'poster', 'rr_src', 'src', 'xlink:href'])
 const SRCSET_ATTRIBUTE_NAMES = new Set(['imagesrcset', 'srcset'])
+// SVG `<use>` and anchors point at elements of the same document through these attributes.
+const ELEMENT_REFERENCE_ATTRIBUTE_NAMES = new Set(['href', 'xlink:href'])
 const TEXT_ATTRIBUTE_NAMES = new Set([
   'alt',
   'aria-description',
@@ -130,6 +141,8 @@ interface SanitizeOptions {
   transformUrl: UrlTransform | undefined
   /** The live node that rrweb recorded under a serialized id. */
   findNode: (id: number) => Node | undefined
+  /** Whether the recording holds an element with this `id`, so a reference to it reveals nothing new. */
+  recordsElementId: (elementId: string) => boolean
   /** Send a sized placeholder for a masked image once it loads. */
   sizeOnLoad: (image: HTMLImageElement) => void
 }
@@ -159,6 +172,29 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
         return record.mirror.getNode(id) ?? undefined
       } catch {
         return undefined
+      }
+    },
+    recordsElementId: (elementId) => {
+      try {
+        const target = document.getElementById(elementId)
+        if (target === null || isBlockedElement(target, options.blockSelector)) {
+          return false
+        }
+        // rrweb keeps metadata with a negative id for a node that slimDOM leaves out, such as a
+        // script, and keeps the metadata of a node it no longer records, such as one moved into
+        // blocked content. A blocked element is recorded with only its size, in `rr_width`. The
+        // metadata keeps the attributes from when the node was recorded, so an `id` set later is
+        // not checked against it.
+        const meta = record.mirror.getMeta(target)
+        return (
+          meta !== null &&
+          meta.id >= 0 &&
+          record.mirror.getNode(meta.id) === target &&
+          'attributes' in meta &&
+          !('rr_width' in meta.attributes)
+        )
+      } catch {
+        return false
       }
     },
     sizeOnLoad: (image) => {
@@ -464,6 +500,13 @@ function sanitizeAttribute(name: string, value: unknown, options: SanitizeOption
   if (typeof value !== 'string') {
     return value
   }
+  if (ELEMENT_REFERENCE_ATTRIBUTE_NAMES.has(name)) {
+    const reference = keptElementReference(value, options)
+    if (reference !== undefined) {
+      // `transformUrl` runs last and its result is used as is, so it stays the final privacy control.
+      return redactUrl(reference, [], window.location.href, options.transformUrl)
+    }
+  }
   if (URL_ATTRIBUTE_NAMES.has(name)) {
     return redact(value)
   }
@@ -474,6 +517,36 @@ function sanitizeAttribute(name: string, value: unknown, options: SanitizeOption
     return maskText(value)
   }
   return value
+}
+
+// Removing the fragment of `#icon` leaves the page URL, so SVG sprite icons render blank. rrweb
+// keeps `#icon` as written on `<use>` but makes an anchor's `#section` absolute, so both forms keep
+// their fragment when the recording holds the element it names.
+function keptElementReference(value: string, options: SanitizeOptions): string | undefined {
+  const baseUrl = window.location.href
+  const fragment = isElementIdReference(value) ? value : sameDocumentFragment(value, baseUrl)
+  if (fragment === undefined) {
+    return undefined
+  }
+  const elementId = fragment.slice(1)
+  if (elementId !== '' && !options.recordsElementId(elementId)) {
+    return undefined
+  }
+  if (fragment === value) {
+    return value
+  }
+  // The page part goes through the patterns as usual, so a query on the page URL is still removed.
+  const page = redactUrl(value, options.patterns, baseUrl)
+  return page.includes('#') ? page : `${page}${fragment}`
+}
+
+// Mirrors rrweb's check for the default `rr-block` class and `blockSelector`, on the element and
+// its ancestors.
+function isBlockedElement(element: Element, blockSelector: string | undefined): boolean {
+  return (
+    element.closest('.rr-block') !== null ||
+    (blockSelector !== undefined && blockSelector.length > 0 && element.closest(blockSelector) !== null)
+  )
 }
 
 function describeElement(node: Record<string, unknown>, attributes: unknown, options: SanitizeOptions): ElementContext | undefined {
