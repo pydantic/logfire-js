@@ -51,11 +51,28 @@ export interface SessionReplay {
   /** The current DOM recording's upload/playback id; distinct from the RUM session id. */
   getRecordingId(): string
   flush(): Promise<void>
-  stop(): Promise<void>
+  /**
+   * Start recording a replay created with `autoStart: false`, for example once the user consents.
+   * Calling it again, after an automatic start, or after `stop()` changes nothing.
+   */
+  start(): Promise<void>
+  /**
+   * Stop recording for this page. Recording does not restart. By default, buffered events get one
+   * last upload attempt. Pass `{ discard: true }` when consent is withdrawn.
+   */
+  stop(options?: StopReplayOptions): Promise<void>
 }
 
 export interface CaptureErrorOptions {
   timestamp?: number
+}
+
+export interface StopReplayOptions {
+  /**
+   * Drop buffered events and queued chunks instead of uploading them, and start no further upload.
+   * A request already on the wire completes. Can follow an earlier `stop()` that is still uploading.
+   */
+  discard?: boolean
 }
 
 const NOOP: SessionReplay = {
@@ -66,6 +83,7 @@ const NOOP: SessionReplay = {
   captureError: () => undefined,
   getRecordingId: () => '',
   flush: async () => Promise.resolve(),
+  start: async () => Promise.resolve(),
   stop: async () => Promise.resolve(),
 }
 
@@ -91,6 +109,8 @@ interface ActiveRuntime {
   captureError(error: unknown, options?: CaptureErrorOptions): void
   deactivate(keepalive?: boolean): Promise<void>
   discard(): void
+  /** Detach the recorder and drop everything not yet sent. */
+  withdraw(): void
 }
 
 export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
@@ -99,8 +119,96 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
   }
 
   const releaseLease = acquireControllerLease()
+  let resolvedConfig: ResolvedSessionReplayConfig
   try {
-    const resolvedConfig = resolveConfig(config)
+    resolvedConfig = resolveConfig(config)
+  } catch (error) {
+    releaseLease()
+    throw error
+  }
+  return config.autoStart === false ? createDeferredReplay(resolvedConfig, releaseLease) : startController(resolvedConfig, releaseLease)
+}
+
+/**
+ * A replay that waits for `start()`. Until then it touches no storage, attaches no recorder or
+ * listeners, and drops reported errors, so nothing about the visit is kept before consent.
+ */
+function createDeferredReplay(resolvedConfig: ResolvedSessionReplayConfig, releaseLease: () => void): SessionReplay {
+  let controller: SessionReplay | undefined
+  let startPromise: Promise<void> | undefined
+  let stopped = false
+  let starting = false
+  // Building the controller runs application callbacks, such as `getSessionId`, which can call
+  // stop(), for example to withdraw consent. That stop() applies once the controller exists.
+  let pendingStop: { discard: boolean; done: Promise<void>; finish: () => void } | undefined
+  // The controller is created synchronously, so a stop() right after start() stops it.
+  const startOnce = async (): Promise<void> =>
+    new Promise<void>((resolve) => {
+      if (!stopped && !starting) {
+        starting = true
+        let started: SessionReplay
+        try {
+          started = startController(resolvedConfig, releaseLease)
+        } catch (error) {
+          // startController() released the lease, so the handle cannot start again.
+          stopped = true
+          pendingStop?.finish()
+          throw error
+        } finally {
+          starting = false
+        }
+        controller = started
+        if (pendingStop !== undefined) {
+          const { discard, finish } = pendingStop
+          started.stop(discard ? { discard: true } : undefined).then(finish, finish)
+        }
+      }
+      resolve()
+    })
+  return {
+    get mode() {
+      return controller?.mode ?? 'off'
+    },
+    get recording() {
+      return controller?.recording ?? false
+    },
+    get uploading() {
+      return controller?.uploading ?? false
+    },
+    getSessionId: () => controller?.getSessionId() ?? '',
+    captureError: (error, options) => {
+      controller?.captureError(error, options)
+    },
+    getRecordingId: () => controller?.getRecordingId() ?? '',
+    flush: async () => controller?.flush(),
+    start: async () => {
+      startPromise ??= startOnce()
+      return startPromise
+    },
+    stop: async (options) => {
+      stopped = true
+      if (controller !== undefined) {
+        return controller.stop(options)
+      }
+      if (starting) {
+        if (pendingStop === undefined) {
+          let finish!: () => void
+          const done = new Promise<void>((resolve) => {
+            finish = resolve
+          })
+          pendingStop = { discard: false, done, finish }
+        }
+        pendingStop.discard ||= options?.discard === true
+        return pendingStop.done
+      }
+      releaseLease()
+      return Promise.resolve()
+    },
+  }
+}
+
+function startController(resolvedConfig: ResolvedSessionReplayConfig, releaseLease: () => void): SessionReplay {
+  try {
     const internalSessions = new SessionManager({
       idleTimeoutMs: resolvedConfig.sessionIdleTimeoutMs,
       maxDurationMs: resolvedConfig.maxSessionDurationMs,
@@ -139,6 +247,22 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
     let transition = Promise.resolve()
     let pageShutdowns = Promise.resolve()
     let stopPromise: Promise<void> | undefined
+    let discarding = false
+    // Runtimes that a session change, a page hide, or a graceful stop is still shutting down, which a
+    // discarding stop() withdraws too.
+    const shuttingDown = new Set<ActiveRuntime>()
+    // The runtime's shutdown starts synchronously, before the first await.
+    const deactivate = async (oldRuntime: ActiveRuntime | undefined, keepalive = false): Promise<void> => {
+      if (oldRuntime === undefined) {
+        return
+      }
+      shuttingDown.add(oldRuntime)
+      try {
+        await oldRuntime.deactivate(keepalive)
+      } finally {
+        shuttingDown.delete(oldRuntime)
+      }
+    }
     let heldLock: { recordingId: string; lock: RecordingLock } | undefined
     let claimAbort: AbortController | undefined
     // Whether the runtime records a resumed recording whose lock is still pending. Another document
@@ -314,7 +438,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       claimAbort?.abort()
       const oldRuntime = runtime
       runtime = undefined
-      const oldShutdown = oldRuntime?.deactivate() ?? Promise.resolve()
+      const oldShutdown = deactivate(oldRuntime)
       const generation = lifecycleGeneration
       transition = transition.then(async () => {
         await reportPromise(oldShutdown, resolvedConfig.onError)
@@ -358,7 +482,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
       claimAbort?.abort()
       const oldRuntime = runtime
       runtime = undefined
-      const shutdown = oldRuntime?.deactivate(true) ?? Promise.resolve()
+      const shutdown = deactivate(oldRuntime, true)
       // deactivate() reserved the final sequences synchronously. Releasing the lock now keeps the page
       // eligible for the back-forward cache, and lets the next document of this tab take the recording.
       releaseLock()
@@ -425,7 +549,13 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
     window.addEventListener('pagehide', onPageHide)
     window.addEventListener('pageshow', onPageShow)
 
-    const stop = async (): Promise<void> => {
+    const stop = async (options?: StopReplayOptions): Promise<void> => {
+      if (options?.discard === true && !discarding) {
+        discarding = true
+        for (const oldRuntime of shuttingDown) {
+          oldRuntime.withdraw()
+        }
+      }
       stopPromise ??= (async () => {
         stopped = true
         lifecycleGeneration += 1
@@ -435,7 +565,15 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
         window.removeEventListener('pageshow', onPageShow)
         const oldRuntime = runtime
         runtime = undefined
-        const oldShutdown = oldRuntime?.deactivate() ?? Promise.resolve()
+        let oldShutdown = Promise.resolve()
+        if (discarding) {
+          oldRuntime?.withdraw()
+          for (const shuttingDownRuntime of shuttingDown) {
+            shuttingDownRuntime.withdraw()
+          }
+        } else {
+          oldShutdown = deactivate(oldRuntime)
+        }
         await reportPromise(oldShutdown, resolvedConfig.onError)
         await transition
         await pageShutdowns
@@ -497,6 +635,7 @@ export function startSessionReplay(config: SessionReplayConfig): SessionReplay {
           safeReportError(resolvedConfig.onError, error)
         }
       },
+      start: async () => Promise.resolve(),
       stop,
     }
   } catch (error) {
@@ -733,6 +872,11 @@ function createActiveRuntime(options: {
         active = false
         stopCleanup(cleanup)
         transport.discard()
+      },
+      withdraw: () => {
+        active = false
+        stopCleanup(cleanup)
+        transport.withdraw()
       },
     }
   } catch (error) {

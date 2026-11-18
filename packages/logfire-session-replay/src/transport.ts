@@ -151,6 +151,7 @@ export class ReplayTransport {
   private bindingBufferIncomplete = false
   private readonly onPermanentRejection: (() => void) | undefined
   private permanentlyRejected = false
+  private withdrawn = false
 
   constructor(
     config: ResolvedSessionReplayConfig,
@@ -436,6 +437,16 @@ export class ReplayTransport {
    * another transport. Requests already on the wire settle with their own responses.
    */
   abandon(): void {
+    this.closeAfterPermanentRejection([])
+  }
+
+  /**
+   * Drop every buffered event and queued chunk and start no further request, for withdrawn consent.
+   * A request already on the wire cannot be recalled, and settles with its own response.
+   */
+  withdraw(): void {
+    this.withdrawn = true
+    this.shuttingDown = true
     this.closeAfterPermanentRejection([])
   }
 
@@ -871,6 +882,10 @@ export class ReplayTransport {
   }
 
   private handleSequencedLoss(seq: number, sessionId: string, failure: UploadFailure): void {
+    // A withdrawn recording drops its chunks on purpose, so their loss is not reported or resynced.
+    if (this.withdrawn) {
+      return
+    }
     const droppedSeqs: number[] = []
     const permanent = isPermanentRejection(failure)
     if (permanent) {
@@ -1190,6 +1205,10 @@ export class ReplayTransport {
       const url = `${this.config.replayUrl.replace(/\/+$/u, '')}/${encodeURIComponent(upload.sessionId)}?seq=${String(upload.seq)}`
       // A stalled header or token callback would otherwise hold the queue head forever.
       const headers = await raceAbort(this.getUploadHeaders(), controller.signal)
+      // Consent can be withdrawn while the headers or token resolve, and then no request may start.
+      if (this.withdrawn) {
+        throw markSdkInternalError(new Error('replay upload withdrawn before it started'))
+      }
       onRequestStarted()
       const responsePromise = this.config.fetchImpl(url, {
         method: 'POST',

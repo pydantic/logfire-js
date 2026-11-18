@@ -2166,11 +2166,12 @@ describe('browser session replay config', () => {
       stop,
     }
 
+    const startSessionReplay = vi.fn<() => BrowserSessionReplayRuntime>(() => runtime)
     cleanup = configure({
       sessionReplay: {
         load: async () => {
           await loadGate
-          return { startSessionReplay: () => runtime }
+          return { startSessionReplay }
         },
         replayUrl: '/logfire/replay',
       },
@@ -2193,8 +2194,9 @@ describe('browser session replay config', () => {
     releaseLoad()
     await flushPromise
     await stopPromise
-    expect(calls).toEqual(['flush', 'stop'])
-    expect(stop).toHaveBeenCalledTimes(1)
+    // Replay stopped while its package loaded, so the recorder never started.
+    expect(calls).toEqual([])
+    expect(startSessionReplay).not.toHaveBeenCalled()
 
     startSpan('after replay-only stop').end()
     expect(getLatestWebTracerProvider().shutdownCalls).toBe(0)
@@ -2202,7 +2204,7 @@ describe('browser session replay config', () => {
     const firstCleanup = cleanup()
     expect(cleanup()).toBe(firstCleanup)
     await firstCleanup
-    expect(stop).toHaveBeenCalledTimes(1)
+    expect(stop).not.toHaveBeenCalled()
 
     const oldReplay = replay
     const nextStop = vi.fn<() => Promise<void>>(async () => Promise.resolve())
@@ -2224,6 +2226,104 @@ describe('browser session replay config', () => {
     await waitForConfigureMicrotasks()
     await oldReplay?.stop()
     expect(nextStop).not.toHaveBeenCalled()
+  })
+
+  describe('consent-gated replay', () => {
+    function gatedReplay() {
+      let releaseLoad!: () => void
+      const loadGate = new Promise<void>((resolve) => {
+        releaseLoad = resolve
+      })
+      const captureError = vi.fn<(error: unknown) => void>()
+      const stop = vi.fn<(options?: { discard?: boolean }) => Promise<void>>(async () => Promise.resolve())
+      const startSessionReplay = vi.fn<() => BrowserSessionReplayRuntime>(() => ({
+        mode: 'buffer',
+        recording: true,
+        captureError,
+        flush: async () => Promise.resolve(),
+        getSessionId: () => 'browser-session',
+        stop,
+      }))
+      const load = vi.fn<() => Promise<{ startSessionReplay: typeof startSessionReplay }>>(async () => {
+        await loadGate
+        return { startSessionReplay }
+      })
+      return { captureError, load, releaseLoad, startSessionReplay, stop }
+    }
+
+    it('loads nothing and keeps no reported errors until start()', async () => {
+      const replay = gatedReplay()
+      cleanup = configure({
+        sessionReplay: { autoStart: false, load: replay.load, replayUrl: '/logfire/replay' },
+        traceUrl: 'http://localhost:8989/client-traces',
+      })
+      logfireApiConfig.onReportError?.(new Error('before consent'))
+      await waitForConfigureMicrotasks()
+
+      expect(replay.load).not.toHaveBeenCalled()
+      expect(cleanup.sessionReplay?.recording).toBe(false)
+      await cleanup.sessionReplay?.flush()
+
+      const starting = [cleanup.sessionReplay?.start(), cleanup.sessionReplay?.start()]
+      const duringLoad = new Error('during load')
+      logfireApiConfig.onReportError?.(duringLoad)
+      const startedDuringLoad = cleanup.sessionReplay?.start()
+      replay.releaseLoad()
+      await Promise.all([...starting, startedDuringLoad])
+
+      expect(replay.load).toHaveBeenCalledTimes(1)
+      expect(replay.startSessionReplay).toHaveBeenCalledTimes(1)
+      expect(replay.captureError.mock.calls.map(([error]) => (error as { message?: string }).message)).toEqual(['during load'])
+      expect(cleanup.sessionReplay?.recording).toBe(true)
+    })
+
+    it('never attaches the recorder when stop() discards during a lazy start()', async () => {
+      const replay = gatedReplay()
+      cleanup = configure({
+        sessionReplay: { autoStart: false, load: replay.load, replayUrl: '/logfire/replay' },
+        traceUrl: 'http://localhost:8989/client-traces',
+      })
+
+      const started = cleanup.sessionReplay?.start()
+      logfireApiConfig.onReportError?.(new Error('withdrawn'))
+      const stopped = cleanup.sessionReplay?.stop({ discard: true })
+      replay.releaseLoad()
+      await Promise.all([started, stopped])
+      await cleanup.sessionReplay?.start()
+
+      expect(replay.load).toHaveBeenCalledTimes(1)
+      expect(replay.startSessionReplay).not.toHaveBeenCalled()
+      expect(replay.captureError).not.toHaveBeenCalled()
+      expect(cleanup.sessionReplay?.recording).toBe(false)
+    })
+
+    it('forwards a discard to a running replay, also after a graceful stop', async () => {
+      const replay = gatedReplay()
+      replay.releaseLoad()
+      cleanup = configure({
+        sessionReplay: { load: replay.load, replayUrl: '/logfire/replay' },
+        traceUrl: 'http://localhost:8989/client-traces',
+      })
+      await cleanup.sessionReplay?.start()
+      expect(replay.startSessionReplay).toHaveBeenCalledTimes(1)
+
+      let finishGraceful!: () => void
+      replay.stop.mockImplementationOnce(
+        async () =>
+          new Promise<void>((resolve) => {
+            finishGraceful = resolve
+          })
+      )
+      const graceful = cleanup.sessionReplay?.stop()
+      await vi.waitFor(() => {
+        expect(replay.stop).toHaveBeenCalledTimes(1)
+      })
+      const discarding = cleanup.sessionReplay?.stop({ discard: true })
+
+      expect(replay.stop.mock.calls).toEqual([[], [{ discard: true }]])
+      finishGraceful()
+      await Promise.all([graceful, discarding])
+    })
   })
 
   it('keeps the replay facade safe when lazy startup fails', async () => {
