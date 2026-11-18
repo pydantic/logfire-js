@@ -177,9 +177,10 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
     recordsElementId: (elementId) => {
       try {
         const target = document.getElementById(elementId)
-        // rrweb records no child of a blocked element and drops a blocked element's own `id`.
+        // rrweb records no child of a blocked element and drops a blocked element's own `id`. It
+        // keeps metadata with a negative id for a node that slimDOM leaves out, such as a script.
         const meta = target === null ? null : record.mirror.getMeta(target)
-        return meta !== null && 'attributes' in meta && meta.attributes['id'] === elementId
+        return meta !== null && meta.id >= 0 && 'attributes' in meta && meta.attributes['id'] === elementId
       } catch {
         return false
       }

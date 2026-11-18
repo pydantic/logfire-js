@@ -192,22 +192,25 @@ describe('same-document references through rrweb serialization', () => {
       '<use id="nested" href="#patient-123-45-6789"></use><use id="self" href="#blocked-self"></use></svg>',
       '<div data-private><span id="jane-doe"></span></div>',
       '<a id="selector" href="#jane-doe">Jane</a><a id="missing" href="#not-on-page">Missing</a><a id="top" href="#">Top</a>',
+      '<script type="application/json" id="patient-987-65-4321">{}</script><a id="ignored" href="#patient-987-65-4321">Ignored</a>',
     ].join('')
     const events = record({ blockSelector: '[data-private]' })
 
     const snapshot = events.find((event) => event.type === EventType.FullSnapshot)
-    expect(['nested', 'self', 'selector', 'missing', 'top'].map((id) => attributesOf(snapshot?.data, id))).toEqual([
+    expect(['nested', 'self', 'selector', 'missing', 'top', 'ignored'].map((id) => attributesOf(snapshot?.data, id))).toEqual([
       { id: 'nested', href: 'http://localhost:3000/page' },
       { id: 'self', href: 'http://localhost:3000/page' },
       { id: 'selector', href: 'http://localhost:3000/page' },
       { id: 'missing', href: 'http://localhost:3000/page' },
       { id: 'top', href: 'http://localhost:3000/page' },
+      { id: 'ignored', href: 'http://localhost:3000/page' },
     ])
 
     const mutations = await mutationAttributes(events, () => {
       document.getElementById('nested')?.setAttribute('href', '#blocked-self')
+      document.getElementById('top')?.setAttribute('href', '#patient-987-65-4321')
     })
-    expect(mutations).toEqual([{ href: 'http://localhost:3000/page' }])
+    expect(mutations).toEqual([{ href: 'http://localhost:3000/page' }, { href: 'http://localhost:3000/page' }])
   })
 })
 
