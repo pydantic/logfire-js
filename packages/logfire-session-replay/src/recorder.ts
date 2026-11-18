@@ -1,6 +1,15 @@
 import { record } from '@rrweb/record'
 
-import { cutText, isElementIdReference, mayReferenceCssUrl, redactSrcset, redactUrl, redactUrlsInText, truncationSuffix } from './privacy'
+import {
+  cutText,
+  isElementIdReference,
+  mayReferenceCssUrl,
+  redactSrcset,
+  redactUrl,
+  redactUrlsInText,
+  sameDocumentFragment,
+  truncationSuffix,
+} from './privacy'
 import type { UrlTransform } from './privacy'
 import { markSdkInternalError } from './sdkInternalError'
 import { CustomTag, EventType, IncrementalSource } from './types'
@@ -325,10 +334,18 @@ function sanitizeAttribute(name: string, value: unknown, options: SanitizeOption
   if (typeof value !== 'string') {
     return value
   }
-  if (ELEMENT_REFERENCE_ATTRIBUTE_NAMES.has(name) && isElementIdReference(value)) {
-    // Resolving `#icon` against the page and removing the fragment leaves the page URL, so SVG
-    // sprite icons render blank. Only the pattern step is skipped; `transformUrl` still applies.
-    return redactUrl(value, [], window.location.href, options.transformUrl)
+  if (ELEMENT_REFERENCE_ATTRIBUTE_NAMES.has(name)) {
+    if (isElementIdReference(value)) {
+      // Resolving `#icon` against the page and removing the fragment leaves the page URL, so SVG
+      // sprite icons render blank. Only the pattern step is skipped; `transformUrl` still applies.
+      return redactUrl(value, [], window.location.href, options.transformUrl)
+    }
+    const fragment = sameDocumentFragment(value, window.location.href)
+    if (fragment !== undefined) {
+      // The page part is redacted as usual, so a query on the page URL is still removed.
+      const redacted = redact(value)
+      return redacted.includes('#') ? redacted : `${redacted}${fragment}`
+    }
   }
   if (URL_ATTRIBUTE_NAMES.has(name)) {
     return redact(value)

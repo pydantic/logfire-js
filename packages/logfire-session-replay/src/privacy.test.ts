@@ -8,6 +8,7 @@ import {
   redactSrcset,
   redactUrl,
   redactUrlsInText,
+  sameDocumentFragment,
   truncateText,
 } from './privacy'
 
@@ -91,6 +92,29 @@ describe('isElementIdReference', () => {
       '##icon',
     ]
     expect(values.map(isElementIdReference)).toEqual(values.map(() => false))
+  })
+})
+
+describe('sameDocumentFragment', () => {
+  const pageUrl = 'https://app.example.test/current/page?tab=1#top'
+
+  it('returns the element id fragment of a URL that points into the page', () => {
+    expect(sameDocumentFragment('https://app.example.test/current/page?tab=1#section-2', pageUrl)).toBe('#section-2')
+    expect(sameDocumentFragment('#section-2', pageUrl)).toBe('#section-2')
+  })
+
+  it('returns nothing for other documents, route-like fragments, and no fragment', () => {
+    const values = [
+      'https://app.example.test/current/page#section-2',
+      'https://app.example.test/other#section-2',
+      'https://other.example.test/current/page?tab=1#section-2',
+      'https://app.example.test/current/page?tab=1#/reset?token=secret',
+      'https://app.example.test/current/page?tab=1#access_token=secret',
+      'https://app.example.test/current/page?tab=1#',
+      'https://app.example.test/current/page?tab=1',
+      'https://[invalid]#section',
+    ]
+    expect(values.map((value) => sameDocumentFragment(value, pageUrl))).toEqual(values.map(() => undefined))
   })
 })
 

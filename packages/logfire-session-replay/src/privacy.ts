@@ -23,6 +23,23 @@ export function isElementIdReference(value: string): boolean {
   return ELEMENT_ID_REFERENCE_PATTERN.test(value)
 }
 
+/**
+ * The element id fragment of `url` when it points into the page at `pageUrl`. rrweb keeps `#icon`
+ * as written only on SVG `<use>`; it resolves an anchor's `#section` against the page first.
+ */
+export function sameDocumentFragment(url: string, pageUrl: string): string | undefined {
+  try {
+    const target = new URL(url, pageUrl)
+    const page = new URL(pageUrl)
+    const fragment = target.hash
+    target.hash = ''
+    page.hash = ''
+    return fragment !== '' && target.href === page.href && isElementIdReference(fragment) ? fragment : undefined
+  } catch {
+    return undefined
+  }
+}
+
 // A failing transform keeps the built-in result, so a bug in it never restores a stripped query.
 function applyUrlTransform(url: string, transformUrl: UrlTransform): string {
   try {
