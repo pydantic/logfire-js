@@ -863,11 +863,14 @@ restrictive Content Security Policy blocks the compressor worker. The fallback
 preserves the batch and is remembered for the active replay controller, but it
 may briefly use the main thread.
 
-Replay masks all rendered text and input values by default, leaves console
+Replay masks all rendered text, input values, and images by default, leaves console
 capture off, and removes query strings and fragments from captured page,
 fetch/XHR, and navigation URLs. Network and navigation capture remain enabled.
 These defaults are inherited when the corresponding browser options are
 omitted.
+
+Image masking (`maskAllImages`) follows `maskAllText` unless it is set
+explicitly, and replaces image sources with a placeholder before upload.
 
 Use `blockSelector` to omit a subtree. Set `maskAllText: false` only when
 visible text recording is acceptable; `maskTextSelector` can then selectively
