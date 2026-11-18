@@ -11,21 +11,26 @@ type RrwebRecordFunction = typeof RrwebRecord<RrwebEvent>
 type RrwebRecordOptions = NonNullable<Parameters<RrwebRecordFunction>[0]>
 type RrwebRecordCall = (...args: Parameters<RrwebRecordFunction>) => ReturnType<RrwebRecordFunction>
 
-const { record, stopFn } = vi.hoisted(() => {
+const { record, stopFn, mirrorNodes } = vi.hoisted(() => {
   const stopFn = vi.fn<() => void>()
+  const mirrorNodes = new Map<number, Node>()
   const record = Object.assign(
     vi.fn<RrwebRecordCall>(() => stopFn),
     {
       addCustomEvent: vi.fn<typeof RrwebRecord.addCustomEvent>(),
       takeFullSnapshot: vi.fn<typeof RrwebRecord.takeFullSnapshot>(),
+      mirror: {
+        getNode: (id: number) => mirrorNodes.get(id) ?? null,
+        getId: (node: Node) => [...mirrorNodes].find(([, candidate]) => candidate === node)?.[0] ?? -1,
+      },
     }
   )
-  return { record, stopFn }
+  return { record, stopFn, mirrorNodes }
 })
 
 vi.mock('@rrweb/record', () => ({ record }))
 
-import { startRecording } from './recorder'
+import { MASKED_IMAGE_SOURCE, sizedImagePlaceholder, startRecording } from './recorder'
 import type { RecorderOptions } from './recorder'
 import { CustomTag, EventType, IncrementalSource } from './types'
 
@@ -66,6 +71,281 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks()
+  mirrorNodes.clear()
+})
+
+function element(type: string, attributes: Record<string, unknown>, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return { type: 2, tagName: type, attributes, childNodes: [], ...extra }
+}
+
+function imageNode(id: number, state: { complete: boolean; naturalWidth?: number; naturalHeight?: number }): HTMLImageElement {
+  const image = document.createElement('img')
+  setImageState(image, state)
+  mirrorNodes.set(id, image)
+  return image
+}
+
+function setImageState(image: HTMLImageElement, state: { complete: boolean; naturalWidth?: number; naturalHeight?: number }): void {
+  Object.defineProperty(image, 'complete', { configurable: true, value: state.complete })
+  Object.defineProperty(image, 'naturalWidth', { configurable: true, value: state.naturalWidth ?? 0 })
+  Object.defineProperty(image, 'naturalHeight', { configurable: true, value: state.naturalHeight ?? 0 })
+}
+
+function finishLoading(image: HTMLImageElement, naturalWidth: number, naturalHeight: number): void {
+  setImageState(image, { complete: true, naturalHeight, naturalWidth })
+  image.dispatchEvent(new Event('load'))
+}
+
+describe('image masking', () => {
+  function record(maskAllImages: boolean, events: RrwebEvent[], options: Partial<RecorderOptions> = {}): RrwebEvent[] {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({ emit: (event) => emitted.push(event), maskAllImages, redactUrlPatterns: [/.+/u], ...options })
+    for (const event of events) {
+      emitFromRrweb(event)
+    }
+    return emitted
+  }
+
+  it('replaces every image source in a full snapshot with a placeholder of the natural size', () => {
+    imageNode(1, { complete: true, naturalWidth: 120, naturalHeight: 80 })
+    imageNode(4, { complete: true, naturalWidth: 640, naturalHeight: 360 })
+    const snapshot = {
+      type: EventType.FullSnapshot,
+      data: {
+        node: element(
+          'div',
+          { style: 'background-image: url(/me.png)', class: 'card' },
+          {
+            id: 9,
+            childNodes: [
+              element(
+                'img',
+                { src: '/avatar.png?u=1', srcset: '/a.png 1x, /b.png 2x', sizes: '100vw', width: '120', class: 'avatar' },
+                { id: 1 }
+              ),
+              element(
+                'picture',
+                {},
+                {
+                  id: 2,
+                  childNodes: [
+                    element('source', { srcset: '/hero.avif', type: 'image/avif' }, { id: 3 }),
+                    element('img', { alt: '' }, { id: 4 }),
+                  ],
+                }
+              ),
+              element(
+                'svg',
+                { viewBox: '0 0 10 10' },
+                {
+                  id: 5,
+                  isSVG: true,
+                  childNodes: [
+                    element('image', { href: '/a.svg', 'xlink:href': '/b.svg', width: '10' }, { id: 6, isSVG: true }),
+                    element('feImage', { href: '/filter.png' }, { id: 7, isSVG: true }),
+                    element('use', { href: '/sprite.svg' }, { id: 8, isSVG: true }),
+                  ],
+                }
+              ),
+              element('video', { poster: '/poster.jpg', src: '/movie.mp4' }, { id: 10 }),
+              element('input', { type: 'image', src: '/submit.png' }, { id: 11 }),
+              element('input', { type: 'text', src: '/ignored.png' }, { id: 12 }),
+              element('link', { rel: 'preload', as: 'image', href: '/lcp.png', imagesrcset: '/lcp.png 1x' }, { id: 13 }),
+              element('link', { rel: 'stylesheet', href: '/app.css' }, { id: 14 }),
+              element('td', { background: '/cell.png' }, { id: 15 }),
+              element('a', { href: '/orders' }, { id: 16 }),
+              element('img', { src: '' }, { id: 17 }),
+              element('img', { srcset: '/only.png 1x' }, { id: 18 }),
+            ],
+          }
+        ),
+        initialOffset: { left: 0, top: 0 },
+      },
+      timestamp: 1,
+    } satisfies RrwebEvent
+
+    const [emitted] = record(true, [snapshot])
+
+    expect(emitted).toEqual({
+      ...snapshot,
+      data: {
+        node: element(
+          'div',
+          { style: '', class: 'card' },
+          {
+            id: 9,
+            childNodes: [
+              element('img', { src: sizedImagePlaceholder(120, 80), srcset: '', sizes: '100vw', width: '120', class: 'avatar' }, { id: 1 }),
+              element(
+                'picture',
+                {},
+                {
+                  id: 2,
+                  childNodes: [
+                    element('source', { srcset: '', type: 'image/avif' }, { id: 3 }),
+                    element('img', { alt: '', src: sizedImagePlaceholder(640, 360) }, { id: 4 }),
+                  ],
+                }
+              ),
+              element(
+                'svg',
+                { viewBox: '0 0 10 10' },
+                {
+                  id: 5,
+                  isSVG: true,
+                  childNodes: [
+                    element('image', { href: MASKED_IMAGE_SOURCE, 'xlink:href': MASKED_IMAGE_SOURCE, width: '10' }, { id: 6, isSVG: true }),
+                    element('feImage', { href: MASKED_IMAGE_SOURCE }, { id: 7, isSVG: true }),
+                    element('use', { href: 'http://localhost:3000/sprite.svg' }, { id: 8, isSVG: true }),
+                  ],
+                }
+              ),
+              element('video', { poster: '', src: 'http://localhost:3000/movie.mp4' }, { id: 10 }),
+              element('input', { type: 'image', src: MASKED_IMAGE_SOURCE }, { id: 11 }),
+              element('input', { type: 'text', src: 'http://localhost:3000/ignored.png' }, { id: 12 }),
+              element('link', { rel: 'preload', as: 'image', href: MASKED_IMAGE_SOURCE, imagesrcset: '' }, { id: 13 }),
+              element('link', { rel: 'stylesheet', href: 'http://localhost:3000/app.css' }, { id: 14 }),
+              element('td', { background: '' }, { id: 15 }),
+              element('a', { href: 'http://localhost:3000/orders' }, { id: 16 }),
+              element('img', { src: MASKED_IMAGE_SOURCE }, { id: 17 }),
+              element('img', { srcset: '', src: MASKED_IMAGE_SOURCE }, { id: 18 }),
+            ],
+          }
+        ),
+        initialOffset: { left: 0, top: 0 },
+      },
+    })
+  })
+
+  it('replaces image sources in added nodes and attribute mutations', () => {
+    imageNode(20, { complete: false })
+    imageNode(21, { complete: true, naturalWidth: 50, naturalHeight: 50 })
+    mirrorNodes.set(22, document.createElementNS('http://www.w3.org/2000/svg', 'image'))
+    mirrorNodes.set(23, document.createElement('a'))
+    const liveInput = document.createElement('input')
+    liveInput.type = 'image'
+    mirrorNodes.set(24, liveInput)
+    imageNode(26, { complete: true, naturalWidth: 10, naturalHeight: 20 })
+    imageNode(27, { complete: true, naturalWidth: 10, naturalHeight: 20 })
+    const mutation = {
+      type: EventType.IncrementalSnapshot,
+      data: {
+        source: IncrementalSource.Mutation,
+        adds: [{ parentId: 1, nextId: null, node: element('img', { src: '/new.png', srcset: '/new@2x.png 2x' }, { id: 20 }) }],
+        attributes: [
+          { id: 21, attributes: { src: '/changed.png', srcset: '/changed@2x.png 2x', alt: null } },
+          { id: 22, attributes: { href: '/changed.svg', 'xlink:href': '/legacy.svg' } },
+          { id: 23, attributes: { href: '/next' } },
+          { id: 24, attributes: { src: '/go.png' } },
+          { id: 99, attributes: { src: '/unknown.png', href: '/unknown' } },
+          { id: 25, attributes: { poster: '/poster.png', style: { 'background-image': 'url(/bg.png)', color: 'red' } } },
+          { id: 26, attributes: { srcset: '/wide.png 2x' } },
+          { id: 27, attributes: { class: 'selected' } },
+        ],
+        removes: [],
+        texts: [],
+      },
+      timestamp: 2,
+    } satisfies RrwebEvent
+
+    const [emitted] = record(true, [mutation])
+
+    expect(emitted).toEqual({
+      ...mutation,
+      data: {
+        ...mutation.data,
+        adds: [{ parentId: 1, nextId: null, node: element('img', { src: MASKED_IMAGE_SOURCE, srcset: '' }, { id: 20 }) }],
+        attributes: [
+          { id: 21, attributes: { src: sizedImagePlaceholder(50, 50), srcset: '', alt: null } },
+          { id: 22, attributes: { href: MASKED_IMAGE_SOURCE, 'xlink:href': MASKED_IMAGE_SOURCE } },
+          { id: 23, attributes: { href: 'http://localhost:3000/next' } },
+          { id: 24, attributes: { src: MASKED_IMAGE_SOURCE } },
+          { id: 99, attributes: { src: MASKED_IMAGE_SOURCE, href: 'http://localhost:3000/unknown' } },
+          { id: 25, attributes: { poster: '', style: { 'background-image': '', color: 'red' } } },
+          { id: 26, attributes: { srcset: '', src: sizedImagePlaceholder(10, 20) } },
+          { id: 27, attributes: { class: 'selected' } },
+        ],
+      },
+    })
+  })
+
+  it('sends a sized placeholder once a masked image loads, and forgets images removed before they load', () => {
+    const added = imageNode(30, { complete: false })
+    // A provisional size, such as one from alt text, does not stop the image from being sized on load.
+    added.getBoundingClientRect = () => ({ width: 200, height: 16 }) as DOMRect
+    const changed = imageNode(31, { complete: false })
+    const broken = imageNode(32, { complete: false })
+    const removed = imageNode(33, { complete: false })
+    const afterStop = imageNode(34, { complete: false })
+    for (const image of [added, changed, broken, removed, afterStop]) {
+      document.body.append(image)
+    }
+    const emitted: RrwebEvent[] = []
+    const recorder = startRecordingForTest({
+      emit: (event) => {
+        emitted.push(event)
+      },
+      maskAllImages: true,
+    })
+    emitFromRrweb({
+      type: EventType.IncrementalSnapshot,
+      data: {
+        source: IncrementalSource.Mutation,
+        adds: [30, 32, 33, 34].map((id) => ({ parentId: 1, nextId: null, node: element('img', { src: `/${String(id)}.png` }, { id }) })),
+        attributes: [{ id: 31, attributes: { src: '/next.png' } }],
+      },
+      timestamp: 1,
+    })
+    removed.remove()
+    emitFromRrweb({
+      type: EventType.IncrementalSnapshot,
+      data: { source: IncrementalSource.Mutation, adds: [], attributes: [], removes: [{ parentId: 1, id: 33 }], texts: [] },
+      timestamp: 2,
+    })
+    emitted.length = 0
+
+    finishLoading(added, 200, 100)
+    added.dispatchEvent(new Event('load'))
+    finishLoading(changed, 64, 48)
+    broken.dispatchEvent(new Event('error'))
+    finishLoading(broken, 16, 16)
+    finishLoading(removed, 8, 8)
+    recorder.stop()
+    finishLoading(afterStop, 10, 10)
+
+    expect(emitted.map((event) => (event.data as { attributes: unknown }).attributes)).toEqual([
+      [{ id: 30, attributes: { src: sizedImagePlaceholder(200, 100) } }],
+      [{ id: 31, attributes: { src: sizedImagePlaceholder(64, 48) } }],
+    ])
+    expect(emitted.every((event) => event.type === EventType.IncrementalSnapshot)).toBe(true)
+    document.body.replaceChildren()
+  })
+
+  it('removes styles that could load an image even when URL redaction is off', () => {
+    const snapshot = {
+      type: EventType.FullSnapshot,
+      data: { node: element('div', { style: 'background: url(/bg.png)' }, { id: 1 }) },
+      timestamp: 1,
+    } satisfies RrwebEvent
+
+    const [masked] = record(true, [snapshot], { redactUrlPatterns: [] })
+    const [unmasked] = record(false, [snapshot], { redactUrlPatterns: [] })
+
+    expect(masked).toEqual({ ...snapshot, data: { node: element('div', { style: '' }, { id: 1 }) } })
+    expect(unmasked).toBe(snapshot)
+  })
+
+  it('keeps image sources when image masking is off', () => {
+    const snapshot = {
+      type: EventType.FullSnapshot,
+      data: { node: element('img', { src: '/a.png', srcset: '/a.png 1x' }, { id: 1 }) },
+      timestamp: 1,
+    } satisfies RrwebEvent
+
+    const [emitted] = record(false, [snapshot], { redactUrlPatterns: [] })
+
+    expect(emitted).toBe(snapshot)
+  })
 })
 
 describe('startRecording', () => {

@@ -154,3 +154,65 @@ describe('same-document references through rrweb serialization', () => {
     ])
   })
 })
+
+describe('image masking with rrweb', () => {
+  function collectStrings(value: unknown, into: string[] = []): string[] {
+    if (typeof value === 'string') {
+      into.push(value)
+    } else if (Array.isArray(value)) {
+      for (const item of value) {
+        collectStrings(item, into)
+      }
+    } else if (typeof value === 'object' && value !== null) {
+      for (const item of Object.values(value)) {
+        collectStrings(item, into)
+      }
+    }
+    return into
+  }
+
+  it('uploads no recorded image URL from snapshots or mutations', async () => {
+    document.body.innerHTML = `
+      <img id="avatar" src="/users/jane/avatar.png" srcset="/users/jane/avatar@2x.png 2x">
+      <picture><source srcset="/users/jane/hero.avif"><img src="/users/jane/hero.jpg"></picture>
+      <svg><image href="/users/jane/a.svg"></image><image xlink:href="/users/jane/b.svg"></image></svg>
+      <video poster="/users/jane/poster.jpg"></video>
+      <div style="background-image: url(/users/jane/bg.png)"></div>`
+    const events: RrwebEvent[] = []
+    const recorder = startRecording({
+      emit: (event) => {
+        events.push(event)
+      },
+      maskAllImages: true,
+      maskAllInputs: true,
+      maskAllText: true,
+      redactUrlPatterns: [],
+    })
+    stopRecording = () => {
+      recorder.stop()
+    }
+
+    document.querySelector('#avatar')?.setAttribute('src', '/users/jane/changed.png')
+    const added = document.createElement('img')
+    added.src = '/users/jane/added.png'
+    document.body.append(added)
+    // rrweb delivers mutation records from a MutationObserver callback.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0)
+    })
+
+    const types = events.map((event) => event.type)
+    expect(types).toContain(EventType.FullSnapshot)
+    expect(
+      events.some(
+        (event) =>
+          event.type === EventType.IncrementalSnapshot &&
+          typeof event.data === 'object' &&
+          event.data !== null &&
+          'source' in event.data &&
+          event.data.source === IncrementalSource.Mutation
+      )
+    ).toBe(true)
+    expect(collectStrings(events).filter((text) => text.includes('/users/jane'))).toEqual([])
+  })
+})

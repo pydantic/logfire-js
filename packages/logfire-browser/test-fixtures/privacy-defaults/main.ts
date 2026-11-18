@@ -99,6 +99,22 @@ async function run(): Promise<void> {
   hiddenInput.value = 'hidden-event-secret'
   image.setAttribute('title', 'title-mutation-secret')
   image.style.backgroundImage = "url('/api/image?mutation_style_secret=visible')"
+  image.setAttribute('src', '/api/image?mutation_src_secret=visible')
+  // Images added before they load have no natural size to record yet. One gets its source from
+  // `srcset` alone, at 2x density.
+  image.insertAdjacentHTML(
+    'afterend',
+    '<img id="late-image" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAIAAADwyuo0AAAAEElEQVR42mM4IScHRwzIHABvCggh7qR9+QAAAABJRU5ErkJggg=="><img id="srcset-image" srcset="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAIAAADwyuo0AAAAEElEQVR42mM4IScHRwzIHABvCggh7qR9+QAAAABJRU5ErkJggg== 2x">'
+  )
+  const lateImage = document.querySelector<HTMLImageElement>('#late-image')
+  const srcsetImage = document.querySelector<HTMLImageElement>('#srcset-image')
+  if (lateImage === null || srcsetImage === null) {
+    throw new Error('missing late images')
+  }
+  await Promise.all([lateImage.decode(), srcsetImage.decode()])
+  await delay(50)
+  // Playback must follow a later size change rather than keep the recorded size.
+  lateImage.setAttribute('width', '8')
   await delay(50)
 
   console.warn('privacy-console-secret', { scenario })

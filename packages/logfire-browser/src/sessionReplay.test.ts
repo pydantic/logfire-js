@@ -180,6 +180,7 @@ describe('startBrowserSessionReplay', () => {
         headers,
         ignoreUrlPatterns: [/\/custom-ignore/u],
         load: () => replayModule,
+        maskAllImages: true,
         maskAllInputs: false,
         maskAllText: false,
         maskTextSelector: '.secret',
@@ -213,6 +214,7 @@ describe('startBrowserSessionReplay', () => {
       flushIntervalMs: 2_000,
       getDistinctId,
       headers,
+      maskAllImages: true,
       maskAllInputs: false,
       maskAllText: false,
       maskTextSelector: '.secret',
@@ -448,6 +450,7 @@ describe('startBrowserSessionReplay', () => {
     )
 
     expect(replayConfig).not.toHaveProperty('maskAllText')
+    expect(replayConfig).not.toHaveProperty('maskAllImages')
     expect(replayConfig).not.toHaveProperty('maskTextSelector')
     expect(replayConfig).not.toHaveProperty('redactUrlPatterns')
     expect(replayConfig).not.toHaveProperty('transformUrl')
