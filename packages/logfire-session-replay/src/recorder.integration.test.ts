@@ -146,7 +146,7 @@ describe('same-document references through rrweb serialization', () => {
   }
 
   const PAGE = [
-    '<h2 id="section-2">Two</h2><h2 id="section-3">Three</h2>',
+    '<h2 id="section-2">Two</h2><h2 id="section-3">Three</h2><h2 class="later">Four</h2>',
     '<a id="anchor" href="#section-2">Section</a>',
     '<a id="route" href="#/reset-password?token=secret">Reset</a>',
     '<svg><symbol id="icon-home"></symbol><use id="icon" href="#icon-home"></use></svg>',
@@ -164,8 +164,14 @@ describe('same-document references through rrweb serialization', () => {
 
     const mutations = await mutationAttributes(events, () => {
       document.getElementById('anchor')?.setAttribute('href', '#section-3')
+      document.querySelector('.later')?.setAttribute('id', 'section-4')
+      document.getElementById('route')?.setAttribute('href', '#section-4')
     })
-    expect(mutations).toEqual([{ href: 'http://localhost:3000/page#section-3' }])
+    expect(mutations).toEqual([
+      { href: 'http://localhost:3000/page#section-3' },
+      { id: 'section-4' },
+      { href: 'http://localhost:3000/page#section-4' },
+    ])
   })
 
   it('uses the URL transform result as is for kept references', async () => {

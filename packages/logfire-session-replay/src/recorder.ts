@@ -177,10 +177,15 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
     recordsElementId: (elementId) => {
       try {
         const target = document.getElementById(elementId)
-        // rrweb records no child of a blocked element and drops a blocked element's own `id`. It
-        // keeps metadata with a negative id for a node that slimDOM leaves out, such as a script.
-        const meta = target === null ? null : record.mirror.getMeta(target)
-        return meta !== null && meta.id >= 0 && 'attributes' in meta && meta.attributes['id'] === elementId
+        if (target === null || isBlockedElement(target, options.blockSelector)) {
+          return false
+        }
+        // rrweb records no child of a blocked element, and keeps metadata with a negative id for a
+        // node that slimDOM leaves out, such as a script. A blocked element is recorded with only
+        // its size, in `rr_width`. The metadata keeps the attributes from when the node was
+        // recorded, so an `id` set later is not checked against it.
+        const meta = record.mirror.getMeta(target)
+        return meta !== null && meta.id >= 0 && 'attributes' in meta && !('rr_width' in meta.attributes)
       } catch {
         return false
       }
@@ -526,6 +531,13 @@ function keptElementReference(value: string, options: SanitizeOptions): string |
   // The page part goes through the patterns as usual, so a query on the page URL is still removed.
   const page = redactUrl(value, options.patterns, baseUrl)
   return page.includes('#') ? page : `${page}${fragment}`
+}
+
+// Mirrors rrweb's check for the default `rr-block` class and `blockSelector`.
+function isBlockedElement(element: Element, blockSelector: string | undefined): boolean {
+  return (
+    element.classList.contains('rr-block') || (blockSelector !== undefined && blockSelector.length > 0 && element.matches(blockSelector))
+  )
 }
 
 function describeElement(node: Record<string, unknown>, attributes: unknown, options: SanitizeOptions): ElementContext | undefined {
