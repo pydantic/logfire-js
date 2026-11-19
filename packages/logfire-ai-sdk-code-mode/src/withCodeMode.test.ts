@@ -329,6 +329,37 @@ describe('withCodeMode', () => {
     })
   })
 
+  test('closes the session when a stream is aborted after running code', async () => {
+    const sandboxes = new TrackingSandboxes()
+    const controller = new AbortController()
+    let step = 0
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        step += 1
+        if (step > 1) {
+          controller.abort()
+          return Promise.reject(new DOMException('aborted', 'AbortError'))
+        }
+        return Promise.resolve({
+          stream: new ReadableStream({
+            start(streamController) {
+              streamController.enqueue(runCodeCall('call', '1 + 1'))
+              streamController.enqueue({ type: 'finish', ...finish('tool-calls') })
+              streamController.close()
+            },
+          }),
+        })
+      },
+    })
+    const agent = withCodeMode({ model, stopWhen: stepCountIs(3) }, { tools: {}, sandboxes })
+
+    const result = await agent.stream({ prompt: 'go', abortSignal: controller.signal })
+    await result.consumeStream()
+    await vi.waitFor(() => {
+      expect([sandboxes.checkouts, sandboxes.closedSessions]).toEqual([1, 1])
+    })
+  })
+
   test('does not run code through the run_code listed in agent.tools', async () => {
     const sandboxes = new TrackingSandboxes()
     const agent = withCodeMode({ model: oneSnippetModel('1') }, { tools: {}, sandboxes })
