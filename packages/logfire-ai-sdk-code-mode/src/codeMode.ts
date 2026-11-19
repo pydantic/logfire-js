@@ -67,8 +67,9 @@ export interface CodeModeOptions<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknow
    * Monty's clock, time zone, sleep and randomness settings, merged key by key over the default, which has no clock
    * or randomness and waits for sleeps on the host (pydantic-ai's policy). For example, `{ datetime: 'system',
    * randomStart: 'system' }` gives code the sandbox's clock and random seeding. The `run_code` description says
-   * whether code has a clock and whether sleeps wait. With `sleep: 'system'`, the sandbox waits instead of the host,
-   * and the total sleep in one snippet is capped at `limits.timeout`.
+   * whether code has a clock and whether sleeps wait. With `sleep: 'system'`, the sandbox waits instead of the host:
+   * each sleep stops at `sleepSystemMax` (10 seconds by default), and sleeps in one snippet that add up to more than
+   * `limits.timeout` raise `TimeoutError`.
    */
   osPolicy?: OsPolicy
   /**

@@ -2,7 +2,7 @@ import { Monty } from '@pydantic/monty'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 
 import { codeMode } from './codeMode'
-import { CountingSandboxes, runCode } from './testing'
+import { CountingSandboxes, runCode, runCodeError } from './testing'
 
 let pool: Monty
 
@@ -41,6 +41,28 @@ describe('osPolicy', () => {
     expect(counted.checkouts[0]?.limits?.maxTotalSleepSecs).toBeUndefined()
   })
 
+  test('fails clock and random calls by default', async () => {
+    await using code = codeMode({ tools: {}, sandboxes: new CountingSandboxes(pool), typeCheck: 'off' })
+
+    expect(await runCodeError(code, { code: 'import datetime\ndatetime.datetime.now()' })).toContain(
+      "RuntimeError: 'datetime.now' is not supported in this environment"
+    )
+    expect(await runCodeError(code, { code: 'import random\nrandom.random()' })).toContain(
+      "RuntimeError: 'os.urandom' is not supported in this environment"
+    )
+  })
+
+  test("gives code the sandbox's clock and randomness with 'system'", async () => {
+    await using code = codeMode({
+      tools: {},
+      sandboxes: new CountingSandboxes(pool),
+      osPolicy: { datetime: 'system', randomStart: 'system' },
+    })
+
+    expect(await runCode(code, { code: 'import datetime\ndatetime.date.today().year' })).toBe(new Date().getUTCFullYear())
+    expect(await runCode(code, { code: 'import random\n0 <= random.random() < 1' })).toBe(true)
+  })
+
   test('gives code the configured clock and random seeding', async () => {
     const counted = new CountingSandboxes(pool)
     const osPolicy = { datetime: new Date('2020-05-01T12:00:00Z'), randomStart: { seed: 7n } }
@@ -75,5 +97,6 @@ describe('osPolicy', () => {
 
     expect(await runCode(code, { code: 'import time\ntime.sleep(0.01)\n1' })).toBe(1)
     expect(counted.checkouts[0]?.limits?.maxTotalSleepSecs).toBe(4)
+    expect(await runCodeError(code, { code: 'import time\ntime.sleep(5)\n1' })).toContain('TimeoutError: sleep limit exceeded: 5.01s > 4s')
   })
 })
