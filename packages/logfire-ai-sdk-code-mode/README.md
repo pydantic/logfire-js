@@ -41,6 +41,9 @@ export async function askAgent(model: LanguageModel, prompt: string): Promise<st
 from. Create one `codeMode()` object per agent run: it is one sandbox session, kept like a REPL for every `run_code`
 call in that run.
 
+To define a `ToolLoopAgent` once and reuse it, use `withCodeMode(agentSettings, codeModeOptions)`. It gives each
+`generate()` or `stream()` call its own sandbox session and closes it when the call ends.
+
 See the [Agent Sandboxes docs](https://github.com/pydantic/logfire-js/blob/main/docs/agent-sandboxes.md#use-with-the-vercel-ai-sdk)
 for streaming, approval, tool context, limits, and error handling.
 

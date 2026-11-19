@@ -183,6 +183,25 @@ options:
 If you pass your own `sandboxes`, set its `requestTimeout`, which Monty takes in seconds, above `limits.timeout`, so that a long snippet gets the
 time-limit message instead of a dropped connection. `codeMode()` does this for the pool it creates.
 
+To define an agent once and call it for each request, use `withCodeMode()`. It takes the `ToolLoopAgent` settings and
+the `codeMode()` options, and returns a `ToolLoopAgent` whose model gets `run_code` next to the agent's direct tools:
+
+```ts
+import { withCodeMode } from '@pydantic/logfire-ai-sdk-code-mode'
+import { stepCountIs } from 'ai'
+
+const agent = withCodeMode({ model, stopWhen: stepCountIs(10) }, { tools: { get_weather: getWeather } })
+
+const { text } = await agent.generate({ prompt })
+```
+
+Each `generate()` or `stream()` call gets its own sandbox session and closes it when the call ends, including on error
+and abort, so Python state lasts for one call. A run that pauses for a tool approval resumes in a new call, with a fresh
+session. The agent works with `createAgentUIStreamResponse()`, and earlier `run_code` results in the conversation
+history reach the model the same way as with `codeMode()`. Without `sandboxes`, the agent creates one
+`agentSandboxes()` pool on first use and shares it across calls; close it with `await agent.close()` when your
+application shuts down.
+
 [`examples/agent-sandboxes-ai-sdk`](https://github.com/pydantic/logfire-js/tree/main/examples/agent-sandboxes-ai-sdk)
 is a complete agent over a larger data set, with a smoke test.
 
