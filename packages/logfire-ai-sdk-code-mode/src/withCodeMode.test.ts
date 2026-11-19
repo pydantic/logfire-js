@@ -1,5 +1,6 @@
-import type { MontySession, RemoteCheckoutOptions } from '@pydantic/monty'
+import type { MontyRemote, MontySession, RemoteCheckoutOptions } from '@pydantic/monty'
 
+import { agentSandboxes } from '@pydantic/logfire-agent-sandboxes'
 import { Monty } from '@pydantic/monty'
 import { convertToModelMessages, createAgentUIStream, stepCountIs, tool } from 'ai'
 import { MockLanguageModelV4 } from 'ai/test'
@@ -9,6 +10,8 @@ import { z } from 'zod'
 import type { Sandboxes } from './codeMode'
 
 import { withCodeMode } from './withCodeMode'
+
+vi.mock('@pydantic/logfire-agent-sandboxes', () => ({ agentSandboxes: vi.fn<typeof agentSandboxes>() }))
 
 let pool: Monty
 
@@ -267,6 +270,100 @@ describe('withCodeMode', () => {
     expect(toolMessage?.content).toEqual([
       { type: 'tool-result', toolCallId: 'call', toolName: 'run_code', output: { type: 'json', value: 42 } },
     ])
+  })
+
+  test('gives each call the context forCall returns for its options', async () => {
+    const sandboxes = new TrackingSandboxes()
+    const whoAmI = tool({
+      inputSchema: z.object({}),
+      outputSchema: z.string(),
+      execute: (_input, { context }) => (context as { user: string }).user,
+    })
+    const model = oneSnippetModel('await who_am_i()')
+    const agent = withCodeMode<{ user: string }>(
+      { model, stopWhen: stepCountIs(3) },
+      { tools: { who_am_i: whoAmI }, sandboxes, forCall: ({ options }) => ({ context: { who_am_i: { user: options?.user ?? 'nobody' } } }) }
+    )
+
+    const [alice, bob] = await Promise.all([
+      agent.generate({ prompt: 'go', options: { user: 'alice' } }),
+      agent.generate({ prompt: 'go', options: { user: 'bob' } }),
+    ])
+
+    expect(parsed(alice.text)).toEqual({ type: 'text', value: 'alice' })
+    expect(parsed(bob.text)).toEqual({ type: 'text', value: 'bob' })
+  })
+
+  test('closes the session when a stream fails after running code', async () => {
+    const sandboxes = new TrackingSandboxes()
+    let step = 0
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        step += 1
+        if (step > 1) {
+          return Promise.reject(new Error('the model broke'))
+        }
+        return Promise.resolve({
+          stream: new ReadableStream({
+            start(controller) {
+              controller.enqueue(runCodeCall('call', '1 + 1'))
+              controller.enqueue({ type: 'finish', ...finish('tool-calls') })
+              controller.close()
+            },
+          }),
+        })
+      },
+    })
+    const errors: unknown[] = []
+    const onError = ({ error }: { error: unknown }) => {
+      errors.push(error)
+    }
+    const agent = withCodeMode({ model, stopWhen: stepCountIs(3), maxRetries: 0, onError }, { tools: {}, sandboxes })
+
+    const result = await agent.stream({ prompt: 'go' })
+    // streamText reports stream errors through onError and resolves text with what arrived before the error.
+    expect(await result.text).toBe('')
+    expect(errors.map((error) => (error instanceof Error ? error.message : error))).toEqual(['the model broke'])
+    await vi.waitFor(() => {
+      expect([sandboxes.checkouts, sandboxes.closedSessions]).toEqual([1, 1])
+    })
+  })
+
+  test('does not run code through the run_code listed in agent.tools', async () => {
+    const sandboxes = new TrackingSandboxes()
+    const agent = withCodeMode({ model: oneSnippetModel('1') }, { tools: {}, sandboxes })
+
+    await expect(agent.tools.run_code.execute?.({ code: '1' }, { toolCallId: 'call', messages: [], context: undefined })).rejects.toThrow(
+      'This run_code belongs to the agent definition. Call agent.generate() or agent.stream() to run code.'
+    )
+    expect(sandboxes.checkouts).toBe(0)
+  })
+
+  test('shares one Agent Sandboxes pool across calls and closes it once', async () => {
+    vi.stubEnv('LOGFIRE_API_KEY', 'test-key')
+    const tracked = new TrackingSandboxes()
+    vi.mocked(agentSandboxes)
+      .mockRejectedValueOnce(new Error('could not dial'))
+      .mockResolvedValue(tracked as unknown as MontyRemote)
+    try {
+      const agent = withCodeMode({ model: oneSnippetModel('1'), stopWhen: stepCountIs(3) }, { tools: {}, limits: { timeout: 5000 } })
+
+      await expect(agent.generate({ prompt: 'go' })).rejects.toThrow('could not dial')
+      await agent.generate({ prompt: 'go' })
+      await agent.generate({ prompt: 'go' })
+      expect(vi.mocked(agentSandboxes).mock.calls).toEqual([[{ requestTimeout: 15 }], [{ requestTimeout: 15 }]])
+      expect([tracked.checkouts, tracked.closedSessions, tracked.closed]).toEqual([2, 2, false])
+
+      await agent.close()
+      await agent.close()
+      expect(tracked.closed).toBe(true)
+      await expect(agent.generate({ prompt: 'go' })).rejects.toThrow(
+        'This code mode agent is closed, so it cannot check out a sandbox session.'
+      )
+    } finally {
+      vi.unstubAllEnvs()
+      vi.mocked(agentSandboxes).mockReset()
+    }
   })
 
   test('refuses a direct tool named run_code', () => {

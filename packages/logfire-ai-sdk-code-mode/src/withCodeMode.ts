@@ -13,6 +13,26 @@ import { RUN_CODE_TOOL_NAME } from './prompt'
 
 type RunCodeTools = CodeMode['tools']
 
+/** The `codeMode()` options that can differ between requests to one agent. */
+export type CallScopedCodeModeOptions<CODE_TOOLS extends ToolSet, RUNTIME_CONTEXT> = Pick<
+  CodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT>,
+  'approval' | 'context' | 'runtimeContext'
+>
+
+export interface WithCodeModeOptions<CODE_TOOLS extends ToolSet, RUNTIME_CONTEXT, CALL_OPTIONS> extends CodeModeOptions<
+  CODE_TOOLS,
+  RUNTIME_CONTEXT
+> {
+  /**
+   * Called at the start of each `generate()` or `stream()` call with that call's `options`, before the agent
+   * validates them against `callOptionsSchema`. The `context`, `runtimeContext` and `approval` it returns replace
+   * the ones given here for that call only, so one agent can give sandbox tools the current user or tenant.
+   */
+  forCall?: (call: {
+    options: CALL_OPTIONS | undefined
+  }) => CallScopedCodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT> | PromiseLike<CallScopedCodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT>>
+}
+
 /**
  * A `ToolLoopAgent` whose model gets `run_code` next to its direct tools. Each `generate()` or `stream()` call gets
  * a fresh code mode session, closed when that call ends, so Python state does not carry from one call to the next.
@@ -25,13 +45,13 @@ export class CodeModeAgent<
   CODE_TOOLS extends ToolSet = ToolSet,
 > extends ToolLoopAgent<CALL_OPTIONS, TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT> {
   readonly #settings: ToolLoopAgentSettings<CALL_OPTIONS, TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>
-  readonly #codeModeOptions: CodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT>
+  readonly #codeModeOptions: WithCodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT, CALL_OPTIONS>
   readonly #sandboxes: Sandboxes
   readonly #ownPool: (() => Promise<void>) | undefined
 
   constructor(
     settings: ToolLoopAgentSettings<CALL_OPTIONS, TOOLS, RUNTIME_CONTEXT, OUTPUT>,
-    codeModeOptions: CodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT>
+    codeModeOptions: WithCodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT, CALL_OPTIONS>
   ) {
     if (settings.tools !== undefined && Object.hasOwn(settings.tools, RUN_CODE_TOOL_NAME)) {
       throw new Error(`The agent's tools include "${RUN_CODE_TOOL_NAME}", the name code mode reserves for its own tool. Rename that tool.`)
@@ -43,11 +63,19 @@ export class CodeModeAgent<
       sandboxes = shared.sandboxes
       ownPool = shared.close
     }
-    // Built only for its tool definition: createAgentUIStream reads `agent.tools` to restore earlier run_code
-    // outputs through run_code's toModelOutput. It never runs, so it never checks out a session.
-    const template = codeMode({ ...codeModeOptions, sandboxes })
+    // createAgentUIStream reads `agent.tools` to restore earlier run_code outputs through run_code's toModelOutput,
+    // so the outer agent lists run_code with the real schema and output hook, but no session behind it.
+    const { forCall: _forCall, ...templateOptions } = codeModeOptions
+    const { run_code: template } = codeMode({ ...templateOptions, sandboxes }).tools
+    const placeholder: RunCodeTools = {
+      run_code: {
+        ...template,
+        execute: async () =>
+          Promise.reject(new Error('This run_code belongs to the agent definition. Call agent.generate() or agent.stream() to run code.')),
+      },
+    }
     // ToolLoopAgentSettings is invariant in its tool set, so adding run_code needs a cast.
-    const outerSettings = { ...settings, tools: { ...settings.tools, ...template.tools } } as unknown as ToolLoopAgentSettings<
+    const outerSettings = { ...settings, tools: { ...settings.tools, ...placeholder } } as unknown as ToolLoopAgentSettings<
       CALL_OPTIONS,
       TOOLS & RunCodeTools,
       RUNTIME_CONTEXT,
@@ -63,23 +91,27 @@ export class CodeModeAgent<
   override async generate(
     options: Parameters<ToolLoopAgent<CALL_OPTIONS, TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>['generate']>[0]
   ): Promise<GenerateTextResult<TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>> {
-    const code = this.#codeMode()
+    const code = await this.#codeMode(options)
+    let result: GenerateTextResult<TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>
     try {
-      return await this.#agentFor(code).generate(options)
-    } finally {
-      await code.close()
+      result = await this.#agentFor(code).generate(options)
+    } catch (error) {
+      await closeQuietly(code)
+      throw error
     }
+    await closeQuietly(code)
+    return result
   }
 
   override async stream(
     options: Parameters<ToolLoopAgent<CALL_OPTIONS, TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>['stream']>[0]
   ): Promise<StreamTextResult<TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>> {
-    const code = this.#codeMode()
+    const code = await this.#codeMode(options)
     let result: StreamTextResult<TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>
     try {
       result = await this.#agentFor(code).stream(options)
     } catch (error) {
-      await code.close()
+      await closeQuietly(code)
       throw error
     }
     // Closing failures cannot reach the caller, who already has the result.
@@ -87,7 +119,10 @@ export class CodeModeAgent<
     return result
   }
 
-  /** Closes the Agent Sandboxes pool this agent created. Sessions of running calls close when their calls end. */
+  /**
+   * Closes the Agent Sandboxes pool this agent created; later calls fail to check out a session. Sessions of
+   * running calls close when their calls end. A pool passed as `sandboxes` stays open.
+   */
   async close(): Promise<void> {
     await this.#ownPool?.()
   }
@@ -96,8 +131,10 @@ export class CodeModeAgent<
     await this.close()
   }
 
-  #codeMode(): CodeMode {
-    return codeMode({ ...this.#codeModeOptions, sandboxes: this.#sandboxes })
+  async #codeMode(call: object): Promise<CodeMode> {
+    const { forCall, ...options } = this.#codeModeOptions
+    const scoped = forCall === undefined ? {} : await forCall({ options: (call as { options?: CALL_OPTIONS }).options })
+    return codeMode({ ...options, ...scoped, sandboxes: this.#sandboxes })
   }
 
   // ToolLoopAgent keeps its settings private, so each call gets a new agent with this call's run_code. The
@@ -127,6 +164,7 @@ export class CodeModeAgent<
  *
  * Each `generate()` or `stream()` call gets its own sandbox session and closes it when the call ends, so Python
  * state lasts for one call. A run that pauses for a tool approval resumes in a new call, with a fresh session.
+ * Use `codeModeOptions.forCall` to give each call its own tool context, runtime context or approval.
  * Without `codeModeOptions.sandboxes`, the agent creates one `agentSandboxes()` pool on first use and shares it
  * across calls; close it with `agent.close()` or `await using`.
  */
@@ -138,9 +176,14 @@ export function withCodeMode<
   CODE_TOOLS extends ToolSet = ToolSet,
 >(
   settings: ToolLoopAgentSettings<CALL_OPTIONS, TOOLS, RUNTIME_CONTEXT, OUTPUT>,
-  codeModeOptions: CodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT>
+  codeModeOptions: WithCodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT, CALL_OPTIONS>
 ): CodeModeAgent<CALL_OPTIONS, TOOLS, RUNTIME_CONTEXT, OUTPUT, CODE_TOOLS> {
   return new CodeModeAgent(settings, codeModeOptions)
+}
+
+// Code mode's close() already absorbs session close failures; this keeps any later one from hiding the run's result or error.
+async function closeQuietly(code: CodeMode): Promise<void> {
+  await code.close().catch(() => undefined)
 }
 
 function sharedAgentSandboxes(options: { limits?: CodeModeOptions<ToolSet>['limits'] }): {
@@ -156,8 +199,12 @@ function sharedAgentSandboxes(options: { limits?: CodeModeOptions<ToolSet>['limi
   // Same transport slack as codeMode()'s own pool, so a long snippet gets the time-limit message.
   const requestTimeout = resolveLimits(options.limits).timeout / 1000 + 10
   let pool: Promise<Sandboxes> | undefined
+  let closed = false
   const sandboxes: Sandboxes = {
     async checkout(checkoutOptions?: RemoteCheckoutOptions): Promise<MontySession> {
+      if (closed) {
+        throw new Error('This code mode agent is closed, so it cannot check out a sandbox session.')
+      }
       pool ??= agentSandboxes({ requestTimeout })
       let created: Sandboxes
       try {
@@ -176,6 +223,7 @@ function sharedAgentSandboxes(options: { limits?: CodeModeOptions<ToolSet>['limi
   return {
     sandboxes,
     close: async () => {
+      closed = true
       const current = pool
       pool = undefined
       if (current !== undefined) {

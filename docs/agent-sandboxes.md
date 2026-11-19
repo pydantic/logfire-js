@@ -202,6 +202,22 @@ history reach the model the same way as with `codeMode()`. Without `sandboxes`, 
 `agentSandboxes()` pool on first use and shares it across calls; close it with `await agent.close()` when your
 application shuts down.
 
+The agent is shared between requests, so request data such as the current user must not go into its fixed options.
+Pass it as the call's `options` instead, and return the request's `context`, `runtimeContext` or `approval` from
+`forCall`:
+
+```ts
+const agent = withCodeMode<{ userId: string }>(
+  { model, stopWhen: stepCountIs(10) },
+  {
+    tools: { get_orders: getOrders },
+    forCall: ({ options }) => ({ context: { get_orders: { userId: options?.userId } } }),
+  }
+)
+
+await agent.generate({ prompt, options: { userId: session.userId } })
+```
+
 [`examples/agent-sandboxes-ai-sdk`](https://github.com/pydantic/logfire-js/tree/main/examples/agent-sandboxes-ai-sdk)
 is a complete agent over a larger data set, with a smoke test.
 
