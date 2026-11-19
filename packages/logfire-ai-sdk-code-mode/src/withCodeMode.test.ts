@@ -272,7 +272,7 @@ describe('withCodeMode', () => {
     ])
   })
 
-  test('gives each call the context forCall returns for its options', async () => {
+  test("gives nested tools the context prepareCall puts under run_code's toolsContext", async () => {
     const sandboxes = new TrackingSandboxes()
     const whoAmI = tool({
       inputSchema: z.object({}),
@@ -280,9 +280,14 @@ describe('withCodeMode', () => {
       execute: (_input, { context }) => (context as { user: string }).user,
     })
     const model = oneSnippetModel('await who_am_i()')
-    const agent = withCodeMode<{ user: string }>(
-      { model, stopWhen: stepCountIs(3) },
-      { tools: { who_am_i: whoAmI }, sandboxes, forCall: ({ options }) => ({ context: { who_am_i: { user: options?.user ?? 'nobody' } } }) }
+    const agent = withCodeMode(
+      {
+        model,
+        stopWhen: stepCountIs(3),
+        callOptionsSchema: z.object({ user: z.string() }),
+        prepareCall: ({ options, ...settings }) => ({ ...settings, toolsContext: { run_code: { who_am_i: { user: options.user } } } }),
+      },
+      { tools: { who_am_i: whoAmI }, sandboxes, context: { who_am_i: { user: 'nobody' } } }
     )
 
     const [alice, bob] = await Promise.all([

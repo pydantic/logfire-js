@@ -52,7 +52,11 @@ export interface CodeModeOptions<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknow
    * snippet fails with a transport error instead of the time-limit message.
    */
   sandboxes?: Sandboxes
-  /** Context for each tool, keyed by tool name, as generateText's `toolsContext`. */
+  /**
+   * Context for each tool, keyed by tool name, as generateText's `toolsContext`. For context that differs per call,
+   * such as the current user, pass the same shape as `run_code`'s own context, `toolsContext: { run_code: { ... } }`
+   * in generateText or an agent's `prepareCall`; its entries replace these for that call.
+   */
   context?: { [NAME in keyof TOOLS]?: unknown }
   /**
    * Which nested calls may run, in the shape of generateText's `toolApproval`, without `'user-approval'`: nothing in
@@ -95,9 +99,12 @@ export interface RunCodeInput {
   restart?: boolean | undefined
 }
 
-export interface CodeMode extends AsyncDisposable {
+/** `run_code`'s own context, `toolsContext.run_code`: per-call context for the nested tools, keyed by tool name. */
+export type RunCodeContext<TOOLS extends ToolSet = ToolSet> = { [NAME in keyof TOOLS]?: unknown } | undefined
+
+export interface CodeMode<TOOLS extends ToolSet = ToolSet> extends AsyncDisposable {
   /** `{ run_code }`, to spread into generateText's or streamText's `tools`. Successful outputs use `{ result: value }`; the output hook unwraps them for the model. */
-  readonly tools: { run_code: Tool<RunCodeInput, unknown> }
+  readonly tools: { run_code: Tool<RunCodeInput, unknown, RunCodeContext<TOOLS>> }
   /** Ends the session and, if code mode created it, the sandbox pool. Safe to call more than once. */
   close(): Promise<void>
   /** Closes code mode once a streamText result settles, including on error and abort. */
@@ -120,7 +127,9 @@ export interface CodeMode extends AsyncDisposable {
  * With `streamText`, use `closeWhenDone(result)` instead, because the block exits before the stream is read.
  * Sandbox setup and checkout failures end the run with the original error; unexpected disconnects become retryable model tool errors.
  */
-export function codeMode<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknown>(options: CodeModeOptions<TOOLS, RUNTIME_CONTEXT>): CodeMode {
+export function codeMode<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknown>(
+  options: CodeModeOptions<TOOLS, RUNTIME_CONTEXT>
+): CodeMode<TOOLS> {
   return new CodeModeRuntime(options)
 }
 
@@ -449,8 +458,8 @@ interface Failure {
   reset: boolean
 }
 
-class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMode {
-  readonly tools: { run_code: Tool<RunCodeInput, unknown> }
+class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMode<TOOLS> {
+  readonly tools: { run_code: Tool<RunCodeInput, unknown, RunCodeContext<TOOLS>> }
   private readonly limits: ResolvedLimits
   private readonly idleTimeout: number
   private readonly pythonNames: Map<string, string>
@@ -520,6 +529,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     }
 
     this.tools = {
+      // tool() cannot infer a context type that includes undefined, which keeps toolsContext.run_code optional.
       [RUN_CODE_TOOL_NAME]: tool({
         description: runCodeDescription(stubs.typeDefinitions, stubs.functions),
         inputSchema: jsonSchema<RunCodeInput>(
@@ -577,7 +587,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
               : output
           return typeof result === 'string' ? { type: 'text', value: result } : { type: 'json', value: result as JSONValue }
         },
-      }),
+      }) as Tool<RunCodeInput, unknown, RunCodeContext<TOOLS>>,
     }
   }
 
@@ -895,6 +905,17 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
     }
   }
 
+  // run_code's own context, from the call's `toolsContext.run_code`, carries per-call context for the nested tools.
+  private nestedContexts(callContext: unknown): Record<string, unknown> | undefined {
+    if (callContext === undefined || callContext === null) {
+      return this.options.context
+    }
+    if (typeof callContext !== 'object' || Array.isArray(callContext)) {
+      throw pythonError('TypeError', "run_code's context must be an object keyed by tool name.")
+    }
+    return { ...this.options.context, ...callContext }
+  }
+
   private externalLookup(
     snippet: Snippet,
     toolOptions: ToolExecutionOptions<unknown>
@@ -943,7 +964,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       throw pythonError('ValueError', `Invalid arguments for ${pythonName}(): ${validationMessage(validated.error)}`)
     }
     const input: unknown = validated === undefined ? kwargs : (validated.value as unknown)
-    const contexts = this.options.context
+    const contexts = this.nestedContexts(toolOptions.context)
     // Own properties only, as the AI SDK reads them: a tool named `toString` must not get Object.prototype's.
     let toolContext: unknown = contexts !== undefined && Object.hasOwn(contexts, toolName) ? contexts[toolName] : undefined
     if (target.contextSchema !== undefined) {
@@ -960,7 +981,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
         this.options.approval as ToolApprovalConfiguration<TOOLS, RUNTIME_CONTEXT> | undefined,
         {
           tools: this.options.tools,
-          toolsContext: this.options.context ?? {},
+          toolsContext: contexts ?? {},
           runtimeContext: this.options.runtimeContext as RUNTIME_CONTEXT,
         },
         { toolName, toolCallId, input, messages: toolOptions.messages, toolContext, tool: target }

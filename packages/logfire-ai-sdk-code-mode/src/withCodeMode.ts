@@ -11,28 +11,6 @@ import { codeMode } from './codeMode'
 import { resolveLimits } from './limits'
 import { RUN_CODE_TOOL_NAME } from './prompt'
 
-type RunCodeTools = CodeMode['tools']
-
-/** The `codeMode()` options that can differ between requests to one agent. */
-export type CallScopedCodeModeOptions<CODE_TOOLS extends ToolSet, RUNTIME_CONTEXT> = Pick<
-  CodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT>,
-  'approval' | 'context' | 'runtimeContext'
->
-
-export interface WithCodeModeOptions<CODE_TOOLS extends ToolSet, RUNTIME_CONTEXT, CALL_OPTIONS> extends CodeModeOptions<
-  CODE_TOOLS,
-  RUNTIME_CONTEXT
-> {
-  /**
-   * Called at the start of each `generate()` or `stream()` call with that call's `options`, before the agent
-   * validates them against `callOptionsSchema`. The `context`, `runtimeContext` and `approval` it returns replace
-   * the ones given here for that call only, so one agent can give sandbox tools the current user or tenant.
-   */
-  forCall?: (call: {
-    options: CALL_OPTIONS | undefined
-  }) => CallScopedCodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT> | PromiseLike<CallScopedCodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT>>
-}
-
 /**
  * A `ToolLoopAgent` whose model gets `run_code` next to its direct tools. Each `generate()` or `stream()` call gets
  * a fresh code mode session, closed when that call ends, so Python state does not carry from one call to the next.
@@ -43,15 +21,15 @@ export class CodeModeAgent<
   RUNTIME_CONTEXT extends Record<string, unknown> = Record<string, unknown>,
   OUTPUT extends OutputInterface = never,
   CODE_TOOLS extends ToolSet = ToolSet,
-> extends ToolLoopAgent<CALL_OPTIONS, TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT> {
-  readonly #settings: ToolLoopAgentSettings<CALL_OPTIONS, TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>
-  readonly #codeModeOptions: WithCodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT, CALL_OPTIONS>
+> extends ToolLoopAgent<CALL_OPTIONS, TOOLS & CodeMode<CODE_TOOLS>['tools'], RUNTIME_CONTEXT, OUTPUT> {
+  readonly #settings: ToolLoopAgentSettings<CALL_OPTIONS, TOOLS & CodeMode<CODE_TOOLS>['tools'], RUNTIME_CONTEXT, OUTPUT>
+  readonly #codeModeOptions: CodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT>
   readonly #sandboxes: Sandboxes
   readonly #ownPool: (() => Promise<void>) | undefined
 
   constructor(
     settings: ToolLoopAgentSettings<CALL_OPTIONS, TOOLS, RUNTIME_CONTEXT, OUTPUT>,
-    codeModeOptions: WithCodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT, CALL_OPTIONS>
+    codeModeOptions: CodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT>
   ) {
     if (settings.tools !== undefined && Object.hasOwn(settings.tools, RUN_CODE_TOOL_NAME)) {
       throw new Error(`The agent's tools include "${RUN_CODE_TOOL_NAME}", the name code mode reserves for its own tool. Rename that tool.`)
@@ -65,9 +43,8 @@ export class CodeModeAgent<
     }
     // createAgentUIStream reads `agent.tools` to restore earlier run_code outputs through run_code's toModelOutput,
     // so the outer agent lists run_code with the real schema and output hook, but no session behind it.
-    const { forCall: _forCall, ...templateOptions } = codeModeOptions
-    const { run_code: template } = codeMode({ ...templateOptions, sandboxes }).tools
-    const placeholder: RunCodeTools = {
+    const { run_code: template } = codeMode({ ...codeModeOptions, sandboxes }).tools
+    const placeholder: CodeMode<CODE_TOOLS>['tools'] = {
       run_code: {
         ...template,
         execute: async () =>
@@ -77,7 +54,7 @@ export class CodeModeAgent<
     // ToolLoopAgentSettings is invariant in its tool set, so adding run_code needs a cast.
     const outerSettings = { ...settings, tools: { ...settings.tools, ...placeholder } } as unknown as ToolLoopAgentSettings<
       CALL_OPTIONS,
-      TOOLS & RunCodeTools,
+      TOOLS & CodeMode<CODE_TOOLS>['tools'],
       RUNTIME_CONTEXT,
       OUTPUT
     >
@@ -89,10 +66,10 @@ export class CodeModeAgent<
   }
 
   override async generate(
-    options: Parameters<ToolLoopAgent<CALL_OPTIONS, TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>['generate']>[0]
-  ): Promise<GenerateTextResult<TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>> {
-    const code = await this.#codeMode(options)
-    let result: GenerateTextResult<TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>
+    options: Parameters<ToolLoopAgent<CALL_OPTIONS, TOOLS & CodeMode<CODE_TOOLS>['tools'], RUNTIME_CONTEXT, OUTPUT>['generate']>[0]
+  ): Promise<GenerateTextResult<TOOLS & CodeMode<CODE_TOOLS>['tools'], RUNTIME_CONTEXT, OUTPUT>> {
+    const code = this.#codeMode()
+    let result: GenerateTextResult<TOOLS & CodeMode<CODE_TOOLS>['tools'], RUNTIME_CONTEXT, OUTPUT>
     try {
       result = await this.#agentFor(code).generate(options)
     } catch (error) {
@@ -104,10 +81,10 @@ export class CodeModeAgent<
   }
 
   override async stream(
-    options: Parameters<ToolLoopAgent<CALL_OPTIONS, TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>['stream']>[0]
-  ): Promise<StreamTextResult<TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>> {
-    const code = await this.#codeMode(options)
-    let result: StreamTextResult<TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT>
+    options: Parameters<ToolLoopAgent<CALL_OPTIONS, TOOLS & CodeMode<CODE_TOOLS>['tools'], RUNTIME_CONTEXT, OUTPUT>['stream']>[0]
+  ): Promise<StreamTextResult<TOOLS & CodeMode<CODE_TOOLS>['tools'], RUNTIME_CONTEXT, OUTPUT>> {
+    const code = this.#codeMode()
+    let result: StreamTextResult<TOOLS & CodeMode<CODE_TOOLS>['tools'], RUNTIME_CONTEXT, OUTPUT>
     try {
       result = await this.#agentFor(code).stream(options)
     } catch (error) {
@@ -131,17 +108,15 @@ export class CodeModeAgent<
     await this.close()
   }
 
-  async #codeMode(call: object): Promise<CodeMode> {
-    const { forCall, ...options } = this.#codeModeOptions
-    const scoped = forCall === undefined ? {} : await forCall({ options: (call as { options?: CALL_OPTIONS }).options })
-    return codeMode({ ...options, ...scoped, sandboxes: this.#sandboxes })
+  #codeMode(): CodeMode<CODE_TOOLS> {
+    return codeMode({ ...this.#codeModeOptions, sandboxes: this.#sandboxes })
   }
 
   // ToolLoopAgent keeps its settings private, so each call gets a new agent with this call's run_code. The
   // constructor only stores settings, and the caller's prepareCall and callbacks run once, inside this agent.
-  #agentFor(code: CodeMode): ToolLoopAgent<CALL_OPTIONS, TOOLS & RunCodeTools, RUNTIME_CONTEXT, OUTPUT> {
+  #agentFor(code: CodeMode<CODE_TOOLS>): ToolLoopAgent<CALL_OPTIONS, TOOLS & CodeMode<CODE_TOOLS>['tools'], RUNTIME_CONTEXT, OUTPUT> {
     const { prepareCall } = this.#settings
-    const settings = { ...this.#settings, tools: { ...this.#settings.tools, ...code.tools } as TOOLS & RunCodeTools }
+    const settings = { ...this.#settings, tools: { ...this.#settings.tools, ...code.tools } as TOOLS & CodeMode<CODE_TOOLS>['tools'] }
     if (prepareCall !== undefined) {
       settings.prepareCall = async (args) => {
         const prepared = await prepareCall(args)
@@ -164,7 +139,8 @@ export class CodeModeAgent<
  *
  * Each `generate()` or `stream()` call gets its own sandbox session and closes it when the call ends, so Python
  * state lasts for one call. A run that pauses for a tool approval resumes in a new call, with a fresh session.
- * Use `codeModeOptions.forCall` to give each call its own tool context, runtime context or approval.
+ * For per-call tool context, such as the current user, return `toolsContext: { run_code: { toolName: context } }`
+ * from the agent's `prepareCall`.
  * Without `codeModeOptions.sandboxes`, the agent creates one `agentSandboxes()` pool on first use and shares it
  * across calls; close it with `agent.close()` or `await using`.
  */
@@ -176,7 +152,7 @@ export function withCodeMode<
   CODE_TOOLS extends ToolSet = ToolSet,
 >(
   settings: ToolLoopAgentSettings<CALL_OPTIONS, TOOLS, RUNTIME_CONTEXT, OUTPUT>,
-  codeModeOptions: WithCodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT, CALL_OPTIONS>
+  codeModeOptions: CodeModeOptions<CODE_TOOLS, RUNTIME_CONTEXT>
 ): CodeModeAgent<CALL_OPTIONS, TOOLS, RUNTIME_CONTEXT, OUTPUT, CODE_TOOLS> {
   return new CodeModeAgent(settings, codeModeOptions)
 }

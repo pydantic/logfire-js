@@ -167,7 +167,10 @@ also ends after `idleTimeout` milliseconds without a call (default 300,000, five
 Calling a tool from the sandbox skips the AI SDK's own approval and context handling, so `codeMode()` takes them as
 options:
 
-- `context`: each tool's context, keyed by tool name, as `toolsContext`.
+- `context`: each tool's context, keyed by tool name, as `toolsContext`. For context that differs per call, such as the
+  current user, put the same shape under `run_code` in the call's own `toolsContext`:
+  `toolsContext: { run_code: { get_weather: { userId } } }`. Its entries replace `context` for that call, and
+  `approval` functions see them too.
 - `approval`: the same shape as `toolApproval`, without the `'user-approval'` status, because nothing in the sandbox
   can wait for a person. An async function can ask one itself and return `'approved'` or `'denied'`, within
   `limits.timeout`. Tools with `needsApproval` are rejected.
@@ -203,16 +206,21 @@ history reach the model the same way as with `codeMode()`. Without `sandboxes`, 
 application shuts down.
 
 The agent is shared between requests, so request data such as the current user must not go into its fixed options.
-Pass it as the call's `options` instead, and return the request's `context`, `runtimeContext` or `approval` from
-`forCall`:
+Pass it as the call's `options`, and turn it into the sandbox tools' context in the agent's `prepareCall`, under
+`run_code`:
 
 ```ts
-const agent = withCodeMode<{ userId: string }>(
-  { model, stopWhen: stepCountIs(10) },
+const agent = withCodeMode(
   {
-    tools: { get_orders: getOrders },
-    forCall: ({ options }) => ({ context: { get_orders: { userId: options?.userId } } }),
-  }
+    model,
+    stopWhen: stepCountIs(10),
+    callOptionsSchema: z.object({ userId: z.string() }),
+    prepareCall: ({ options, ...settings }) => ({
+      ...settings,
+      toolsContext: { ...settings.toolsContext, run_code: { get_orders: { userId: options.userId } } },
+    }),
+  },
+  { tools: { get_orders: getOrders } }
 )
 
 await agent.generate({ prompt, options: { userId: session.userId } })
