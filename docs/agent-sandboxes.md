@@ -175,6 +175,11 @@ options:
   filtering bypassed.
 - `limits`: a wall-clock `timeout` per snippet that includes time spent waiting on tools (in milliseconds, default 30,000), and caps
   on nested calls, concurrent calls, and the sizes of code, results and tool input and output.
+- `osPolicy`: Monty's clock, time zone, sleep and randomness settings. By default, as in pydantic-ai, code has no
+  clock or randomness and sleeps wait on your server within the snippet's `timeout`. `{ datetime: 'system',
+randomStart: 'system' }` gives code the sandbox's clock and random seeding, and a `Date` freezes the clock. The
+  `run_code` description tells the model whether it has a clock. With `sleep: 'system'`, the sandbox waits instead, up
+  to `timeout` in total per snippet.
 - `onToolError`: replaces a tool's error message before the sandbox, the model or a span sees it. Messages pass through
   unchanged by default. A result that has no JSON form, such as a bigint or a cycle, is not a tool error, so it does not
   go through `onToolError`.

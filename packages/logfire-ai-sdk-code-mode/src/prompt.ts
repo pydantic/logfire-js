@@ -1,6 +1,8 @@
 // Ported word for word from pydantic-ai CodeMode at commit c833840a95f4f7e7607091dcf7c98f9da5db784a,
 // src/pydantic_ai_harness/pydantic_ai_harness/code_mode/_toolset.py and _parts.py. The parity test compares the
 // rendered description with pydantic-ai's own, so copy changes from there rather than editing here.
+// The clock variant comes from pydantic-ai e272a4351 (`_NO_OS_WITH_CLOCK_NOTE`), which postdates the pin. The
+// `sleep: 'zero'` sentence is this package's own: pydantic-ai always says sleeps really wait.
 
 export const RUN_CODE_TOOL_NAME = 'run_code'
 
@@ -14,11 +16,33 @@ The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No third-party libraries**: only the standard library modules listed below can be used
 - **Importable standard library modules**: \`sys\`, \`typing\`, \`asyncio\`, \`math\`, \`json\`, \`re\`, \`unicodedata\`, \`datetime\`, \`time\`, \`random\`, \`os\`, \`pathlib\`, \`collections\`, \`itertools\`, \`functools\`, \`dataclasses\`, \`copy\`, \`base64\`, \`binascii\`, \`bisect\`, \`csv\`, \`decimal\`, \`fnmatch\`, \`hashlib\`, \`os.path\`, \`tomllib\`, \`annotationlib\`. These must be imported before use, just like in regular Python.`
 
-const NO_OS_RESTRICTION =
-  '- **No filesystem, environment, or clock**: `pathlib.Path` I/O, `os.getenv`/`os.environ`, ' +
-  '`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` are unavailable here ' +
-  '(no filesystem mount or OS handler is configured). `os` and `pathlib` import successfully, but ' +
-  'their I/O operations are not supported in this configuration. `time.sleep` and `asyncio.sleep` really wait.'
+const SLEEP_SENTENCE = '`time.sleep` and `asyncio.sleep` really wait.'
+const ZERO_SLEEP_SENTENCE = '`time.sleep` and `asyncio.sleep` return at once without waiting.'
+
+function noOsRestriction(sleep: string): string {
+  return (
+    '- **No filesystem, environment, or clock**: `pathlib.Path` I/O, `os.getenv`/`os.environ`, ' +
+    '`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` are unavailable here ' +
+    '(no filesystem mount or OS handler is configured). `os` and `pathlib` import successfully, but ' +
+    `their I/O operations are not supported in this configuration. ${sleep}`
+  )
+}
+
+function noOsWithClockNote(sleep: string): string {
+  return (
+    '- **No filesystem or environment**: `pathlib.Path` I/O and `os.getenv`/`os.environ` are unavailable here ' +
+    '(no filesystem mount or OS handler is configured). `os` and `pathlib` import successfully, but their I/O ' +
+    'operations are not supported in this configuration. `datetime.datetime.now()`, `datetime.date.today()`, ' +
+    `and \`time.time()\` read the clock configured for this sandbox. ${sleep}`
+  )
+}
+
+/** The OS line of the `run_code` description for the session's clock and sleep policy, as pydantic-ai's `_base_description`. */
+export function osRestriction(policy: { datetime?: unknown; sleep?: string | undefined }): string {
+  const sleep = policy.sleep === 'zero' ? ZERO_SLEEP_SENTENCE : SLEEP_SENTENCE
+  // pydantic-ai `_policy_has_clock`: any datetime source except the host gives the sandbox its own clock.
+  return policy.datetime === undefined || policy.datetime === 'call_host' ? noOsRestriction(sleep) : noOsWithClockNote(sleep)
+}
 
 const RUN_CODE_DESCRIPTION_TAIL =
   '- **No `import *`**: wildcard imports are not supported\n' +
@@ -57,17 +81,20 @@ const ASYNC_FUNCTIONS_HEADER =
   ' Monty does not support `asyncio.gather` keyword arguments or other task creation' +
   ' and wait APIs.'
 
-const BASE_DESCRIPTION = `${RUN_CODE_DESCRIPTION_HEAD}\n${NO_OS_RESTRICTION}\n${RUN_CODE_DESCRIPTION_TAIL}`
-
 /** The `run_code` description: pydantic-ai's prose, then the TypedDicts and function signatures. */
-export function runCodeDescription(typeDefinitions: readonly string[], functions: readonly string[]): string {
+export function runCodeDescription(
+  typeDefinitions: readonly string[],
+  functions: readonly string[],
+  restriction: string = osRestriction({})
+): string {
+  const base = `${RUN_CODE_DESCRIPTION_HEAD}\n${restriction}\n${RUN_CODE_DESCRIPTION_TAIL}`
   if (functions.length === 0) {
-    return BASE_DESCRIPTION
+    return base
   }
   const sections = [ASYNC_FUNCTIONS_HEADER]
   if (typeDefinitions.length > 0) {
     sections.push('```python\n' + typeDefinitions.join('\n\n') + '\n```')
   }
   sections.push('```python\n' + functions.join('\n\n') + '\n```')
-  return `${BASE_DESCRIPTION}\n\n${sections.join('\n\n')}`
+  return `${base}\n\n${sections.join('\n\n')}`
 }

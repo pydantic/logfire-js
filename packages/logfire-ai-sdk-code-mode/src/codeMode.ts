@@ -1,6 +1,6 @@
 /** AI SDK agents use `codeMode` and `CodeModeOptions` to run tool-calling Python; `onError` reports Agent Sandboxes failures without exposing their details to models or UI streams. */
 import type { Context } from '@opentelemetry/api'
-import type { MontySession, RemoteCheckoutOptions } from '@pydantic/monty'
+import type { MontySession, OsPolicy, RemoteCheckoutOptions } from '@pydantic/monty'
 import type { JSONValue, StreamTextOnErrorCallback, Tool, ToolApprovalConfiguration, ToolExecutionOptions, ToolSet } from 'ai'
 
 import { context as otelContext } from '@opentelemetry/api'
@@ -27,7 +27,7 @@ import type { StartedCall } from './values'
 import { decideApproval } from './approval'
 import { resolveLimits } from './limits'
 import { pyIsBuiltin } from './python'
-import { CODE_DESCRIPTION, RESTART_DESCRIPTION, RUN_CODE_TOOL_NAME, runCodeDescription } from './prompt'
+import { CODE_DESCRIPTION, osRestriction, RESTART_DESCRIPTION, RUN_CODE_TOOL_NAME, runCodeDescription } from './prompt'
 import { toolStubs } from './stubs'
 import { byteLength, cutMiddle, describeStartedCalls, forModel, fromSandbox, preview, ValueTooLargeError } from './values'
 
@@ -63,6 +63,14 @@ export interface CodeModeOptions<TOOLS extends ToolSet, RUNTIME_CONTEXT = unknow
   /** Passed to `approval` functions; tool execution does not see generateText's `runtimeContext`. */
   runtimeContext?: RUNTIME_CONTEXT
   limits?: CodeModeLimits
+  /**
+   * Monty's clock, time zone, sleep and randomness settings, merged key by key over the default, which has no clock
+   * or randomness and waits for sleeps on the host (pydantic-ai's policy). For example, `{ datetime: 'system',
+   * randomStart: 'system' }` gives code the sandbox's clock and random seeding. The `run_code` description says
+   * whether code has a clock and whether sleeps wait. With `sleep: 'system'`, the sandbox waits instead of the host,
+   * and the total sleep in one snippet is capped at `limits.timeout`.
+   */
+  osPolicy?: OsPolicy
   /**
    * Which snippets Monty's type checker sees (default `'first-snippet'`, as pydantic-ai). Monty's checker rejects
    * some valid code, such as a None check on an indexed value, and a model can spend every step trying to satisfy
@@ -421,6 +429,9 @@ class Snippet {
   }
 }
 
+// pydantic-ai's `_OS_POLICY`: no clock or randomness, and sleeps on the host, where the snippet deadline bounds them.
+const DEFAULT_OS_POLICY: OsPolicy = { datetime: 'call_host', sleep: 'call_host', randomStart: 'call_host' }
+
 const SUSPENSION_LIMIT = /^suspension limit [0-9]+ exceeded$/u
 const SANDBOX_LIMIT_MARKERS = ['time limit exceeded', 'memory limit exceeded', 'suspension limit ']
 const TIME_LIMIT_MESSAGE =
@@ -456,6 +467,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
   private readonly pythonNames: Map<string, string>
   private readonly schemaArgNames: ReadonlyMap<string, ReadonlyMap<string, string>>
   private readonly typeCheckStubs: string
+  private readonly osPolicy: OsPolicy
   private queue: Promise<unknown> = Promise.resolve()
   private poolPromise: Promise<Sandboxes> | undefined
   private sessionPromise: Promise<MontySession> | undefined
@@ -501,6 +513,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
       throw new RangeError(`idleTimeout must be a positive number of milliseconds or Infinity, not ${String(idleTimeout)}.`)
     }
     this.limits = resolveLimits(options.limits)
+    this.osPolicy = { ...DEFAULT_OS_POLICY, ...options.osPolicy }
     this.slots = new Slots(this.limits.concurrentToolCalls)
     this.idleTimeout = idleTimeout
 
@@ -521,7 +534,7 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
 
     this.tools = {
       [RUN_CODE_TOOL_NAME]: tool({
-        description: runCodeDescription(stubs.typeDefinitions, stubs.functions),
+        description: runCodeDescription(stubs.typeDefinitions, stubs.functions, osRestriction(this.osPolicy)),
         inputSchema: jsonSchema<RunCodeInput>(
           {
             type: 'object',
@@ -1112,9 +1125,10 @@ class CodeModeRuntime<TOOLS extends ToolSet, RUNTIME_CONTEXT> implements CodeMod
           maxFeedDurationSecs: this.limits.timeout / 1000,
           maxMemory: this.limits.memory,
           maxSuspensions: this.limits.suspensions,
+          // Sandbox sleeps do not count toward maxFeedDurationSecs, so they get their own cap.
+          ...(this.osPolicy.sleep === 'system' ? { maxTotalSleepSecs: this.limits.timeout / 1000 } : {}),
         },
-        // pydantic-ai's policy: no clock or randomness, and sleeps on the host.
-        osPolicy: { datetime: 'call_host', sleep: 'call_host', randomStart: 'call_host' },
+        osPolicy: this.osPolicy,
       }
       try {
         return await pool.checkout(options)
