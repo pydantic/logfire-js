@@ -696,6 +696,18 @@ describe('logfire config', () => {
       expect(logfireConfig.sampling).toEqual({ head: 0.5 })
     })
 
+    it('rejects an out-of-range sampling.head instead of exporting everything', () => {
+      for (const head of [0, 1]) {
+        configure({ sampling: { head }, sendToLogfire: false })
+        expect(logfireConfig.sampling).toEqual({ head })
+      }
+      for (const head of [10, 1.5, -0.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(() => {
+          configure({ sampling: { head }, sendToLogfire: false })
+        }).toThrow(`Expected sampling.head to be a number between 0 and 1, got ${String(head)}`)
+      }
+    })
+
     it('treats an empty or whitespace-only value as unset', () => {
       for (const value of ['', '   ']) {
         process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = value

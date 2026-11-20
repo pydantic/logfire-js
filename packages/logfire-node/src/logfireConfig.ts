@@ -458,6 +458,9 @@ function configureSharedApi(apiConfig: logfireApi.LogfireApiConfigOptions, minLe
  */
 function resolveSampling(option: SamplingOptions | undefined): SamplingOptions | undefined {
   if (option) {
+    if (option.head !== undefined && !(option.head >= 0 && option.head <= 1)) {
+      throw new Error(`Expected sampling.head to be a number between 0 and 1, got ${String(option.head)}`)
+    }
     return option
   }
   const envRate = process.env['LOGFIRE_TRACE_SAMPLE_RATE']?.trim()
