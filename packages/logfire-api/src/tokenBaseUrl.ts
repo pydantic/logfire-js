@@ -70,5 +70,6 @@ export function getBaseUrlFromToken(token: string | undefined): string {
 }
 
 export function resolveLogfireBaseUrl(env: Record<string, string | undefined>, passedUrl: string | undefined, token: string): string {
-  return removeTrailingSlash(passedUrl ?? env['LOGFIRE_BASE_URL'] ?? getBaseUrlFromToken(token))
+  const envUrl = env['LOGFIRE_BASE_URL']
+  return removeTrailingSlash(passedUrl ?? (envUrl !== undefined && envUrl.trim() !== '' ? envUrl : undefined) ?? getBaseUrlFromToken(token))
 }

@@ -481,6 +481,31 @@ describe('logfire config', () => {
     expect(logfireConfig.baseUrl).toBe('https://env.example.com')
   })
 
+  it('treats a blank LOGFIRE_BASE_URL as unset', () => {
+    process.env['LOGFIRE_BASE_URL'] = ''
+    process.env['LOGFIRE_API_KEY'] = 'pylf_v1_eu_key'
+    configure({ token: 'pylf_v1_eu_abc123' })
+
+    expect(logfireConfig.traceExporterUrl).toBe('https://logfire-eu.pydantic.dev/v1/traces')
+    expect(logfireConfig.variablesBaseUrl).toBe('https://logfire-eu.pydantic.dev')
+
+    delete process.env['LOGFIRE_API_KEY']
+    const dataDir = makeCredentialsDir({
+      logfire_api_url: 'https://local.example.com',
+      project_name: 'local-project',
+      project_url: 'https://example.com/project',
+      token: 'local-token',
+    })
+    configure({ dataDir })
+
+    expect(logfireConfig.baseUrl).toBe('https://local.example.com')
+
+    process.env['LOGFIRE_BASE_URL'] = ' '
+    expect(() => {
+      configure({ token: () => 'pylf_v1_eu_abc123' })
+    }).toThrow('advanced.baseUrl or LOGFIRE_BASE_URL is required when token is a function.')
+  })
+
   it('trims whitespace around a token before reading its region or sending it', () => {
     process.env['LOGFIRE_TOKEN'] = 'pylf_v1_eu_abc123\n'
     configure({})

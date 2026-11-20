@@ -491,7 +491,7 @@ function resolveBaseUrl(
     return ''
   }
   if (typeof token === 'function') {
-    const baseUrl = passedUrl ?? env['LOGFIRE_BASE_URL']
+    const baseUrl = passedUrl ?? readNonEmptyEnv(env, 'LOGFIRE_BASE_URL')
     if (baseUrl === undefined || baseUrl === '') {
       throw new Error('advanced.baseUrl or LOGFIRE_BASE_URL is required when token is a function.')
     }
@@ -500,7 +500,7 @@ function resolveBaseUrl(
   if (token === undefined || token === '') {
     return ''
   }
-  const configuredBaseUrl = passedUrl ?? env['LOGFIRE_BASE_URL'] ?? localCredentialsBaseUrl
+  const configuredBaseUrl = passedUrl ?? readNonEmptyEnv(env, 'LOGFIRE_BASE_URL') ?? localCredentialsBaseUrl
   if (configuredBaseUrl !== undefined && configuredBaseUrl !== '') {
     return removeTrailingSlash(configuredBaseUrl)
   }
