@@ -29,6 +29,12 @@ OpenTelemetry spans named `web_vital.lcp`, `web_vital.inp`, `web_vital.cls`,
 `web_vital.fcp`, and `web_vital.ttfb`. These point events carry exact
 `logfire.span_type = 'log'`.
 
+After the browser restores a page from the back/forward cache, the SDK reports
+the Web Vitals of the restored page with
+`web_vital.navigation_type = 'back-forward-cache'`. A restore has no document
+request, so the SDK reports no TTFB for it: no `web_vital.ttfb` span and no
+`logfire.browser.web_vital.ttfb` histogram point.
+
 ### Captured attributes
 
 Every Web Vital span includes `web_vital.name`, `web_vital.value`,

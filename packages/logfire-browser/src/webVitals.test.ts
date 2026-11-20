@@ -411,6 +411,58 @@ describe('browser Web Vitals reporting', () => {
     ])
   })
 
+  it('does not report the placeholder TTFB of a back/forward cache restore', async () => {
+    const metricRecorder = createMetricRecorder()
+
+    await startWebVitals({ metricRecorder })
+    report('TTFB', {
+      ...createMetric('TTFB', {
+        cacheDuration: 0,
+        connectionDuration: 0,
+        dnsDuration: 0,
+        requestDuration: 0,
+        waitingDuration: 0,
+      }),
+      entries: [],
+      navigationType: 'back-forward-cache',
+      value: 0,
+    })
+
+    expect(mocks.spans).toEqual([])
+    expect(metricRecorder.record).not.toHaveBeenCalled()
+  })
+
+  it('reports the TTFB of a history navigation and the FCP and LCP of a back/forward cache restore', async () => {
+    const metricRecorder = createMetricRecorder()
+    const ttfb = { ...createMetric('TTFB', { waitingDuration: 3 }), navigationType: 'back-forward', value: 240 }
+    const fcp = {
+      ...createMetric('FCP', { firstByteToFCP: 31, loadState: 'complete', timeToFirstByte: 0 }),
+      entries: [],
+      navigationType: 'back-forward-cache',
+      value: 31,
+    }
+    const lcp = {
+      ...createMetric('LCP', { elementRenderDelay: 31, resourceLoadDelay: 0, resourceLoadDuration: 0, timeToFirstByte: 0 }),
+      entries: [],
+      navigationType: 'back-forward-cache',
+      value: 31,
+    }
+
+    await startWebVitals({ metricRecorder })
+    report('TTFB', ttfb)
+    report('FCP', fcp)
+    report('LCP', lcp)
+
+    expect(
+      mocks.spans.map((span) => [span.name, span.attributes['web_vital.navigation_type'], span.attributes['web_vital.value']])
+    ).toEqual([
+      ['web_vital.ttfb', 'back-forward', 240],
+      ['web_vital.fcp', 'back-forward-cache', 31],
+      ['web_vital.lcp', 'back-forward-cache', 31],
+    ])
+    expect(metricRecorder.record.mock.calls).toEqual([[ttfb], [fcp], [lcp]])
+  })
+
   it('attaches a metric recorder after Web Vitals already started without metrics', async () => {
     const metricRecorder = createMetricRecorder()
     const beforeRecorder = createMetric('FCP', { firstByteToFCP: 85, loadState: 'dom-interactive', timeToFirstByte: 42 })
