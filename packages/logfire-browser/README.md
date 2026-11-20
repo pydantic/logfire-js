@@ -540,6 +540,12 @@ enabled. It records LCP, INP, CLS, FCP, and TTFB as short spans named
 `web_vital.ttfb`. These point events carry exact
 `logfire.span_type = 'log'`.
 
+After the browser restores a page from the back/forward cache, the SDK reports
+the Web Vitals of the restored page with
+`web_vital.navigation_type = 'back-forward-cache'`. A restore has no document
+request, so the SDK reports no TTFB for it: no `web_vital.ttfb` span and no
+`logfire.browser.web_vital.ttfb` histogram point.
+
 Each span includes base attributes such as `web_vital.name`,
 `web_vital.value`, `web_vital.delta`, `web_vital.id`, `web_vital.rating`, and
 `web_vital.navigation_type`. It also includes available navigation identity,

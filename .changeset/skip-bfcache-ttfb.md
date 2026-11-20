@@ -1,0 +1,7 @@
+---
+'@pydantic/logfire-browser': patch
+---
+
+Stop reporting a time to first byte of `0` for back/forward cache restores. When the browser restores a page from the back/forward cache, the `web-vitals` library emits a placeholder TTFB of `0`, because a restore has no document request to time. The SDK recorded that placeholder as a `web_vital.ttfb` span and as a `logfire.browser.web_vital.ttfb` histogram point, so TTFB averages and percentiles read lower than the real value. By default the histogram has no `web_vital.navigation_type` attribute, so a metric query could not exclude those points.
+
+**Behavior change:** this affects every application that has `rum.webVitals` on. A back/forward cache restore now gives no `web_vital.ttfb` span and no TTFB histogram point, so the number of TTFB records drops, and TTFB averages and percentiles rise to the value for real document requests. The size of the change depends on how often your pages are restored from the back/forward cache. Data recorded by earlier versions keeps the `0` readings: exclude them from span queries with `web_vital.navigation_type != 'back-forward-cache'`. Histogram points recorded by earlier versions can be separated only if they carry `web_vital.navigation_type`, which needs `reportSoftNavs` or a `rum.webVitals.metrics.attributes` callback that adds it. Without that attribute, expect a step up in TTFB charts at the upgrade. LCP, INP, CLS, and FCP are still reported for a restore, and a history navigation that loads the document again (`back-forward`) still reports its TTFB.
