@@ -1,5 +1,11 @@
 # @pydantic/logfire-ai-sdk-code-mode
 
+## 0.2.0
+
+### Minor Changes
+
+- f8a8a66: Add the `osPolicy` option, so sandbox code can read a real or frozen clock and use random numbers. The default is unchanged: no clock or randomness, as in pydantic-ai.
+
 ## 0.1.5
 
 ### Patch Changes
