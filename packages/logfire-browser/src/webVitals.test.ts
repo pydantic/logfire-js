@@ -349,19 +349,55 @@ describe('browser Web Vitals reporting', () => {
     const firstMetricRecorder = createMetricRecorder()
     const secondMetricRecorder = createMetricRecorder()
     const metric = {
-      ...createMetric('TTFB', { waitingDuration: 0 }),
+      ...createMetric('FCP', { firstByteToFCP: 85, loadState: 'complete', timeToFirstByte: 0 }),
       navigationType: 'soft-navigation',
-      value: 0,
     }
 
     await startWebVitals({ metricRecorder: firstMetricRecorder, reportSoftNavs: true })
     await startWebVitals({ metricRecorder: secondMetricRecorder, reportSoftNavs: false })
-    report('TTFB', metric)
+    report('FCP', metric)
 
     expect(firstMetricRecorder.record).not.toHaveBeenCalled()
     expect(secondMetricRecorder.record).toHaveBeenCalledWith(metric, {
       'web_vital.navigation_type': 'soft-navigation',
     })
+  })
+
+  it('does not report the placeholder TTFB of a soft navigation', async () => {
+    const metricRecorder = createMetricRecorder()
+
+    await startWebVitals({ metricRecorder, reportSoftNavs: true })
+    report('TTFB', {
+      ...createMetric('TTFB', { waitingDuration: 0 }),
+      navigationType: 'soft-navigation',
+      value: 0,
+    })
+
+    expect(mocks.spans).toEqual([])
+    expect(metricRecorder.record).not.toHaveBeenCalled()
+  })
+
+  it('reports a document TTFB of 0 and the FCP of a soft navigation', async () => {
+    const metricRecorder = createMetricRecorder()
+    const ttfb = { ...createMetric('TTFB', { waitingDuration: 0 }), navigationType: 'prerender', value: 0 }
+    const fcp = {
+      ...createMetric('FCP', { firstByteToFCP: 85, loadState: 'complete', timeToFirstByte: 0 }),
+      navigationType: 'soft-navigation',
+      value: 85,
+    }
+
+    await startWebVitals({ metricRecorder, reportSoftNavs: true })
+    report('TTFB', ttfb)
+    report('FCP', fcp)
+
+    expect(mocks.spans.map((span) => [span.name, span.attributes['web_vital.value']])).toEqual([
+      ['web_vital.ttfb', 0],
+      ['web_vital.fcp', 85],
+    ])
+    expect(metricRecorder.record.mock.calls).toEqual([
+      [ttfb, { 'web_vital.navigation_type': 'prerender' }],
+      [fcp, { 'web_vital.navigation_type': 'soft-navigation' }],
+    ])
   })
 
   it('attaches a metric recorder after Web Vitals already started without metrics', async () => {
