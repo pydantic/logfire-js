@@ -1,5 +1,19 @@
 # @pydantic/logfire-browser
 
+## 0.40.0
+
+### Minor Changes
+
+- b21d321: Give Web Vital targets a stable name with a `data-logfire-component` attribute. The SDK reports the element behind LCP, INP, and the largest layout shift (`web_vital.lcp.target`, `web_vital.inp.target`, `web_vital.cls.largest_shift_target`) as the CSS selector that `web-vitals` generates. That selector holds class names and generated ids, such as `#:r1:>span`, so the same element gets a different value between builds and page views and does not group. An element that has the attribute, or is inside an element that has it, is now reported as `component:<name>`, for example `component:MessageList`.
+  
+  **Behavior change:** none until an application adds the attribute. An element with no named ancestor keeps the same CSS selector as before, and an application that passes its own `rum.webVitals.generateTarget` is not affected, because that function replaces the default naming. After an application adds the attribute, new records for the named elements hold `component:<name>` and not a selector, so they no longer match the selectors stored earlier for those elements. To keep CSS selectors for every element, pass `generateTarget: () => undefined`.
+
+### Patch Changes
+
+- 1c00811: Stop reporting a time to first byte of `0` for soft navigations. With `rum.webVitals.reportSoftNavs` on, the `web-vitals` library emits a placeholder TTFB of `0` for each soft navigation, because a route change inside a single-page application has no document request to time. The SDK recorded that placeholder as a `web_vital.ttfb` span and as a `logfire.browser.web_vital.ttfb` histogram point, so every TTFB average or percentile that did not exclude `web_vital.navigation_type = 'soft-navigation'` read lower than the real value.
+  
+  **Behavior change:** this affects only applications that set `reportSoftNavs: true`. They now get no `web_vital.ttfb` span and no TTFB histogram point for a soft navigation, so the number of TTFB records drops and TTFB averages and percentiles no longer include those `0` readings. A query that already excludes soft navigations returns the same result. Data recorded by earlier versions keeps the `0` readings, so keep that filter for time ranges that include them. LCP, INP, CLS, and FCP are still reported for soft navigations.
+
 ## 0.39.0
 
 ### Minor Changes
