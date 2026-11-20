@@ -202,6 +202,13 @@ function readTarget(value: unknown): ReturnType<typeof splitWebVitalTarget> {
   return options?.generateTarget === undefined ? splitWebVitalTarget(value) : { target: value }
 }
 
+// web-vitals gives a placeholder TTFB of 0 to each soft navigation and each back/forward cache
+// restore, which have no request to time. The navigation type is the test, because a prerendered
+// document has a real 0.
+function hasNoDocumentRequest(metric: MetricWithAttribution): boolean {
+  return metric.navigationType === 'soft-navigation' || metric.navigationType === 'back-forward-cache'
+}
+
 function createMetricAttributes(metric: MetricWithAttribution): Attributes {
   const attributes = createBaseAttributes(metric)
 
@@ -213,7 +220,9 @@ function createMetricAttributes(metric: MetricWithAttribution): Attributes {
       setPrimitiveAttribute(attributes, 'web_vital.lcp.element', target)
       setPrimitiveAttribute(attributes, 'web_vital.lcp.target_selector', selector)
       setPrimitiveAttribute(attributes, 'web_vital.lcp.url', attribution.url)
-      setPrimitiveAttribute(attributes, 'web_vital.lcp.time_to_first_byte', attribution.timeToFirstByte)
+      if (!hasNoDocumentRequest(metric)) {
+        setPrimitiveAttribute(attributes, 'web_vital.lcp.time_to_first_byte', attribution.timeToFirstByte)
+      }
       setPrimitiveAttribute(attributes, 'web_vital.lcp.resource_load_delay', attribution.resourceLoadDelay)
       setPrimitiveAttribute(attributes, 'web_vital.lcp.resource_load_duration', attribution.resourceLoadDuration)
       setPrimitiveAttribute(attributes, 'web_vital.lcp.element_render_delay', attribution.elementRenderDelay)
@@ -251,7 +260,9 @@ function createMetricAttributes(metric: MetricWithAttribution): Attributes {
     }
     case 'FCP': {
       const { attribution } = metric
-      setPrimitiveAttribute(attributes, 'web_vital.fcp.time_to_first_byte', attribution.timeToFirstByte)
+      if (!hasNoDocumentRequest(metric)) {
+        setPrimitiveAttribute(attributes, 'web_vital.fcp.time_to_first_byte', attribution.timeToFirstByte)
+      }
       setPrimitiveAttribute(attributes, 'web_vital.fcp.first_byte_to_fcp', attribution.firstByteToFCP)
       setPrimitiveAttribute(attributes, 'web_vital.fcp.load_state', attribution.loadState)
       break
@@ -389,10 +400,7 @@ function registerWebVitals(webVitals: WebVitalsAttributionModule, requestedOptio
     if (registeredObserverOptions === undefined || currentOwner?.active !== true) {
       return
     }
-    // web-vitals reports a placeholder TTFB of 0 for each soft navigation and each back/forward
-    // cache restore, which have no request to time. The navigation type is the test, because a
-    // prerendered document has a real 0.
-    if (metric.name === 'TTFB' && (metric.navigationType === 'soft-navigation' || metric.navigationType === 'back-forward-cache')) {
+    if (metric.name === 'TTFB' && hasNoDocumentRequest(metric)) {
       return
     }
     reportWebVital(metric, currentMetricRecorder, currentSessionManager, currentTracer)

@@ -544,7 +544,9 @@ After the browser restores a page from the back/forward cache, the SDK reports
 the Web Vitals of the restored page with
 `web_vital.navigation_type = 'back-forward-cache'`. A restore has no document
 request, so the SDK reports no TTFB for it: no `web_vital.ttfb` span and no
-`logfire.browser.web_vital.ttfb` histogram point.
+`logfire.browser.web_vital.ttfb` histogram point. For the same reason, the FCP
+and LCP spans of a restore have no `web_vital.fcp.time_to_first_byte` or
+`web_vital.lcp.time_to_first_byte` attribute.
 
 Each span includes base attributes such as `web_vital.name`,
 `web_vital.value`, `web_vital.delta`, `web_vital.id`, `web_vital.rating`, and
@@ -751,7 +753,9 @@ also finalizes the initial navigation when the first soft navigation occurs.
 Soft-navigation LCP considers newly painted content, which can differ from a
 cold load of the same URL. A soft navigation has no document request, so the SDK
 reports no TTFB for it: no `web_vital.ttfb` span and no
-`logfire.browser.web_vital.ttfb` histogram point.
+`logfire.browser.web_vital.ttfb` histogram point. For the same reason, the FCP
+and LCP spans of a soft navigation have no `web_vital.fcp.time_to_first_byte` or
+`web_vital.lcp.time_to_first_byte` attribute.
 
 Soft-navigation spans use the metric's sanitized navigation URL. They carry
 `logfire.page.route` when the SDK observed a route for that navigation, and omit
