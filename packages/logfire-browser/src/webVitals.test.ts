@@ -132,6 +132,7 @@ vi.mock('web-vitals/attribution', () => ({
 
 import { BrowserSessionManager } from './browserSession'
 import { observeNavigatedPages, resetBrowserWebVitalsForTests, startBrowserWebVitals } from './webVitals'
+import { generateComponentTarget } from './webVitalTarget'
 
 const webVitalNames: WebVitalName[] = ['LCP', 'INP', 'CLS', 'FCP', 'TTFB']
 
@@ -234,13 +235,17 @@ describe('browser Web Vitals reporting', () => {
     })
   })
 
-  it('defaults INP processed event entries to false', async () => {
+  it('defaults to component targets and to no INP processed event entries', async () => {
+    await startWebVitals()
     await startWebVitals()
 
     expect(getRegistration('INP').options).toEqual({
+      generateTarget: generateComponentTarget,
       includeProcessedEventEntries: false,
     })
-    expect(getRegistration('LCP').options).toEqual({})
+    expect(getRegistration('LCP').options).toEqual({ generateTarget: generateComponentTarget })
+    expect(getRegistration('CLS').options).toEqual({ generateTarget: generateComponentTarget })
+    expect(mocks.diagWarnings).toEqual([])
   })
 
   it('does not register duplicate observers in one page lifecycle', async () => {
@@ -250,7 +255,11 @@ describe('browser Web Vitals reporting', () => {
     for (const name of webVitalNames) {
       expect(mocks.registrations[name]).toHaveLength(1)
     }
-    expect(getRegistration('LCP').options).toEqual({ reportAllChanges: true, reportSoftNavs: true })
+    expect(getRegistration('LCP').options).toEqual({
+      generateTarget: generateComponentTarget,
+      reportAllChanges: true,
+      reportSoftNavs: true,
+    })
     expect(mocks.diagWarnings).toEqual([
       ['logfire-browser: Web Vitals observer options are fixed by the first successful startup; ignoring changed options'],
     ])
@@ -265,7 +274,7 @@ describe('browser Web Vitals reporting', () => {
     for (const name of webVitalNames) {
       expect(mocks.registrations[name]).toHaveLength(1)
     }
-    expect(getRegistration('LCP').options).toEqual({ reportAllChanges: false })
+    expect(getRegistration('LCP').options).toEqual({ generateTarget: generateComponentTarget, reportAllChanges: false })
   })
 
   it('retries only missing observers after a partial startup failure', async () => {
@@ -294,7 +303,9 @@ describe('browser Web Vitals reporting', () => {
     for (const name of webVitalNames) {
       expect(mocks.registrations[name]).toHaveLength(1)
       expect(getRegistration(name).options).toEqual(
-        name === 'INP' ? { includeProcessedEventEntries: false, reportAllChanges: true } : { reportAllChanges: true }
+        name === 'INP'
+          ? { generateTarget: generateComponentTarget, includeProcessedEventEntries: false, reportAllChanges: true }
+          : { generateTarget: generateComponentTarget, reportAllChanges: true }
       )
     }
     expect(retryMetricRecorder.record).toHaveBeenCalledWith(metric)
