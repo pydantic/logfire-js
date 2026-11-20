@@ -651,8 +651,9 @@ soft navigation requires a user interaction, URL change, and resulting paint,
 so browser detection can differ from application router events. Enabling it
 also finalizes the initial navigation when the first soft navigation occurs.
 Soft-navigation LCP considers newly painted content, which can differ from a
-cold load of the same URL, and soft-navigation TTFB is reported as `0` rather
-than as request latency.
+cold load of the same URL. A soft navigation has no document request, so the SDK
+reports no TTFB for it: no `web_vital.ttfb` span and no
+`logfire.browser.web_vital.ttfb` histogram point.
 
 Soft-navigation spans use the metric's sanitized navigation URL. They carry
 `logfire.page.route` when the SDK observed a route for that navigation, and omit

@@ -352,6 +352,11 @@ function registerWebVitals(webVitals: WebVitalsAttributionModule, requestedOptio
     if (registeredObserverOptions === undefined || currentOwner?.active !== true) {
       return
     }
+    // web-vitals reports a placeholder TTFB of 0 for each soft navigation, which has no request
+    // to time. The navigation type is the test, because a prerendered document has a real 0.
+    if (metric.name === 'TTFB' && metric.navigationType === 'soft-navigation') {
+      return
+    }
     reportWebVital(metric, currentMetricRecorder, currentSessionManager, currentTracer)
   }
   const registrations = [
