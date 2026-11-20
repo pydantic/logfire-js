@@ -63,6 +63,42 @@ logfire.configureFrontend({
 })
 ```
 
+### Target names
+
+Web Vitals report the element behind LCP, INP, and the largest layout shift in
+`web_vital.lcp.target`, `web_vital.inp.target`, and
+`web_vital.cls.largest_shift_target`. By default the value is the CSS selector
+that `web-vitals` generates, such as `div.card.wide>p.title` or
+`#:r1:>span`. A selector follows the markup: it changes when class names
+change, and an id that a framework generates at render time gives a different
+value on each page view, so the same element does not group across builds or
+sessions.
+
+To give an element a stable name, add `data-logfire-component` to it or to an
+element that contains it:
+
+```html
+<section data-logfire-component="MessageList">
+  <div class="card wide"><p class="title">...</p></div>
+</section>
+```
+
+Every Web Vital target inside that section is reported as
+`component:MessageList`. The nearest named ancestor wins, an empty value is
+skipped, and the target is limited to 100 characters. Use names that are the
+same for every user and build, and put no user data in them. Name the
+components that you want to tell apart: a name on a page-level wrapper gives
+every unnamed element inside it that one name, which is a coarser group than
+the selectors it replaces. An element with no named ancestor keeps its CSS
+selector, so an application that does not use the attribute reports the same
+targets as before.
+
+A named target replaces the selector; the span does not carry both. To change
+that, pass `rum.webVitals.generateTarget`, which replaces the default naming.
+It receives the DOM node, and a return value of `undefined` falls back to the
+`web-vitals` selector, so `generateTarget: () => undefined` reports CSS
+selectors for every element.
+
 ### Observer options
 
 Web Vitals observers live for the page lifetime. The first successful startup

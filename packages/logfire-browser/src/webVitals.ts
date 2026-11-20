@@ -16,6 +16,7 @@ import type { BrowserSessionManager } from './browserSession'
 import { normalizeScriptEntry } from './scriptAttributes'
 
 import { setOwn } from './ownRecord'
+import { generateComponentTarget } from './webVitalTarget'
 
 const LOGFIRE_SPAN_TYPE_KEY = 'logfire.span_type'
 const ATTR_LOGFIRE_PAGE_ROUTE = 'logfire.page.route'
@@ -35,6 +36,10 @@ export interface BrowserWebVitalsOptions {
   reportSoftNavs?: boolean
   /**
    * Customize how DOM targets are stringified by `web-vitals/attribution`.
+   * Defaults to `component:<name>` for an element that has, or is inside an
+   * element that has, a `data-logfire-component` attribute. A function that
+   * returns `undefined` falls back to the CSS selector that `web-vitals`
+   * generates, so `() => undefined` reports that selector for every element.
    */
   generateTarget?: (element: Node | null) => string | undefined
   /**
@@ -144,9 +149,7 @@ function createBaseReportOptions(options: ReportOptionSource = {}): AttributionR
   if (options.reportSoftNavs !== undefined) {
     reportOptions.reportSoftNavs = options.reportSoftNavs
   }
-  if (options.generateTarget !== undefined) {
-    reportOptions.generateTarget = options.generateTarget
-  }
+  reportOptions.generateTarget = options.generateTarget ?? generateComponentTarget
   return reportOptions
 }
 
