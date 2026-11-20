@@ -16,7 +16,8 @@ import type { BrowserSessionManager } from './browserSession'
 import { normalizeScriptEntry } from './scriptAttributes'
 
 import { setOwn } from './ownRecord'
-import { generateComponentTarget } from './webVitalTarget'
+import { generateStableSelector } from './webVitalSelector'
+import { generateDefaultTarget, generateStableDefaultTarget, splitWebVitalTarget } from './webVitalTarget'
 
 const LOGFIRE_SPAN_TYPE_KEY = 'logfire.span_type'
 const ATTR_LOGFIRE_PAGE_ROUTE = 'logfire.page.route'
@@ -42,6 +43,14 @@ export interface BrowserWebVitalsOptions {
    * generates, so `() => undefined` reports that selector for every element.
    */
   generateTarget?: (element: Node | null) => string | undefined
+  /**
+   * Leave ids that a framework generates at render time, such as a React
+   * `useId` id, out of the CSS selector of a target. It applies where the
+   * target is a selector: an element with no component name, and an element
+   * for which `generateTarget` returns `undefined`. A selector with no
+   * generated id in it does not change. Defaults to false.
+   */
+  stableSelectors?: boolean
   /**
    * Whether INP attribution should include processed event entries internally.
    * Defaults to false to reduce memory pressure; entries are not exported as
@@ -89,6 +98,7 @@ interface ObserverOptions {
   includeProcessedEventEntries: boolean
   reportAllChanges: boolean | undefined
   reportSoftNavs: boolean | undefined
+  stableSelectors: boolean
 }
 
 interface ReportOptionSource {
@@ -96,6 +106,7 @@ interface ReportOptionSource {
   includeProcessedEventEntries?: boolean | undefined
   reportAllChanges?: boolean | undefined
   reportSoftNavs?: boolean | undefined
+  stableSelectors?: boolean | undefined
 }
 
 function createHandle(
@@ -141,6 +152,17 @@ function setPrimitiveAttribute(attributes: Attributes, key: string, value: unkno
   }
 }
 
+function resolveGenerateTarget(options: ReportOptionSource): NonNullable<BrowserWebVitalsOptions['generateTarget']> {
+  const { generateTarget } = options
+  if (generateTarget === undefined) {
+    return options.stableSelectors === true ? generateStableDefaultTarget : generateDefaultTarget
+  }
+  if (options.stableSelectors !== true) {
+    return generateTarget
+  }
+  return (node) => generateTarget(node) ?? generateStableSelector(node)
+}
+
 function createBaseReportOptions(options: ReportOptionSource = {}): AttributionReportOpts {
   const reportOptions: AttributionReportOpts = {}
   if (options.reportAllChanges !== undefined) {
@@ -149,7 +171,7 @@ function createBaseReportOptions(options: ReportOptionSource = {}): AttributionR
   if (options.reportSoftNavs !== undefined) {
     reportOptions.reportSoftNavs = options.reportSoftNavs
   }
-  reportOptions.generateTarget = options.generateTarget ?? generateComponentTarget
+  reportOptions.generateTarget = resolveGenerateTarget(options)
   return reportOptions
 }
 
@@ -180,8 +202,10 @@ function createMetricAttributes(metric: MetricWithAttribution): Attributes {
   switch (metric.name) {
     case 'LCP': {
       const { attribution } = metric
-      setPrimitiveAttribute(attributes, 'web_vital.lcp.target', attribution.target)
-      setPrimitiveAttribute(attributes, 'web_vital.lcp.element', attribution.target)
+      const { selector, target } = splitWebVitalTarget(attribution.target)
+      setPrimitiveAttribute(attributes, 'web_vital.lcp.target', target)
+      setPrimitiveAttribute(attributes, 'web_vital.lcp.element', target)
+      setPrimitiveAttribute(attributes, 'web_vital.lcp.target_selector', selector)
       setPrimitiveAttribute(attributes, 'web_vital.lcp.url', attribution.url)
       setPrimitiveAttribute(attributes, 'web_vital.lcp.time_to_first_byte', attribution.timeToFirstByte)
       setPrimitiveAttribute(attributes, 'web_vital.lcp.resource_load_delay', attribution.resourceLoadDelay)
@@ -191,7 +215,9 @@ function createMetricAttributes(metric: MetricWithAttribution): Attributes {
     }
     case 'INP': {
       const { attribution } = metric
-      setPrimitiveAttribute(attributes, 'web_vital.inp.target', attribution.interactionTarget)
+      const { selector, target } = splitWebVitalTarget(attribution.interactionTarget)
+      setPrimitiveAttribute(attributes, 'web_vital.inp.target', target)
+      setPrimitiveAttribute(attributes, 'web_vital.inp.target_selector', selector)
       setPrimitiveAttribute(attributes, 'web_vital.inp.interaction_type', attribution.interactionType)
       setPrimitiveAttribute(attributes, 'web_vital.inp.interaction_time', attribution.interactionTime)
       setPrimitiveAttribute(attributes, 'web_vital.inp.input_delay', attribution.inputDelay)
@@ -209,7 +235,9 @@ function createMetricAttributes(metric: MetricWithAttribution): Attributes {
     }
     case 'CLS': {
       const { attribution } = metric
-      setPrimitiveAttribute(attributes, 'web_vital.cls.largest_shift_target', attribution.largestShiftTarget)
+      const { selector, target } = splitWebVitalTarget(attribution.largestShiftTarget)
+      setPrimitiveAttribute(attributes, 'web_vital.cls.largest_shift_target', target)
+      setPrimitiveAttribute(attributes, 'web_vital.cls.largest_shift_target_selector', selector)
       setPrimitiveAttribute(attributes, 'web_vital.cls.largest_shift_time', attribution.largestShiftTime)
       setPrimitiveAttribute(attributes, 'web_vital.cls.largest_shift_value', attribution.largestShiftValue)
       setPrimitiveAttribute(attributes, 'web_vital.cls.load_state', attribution.loadState)
@@ -486,6 +514,7 @@ function normalizeObserverOptions(options: BrowserWebVitalsOptions): ObserverOpt
     includeProcessedEventEntries: options.includeProcessedEventEntries ?? false,
     reportAllChanges: options.reportAllChanges,
     reportSoftNavs: options.reportSoftNavs,
+    stableSelectors: options.stableSelectors ?? false,
   }
 }
 
@@ -494,6 +523,7 @@ function sameObserverOptions(left: ObserverOptions, right: ObserverOptions): boo
     left.generateTarget === right.generateTarget &&
     left.includeProcessedEventEntries === right.includeProcessedEventEntries &&
     (left.reportAllChanges ?? false) === (right.reportAllChanges ?? false) &&
-    (left.reportSoftNavs ?? false) === (right.reportSoftNavs ?? false)
+    (left.reportSoftNavs ?? false) === (right.reportSoftNavs ?? false) &&
+    left.stableSelectors === right.stableSelectors
   )
 }
