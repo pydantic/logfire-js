@@ -496,6 +496,63 @@ describe('browser Web Vitals reporting', () => {
     expect(metricRecorder.record.mock.calls).toEqual([[ttfb], [fcp], [lcp]])
   })
 
+  it.each(['soft-navigation', 'back-forward-cache'] as const)(
+    'omits the placeholder time to first byte from the FCP and LCP of a %s',
+    async (navigationType) => {
+      const metricRecorder = createMetricRecorder()
+      const fcp = {
+        ...createMetric('FCP', { firstByteToFCP: 31, loadState: 'complete', timeToFirstByte: 0 }),
+        navigationType,
+        value: 31,
+      }
+      const lcp = {
+        ...createMetric('LCP', { elementRenderDelay: 21, resourceLoadDelay: 4, resourceLoadDuration: 6, timeToFirstByte: 0 }),
+        navigationType,
+        value: 31,
+      }
+
+      await startWebVitals({ metricRecorder })
+      report('FCP', fcp)
+      report('LCP', lcp)
+
+      const subparts = mocks.spans.map((span) =>
+        Object.fromEntries(Object.entries(span.attributes).filter(([key]) => key.startsWith(`${span.name}.`)))
+      )
+      expect(subparts).toEqual([
+        { 'web_vital.fcp.first_byte_to_fcp': 31, 'web_vital.fcp.load_state': 'complete' },
+        {
+          'web_vital.lcp.element_render_delay': 21,
+          'web_vital.lcp.resource_load_delay': 4,
+          'web_vital.lcp.resource_load_duration': 6,
+        },
+      ])
+      // The histogram recorder receives the metric as web-vitals reported it.
+      expect(metricRecorder.record.mock.calls.map(([metric]) => (metric as { attribution: unknown }).attribution)).toEqual([
+        { firstByteToFCP: 31, loadState: 'complete', timeToFirstByte: 0 },
+        { elementRenderDelay: 21, resourceLoadDelay: 4, resourceLoadDuration: 6, timeToFirstByte: 0 },
+      ])
+    }
+  )
+
+  it.each(['navigate', 'prerender', 'back-forward'] as const)(
+    'keeps a time to first byte of 0 on the FCP and LCP of a %s document',
+    async (navigationType) => {
+      await startWebVitals()
+      report('FCP', {
+        ...createMetric('FCP', { firstByteToFCP: 85, loadState: 'complete', timeToFirstByte: 0 }),
+        navigationType,
+        value: 85,
+      })
+      report('LCP', {
+        ...createMetric('LCP', { elementRenderDelay: 85, resourceLoadDelay: 0, resourceLoadDuration: 0, timeToFirstByte: 0 }),
+        navigationType,
+        value: 85,
+      })
+
+      expect(mocks.spans.map((span) => span.attributes[`${span.name}.time_to_first_byte`])).toEqual([0, 0])
+    }
+  )
+
   it('attaches a metric recorder after Web Vitals already started without metrics', async () => {
     const metricRecorder = createMetricRecorder()
     const beforeRecorder = createMetric('FCP', { firstByteToFCP: 85, loadState: 'dom-interactive', timeToFirstByte: 42 })
