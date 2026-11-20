@@ -196,13 +196,19 @@ function createBaseAttributes(metric: MetricWithAttribution): Attributes {
   return attributes
 }
 
+function readTarget(value: unknown): ReturnType<typeof splitWebVitalTarget> {
+  // Only the default generateTarget adds a selector, so a target from the application stays as it is.
+  const options = registeredObserverOptions ?? observerOptionsDuringStartup
+  return options?.generateTarget === undefined ? splitWebVitalTarget(value) : { target: value }
+}
+
 function createMetricAttributes(metric: MetricWithAttribution): Attributes {
   const attributes = createBaseAttributes(metric)
 
   switch (metric.name) {
     case 'LCP': {
       const { attribution } = metric
-      const { selector, target } = splitWebVitalTarget(attribution.target)
+      const { selector, target } = readTarget(attribution.target)
       setPrimitiveAttribute(attributes, 'web_vital.lcp.target', target)
       setPrimitiveAttribute(attributes, 'web_vital.lcp.element', target)
       setPrimitiveAttribute(attributes, 'web_vital.lcp.target_selector', selector)
@@ -215,7 +221,7 @@ function createMetricAttributes(metric: MetricWithAttribution): Attributes {
     }
     case 'INP': {
       const { attribution } = metric
-      const { selector, target } = splitWebVitalTarget(attribution.interactionTarget)
+      const { selector, target } = readTarget(attribution.interactionTarget)
       setPrimitiveAttribute(attributes, 'web_vital.inp.target', target)
       setPrimitiveAttribute(attributes, 'web_vital.inp.target_selector', selector)
       setPrimitiveAttribute(attributes, 'web_vital.inp.interaction_type', attribution.interactionType)
@@ -235,7 +241,7 @@ function createMetricAttributes(metric: MetricWithAttribution): Attributes {
     }
     case 'CLS': {
       const { attribution } = metric
-      const { selector, target } = splitWebVitalTarget(attribution.largestShiftTarget)
+      const { selector, target } = readTarget(attribution.largestShiftTarget)
       setPrimitiveAttribute(attributes, 'web_vital.cls.largest_shift_target', target)
       setPrimitiveAttribute(attributes, 'web_vital.cls.largest_shift_target_selector', selector)
       setPrimitiveAttribute(attributes, 'web_vital.cls.largest_shift_time', attribution.largestShiftTime)

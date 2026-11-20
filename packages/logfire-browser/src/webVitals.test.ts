@@ -921,6 +921,18 @@ describe('browser Web Vitals reporting', () => {
     expect(mocks.spans[1]?.attributes).not.toHaveProperty('web_vital.inp.target_selector')
   })
 
+  it('keeps a target from a custom generateTarget as it is', async () => {
+    await startWebVitals({ generateTarget: () => 'component:Card\nprimary' })
+
+    report('LCP', createMetric('LCP', { target: 'component:Card\nprimary' }))
+
+    expect(mocks.spans[0]?.attributes).toMatchObject({
+      'web_vital.lcp.element': 'component:Card\nprimary',
+      'web_vital.lcp.target': 'component:Card\nprimary',
+    })
+    expect(mocks.spans[0]?.attributes).not.toHaveProperty('web_vital.lcp.target_selector')
+  })
+
   it('maps INP, CLS, FCP, and TTFB attribution primitives', async () => {
     await startWebVitals()
 
