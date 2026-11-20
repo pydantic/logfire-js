@@ -1,5 +1,18 @@
 # logfire
 
+## 0.24.0
+
+### Minor Changes
+
+- 5487d49: `configure()` now throws when `sampling.head` is outside `0` to `1` or is `NaN`, instead of keeping every trace for a value above `1` or `NaN` and dropping every trace for a negative one
+
+### Patch Changes
+
+- 134b53b: Treat a blank `LOGFIRE_BASE_URL` as unset, so the base URL falls back to local credentials or the token's region instead of becoming empty
+- 3db06cb: Trim whitespace around the value a `token` provider function returns. A trailing newline, such as one left by reading a secret file, made Node reject the `Authorization` header and drop every export.
+- Updated dependencies [134b53b]
+  - logfire@0.26.2
+
 ## 0.23.1
 
 ### Patch Changes

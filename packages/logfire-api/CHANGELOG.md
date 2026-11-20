@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.26.2
+
+### Patch Changes
+
+- 134b53b: Treat a blank `LOGFIRE_BASE_URL` as unset, so the base URL falls back to local credentials or the token's region instead of becoming empty
+
 ## 0.26.1
 
 ### Patch Changes
