@@ -1355,11 +1355,11 @@ class ReplayIngestError extends Error {
   }
 }
 
+// A token read from a file or an environment template often ends in a newline, and fetch rejects a
+// header value that holds one, so every upload would fail.
 async function resolveToken(token: ResolvedSessionReplayConfig['token']): Promise<string | undefined> {
-  if (typeof token === 'function') {
-    return token()
-  }
-  return token
+  const value = typeof token === 'function' ? await token() : token
+  return value?.trim()
 }
 
 async function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {

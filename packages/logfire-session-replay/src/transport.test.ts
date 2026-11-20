@@ -344,6 +344,40 @@ describe('ReplayTransport full mode', () => {
     })
   })
 
+  it.each([
+    ['a string', 'write-token\n'],
+    ['a provider', async () => '  write-token\r\n'],
+  ])('trims whitespace around a direct token from %s', async (_source, token) => {
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport({ ...makeConfig(fetchImpl), token }, 'sess-trim-token', 'full', null)
+    transport.add(fullSnapshot)
+    await transport.flush()
+
+    expect(calls[0]!.init.headers).toEqual({
+      Authorization: 'Bearer write-token',
+      'Content-Type': 'application/json',
+      'Content-Encoding': 'gzip',
+    })
+  })
+
+  it('keeps caller Authorization headers when the direct token is only whitespace', async () => {
+    const { calls, fetchImpl } = recordingFetch()
+    const transport = new ReplayTransport(
+      { ...makeConfig(fetchImpl), headers: async () => ({ authorization: 'Bearer caller-token' }), token: '\n' },
+      'sess-blank-token',
+      'full',
+      null
+    )
+    transport.add(fullSnapshot)
+    await transport.flush()
+
+    expect(calls[0]!.init.headers).toEqual({
+      authorization: 'Bearer caller-token',
+      'Content-Type': 'application/json',
+      'Content-Encoding': 'gzip',
+    })
+  })
+
   it('keeps caller Authorization headers when the direct token is empty', async () => {
     const { calls, fetchImpl } = recordingFetch()
     const transport = new ReplayTransport(
