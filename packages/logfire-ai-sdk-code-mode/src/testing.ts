@@ -3,7 +3,7 @@
 import type { MontySession, RemoteCheckoutOptions } from '@pydantic/monty'
 import type { ToolExecutionOptions } from 'ai'
 
-import type { CodeMode, RunCodeInput, Sandboxes } from './codeMode'
+import type { CodeMode, RunCodeContext, RunCodeInput, Sandboxes } from './codeMode'
 
 /** Runs both `run_code` hooks and returns the unwrapped text or JSON value seen by the model. */
 export async function runCode(code: CodeMode, input: RunCodeInput, options: Partial<ToolExecutionOptions<unknown>> = {}): Promise<unknown> {
@@ -11,7 +11,13 @@ export async function runCode(code: CodeMode, input: RunCodeInput, options: Part
   if (execute === undefined || toModelOutput === undefined) {
     throw new Error('run_code requires execute and toModelOutput functions')
   }
-  const output = await execute(input, { toolCallId: 'call', messages: [], context: undefined, ...options })
+  // Tests pass invalid contexts on purpose, so the options are not narrowed to run_code's context type.
+  const output = await execute(input, {
+    toolCallId: 'call',
+    messages: [],
+    context: undefined,
+    ...options,
+  } as ToolExecutionOptions<RunCodeContext>)
   const result = await toModelOutput({ toolCallId: 'call', input, output })
   if (result.type === 'text' || result.type === 'json') {
     return result.value

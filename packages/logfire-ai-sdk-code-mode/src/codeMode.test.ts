@@ -144,6 +144,60 @@ describe('nested calls', () => {
     expect(seen[0]?.options.abortSignal).toBeInstanceOf(AbortSignal)
   })
 
+  test("take per-call context from run_code's own toolsContext entry over the context option", async () => {
+    const seen: unknown[] = []
+    const approvalContexts: unknown[] = []
+    const inspect = tool({
+      inputSchema: z.object({}),
+      outputSchema: z.object({}),
+      contextSchema: z.object({ tenant: z.string() }),
+      execute: (_input, { context }) => {
+        seen.push(context)
+        return {}
+      },
+    })
+    await using code = codeMode({
+      tools: { inspect },
+      sandboxes: sandboxes(),
+      context: { inspect: { tenant: 'default' } },
+      approval: ({ toolsContext }) => {
+        approvalContexts.push(toolsContext)
+        return 'approved'
+      },
+    })
+    const model = new MockLanguageModelV4({
+      doGenerate: [
+        {
+          content: [{ type: 'tool-call', toolCallId: 'call', toolName: 'run_code', input: JSON.stringify({ code: 'await inspect()' }) }],
+          finishReason: { unified: 'tool-calls', raw: 'tool-calls' },
+          usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } },
+          warnings: [],
+        },
+        {
+          content: [{ type: 'text', text: 'done' }],
+          finishReason: { unified: 'stop', raw: 'stop' },
+          usage: { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } },
+          warnings: [],
+        },
+      ],
+    })
+
+    await generateText({
+      model,
+      prompt: 'go',
+      tools: code.tools,
+      toolsContext: { run_code: { inspect: { tenant: 'acme' } } },
+      stopWhen: stepCountIs(3),
+    })
+    await runCode(code, { code: 'await inspect()' })
+
+    expect(seen).toEqual([{ tenant: 'acme' }, { tenant: 'default' }])
+    expect(approvalContexts).toEqual([{ inspect: { tenant: 'acme' } }, { inspect: { tenant: 'default' } }])
+    expect(await runCodeError(code, { code: 'await inspect()' }, { context: 'acme' })).toMatch(
+      /\nTypeError: run_code's context must be an object keyed by tool name\.$/u
+    )
+  })
+
   test.each(['first-snippet', 'off'] as const)(
     'restore schema property names that are not Python names, with type checking %s',
     async (typeCheck) => {

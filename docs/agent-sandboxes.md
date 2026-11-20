@@ -167,7 +167,10 @@ also ends after `idleTimeout` milliseconds without a call (default 300,000, five
 Calling a tool from the sandbox skips the AI SDK's own approval and context handling, so `codeMode()` takes them as
 options:
 
-- `context`: each tool's context, keyed by tool name, as `toolsContext`.
+- `context`: each tool's context, keyed by tool name, as `toolsContext`. For context that differs per call, such as the
+  current user, put the same shape under `run_code` in the call's own `toolsContext`:
+  `toolsContext: { run_code: { get_weather: { userId } } }`. Its entries replace `context` for that call, and
+  `approval` functions see them too.
 - `approval`: the same shape as `toolApproval`, without the `'user-approval'` status, because nothing in the sandbox
   can wait for a person. An async function can ask one itself and return `'approved'` or `'denied'`, within
   `limits.timeout`. Tools with `needsApproval` are rejected.
@@ -182,6 +185,46 @@ options:
 
 If you pass your own `sandboxes`, set its `requestTimeout`, which Monty takes in seconds, above `limits.timeout`, so that a long snippet gets the
 time-limit message instead of a dropped connection. `codeMode()` does this for the pool it creates.
+
+To define an agent once and call it for each request, use `withCodeMode()`. It takes the `ToolLoopAgent` settings and
+the `codeMode()` options, and returns a `ToolLoopAgent` whose model gets `run_code` next to the agent's direct tools:
+
+```ts
+import { withCodeMode } from '@pydantic/logfire-ai-sdk-code-mode'
+import { stepCountIs } from 'ai'
+
+const agent = withCodeMode({ model, stopWhen: stepCountIs(10) }, { tools: { get_weather: getWeather } })
+
+const { text } = await agent.generate({ prompt })
+```
+
+Each `generate()` or `stream()` call gets its own sandbox session and closes it when the call ends, including on error
+and abort, so Python state lasts for one call. A run that pauses for a tool approval resumes in a new call, with a fresh
+session. The agent works with `createAgentUIStreamResponse()`, and earlier `run_code` results in the conversation
+history reach the model the same way as with `codeMode()`. Without `sandboxes`, the agent creates one
+`agentSandboxes()` pool on first use and shares it across calls; close it with `await agent.close()` when your
+application shuts down.
+
+The agent is shared between requests, so request data such as the current user must not go into its fixed options.
+Pass it as the call's `options`, and turn it into the sandbox tools' context in the agent's `prepareCall`, under
+`run_code`:
+
+```ts
+const agent = withCodeMode(
+  {
+    model,
+    stopWhen: stepCountIs(10),
+    callOptionsSchema: z.object({ userId: z.string() }),
+    prepareCall: ({ options, ...settings }) => ({
+      ...settings,
+      toolsContext: { ...settings.toolsContext, run_code: { get_orders: { userId: options.userId } } },
+    }),
+  },
+  { tools: { get_orders: getOrders } }
+)
+
+await agent.generate({ prompt, options: { userId: session.userId } })
+```
 
 [`examples/agent-sandboxes-ai-sdk`](https://github.com/pydantic/logfire-js/tree/main/examples/agent-sandboxes-ai-sdk)
 is a complete agent over a larger data set, with a smoke test.
