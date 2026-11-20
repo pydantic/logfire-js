@@ -443,6 +443,17 @@ function defaultTraceExporterHeaders() {
   return {}
 }
 
+// The Node SDK throws on an invalid rate, but a throw here would stop the page that calls
+// configure(). A rate above 1 or NaN kept every trace and a negative one dropped every trace,
+// with no sign, so the browser warns and keeps every trace.
+function resolveHeadRate(head: number | undefined): number | undefined {
+  if (head === undefined || (head >= 0 && head <= 1)) {
+    return head
+  }
+  diag.warn(`logfire-browser: ignoring sampling.head ${String(head)}; expected a number between 0 and 1, so every trace is kept`)
+  return undefined
+}
+
 function resolveBrowserWebVitalsOptions(webVitals: RUMOptions['webVitals'] | undefined): BrowserWebVitalsOptions | undefined {
   if (webVitals === undefined || webVitals === false) {
     return undefined
@@ -738,7 +749,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
 
   diag.info('logfire-browser: starting')
 
-  const headRate = options.sampling?.head
+  const headRate = resolveHeadRate(options.sampling?.head)
   const sampler =
     headRate !== undefined && headRate < 1.0 ? new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(headRate) }) : undefined
 

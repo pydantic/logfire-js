@@ -1105,6 +1105,29 @@ describe('browser pending spans', () => {
     expect(spanProcessors.some((processor) => processor instanceof PendingSpanProcessor)).toBe(false)
   })
 
+  it.each([
+    [0, 0],
+    [0.5, 0.5],
+    [1, undefined],
+  ])('uses a sampling.head of %s', (head, expectedRatio) => {
+    const diagWarn = vi.spyOn(diag, 'warn').mockImplementation(() => undefined)
+    cleanup = configure({ sampling: { head }, traceUrl: 'http://localhost:8989/client-traces' })
+
+    const { sampler } = getLatestWebTracerProvider().options as { sampler?: { config: { root: { ratio: number } } } }
+    expect(sampler?.config.root.ratio).toBe(expectedRatio)
+    expect(diagWarn).not.toHaveBeenCalled()
+  })
+
+  it.each([10, 1.5, -0.1, Number.NaN, Number.POSITIVE_INFINITY])('warns and keeps every trace for a sampling.head of %s', (head) => {
+    const diagWarn = vi.spyOn(diag, 'warn').mockImplementation(() => undefined)
+    cleanup = configure({ sampling: { head }, traceUrl: 'http://localhost:8989/client-traces' })
+
+    expect((getLatestWebTracerProvider().options as { sampler?: unknown }).sampler).toBeUndefined()
+    expect(diagWarn).toHaveBeenCalledWith(
+      `logfire-browser: ignoring sampling.head ${String(head)}; expected a number between 0 and 1, so every trace is kept`
+    )
+  })
+
   it('does not install automatic or deferred pending spans in the tail-sampled processor pipeline', () => {
     cleanup = configure({
       sampling: { tail: () => 0.0 },
