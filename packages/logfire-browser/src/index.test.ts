@@ -1877,6 +1877,7 @@ describe('browser Web Vitals config', () => {
           includeProcessedEventEntries: true,
           reportAllChanges: true,
           reportSoftNavs: true,
+          stableSelectors: true,
         },
       },
       traceUrl: 'http://localhost:8989/client-traces',
@@ -1888,6 +1889,7 @@ describe('browser Web Vitals config', () => {
       includeProcessedEventEntries: boolean
       reportAllChanges: boolean
       reportSoftNavs: boolean
+      stableSelectors: boolean
       sessionManager: unknown
       tracer: { name: string }
     }
@@ -1897,6 +1899,7 @@ describe('browser Web Vitals config', () => {
       includeProcessedEventEntries: call.includeProcessedEventEntries,
       reportAllChanges: call.reportAllChanges,
       reportSoftNavs: call.reportSoftNavs,
+      stableSelectors: call.stableSelectors,
       tracerName: call.tracer.name,
     }).toEqual({
       generateTarget,
@@ -1904,6 +1907,7 @@ describe('browser Web Vitals config', () => {
       includeProcessedEventEntries: true,
       reportAllChanges: true,
       reportSoftNavs: true,
+      stableSelectors: true,
       tracerName: 'logfire-web-vitals',
     })
   })

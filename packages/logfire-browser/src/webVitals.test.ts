@@ -132,7 +132,7 @@ vi.mock('web-vitals/attribution', () => ({
 
 import { BrowserSessionManager } from './browserSession'
 import { observeNavigatedPages, resetBrowserWebVitalsForTests, startBrowserWebVitals } from './webVitals'
-import { generateComponentTarget } from './webVitalTarget'
+import { generateDefaultTarget, generateStableDefaultTarget } from './webVitalTarget'
 
 const webVitalNames: WebVitalName[] = ['LCP', 'INP', 'CLS', 'FCP', 'TTFB']
 
@@ -240,12 +240,45 @@ describe('browser Web Vitals reporting', () => {
     await startWebVitals()
 
     expect(getRegistration('INP').options).toEqual({
-      generateTarget: generateComponentTarget,
+      generateTarget: generateDefaultTarget,
       includeProcessedEventEntries: false,
     })
-    expect(getRegistration('LCP').options).toEqual({ generateTarget: generateComponentTarget })
-    expect(getRegistration('CLS').options).toEqual({ generateTarget: generateComponentTarget })
+    expect(getRegistration('LCP').options).toEqual({ generateTarget: generateDefaultTarget })
+    expect(getRegistration('CLS').options).toEqual({ generateTarget: generateDefaultTarget })
     expect(mocks.diagWarnings).toEqual([])
+  })
+
+  it('uses the stable default target with stableSelectors and no generateTarget', async () => {
+    await startWebVitals({ stableSelectors: true })
+
+    expect(getRegistration('LCP').options).toEqual({ generateTarget: generateStableDefaultTarget })
+    expect(getRegistration('INP').options).toEqual({
+      generateTarget: generateStableDefaultTarget,
+      includeProcessedEventEntries: false,
+    })
+  })
+
+  it('uses the stable selector where a custom generateTarget returns undefined', async () => {
+    const generatedIdNode = { classList: ['card'], id: ':r1:', nodeName: 'DIV', nodeType: 1, parentNode: { nodeType: 9 } }
+    const stableIdNode = { ...generatedIdNode, id: 'app' }
+    const generateTarget = (node: Node | null) => (node === null ? 'custom-target' : undefined)
+
+    await startWebVitals({ generateTarget, stableSelectors: true })
+
+    const { generateTarget: registered } = getRegistration('LCP').options as { generateTarget: (node: unknown) => string | undefined }
+    expect(registered(null)).toBe('custom-target')
+    expect(registered(generatedIdNode)).toBe('div.card')
+    expect(registered(stableIdNode)).toBeUndefined()
+  })
+
+  it('warns when a later startup changes stableSelectors', async () => {
+    await startWebVitals({ stableSelectors: true })
+    await startWebVitals()
+
+    expect(getRegistration('LCP').options).toEqual({ generateTarget: generateStableDefaultTarget })
+    expect(mocks.diagWarnings).toEqual([
+      ['logfire-browser: Web Vitals observer options are fixed by the first successful startup; ignoring changed options'],
+    ])
   })
 
   it('does not register duplicate observers in one page lifecycle', async () => {
@@ -256,7 +289,7 @@ describe('browser Web Vitals reporting', () => {
       expect(mocks.registrations[name]).toHaveLength(1)
     }
     expect(getRegistration('LCP').options).toEqual({
-      generateTarget: generateComponentTarget,
+      generateTarget: generateDefaultTarget,
       reportAllChanges: true,
       reportSoftNavs: true,
     })
@@ -274,7 +307,7 @@ describe('browser Web Vitals reporting', () => {
     for (const name of webVitalNames) {
       expect(mocks.registrations[name]).toHaveLength(1)
     }
-    expect(getRegistration('LCP').options).toEqual({ generateTarget: generateComponentTarget, reportAllChanges: false })
+    expect(getRegistration('LCP').options).toEqual({ generateTarget: generateDefaultTarget, reportAllChanges: false })
   })
 
   it('retries only missing observers after a partial startup failure', async () => {
@@ -304,8 +337,8 @@ describe('browser Web Vitals reporting', () => {
       expect(mocks.registrations[name]).toHaveLength(1)
       expect(getRegistration(name).options).toEqual(
         name === 'INP'
-          ? { generateTarget: generateComponentTarget, includeProcessedEventEntries: false, reportAllChanges: true }
-          : { generateTarget: generateComponentTarget, reportAllChanges: true }
+          ? { generateTarget: generateDefaultTarget, includeProcessedEventEntries: false, reportAllChanges: true }
+          : { generateTarget: generateDefaultTarget, reportAllChanges: true }
       )
     }
     expect(retryMetricRecorder.record).toHaveBeenCalledWith(metric)
@@ -905,6 +938,51 @@ describe('browser Web Vitals reporting', () => {
     expect(Object.values(mocks.spans[0]?.attributes ?? {}).every((value) => ['boolean', 'number', 'string'].includes(typeof value))).toBe(
       true
     )
+  })
+
+  it('reports the selector that a component target carries in a separate attribute', async () => {
+    await startWebVitals()
+
+    report('LCP', createMetric('LCP', { target: 'component:Hero\n#:r1:>img' }))
+    report('INP', createMetric('INP', { interactionTarget: 'component:Form\nbutton.submit' }))
+    report('CLS', createMetric('CLS', { largestShiftTarget: 'component:Banner\ndiv.banner' }))
+
+    expect(mocks.spans[0]?.attributes).toMatchObject({
+      'web_vital.lcp.element': 'component:Hero',
+      'web_vital.lcp.target': 'component:Hero',
+      'web_vital.lcp.target_selector': '#:r1:>img',
+    })
+    expect(mocks.spans[1]?.attributes).toMatchObject({
+      'web_vital.inp.target': 'component:Form',
+      'web_vital.inp.target_selector': 'button.submit',
+    })
+    expect(mocks.spans[2]?.attributes).toMatchObject({
+      'web_vital.cls.largest_shift_target': 'component:Banner',
+      'web_vital.cls.largest_shift_target_selector': 'div.banner',
+    })
+  })
+
+  it('reports no selector attribute for a target that is not a component name', async () => {
+    await startWebVitals()
+
+    report('LCP', createMetric('LCP', { target: '#hero img' }))
+    report('INP', createMetric('INP', { interactionTarget: 'custom\ntarget' }))
+
+    expect(mocks.spans[0]?.attributes).not.toHaveProperty('web_vital.lcp.target_selector')
+    expect(mocks.spans[1]?.attributes).toMatchObject({ 'web_vital.inp.target': 'custom\ntarget' })
+    expect(mocks.spans[1]?.attributes).not.toHaveProperty('web_vital.inp.target_selector')
+  })
+
+  it('keeps a target from a custom generateTarget as it is', async () => {
+    await startWebVitals({ generateTarget: () => 'component:Card\nprimary' })
+
+    report('LCP', createMetric('LCP', { target: 'component:Card\nprimary' }))
+
+    expect(mocks.spans[0]?.attributes).toMatchObject({
+      'web_vital.lcp.element': 'component:Card\nprimary',
+      'web_vital.lcp.target': 'component:Card\nprimary',
+    })
+    expect(mocks.spans[0]?.attributes).not.toHaveProperty('web_vital.lcp.target_selector')
   })
 
   it('maps INP, CLS, FCP, and TTFB attribution primitives', async () => {

@@ -99,16 +99,74 @@ the selectors it replaces. An element with no named ancestor keeps its CSS
 selector, so an application that does not use the attribute reports the same
 targets as before.
 
-A named target replaces the selector; the span does not carry both. To change
-that, pass `rum.webVitals.generateTarget`, which replaces the default naming.
-It receives the DOM node, and a return value of `undefined` falls back to the
-`web-vitals` selector, so `generateTarget: () => undefined` reports CSS
-selectors for every element.
+A named target also keeps the CSS selector of the element, in
+`web_vital.lcp.target_selector`, `web_vital.inp.target_selector`, and
+`web_vital.cls.largest_shift_target_selector`. Group by the target, and read
+the selector to find which element inside the component a record is about. A
+target that is a selector has no `target_selector` attribute.
+
+To change the naming, pass `rum.webVitals.generateTarget`, which replaces the
+default. It receives the DOM node, and a return value of `undefined` falls back
+to the `web-vitals` selector, so `generateTarget: () => undefined` reports CSS
+selectors for every element. The SDK adds no `target_selector` attribute to a
+target that your function returns.
+
+### Stable selectors
+
+`web-vitals` ends a selector at the first element that has an id. When a
+framework generates that id at render time, the selector changes between page
+views: `#:r1:>span` on one view is `#:r3:>span` on the next. To leave those ids
+out of the selector, set `stableSelectors`:
+
+```ts
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  rum: {
+    webVitals: {
+      stableSelectors: true,
+    },
+  },
+})
+```
+
+The SDK then treats an element with a generated id as an element with no id,
+and the selector continues to the next ancestor that has a stable id, or to the
+document: `#:r1:>span` becomes `#app>div.card>span`. The 100-character limit
+stays. A selector with no generated id in it is not changed.
+
+The SDK detects these ids:
+
+| Source                                                 | Examples                                                                                           |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| React `useId`, and ids that a library builds on it     | `:r1:`, `:R1mcq:`, `«r1»`, `_r_1_`, `radix-:r1:`, `headlessui-menu-button-:r1:`, `react-aria-:r1:` |
+| Counter ids from Radix UI, Headless UI, and React Aria | `radix-1`, `headlessui-menu-button-1`, `react-aria-1`                                              |
+
+Limits:
+
+- An id from a different generator is not detected, and neither is a React id
+  with a custom `identifierPrefix`. The selector keeps those ids.
+- A hand-written id that matches a pattern is skipped: an id that holds a
+  React-style token, such as `tab-:r2:`, or an id that starts with `radix`,
+  `headlessui`, or `react-aria` and ends with a number, such as
+  `radix-demo-2`. The selector then holds the tag and class names of that
+  element and continues to the next ancestor id, so it is longer but stays
+  stable.
+- Class names stay in the selector. Class names that a build tool generates
+  still change between builds; use `data-logfire-component` for those elements.
+- `web-vitals` does not ask the SDK for a target in two cases, so these targets
+  can still hold a generated id: an LCP element that was removed from the page
+  is reported by its id, and an INP target that was removed is reported by the
+  selector that the browser recorded.
+
+The option changes the selector only. A component name still wins, and its
+`target_selector` attribute holds the selector with no generated id. With your
+own `generateTarget`, the option applies where that function returns
+`undefined`.
 
 ### Observer options
 
 Web Vitals observers live for the page lifetime. The first successful startup
-fixes `reportAllChanges`, `generateTarget`,
+fixes `reportAllChanges`, `generateTarget`, `stableSelectors`,
 `includeProcessedEventEntries`, and `reportSoftNavs`; later `configure()` calls can update the tracer
 and metric destination but ignore changed observer options with a diagnostic
 warning. If the initial lazy load or observer startup fails, a later
