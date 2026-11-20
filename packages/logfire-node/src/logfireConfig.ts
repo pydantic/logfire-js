@@ -514,7 +514,7 @@ function removeTrailingSlash(url: string): string {
 function resolveAuthorizationHeaders(token: LogfireToken | undefined): AuthorizationHeaders {
   if (typeof token === 'function') {
     return async () => ({
-      Authorization: await token(),
+      Authorization: (await token()).trim(),
     })
   }
   return {

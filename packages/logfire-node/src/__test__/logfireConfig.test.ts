@@ -403,6 +403,18 @@ describe('logfire config', () => {
     expect(tokenProvider).toHaveBeenCalledTimes(1)
   })
 
+  it('trims whitespace around the value a token provider returns', async () => {
+    configure({
+      advanced: { baseUrl: 'https://proxy.example.com' },
+      token: () => 'pylf_v1_us_abc123\n',
+    })
+
+    if (typeof logfireConfig.authorizationHeaders !== 'function') {
+      throw new Error('expected authorization headers provider')
+    }
+    await expect(logfireConfig.authorizationHeaders()).resolves.toEqual({ Authorization: 'pylf_v1_us_abc123' })
+  })
+
   it('uses LOGFIRE_BASE_URL for a token provider', () => {
     process.env['LOGFIRE_BASE_URL'] = 'https://proxy.example.com/'
 
