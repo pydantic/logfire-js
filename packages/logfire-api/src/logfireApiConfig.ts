@@ -166,7 +166,7 @@ export function resolveSendToLogfire(env: Env, option: SendToLogfire, token: str
   // is true, so truthiness alone cannot be the only test.
   const sendToLogfireConfig = typeof configured === 'string' ? configured.trim().toLowerCase() : configured
 
-  if (sendToLogfireConfig === 'if-token-present') {
+  if (sendToLogfireConfig === 'if-token-present' || sendToLogfireConfig === '') {
     return token !== undefined && token !== ''
   }
   // Match the spellings the Python SDK accepts for boolean settings, so
@@ -180,10 +180,6 @@ export function resolveSendToLogfire(env: Env, option: SendToLogfire, token: str
   }
   if (typeof sendToLogfireConfig === 'boolean') {
     return sendToLogfireConfig
-  }
-  // A blank value keeps its existing meaning: nothing was configured, so nothing is sent.
-  if (sendToLogfireConfig === '') {
-    return false
   }
   // Any other unrecognised string is a typo. `Boolean('yes')` is true, so guessing here turns
   // sending ON for a value the user may have meant as off. Python raises instead.
