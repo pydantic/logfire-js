@@ -443,6 +443,24 @@ describe('logfire config', () => {
     expect(logfireConfig.baseUrl).toBe('')
   })
 
+  it('treats a blank LOGFIRE_SEND_TO_LOGFIRE as unset', () => {
+    process.env['LOGFIRE_SEND_TO_LOGFIRE'] = ''
+    configure({ token: 'pylf_v1_eu_abc123' })
+
+    expect(logfireConfig.sendToLogfire).toBe(true)
+    expect(logfireConfig.traceExporterUrl).toBe('https://logfire-eu.pydantic.dev/v1/traces')
+
+    process.env['LOGFIRE_SEND_TO_LOGFIRE'] = ' '
+    configure({ advanced: { baseUrl: 'https://proxy.example.com' }, token: () => 'pylf_v1_eu_abc123' })
+
+    expect(logfireConfig.sendToLogfire).toBe(true)
+    expect(logfireConfig.baseUrl).toBe('https://proxy.example.com')
+
+    configure({})
+
+    expect(logfireConfig.sendToLogfire).toBe(false)
+  })
+
   it('uses local project credentials when no explicit or environment token is set', () => {
     const dataDir = makeCredentialsDir({
       logfire_api_url: 'https://local.example.com/',
