@@ -60,7 +60,7 @@ function createReplayRuntime(overrides: Partial<BrowserSessionReplayRuntime> = {
     get stopCalls() {
       return stopCalls
     },
-  } as BrowserSessionReplayRuntime & { readonly stopCalls: number }
+  }
 }
 
 afterEach(() => {
@@ -68,7 +68,87 @@ afterEach(() => {
 })
 
 describe('startBrowserSessionReplay', () => {
-  it('loads replay, passes browser-owned config, and uses peekSessionId on the hot path', async () => {
+  it('contains a failing recording-id getter without breaking span correlation', async () => {
+    const failure = new Error('recording id unavailable')
+    const onError = vi.fn<(error: unknown) => void>()
+    const state = new BrowserSessionReplayState()
+    const runtime = createReplayRuntime({
+      getRecordingId: () => {
+        throw failure
+      },
+    })
+    const replay = await startBrowserSessionReplay(
+      { load: () => ({ startSessionReplay: () => runtime }), onError, replayUrl: '/logfire/replay' },
+      createManager(),
+      state,
+      { traceUrl: '/v1/traces' }
+    )
+    try {
+      expect(state.getState()).toBeUndefined()
+      expect(replay?.getRecordingId?.()).toBe('')
+      expect(onError).toHaveBeenCalledWith(failure)
+    } finally {
+      await replay?.stop()
+    }
+  })
+
+  it('forwards the current recording id through the runtime facade', async () => {
+    let recordingId = 'recording-1'
+    const state = new BrowserSessionReplayState()
+    const runtime = createReplayRuntime({ getRecordingId: () => recordingId })
+    const replay = await startBrowserSessionReplay(
+      { load: () => ({ startSessionReplay: () => runtime }), replayUrl: '/logfire/replay' },
+      createManager(),
+      state,
+      { traceUrl: '/v1/traces' }
+    )
+    expect(replay?.getRecordingId?.()).toBe('recording-1')
+    expect(state.getState()).toEqual({ active: true, mode: 'full', recordingId: 'recording-1' })
+    recordingId = ''
+    expect(state.getState()).toBeUndefined()
+    recordingId = 'recording-2'
+    expect(state.getState()).toEqual({ active: true, mode: 'full', recordingId: 'recording-2' })
+    await replay?.stop()
+    expect(state.getState()).toBeUndefined()
+  })
+
+  it('marks spans as full only once the recording uploads', async () => {
+    let uploading: boolean | undefined = false
+    let mode: 'full' | 'buffer' = 'full'
+    const state = new BrowserSessionReplayState()
+    const runtime: BrowserSessionReplayRuntime = {
+      get mode() {
+        return mode
+      },
+      recording: true,
+      get uploading() {
+        return uploading
+      },
+      flush: async () => Promise.resolve(),
+      getSessionId: () => 'browser-session-1',
+      stop: async () => Promise.resolve(),
+    }
+    await startBrowserSessionReplay(
+      { load: () => ({ startSessionReplay: () => runtime }), replayUrl: '/logfire/replay' },
+      createManager(),
+      state,
+      {
+        traceUrl: '/logfire/traces',
+      }
+    )
+
+    expect(state.getState()).toBeUndefined()
+    mode = 'buffer'
+    expect(state.getState()).toEqual({ active: true, mode: 'buffer' })
+    mode = 'full'
+    uploading = true
+    expect(state.getState()).toEqual({ active: true, mode: 'full' })
+    // Replay packages without the getter keep marking full spans.
+    uploading = undefined
+    expect(state.getState()).toEqual({ active: true, mode: 'full' })
+  })
+
+  it('loads replay, passes browser-owned config, and reads the session id without touching it', async () => {
     const manager = createManager()
     const touchSpy = vi.spyOn(manager, 'touch')
     const getSessionSpy = vi.spyOn(manager, 'getSession')
@@ -82,6 +162,7 @@ describe('startBrowserSessionReplay', () => {
     }
     const headers = () => ({ 'X-CSRF': 'csrf-token' })
     const getDistinctId = () => 'user-1'
+    const transformUrl = (url: string) => url.replace('/users/jane', '/users/:id')
     const fetchImpl = vi.fn<typeof fetch>()
     const onError = vi.fn<(error: unknown) => void>()
     const replayState = new BrowserSessionReplayState()
@@ -99,6 +180,7 @@ describe('startBrowserSessionReplay', () => {
         headers,
         ignoreUrlPatterns: [/\/custom-ignore/u],
         load: () => replayModule,
+        maskAllImages: true,
         maskAllInputs: false,
         maskAllText: false,
         maskTextSelector: '.secret',
@@ -110,6 +192,7 @@ describe('startBrowserSessionReplay', () => {
         replayUrl: '/logfire/replay',
         sessionSampleRate: 0.25,
         token: 'direct-token',
+        transformUrl,
       },
       manager,
       replayState,
@@ -131,6 +214,7 @@ describe('startBrowserSessionReplay', () => {
       flushIntervalMs: 2_000,
       getDistinctId,
       headers,
+      maskAllImages: true,
       maskAllInputs: false,
       maskAllText: false,
       maskTextSelector: '.secret',
@@ -141,12 +225,21 @@ describe('startBrowserSessionReplay', () => {
       replayUrl: '/logfire/replay',
       sessionSampleRate: 0.25,
       token: 'direct-token',
+      transformUrl,
     })
     expect(replayConfig).not.toHaveProperty('sessionIdleTimeoutMs')
     expect(replayConfig).not.toHaveProperty('maxSessionDurationMs')
     const reportedError = new Error('reported by replay')
     replayConfig?.onError?.(reportedError)
     expect(onError).toHaveBeenCalledWith(reportedError)
+    const hostileError = new Error('hostile replay error')
+    Object.defineProperty(hostileError, 'name', {
+      get: () => {
+        throw new Error('unreadable name')
+      },
+    })
+    expect(() => replayConfig?.onError?.(hostileError)).not.toThrow()
+    expect(onError).toHaveBeenLastCalledWith(hostileError)
     expect(replayConfig?.ignoreUrlPatterns?.some((pattern) => pattern.test('/logfire/traces'))).toBe(true)
     expect(replayConfig?.ignoreUrlPatterns?.some((pattern) => pattern.test('/logfire/metrics'))).toBe(true)
     expect(replayConfig?.ignoreUrlPatterns?.some((pattern) => pattern.test('/logfire/replay/browser-session-1?seq=0'))).toBe(true)
@@ -157,7 +250,39 @@ describe('startBrowserSessionReplay', () => {
     expect(replayConfig?.getSessionId?.()).toBe('browser-session-1')
     expect(replayConfig?.getSessionAttributes?.()).toEqual({})
     expect(touchSpy).toHaveBeenCalledTimes(1)
-    expect(getSessionSpy).not.toHaveBeenCalled()
+    expect(getSessionSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('rotates the replay session id once the browser session goes idle', async () => {
+    let now = 1_000
+    let id = 0
+    const manager = new BrowserSessionManager({
+      generateId: () => {
+        id += 1
+        return `browser-session-${id.toString()}`
+      },
+      idleTimeoutMs: 60_000,
+      now: () => now,
+      storage: new MemoryStorage(),
+      storageKey: 'test-session',
+    })
+    let replayConfig: BrowserSessionReplayPackageConfig | undefined
+    const replayModule: BrowserSessionReplayModule = {
+      startSessionReplay: (config) => {
+        replayConfig = config
+        return createReplayRuntime()
+      },
+    }
+
+    await startBrowserSessionReplay({ load: () => replayModule, replayUrl: '/logfire/replay' }, manager, new BrowserSessionReplayState(), {
+      traceUrl: '/logfire/traces',
+    })
+
+    now += 60_000
+    expect(replayConfig?.getSessionId?.()).toBe('browser-session-1')
+    now += 1
+    expect(replayConfig?.getSessionId?.()).toBe('browser-session-2')
+    expect(manager.peekSessionId()).toBe('browser-session-2')
   })
 
   it('passes the browser session snapshot to replay without touching the session again', async () => {
@@ -225,8 +350,8 @@ describe('startBrowserSessionReplay', () => {
     expect(touchSpy).toHaveBeenCalledTimes(touchCallsAfterStartup)
   })
 
-  it('derives live replay identity from the current span user', async () => {
-    let user: { id: string } | undefined
+  it('passes the live span user to replay so it can derive distinctId from the same snapshot', async () => {
+    let user: { id: string; name?: string; email?: string; role?: string } | undefined
     const manager = new BrowserSessionManager({
       generateId: () => 'browser-session-1',
       getUser: () => user,
@@ -249,14 +374,37 @@ describe('startBrowserSessionReplay', () => {
       { traceUrl: '/logfire/traces' }
     )
 
-    expect(replayConfig?.getDistinctId?.()).toBeUndefined()
-    user = { id: 'user-a' }
-    expect(replayConfig?.getDistinctId?.()).toBe('user-a')
+    expect(replayConfig?.getDistinctId).toBeUndefined()
+    expect(replayConfig?.getUser?.()).toBeUndefined()
+    user = { id: 'user-a', name: 'Ada', email: 'ada@example.com', role: 'admin' }
+    expect(replayConfig?.getUser?.()).toEqual({ id: 'user-a', name: 'Ada', email: 'ada@example.com' })
     user = { id: 'user-b' }
-    expect(replayConfig?.getDistinctId?.()).toBe('user-b')
+    expect(replayConfig?.getUser?.()).toEqual({ id: 'user-b' })
     user = undefined
-    expect(replayConfig?.getDistinctId?.()).toBeUndefined()
+    expect(replayConfig?.getUser?.()).toBeUndefined()
     expect(replayConfig?.distinctId).toBe('anonymous')
+  })
+
+  it('omits the replay user when the span user callback fails', async () => {
+    const manager = new BrowserSessionManager({
+      getUser: () => {
+        throw new Error('user lookup failed')
+      },
+      storage: null,
+    })
+    let replayConfig: BrowserSessionReplayPackageConfig | undefined
+    const replayModule: BrowserSessionReplayModule = {
+      startSessionReplay: (config) => {
+        replayConfig = config
+        return createReplayRuntime()
+      },
+    }
+
+    await startBrowserSessionReplay({ load: () => replayModule, replayUrl: '/logfire/replay' }, manager, new BrowserSessionReplayState(), {
+      traceUrl: '/logfire/traces',
+    })
+
+    expect(replayConfig?.getUser?.()).toBeUndefined()
   })
 
   it('preserves an explicit replay identity getter over the span user', async () => {
@@ -282,6 +430,7 @@ describe('startBrowserSessionReplay', () => {
 
     expect(replayConfig?.getDistinctId).toBe(explicitGetDistinctId)
     expect(replayConfig?.getDistinctId?.()).toBe('replay-user')
+    expect(replayConfig?.getUser?.()).toEqual({ id: 'span-user' })
   })
 
   it('leaves privacy options absent so the replay package owns safe defaults', async () => {
@@ -301,8 +450,10 @@ describe('startBrowserSessionReplay', () => {
     )
 
     expect(replayConfig).not.toHaveProperty('maskAllText')
+    expect(replayConfig).not.toHaveProperty('maskAllImages')
     expect(replayConfig).not.toHaveProperty('maskTextSelector')
     expect(replayConfig).not.toHaveProperty('redactUrlPatterns')
+    expect(replayConfig).not.toHaveProperty('transformUrl')
   })
 
   it('forwards explicit raw-data privacy opt-ins unchanged', async () => {
@@ -333,6 +484,34 @@ describe('startBrowserSessionReplay', () => {
       redactUrlPatterns: [],
     })
   })
+
+  it.each([
+    [false, undefined, undefined],
+    [false, false, false],
+    [false, true, true],
+    [true, undefined, false],
+    [true, true, false],
+  ])(
+    'with browser global error capture %s and replay captureGlobalErrors %s, passes %s to replay',
+    async (capturesGlobalErrors, captureGlobalErrors, expected) => {
+      let replayConfig: BrowserSessionReplayPackageConfig | undefined
+      const replayModule: BrowserSessionReplayModule = {
+        startSessionReplay: (config) => {
+          replayConfig = config
+          return createReplayRuntime()
+        },
+      }
+
+      await startBrowserSessionReplay(
+        { load: () => replayModule, replayUrl: '/logfire/replay', ...(captureGlobalErrors === undefined ? {} : { captureGlobalErrors }) },
+        createManager(),
+        new BrowserSessionReplayState(),
+        { capturesGlobalErrors, traceUrl: '/logfire/traces' }
+      )
+
+      expect(replayConfig?.captureGlobalErrors).toBe(expected)
+    }
+  )
 
   it('clears replay state when the wrapped replay is stopped once', async () => {
     const replayState = new BrowserSessionReplayState()
@@ -402,7 +581,7 @@ describe('startBrowserSessionReplay', () => {
     const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
     const onError = vi.fn<(error: unknown) => void>()
     const replayState = new BrowserSessionReplayState()
-    replayState.setReplay(createReplayRuntime())
+    replayState.setReplay({ captureError: () => undefined, ...createReplayRuntime() })
     const error = new Error('missing peer')
 
     const replay = await startBrowserSessionReplay(

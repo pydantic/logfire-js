@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vite-plus/test'
+import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
 
 import { sessionReplayIntegration } from './integration'
+import type { SessionReplayIntegrationOptions } from './integration'
 
 describe('sessionReplayIntegration', () => {
   it('preserves capture options and lazily loads the recorder', async () => {
@@ -19,5 +20,10 @@ describe('sessionReplayIntegration', () => {
 
     const recorder = await integration.load()
     expect(recorder.startSessionReplay).toBeTypeOf('function')
+  })
+
+  it('leaves browser-owned identity callbacks to the browser SDK', () => {
+    expectTypeOf<SessionReplayIntegrationOptions>().not.toHaveProperty('getUser')
+    expectTypeOf<SessionReplayIntegrationOptions>().not.toHaveProperty('getSessionId')
   })
 })

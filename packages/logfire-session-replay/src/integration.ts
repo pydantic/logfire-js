@@ -5,6 +5,7 @@ export type SessionReplayIntegrationOptions = Omit<
   SessionReplayConfig,
   | 'getSessionAttributes'
   | 'getSessionId'
+  | 'getUser'
   | 'headers'
   | 'maxSessionDurationMs'
   | 'now'

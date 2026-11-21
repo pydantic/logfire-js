@@ -1,0 +1,49 @@
+name: Frustration detector mutations
+# Mutation testing takes several minutes, so it runs only when the detector or its tests change.
+on:
+  push:
+    branches:
+      - main
+    paths: &paths
+      - packages/logfire-browser/src/interactionFrustration.ts
+      - packages/logfire-browser/src/interactionFrustration.test.ts
+      - packages/logfire-browser/src/interactionFrustration.model.test.ts
+      - stryker.frustration.config.mjs
+      - .github/workflows/frustration-mutations.yml
+  pull_request:
+    paths: *paths
+
+jobs:
+  mutations:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CI: true
+    steps:
+      - name: Begin CI...
+        uses: actions/checkout@v4
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: '24'
+          cache: true
+
+      - name: Install dependencies
+        run: vp install --frozen-lockfile
+
+      - name: Build
+        run: vp run --filter "./packages/*" build
+
+      - name: Frustration detector mutation tests
+        id: frustration-mutations
+        run: pnpm run test:frustration-mutations
+
+      - name: Upload mutation failure report
+        if: failure() && steps.frustration-mutations.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frustration-mutation-results
+          path: reports/frustration-mutation.json
+          retention-days: 7

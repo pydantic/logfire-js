@@ -4,11 +4,44 @@ import type { ExportResult } from '@opentelemetry/core'
 import { ExportResultCode, hrTimeToMicroseconds } from '@opentelemetry/core'
 import type { ReadableSpan, Span, SpanExporter, SpanProcessor } from '@opentelemetry/sdk-trace-web'
 import { SimpleSpanProcessor } from '@opentelemetry/sdk-trace-web'
+import { ATTR_URL_FULL } from '@opentelemetry/semantic-conventions'
 import { ATTR_HTTP_URL } from '@opentelemetry/semantic-conventions/incubating'
+import { scrubSpanForExport } from 'logfire'
 
 // not present in the semantic conventions
 const ATTR_TARGET_XPATH = 'target_xpath'
 const ATTR_EVENT_TYPE = 'event_type'
+
+// URL and route attributes the browser SDK sets itself. Like the core `url.full`, `http.url`, and
+// `http.route` safe keys, they are governed by the URL policy (`captureUrlQueryAndFragment`), so a
+// path such as `/auth/login` or a kept query parameter named `secret` does not redact them.
+const BROWSER_URL_ATTRIBUTES = new Set([
+  'browser.long_animation_frame.script.source_url',
+  'http.referrer',
+  'logfire.page.route',
+  'logfire.page.url.full',
+  'logfire.page.url.path',
+  'web_vital.inp.script.source_url',
+  'web_vital.lcp.url',
+])
+const MAIN_THREAD_WINDOW_SCRIPT_URL_PATTERN = /^browser\.main_thread_window\.script\.\d+\.source_url$/u
+
+/**
+ * BrowserSessionSpanProcessor sets the session keys from the SDK's own session state; their names
+ * contain `session`, which the default patterns would otherwise redact on every span.
+ */
+function isBrowserSafeAttribute(key: string): boolean {
+  return (
+    key === 'session.id' ||
+    key.startsWith('logfire.session_replay.') ||
+    BROWSER_URL_ATTRIBUTES.has(key) ||
+    MAIN_THREAD_WINDOW_SCRIPT_URL_PATTERN.test(key)
+  )
+}
+
+// Application session attributes from `getSessionAttributes()`. Their values are still scrubbed,
+// but only the application's own name is matched, not the `session` in the prefix.
+const BROWSER_SESSION_ATTRIBUTE_PREFIXES = ['logfire.session.']
 
 export const LevelLabels = {
   1: 'trace',
@@ -95,7 +128,7 @@ class LogfireConsoleSpanExporter implements SpanExporter {
 }
 
 /**
- * `onStart` runs for every span, so a `http.url` that is not an absolute URL must not throw out of
+ * `onStart` runs for every span, so a URL attribute that is not an absolute URL must not throw out of
  * it and break the caller's span creation. Anything unparseable just leaves the name as it was.
  */
 function urlPathname(value: unknown): string | undefined {
@@ -126,16 +159,18 @@ export class LogfireSpanProcessor implements SpanProcessor {
   }
 
   onEnd(span: ReadableSpan): void {
+    // Serialization has to happen when `logfire.span` and friends create the span, because the
+    // OpenTelemetry API rejects non-primitive attribute values. Scrubbing primitives here also covers
+    // instrumentation spans, attributes set after creation, events, and links.
+    scrubSpanForExport(span, { isSafeKey: isBrowserSafeAttribute, namespacePrefixes: BROWSER_SESSION_ATTRIBUTE_PREFIXES })
     this.console?.onEnd(span)
-    // Note: this is too late for the regular node instrumentation. The opentelemetry API rejects the non-primitive attribute values.
-    // Instead, the serialization happens at the `logfire.span, logfire.startSpan`, etc.
-    // Object.assign(span.attributes, serializeAttributes(span.attributes))
     this.wrapped.onEnd(span)
   }
 
   onStart(span: Span, parentContext: Context): void {
-    // make the fetch spans more descriptive
-    const pathname = urlPathname(span.attributes[ATTR_HTTP_URL])
+    // make the fetch spans more descriptive. The fetch and XHR instrumentations emit `url.full` since
+    // 0.221; older versions emit `http.url`.
+    const pathname = urlPathname(span.attributes[ATTR_URL_FULL] ?? span.attributes[ATTR_HTTP_URL])
     if (pathname !== undefined) {
       Reflect.set(span, 'name', `${span.name} ${pathname}`)
     }

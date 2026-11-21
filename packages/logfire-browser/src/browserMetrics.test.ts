@@ -259,7 +259,7 @@ describe('browser metrics runtime', () => {
         Object.fromEntries([
           ['__proto__', 'proto-value'],
           ['app.route', '/products/:id'],
-        ]) as never,
+        ]),
     })
 
     recorder.record(createMetric('LCP', 2500))
@@ -274,19 +274,18 @@ describe('browser metrics runtime', () => {
   it('keeps Web Vital metric attributes low-cardinality', async () => {
     const runtime = await startBrowserMetrics({ metricUrl: '/v1/metrics/browser' }, { attributes: {} } as never)
     const recorder = runtime.createWebVitalsMetricRecorder({
-      attributes: () =>
-        ({
-          'app.route': '/products/:id',
-          'user.plan': 'enterprise',
-          'web_vital.id': 'custom-id',
-          'web_vital.lcp.target': '#hero img',
-          'web_vital.navigation_id': 42,
-          'web_vital.navigation_interaction_id': 84,
-          'web_vital.navigation_start_time': 1234,
-          'web_vital.navigation_type': 'navigate',
-          'web_vital.navigation_url': 'https://example.com/products/123?token=secret',
-          'web_vital.value': 999,
-        }) as never,
+      attributes: () => ({
+        'app.route': '/products/:id',
+        'user.plan': 'enterprise',
+        'web_vital.id': 'custom-id',
+        'web_vital.lcp.target': '#hero img',
+        'web_vital.navigation_id': 42,
+        'web_vital.navigation_interaction_id': 84,
+        'web_vital.navigation_start_time': 1234,
+        'web_vital.navigation_type': 'navigate',
+        'web_vital.navigation_url': 'https://example.com/products/123?token=secret',
+        'web_vital.value': 999,
+      }),
     })
 
     recorder.record(createMetric('LCP', 2400, 'needs-improvement'), {

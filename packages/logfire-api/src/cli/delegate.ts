@@ -1,40 +1,37 @@
+import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { dirname, resolve } from 'node:path'
 
-type ModuleLoader = (id: string) => unknown
-type ErrorWriter = (message: string) => void
+const CLI_MANIFEST = 'logfire-cli/package.json'
 
-const CLI_LAUNCHER = 'logfire-cli/run-logfire.js'
-const MISSING_CLI_MESSAGE = 'Logfire CLI is unavailable. Reinstall logfire without --omit=optional or --no-optional.'
-
-function isMissingCliLauncher(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    'code' in error &&
-    error.code === 'MODULE_NOT_FOUND' &&
-    error.message.startsWith(`Cannot find module '${CLI_LAUNCHER}'`)
-  )
-}
-
-/** Run the native Logfire CLI while preserving the JavaScript SDK identity. */
-export function runNativeCli(
-  sdkVersion: string = PACKAGE_VERSION,
-  env: NodeJS.ProcessEnv = process.env,
-  load: ModuleLoader = createRequire(import.meta.url)
-): void {
-  env['LOGFIRE_CLI_SDK_VERSION'] = sdkVersion
-  load(CLI_LAUNCHER)
-}
-
-/** Start the CLI with a concise recovery message when its optional package is absent. */
-export function runCli(run: () => void = runNativeCli, writeError: ErrorWriter = console.error): boolean {
+/** Delegate to the installed package's declared bin, without resolving a command from PATH. */
+export function runNativeCli(args: string[], sdkVersion: string, load: NodeJS.Require = createRequire(import.meta.url)): number {
+  let manifestPath: string
   try {
-    run()
-    return true
+    manifestPath = load.resolve(CLI_MANIFEST)
   } catch (error) {
-    if (isMissingCliLauncher(error)) {
-      writeError(MISSING_CLI_MESSAGE)
-      return false
+    if (error instanceof Error && 'code' in error && error.code === 'MODULE_NOT_FOUND') {
+      console.error('Logfire CLI is unavailable. Install optional dependencies on a supported platform.')
+      return 1
     }
     throw error
   }
+
+  const manifest = load(manifestPath) as { bin?: { logfire?: unknown } }
+  const bin = manifest.bin?.logfire
+  if (typeof bin !== 'string' || bin.length === 0) {
+    throw new Error('The installed logfire-cli package does not declare a logfire command.')
+  }
+
+  const result = spawnSync(process.execPath, [resolve(dirname(manifestPath), bin), ...args], {
+    env: { ...process.env, LOGFIRE_CLI_SDK_VERSION: sdkVersion, LOGFIRE_CLI_COMMAND_NAME: 'logfire' },
+    stdio: 'inherit',
+  })
+  if (result.error) {
+    throw result.error
+  }
+  if (result.signal) {
+    process.kill(process.pid, result.signal)
+  }
+  return result.status ?? 1
 }

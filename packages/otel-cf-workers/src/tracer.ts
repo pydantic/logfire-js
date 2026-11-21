@@ -1,37 +1,23 @@
 import type { Attributes, Context, Span, SpanOptions, Tracer } from '@opentelemetry/api'
 import { SpanKind, TraceFlags, context as api_context, trace } from '@opentelemetry/api'
-import type { InstrumentationScope } from '@opentelemetry/core'
 import { sanitizeAttributes } from '@opentelemetry/core'
-import type { Resource } from '@opentelemetry/resources'
-import type { IdGenerator, ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base'
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 import { SamplingDecision } from '@opentelemetry/sdk-trace-base'
 
-import { getActiveConfig } from './config.js'
+import { getConfig } from './config.js'
 import { SpanImpl } from './span.js'
 
 let withNextSpanAttributes: Attributes
 
 export class WorkerTracer implements Tracer {
-  private readonly _spanProcessors: SpanProcessor[]
-  private resource: Resource
-  private readonly scope: InstrumentationScope
-  private readonly idGenerator: IdGenerator
-  constructor(spanProcessors: SpanProcessor[], resource: Resource, scope: InstrumentationScope, idGenerator: IdGenerator) {
-    this._spanProcessors = spanProcessors
-    this.resource = resource
-    this.scope = scope
-    this.idGenerator = idGenerator
-  }
-
-  get spanProcessors(): SpanProcessor[] {
-    return this._spanProcessors
-  }
-
-  addToResource(extra: Resource): void {
-    this.resource = this.resource.merge(extra)
-  }
-
   startSpan(name: string, options: SpanOptions = {}, context: Context = api_context.active()): Span {
+    const config = getConfig(context)
+    if (!config) {
+      throw new Error('Config is undefined. This is a bug in the instrumentation logic')
+    }
+    // Captured at start so onEnd reaches the same processors that saw onStart.
+    const { spanProcessors, resource, scope, idGenerator } = config
+
     if (options.root === true) {
       context = trace.deleteSpan(context)
     }
@@ -39,14 +25,9 @@ export class WorkerTracer implements Tracer {
     const parentSpanContext = parentSpan?.spanContext()
     const hasParentContext = parentSpanContext !== undefined && trace.isSpanContextValid(parentSpanContext)
 
-    const traceId = hasParentContext ? parentSpanContext.traceId : this.idGenerator.generateTraceId()
+    const traceId = hasParentContext ? parentSpanContext.traceId : idGenerator.generateTraceId()
     const spanKind = options.kind ?? SpanKind.INTERNAL
     const sanitisedAttrs = sanitizeAttributes(options.attributes)
-
-    const config = getActiveConfig()
-    if (!config) {
-      throw new Error('Config is undefined. This is a bug in the instrumentation logic')
-    }
 
     const sampler = config.sampling.headSampler
     const samplingDecision = sampler.shouldSample(context, traceId, name, spanKind, sanitisedAttrs, [])
@@ -55,7 +36,7 @@ export class WorkerTracer implements Tracer {
     const attributes = { ...sanitisedAttrs, ...attrs, ...withNextSpanAttributes }
     withNextSpanAttributes = {}
 
-    const spanId = this.idGenerator.generateSpanId()
+    const spanId = idGenerator.generateSpanId()
     const parentSpanId = hasParentContext ? parentSpanContext.spanId : undefined
     const traceFlags = decision === SamplingDecision.RECORD_AND_SAMPLED ? TraceFlags.SAMPLED : TraceFlags.NONE
     const spanContext = { traceId, spanId, traceFlags, ...(traceState !== undefined ? { traceState } : {}) }
@@ -64,19 +45,19 @@ export class WorkerTracer implements Tracer {
       attributes,
       name,
       onEnd: (span) => {
-        this.spanProcessors.forEach((sp) => {
+        spanProcessors.forEach((sp) => {
           sp.onEnd(span as unknown as ReadableSpan)
         })
       },
-      resource: this.resource,
-      scope: this.scope,
+      resource,
+      scope,
       spanContext,
       spanKind,
       ...(parentSpanContext !== undefined ? { parentSpanContext } : {}),
       ...(parentSpanId !== undefined ? { parentSpanId } : {}),
       ...(options.startTime !== undefined ? { startTime: options.startTime } : {}),
     })
-    this.spanProcessors.forEach((sp) => {
+    spanProcessors.forEach((sp) => {
       sp.onStart(span, context)
     })
     return span

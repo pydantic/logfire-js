@@ -1,7 +1,10 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
 import { instrument as instrumentFunction, startPendingSpan, withSettings, withTags } from 'logfire'
+import type { SpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { NoopSpanProcessor } from '@opentelemetry/sdk-trace-base'
 import * as packageRoot from '@pydantic/logfire-cf-workers'
+import type * as OtelCfWorkers from '@pydantic/otel-cf-workers'
 
 import logfireCfWorkers, { instrument as instrumentWorker } from './index'
 
@@ -93,7 +96,8 @@ describe('User-Agent', () => {
     const [{ exportTailEventsToLogfire }, { USER_AGENT }, { OTLP_EXPORTER_USER_AGENT }] = await Promise.all([
       import('./exportTailEventsToLogfire'),
       import('./userAgent'),
-      import('@pydantic/otel-cf-workers'),
+      // Vitest 5 keeps serving an earlier doMock factory to this file's own imports after doUnmock.
+      vi.importActual<typeof OtelCfWorkers>('@pydantic/otel-cf-workers'),
     ])
 
     const events = [{ logs: [{ message: [{ resourceSpans: [] }] }] }]
@@ -110,5 +114,44 @@ describe('User-Agent', () => {
       },
       method: 'POST',
     })
+  })
+})
+
+describe('in-process config', () => {
+  afterEach(() => {
+    vi.doUnmock('@pydantic/otel-cf-workers')
+    vi.resetModules()
+  })
+
+  it('does not mutate the caller additionalSpanProcessors when console output is enabled', async () => {
+    vi.resetModules()
+
+    type InProcessConfigFn = (env: Record<string, string | undefined>) => { additionalSpanProcessors: SpanProcessor[] }
+
+    let capturedConfigFn: InProcessConfigFn | undefined
+
+    vi.doMock('@pydantic/otel-cf-workers', () => ({
+      instrument: (handler: unknown, configFn: InProcessConfigFn): unknown => {
+        capturedConfigFn = configFn
+        return handler
+      },
+      instrumentDO: (doClass: unknown): unknown => doClass,
+      OTLP_EXPORTER_USER_AGENT: 'otel-cf-workers/0.0.0',
+    }))
+
+    const { instrumentInProcess } = await import('./index')
+
+    const userProcessor = new NoopSpanProcessor()
+    const additionalSpanProcessors: SpanProcessor[] = [userProcessor]
+    instrumentInProcess({}, { additionalSpanProcessors, console: true, service: { name: 'test-service' } })
+
+    const first = capturedConfigFn?.({ LOGFIRE_TOKEN: 'test-token' })
+    const second = capturedConfigFn?.({ LOGFIRE_TOKEN: 'test-token' })
+
+    expect(additionalSpanProcessors).toEqual([userProcessor])
+    expect(first?.additionalSpanProcessors).toHaveLength(2)
+    expect(second?.additionalSpanProcessors).toHaveLength(2)
+    expect(first?.additionalSpanProcessors[0]).toBe(userProcessor)
+    expect(second?.additionalSpanProcessors[0]).toBe(userProcessor)
   })
 })

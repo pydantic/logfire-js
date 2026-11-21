@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method */
 import type { IdGenerator, ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 
-import { ROOT_CONTEXT, SpanKind, SpanStatusCode, TraceFlags } from '@opentelemetry/api'
+import { diag, ROOT_CONTEXT, SpanKind, SpanStatusCode, TraceFlags } from '@opentelemetry/api'
 import { describe, expect, test, vi } from 'vite-plus/test'
 
 import { ATTRIBUTES_LEVEL_KEY, ATTRIBUTES_SPAN_TYPE_KEY } from './constants'
@@ -243,10 +243,10 @@ describe('TailSamplingProcessor', () => {
     processor.onStart(child, ROOT_CONTEXT)
     expect(downstream.calls).toHaveLength(0)
 
-    processor.onEnd(child as unknown as ReadableSpan)
+    processor.onEnd(child)
     expect(downstream.calls).toHaveLength(0)
 
-    processor.onEnd(root as unknown as ReadableSpan)
+    processor.onEnd(root)
     expect(downstream.calls).toHaveLength(0)
   })
 
@@ -260,11 +260,87 @@ describe('TailSamplingProcessor', () => {
     const child = makeSpan({ parentSpanContext: { spanId: '1234567890abcdef' }, spanId: 'child00000000000', startTime: [1001, 0] })
     processor.onStart(child, ROOT_CONTEXT)
 
-    processor.onEnd(root as unknown as ReadableSpan)
+    processor.onEnd(root)
     expect(downstream.calls).toHaveLength(0)
 
-    processor.onEnd(child as unknown as ReadableSpan)
+    processor.onEnd(child)
     expect(downstream.calls).toHaveLength(0)
+  })
+
+  test('drops a span that starts after its trace was dropped', () => {
+    const downstream = makeProcessor()
+    const processor = new TailSamplingProcessor(downstream, () => 0.0)
+
+    const root = makeSpan({ name: 'root', startTime: [1000, 0] })
+    processor.onStart(root, ROOT_CONTEXT)
+    processor.onEnd(root)
+    // A listener that runs after the root ended still has the root as its parent.
+    const late = makeSpan({ name: 'late', parentSpanContext: root.spanContext(), spanId: 'late000000000000', startTime: [1001, 0] })
+    processor.onStart(late, ROOT_CONTEXT)
+    processor.onEnd(late)
+
+    expect(downstream.calls).toEqual([])
+  })
+
+  test('exports a span that starts after its trace was dropped when it meets the criteria itself', () => {
+    const downstream = makeProcessor()
+    const processor = new TailSamplingProcessor(downstream, (info) => (info.span.name === 'late error' ? 1.0 : 0.0))
+
+    const root = makeSpan({ name: 'root', startTime: [1000, 0] })
+    processor.onStart(root, ROOT_CONTEXT)
+    processor.onEnd(root)
+    const late = makeSpan({ name: 'late error', parentSpanContext: root.spanContext(), spanId: 'late000000000000', startTime: [1001, 0] })
+    processor.onStart(late, ROOT_CONTEXT)
+    processor.onEnd(late)
+    // Once part of the trace was sampled, its later spans are exported as usual.
+    const after = makeSpan({ name: 'after', parentSpanContext: root.spanContext(), spanId: 'after00000000000', startTime: [1002, 0] })
+    processor.onStart(after, ROOT_CONTEXT)
+    processor.onEnd(after)
+
+    expect(downstream.calls).toEqual([
+      { event: 'start', span: late },
+      { event: 'end', span: late },
+      { event: 'start', span: after },
+      { event: 'end', span: after },
+    ])
+  })
+
+  test('measures a late span of a dropped trace from the trace start', () => {
+    const downstream = makeProcessor()
+    const tail = levelOrDuration({ durationThreshold: 5.0 }).tail
+    if (tail === undefined) {
+      throw new Error('expected tail sampler')
+    }
+    const processor = new TailSamplingProcessor(downstream, tail)
+
+    const root = makeSpan({ endTime: [1001, 0], name: 'root', startTime: [1000, 0] })
+    processor.onStart(root, ROOT_CONTEXT)
+    processor.onEnd(root)
+    // An early late span is dropped too, and must not reset the start of the trace.
+    const early = makeSpan({
+      endTime: [1002, 0],
+      name: 'early',
+      parentSpanContext: root.spanContext(),
+      spanId: 'early00000000000',
+      startTime: [1001, 0],
+    })
+    processor.onStart(early, ROOT_CONTEXT)
+    processor.onEnd(early)
+    // Starts 10 seconds into the trace but runs for only one second.
+    const late = makeSpan({
+      endTime: [1011, 0],
+      name: 'late',
+      parentSpanContext: root.spanContext(),
+      spanId: 'late000000000000',
+      startTime: [1010, 0],
+    })
+    processor.onStart(late, ROOT_CONTEXT)
+    processor.onEnd(late)
+
+    expect(downstream.calls).toEqual([
+      { event: 'start', span: late },
+      { event: 'end', span: late },
+    ])
   })
 
   test('exports a sampled trace span that ends after the root through both processors', () => {
@@ -277,8 +353,8 @@ describe('TailSamplingProcessor', () => {
     const child = makeSpan({ parentSpanContext: { spanId: '1234567890abcdef' }, spanId: 'child00000000000', startTime: [1001, 0] })
     processor.onStart(child, ROOT_CONTEXT)
 
-    processor.onEnd(root as unknown as ReadableSpan)
-    processor.onEnd(child as unknown as ReadableSpan)
+    processor.onEnd(root)
+    processor.onEnd(child)
 
     // The late child reaches both processors, not just one of them.
     expect(downstream.calls.filter((c) => c.event === 'end').map((c) => c.span)).toEqual([root, child])
@@ -341,7 +417,7 @@ describe('TailSamplingProcessor', () => {
         traceId: traceId(index),
       })
       processor.onStart(child, ROOT_CONTEXT)
-      processor.onEnd(root as unknown as ReadableSpan)
+      processor.onEnd(root)
       openChildren.push(child)
     }
     expect(downstream.calls).toHaveLength(0)
@@ -381,10 +457,10 @@ describe('TailSamplingProcessor', () => {
     ])
 
     // After flush, subsequent spans pass through directly
-    processor.onEnd(child as unknown as ReadableSpan)
+    processor.onEnd(child)
     expect(downstream.calls).toHaveLength(3)
 
-    processor.onEnd(root as unknown as ReadableSpan)
+    processor.onEnd(root)
     expect(downstream.calls).toHaveLength(4)
     expect(downstream.calls[3]).toEqual({ event: 'end', span: root })
   })
@@ -407,7 +483,7 @@ describe('TailSamplingProcessor', () => {
     processor.onStart(child, ROOT_CONTEXT)
     expect(downstream.calls).toHaveLength(2)
 
-    processor.onEnd(child as unknown as ReadableSpan)
+    processor.onEnd(child)
     expect(downstream.calls).toHaveLength(3)
   })
 
@@ -572,7 +648,8 @@ describe('TailSamplingProcessor', () => {
       startTime: [1001, 0],
     })
     processor.onStart(lateChild, ROOT_CONTEXT)
-    expect(downstream.calls).toEqual([{ event: 'start', span: lateChild }])
+    // The late child is buffered with what is left of the dropped trace instead of exported.
+    expect(downstream.calls).toEqual([])
     expect(getPendingSpanNames(downstream.calls)).toEqual([])
   })
 
@@ -797,6 +874,49 @@ describe('TailSamplingProcessor', () => {
     // The wrapped processor is still called exactly once for each.
     expect(downstream.forceFlush).toHaveBeenCalledTimes(1)
     expect(downstream.shutdown).toHaveBeenCalledTimes(1)
+  })
+
+  test('a throwing callback reaches neither the caller nor the sampling decision', () => {
+    const diagError = vi.spyOn(diag, 'error').mockImplementation(() => undefined)
+    const downstream = makeProcessor()
+    const processor = new TailSamplingProcessor(downstream, ({ event, span }) => {
+      if (span.name === 'broken') {
+        throw new Error(`tail failed on ${event}`)
+      }
+      return span.name === 'keep' && event === 'end' ? 1.0 : 0.0
+    })
+
+    const root = makeSpan({ name: 'root' })
+    const broken = makeSpan({ name: 'broken', parentSpanContext: root.spanContext(), spanId: 'broken0000000000' })
+    const keep = makeSpan({ name: 'keep', parentSpanContext: root.spanContext(), spanId: 'keep000000000000' })
+
+    processor.onStart(root, ROOT_CONTEXT)
+    expect(() => {
+      processor.onStart(broken, ROOT_CONTEXT)
+    }).not.toThrow()
+    // The broken span ends while the trace is still buffered, so the callback runs and throws on end too.
+    expect(() => {
+      processor.onEnd(broken)
+    }).not.toThrow()
+    processor.onStart(keep, ROOT_CONTEXT)
+    expect(downstream.calls).toEqual([])
+
+    processor.onEnd(keep)
+    processor.onEnd(root)
+
+    expect(diagError.mock.calls).toEqual([
+      ['logfire: tail sampling callback failed', new Error('tail failed on start')],
+      ['logfire: tail sampling callback failed', new Error('tail failed on end')],
+    ])
+    expect(downstream.calls).toEqual([
+      { event: 'start', span: root },
+      { event: 'start', span: broken },
+      { event: 'end', span: broken },
+      { event: 'start', span: keep },
+      { event: 'end', span: keep },
+      { event: 'end', span: root },
+    ])
+    diagError.mockRestore()
   })
 
   test('still reaches the deferred processor when the wrapped one rejects', async () => {

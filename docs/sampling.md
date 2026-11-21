@@ -20,7 +20,7 @@ logfire.configure({
 })
 ```
 
-In Node.js, `LOGFIRE_TRACE_SAMPLE_RATE=0.1` configures head sampling from the environment. The value must read as a number between `0` and `1`; anything else makes `configure()` throw rather than silently exporting every trace. An explicit `sampling` option takes precedence over the environment variable.
+In Node.js, `LOGFIRE_TRACE_SAMPLE_RATE=0.1` configures head sampling from the environment. The value must read as a number between `0` and `1`; anything else makes `configure()` throw rather than silently exporting every trace. An explicit `sampling` option takes precedence over the environment variable. An explicit `sampling.head` outside `0` to `1` also makes the Node.js `configure()` throw. In the browser, `configure()` warns through the OpenTelemetry diagnostic logger, ignores the value, and keeps every trace, so a mistake in the option cannot stop the page.
 
 ## Tail Sampling
 
@@ -55,6 +55,8 @@ Tail sampling buffers spans until a decision can be made. Be conservative in bro
 
 In Node.js, pending-span placeholders respect tail-sampling decisions: accepted
 traces can emit pending placeholders for still-open spans, while dropped traces
-do not export pending placeholders.
+do not export pending placeholders. Set `advanced.pendingSpans: false` to stop
+sending pending placeholders to Logfire; see
+[Pending Spans](configuration.md#pending-spans).
 
 See `examples/node/sampling.ts` for a runnable example.

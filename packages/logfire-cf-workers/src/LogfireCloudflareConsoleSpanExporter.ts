@@ -1,6 +1,7 @@
 import type { ExportResult } from '@opentelemetry/core'
 import { ExportResultCode, hrTimeToMicroseconds } from '@opentelemetry/core'
 import type { ReadableSpan, SpanExporter } from '@opentelemetry/sdk-trace-base'
+import { scrubbedSpanCopy } from 'logfire'
 
 const LevelLabels = {
   1: 'trace',
@@ -54,7 +55,8 @@ export class LogfireCloudflareConsoleSpanExporter implements SpanExporter {
   }
 
   private sendSpans(spans: ReadableSpan[], done?: (result: ExportResult) => void): void {
-    for (const span of spans) {
+    // The console prints each span as it ends, before the exporter's post-processor scrubs the batch.
+    for (const span of spans.map((ended) => scrubbedSpanCopy(ended))) {
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       const type = LevelLabels[span.attributes['logfire.level_num'] as keyof typeof LevelLabels] ?? 'info'
 

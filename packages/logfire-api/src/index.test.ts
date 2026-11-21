@@ -9,6 +9,7 @@ import {
   ATTRIBUTES_MESSAGE_KEY,
   ATTRIBUTES_MESSAGE_TEMPLATE_KEY,
   ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY,
+  ATTRIBUTES_SDK_INTERNAL_KEY,
   ATTRIBUTES_SPAN_TYPE_KEY,
   ATTRIBUTES_TAGS_KEY,
   INVALID_SPAN_ID,
@@ -33,6 +34,7 @@ import defaultExport, {
   withTags,
 } from './index'
 import { isPendingSpanSuppressed } from './pendingSpanSuppression'
+import { isSdkInternalError, markSdkInternalError } from './sdkInternalError'
 
 const sleep = async (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -573,6 +575,29 @@ describe('span', () => {
     mocks.reset()
   })
 
+  test('marks the span when its callback throws an SDK error, but not an application error', () => {
+    const sdkFailure = markSdkInternalError(new Error('sdk failure'))
+    expect(() =>
+      span('configuring', {
+        callback: () => {
+          throw sdkFailure
+        },
+      })
+    ).toThrow(sdkFailure)
+    expect(spanMock.setAttribute).toHaveBeenCalledWith(ATTRIBUTES_SDK_INTERNAL_KEY, true)
+
+    spanMock.setAttribute.mockClear()
+    const applicationError = new Error('boom')
+    expect(() =>
+      span('working', {
+        callback: () => {
+          throw applicationError
+        },
+      })
+    ).toThrow(applicationError)
+    expect(spanMock.setAttribute).not.toHaveBeenCalledWith(ATTRIBUTES_SDK_INTERNAL_KEY, true)
+  })
+
   test('sync callback succeeds - span ends normally', () => {
     const result = span('test {x}', { attributes: { x: 1 }, callback: () => 'ok' })
 
@@ -598,6 +623,35 @@ describe('span', () => {
     expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: boom' })
     expect(spanMock.setAttribute).toHaveBeenCalledWith(ATTRIBUTES_LEVEL_KEY, 17)
     expect(spanMock.setAttribute).toHaveBeenCalledWith(ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY, expect.any(String))
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
+  test('sync callback throws an Error whose message getter throws - re-throws the original error', () => {
+    spanMock.recordException.mockImplementationOnce((exception) => {
+      Reflect.get(exception as Error, 'message')
+    })
+    const error = new Error('boom')
+    error.stack = 'Error: boom\n    at handler (app.ts:8:1)'
+    Object.defineProperty(error, 'message', {
+      get() {
+        throw new Error('message getter failed')
+      },
+    })
+
+    expect(() =>
+      span('test', {
+        callback: () => {
+          throw error
+        },
+      })
+    ).toThrow(error)
+
+    expect(spanMock.recordException).toHaveBeenLastCalledWith({
+      message: 'Unknown error',
+      name: 'Error',
+      stack: 'Error: boom\n    at handler (app.ts:8:1)',
+    })
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: Unknown error' })
     expect(spanMock.end).toHaveBeenCalledOnce()
   })
 
@@ -820,6 +874,31 @@ describe('span', () => {
     expect(spanMock.end).toHaveBeenCalledOnce()
   })
 
+  test('async callback rejects with an Error whose message getter throws - rejects with the original error', async () => {
+    spanMock.recordException.mockImplementationOnce((exception) => {
+      Reflect.get(exception as Error, 'message')
+    })
+    const error = new Error('boom')
+    error.stack = 'Error: boom\n    at handler (app.ts:8:1)'
+    Object.defineProperty(error, 'message', {
+      get() {
+        throw new Error('message getter failed')
+      },
+    })
+
+    // toBe, not toThrow: toThrow reads the message, which is the getter under test.
+    await expect(span('test', { callback: async () => Promise.reject(error) })).rejects.toBe(error)
+    await sleep(0)
+
+    expect(spanMock.recordException).toHaveBeenLastCalledWith({
+      message: 'Unknown error',
+      name: 'Error',
+      stack: 'Error: boom\n    at handler (app.ts:8:1)',
+    })
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: Unknown error' })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
   test('async callback rejects with string - records exception without fingerprint', async () => {
     // eslint-disable-next-line prefer-promise-reject-errors, @typescript-eslint/prefer-promise-reject-errors
     const result = span('test', { callback: async () => Promise.reject('async-oops') })
@@ -954,6 +1033,94 @@ describe('reportError', () => {
     mocks.reset()
   })
 
+  test('passes the original error to onReportError, even when minLevel filters the span', () => {
+    const reported: unknown[] = []
+    logfireApiConfig.onReportError = (error) => {
+      reported.push(error)
+    }
+    const error = new Error('boom')
+    try {
+      reportError('Caught error', error)
+      configureLogfireApi({ minLevel: 'fatal' })
+      reportError('Filtered error', 'plain string')
+    } finally {
+      logfireApiConfig.onReportError = undefined
+      configureLogfireApi({ minLevel: null })
+    }
+
+    expect(reported).toEqual([error, 'plain string'])
+  })
+
+  test('marks an error that the SDK branded', () => {
+    reportError('Caught error', markSdkInternalError(new Error('sdk failure')))
+
+    expect(getStartSpanAttributes()[ATTRIBUTES_SDK_INTERNAL_KEY]).toBe(true)
+  })
+
+  test.each([
+    ['an application error', new Error('boom')],
+    ['an application error that wraps an SDK error', new Error('boom', { cause: markSdkInternalError(new Error('sdk failure')) })],
+    ['a thrown string', 'boom'],
+  ])('does not mark %s', (_name, error) => {
+    reportError('Caught error', error)
+
+    expect(getStartSpanAttributes()).not.toHaveProperty([ATTRIBUTES_SDK_INTERNAL_KEY])
+  })
+
+  test('treats an error whose brand cannot be read as unmarked', () => {
+    const hostile = new Proxy(new Error('boom'), {
+      get(target, key) {
+        if (typeof key === 'symbol') {
+          throw new Error('hostile getter')
+        }
+        return Reflect.get(target, key) as unknown
+      },
+    })
+
+    expect(isSdkInternalError(hostile)).toBe(false)
+  })
+
+  test('keeps reporting when onReportError throws', () => {
+    logfireApiConfig.onReportError = () => {
+      throw new Error('hook failed')
+    }
+    try {
+      expect(() => {
+        reportError('Caught error', new Error('boom'))
+      }).not.toThrow()
+    } finally {
+      logfireApiConfig.onReportError = undefined
+    }
+
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
+  test('still records and ends the span when reading the error message throws', () => {
+    spanMock.recordException.mockImplementationOnce((exception) => {
+      Reflect.get(exception as Error, 'message')
+    })
+    const error = Object.assign(new Error('boom'), { code: 'ECONNREFUSED' })
+    error.stack = 'Error: boom\n    at handler (app.ts:8:1)'
+    Object.defineProperty(error, 'message', {
+      get() {
+        throw new Error('message getter failed')
+      },
+    })
+
+    expect(() => {
+      reportError('Caught error', error)
+    }).not.toThrow()
+
+    expect(spanMock.recordException).toHaveBeenLastCalledWith({
+      code: 'ECONNREFUSED',
+      message: 'Unknown error',
+      name: 'Error',
+      stack: 'Error: boom\n    at handler (app.ts:8:1)',
+    })
+    expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: Unknown error' })
+    expect(spanMock.end).toHaveBeenCalledOnce()
+  })
+
   test('preserves legacy attributes argument and error behavior', () => {
     const error = new Error('legacy')
 
@@ -968,6 +1135,17 @@ describe('reportError', () => {
     expect(attributes['path']).toBe('/users')
     expect(spanMock.recordException).toHaveBeenCalledWith(error)
     expect(spanMock.setStatus).toHaveBeenCalledWith({ code: SpanStatusCode.ERROR, message: 'Error: legacy' })
+  })
+
+  test('scrubs the exception message attribute and the message line of the stack trace at creation', () => {
+    const error = new Error('invalid session token')
+    error.stack = 'Error: invalid session token\n    at login (file:///app/auth.js:1:2)'
+
+    reportError('Caught error', error)
+
+    const attributes = (mocks.tracerMock.startSpan.mock.calls[0]?.[1] as { attributes: Record<string, unknown> }).attributes
+    expect(attributes[ATTR_EXCEPTION_MESSAGE]).toBe("[Scrubbed due to 'session']")
+    expect(attributes[ATTR_EXCEPTION_STACKTRACE]).toBe("[Scrubbed due to 'session']\n    at login (file:///app/auth.js:1:2)")
   })
 
   test('records Error cause chain in reportError stacktrace', () => {

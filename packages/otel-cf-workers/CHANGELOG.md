@@ -1,5 +1,29 @@
 # @pydantic/otel-cf-workers
 
+## 2.1.7
+
+### Patch Changes
+
+- d7a4f7f: Preserve synchronous return values and exceptions from Durable Object storage methods such as `transactionSync`, while retaining span completion and error recording for asynchronous methods.
+
+## 2.1.6
+
+### Patch Changes
+
+- bbc4362: Stop `parseConfig` from mutating the supplied trace config. Reusing one config object across requests with a different exporter each time now exports each request to its own exporter instead of the first request's.
+
+## 2.1.5
+
+### Patch Changes
+
+- b85bf8c: Fix fresh installs failing with `ERESOLVE` since the OpenTelemetry JS 3.0 release. The OpenTelemetry dependency ranges now stop before `@opentelemetry/api` 1.10, `@opentelemetry/auto-instrumentations-node` 0.82, `@opentelemetry/auto-instrumentations-web` 0.69 and `@opentelemetry/instrumentation-user-interaction` 0.68, which require the 3.0 line. A new install resolves to the 1.9 / 2.x / 0.2xx line again. Support for OpenTelemetry JS 3.0 will follow in a later release.
+
+## 2.1.4
+
+### Patch Changes
+
+- 07cf8b6: Send each Cloudflare Worker request's spans to the exporter, resource, and propagator from that request's resolved config. Before, the first request in an isolate fixed these for all later requests. A `ResolveConfigFn` that picked a destination or service name per request or trigger could then send one tenant's telemetry to another tenant's collector. `@pydantic/logfire-cf-workers` reads its config only from `env`, so it was not affected in practice. It now also copies `additionalSpanProcessors` instead of appending the console exporter to the caller's array on every request.
+
 ## 2.1.3
 
 ### Patch Changes

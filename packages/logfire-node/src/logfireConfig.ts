@@ -11,6 +11,7 @@ import * as logfireApi from 'logfire'
 import type { ConsoleConfig } from './consoleOptions'
 import { resolveConsoleOptions } from './consoleOptions'
 import { readLocalProjectCredentials, resolveCredentialsDir } from './credentials'
+import type { FleetOptions } from './fleet'
 import { start } from './sdk'
 
 export type { ConsoleConfig, ConsoleOptions } from './consoleOptions'
@@ -24,6 +25,15 @@ export interface AdvancedLogfireConfigOptions {
    * The generator to use for generating trace IDs. Defaults to ULIDGenerator - https://github.com/ulid/spec.
    */
   idGenerator?: IdGenerator
+  /**
+   * Whether to send pending spans to Logfire. A pending span is a placeholder sent when a span starts,
+   * so the Logfire UI can show spans that are still running. Set to `false` to send only finished spans,
+   * which reduces the volume of data sent; spans that are still running then do not show in the Logfire UI
+   * until they finish. This does not affect console output.
+   *
+   * Defaults to the `LOGFIRE_PENDING_SPANS` environment variable, or `true`.
+   */
+  pendingSpans?: boolean
 }
 
 export interface CodeSource {
@@ -81,7 +91,7 @@ export interface LogfireConfigOptions {
    */
   diagLogLevel?: DiagLogLevel
   /**
-   * Set to False to suppress extraction of incoming trace context. See [Unintentional Distributed Tracing](https://logfire.pydantic.dev/docs/how-to-guides/distributed-tracing/#unintentional-distributed-tracing) for more information.
+   * Set to false to ignore all incoming context, including trace context and W3C baggage. Outgoing requests still carry both. See [Unintentional Distributed Tracing](https://logfire.pydantic.dev/docs/how-to-guides/distributed-tracing/#unintentional-distributed-tracing) for more information.
    */
   distributedTracing?: boolean
   /**
@@ -89,6 +99,25 @@ export interface LogfireConfigOptions {
    * Defaults to `LOGFIRE_CREDENTIALS_DIR`, then `.logfire` in the current working directory.
    */
   dataDir?: string
+  /**
+   * Calls `process.setSourceMapsEnabled(true)`, so Node rewrites stack traces to original source files and lines using
+   * the `.map` files shipped beside your built code. This needs no source map upload. Call `configure()` before
+   * application modules load: Node reads maps only for files loaded after this. Do not install `source-map-support`
+   * alongside. Frames that Node rewrites no longer carry debug IDs. `false` leaves the setting as Node started,
+   * including `--enable-source-maps`. Defaults to false.
+   */
+  enableSourceMaps?: boolean
+  /**
+   * Whether to manage this SDK from Logfire Fleet: the Fleet policy then applies to everything it sends (sampling,
+   * which signals are sent, log levels, redaction and volume limits, the console included). `true` takes the Fleet
+   * server from the `OTEL_OPAMP_*` environment variables; a `FleetOptions` gives it in code. Needs the
+   * `@pydantic/logfire-fleet-otel` package installed. It never blocks or throws: until Fleet answers, the last policy
+   * saved is in force, else the SDK's own settings, and where Fleet can't be joined it warns and the SDK runs
+   * unmanaged.
+   *
+   * Defaults to the `LOGFIRE_FLEET` environment variable, otherwise false.
+   */
+  fleet?: boolean | FleetOptions
   /**
    * The environment this service is running in, e.g. `staging` or `prod`. Sets the deployment.environment.name resource attribute. Useful for filtering within projects in the Logfire UI.
    * Defaults to the `LOGFIRE_ENVIRONMENT` environment variable.
@@ -156,8 +185,9 @@ export interface LogfireConfigOptions {
    */
   serviceName?: string
   /**
-   * Version of this service.
-   * Defaults to the `LOGFIRE_SERVICE_VERSION` environment variable, then `OTEL_SERVICE_VERSION`.
+   * Version of this service. Source map resolution needs a real per-build value, such as the commit SHA or release tag.
+   * Defaults to the `LOGFIRE_SERVICE_VERSION` environment variable, then `OTEL_SERVICE_VERSION`, then the release
+   * identifier that `logfire sourcemap inject` stamped into a bundle loaded before `configure()` runs.
    */
   serviceVersion?: string
   /**
@@ -222,6 +252,7 @@ function readServiceVersionEnv(env: NodeJS.ProcessEnv): string | undefined {
 
 export interface LogfireConfig {
   additionalSpanProcessors: SpanProcessor[]
+  fleet: FleetOptions | undefined
   apiKey: string | undefined
   authorizationHeaders: AuthorizationHeaders
   baggage: BaggageOptions
@@ -232,6 +263,7 @@ export interface LogfireConfig {
   diagLogLevel?: DiagLogLevel
   distributedTracing: boolean
   dataDir: string
+  pendingSpans: boolean
   idGenerator: IdGenerator
   instrumentations: Instrumentation[]
   jsonSchema: JsonSchemaMode
@@ -254,6 +286,7 @@ export interface LogfireConfig {
 
 const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   additionalSpanProcessors: [],
+  fleet: undefined,
   apiKey: undefined,
   authorizationHeaders: {},
   baggage: {
@@ -265,6 +298,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   deploymentEnvironment: undefined,
   distributedTracing: true,
   dataDir: '.logfire',
+  pendingSpans: true,
   idGenerator: new logfireApi.ULIDGenerator(),
   instrumentations: [],
   jsonSchema: 'rich',
@@ -293,8 +327,10 @@ export function configure(config: LogfireConfigOptions = {}): void {
   const env = process.env
   const envMinLevel = env['LOGFIRE_MIN_LEVEL']
   const console = 'console' in cnf ? cnf.console : parseBooleanEnv(env['LOGFIRE_CONSOLE'], 'LOGFIRE_CONSOLE')
+  // A blank code token counts as unset, like a blank LOGFIRE_TOKEN, so it falls back to the env and local credentials.
+  const codeToken = typeof cnf.token === 'string' ? cnf.token.trim() || undefined : cnf.token
   const shouldReadLocalCredentials =
-    cnf.token === undefined && readNonEmptyEnv(env, 'LOGFIRE_TOKEN') === undefined && cnf.sendToLogfire !== false
+    codeToken === undefined && readNonEmptyEnv(env, 'LOGFIRE_TOKEN') === undefined && cnf.sendToLogfire !== false
 
   resolveConsoleOptions(console)
 
@@ -340,21 +376,24 @@ export function configure(config: LogfireConfigOptions = {}): void {
   const envToken = readNonEmptyEnv(env, 'LOGFIRE_TOKEN')
   const dataDir = resolveCredentialsDir(cnf.dataDir, env)
   const localCredentials = shouldReadLocalCredentials ? readLocalProjectCredentials(dataDir) : undefined
-  const token = cnf.token ?? envToken ?? localCredentials?.token
+  const token = codeToken ?? envToken?.trim() ?? localCredentials?.token.trim()
   const apiKey = cnf.apiKey ?? env['LOGFIRE_API_KEY']
   const sendToLogfire = resolveSendToLogfire(cnf.sendToLogfire, token)
   const baseUrl = resolveBaseUrl(env, cnf.advanced?.baseUrl, token, sendToLogfire, localCredentials?.logfire_api_url)
   const deploymentEnvironment = cnf.environment ?? env['LOGFIRE_ENVIRONMENT']
   const serviceName = cnf.serviceName ?? readServiceNameEnv(env)
-  const serviceVersion = cnf.serviceVersion ?? readServiceVersionEnv(env)
+  const serviceVersion = cnf.serviceVersion ?? readServiceVersionEnv(env) ?? logfireApi.readInjectedRelease()
   const variablesBaseUrl =
     apiKey !== undefined && apiKey !== '' ? logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, apiKey) : cnf.advanced?.baseUrl
   if (requiresRemoteVariables(cnf.variables) && (apiKey === undefined || apiKey === '')) {
     throw new Error('Remote variables require an API key. Set LOGFIRE_API_KEY or pass apiKey to configure().')
   }
 
+  const fleet = cnf.fleet ?? parseBooleanEnv(env['LOGFIRE_FLEET'], 'LOGFIRE_FLEET')
+
   Object.assign(logfireConfig, {
     additionalSpanProcessors: cnf.additionalSpanProcessors ?? [],
+    fleet: fleet === true ? {} : fleet === false ? undefined : fleet,
     apiKey,
     authorizationHeaders: resolveAuthorizationHeaders(token),
     baggage: baggage !== undefined ? { spanAttributes: [...(baggage.spanAttributes ?? [])] } : logfireConfig.baggage,
@@ -366,6 +405,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
     diagLogLevel: cnf.diagLogLevel,
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),
     idGenerator: cnf.advanced?.idGenerator ?? new logfireApi.ULIDGenerator(),
+    pendingSpans: resolvePendingSpans(cnf.advanced?.pendingSpans),
     instrumentations: cnf.instrumentations ?? [],
     jsonSchema: jsonSchema ?? logfireConfig.jsonSchema,
     logsExporterUrl: `${baseUrl}/${LOGS_ENDPOINT_PATH}`,
@@ -383,6 +423,10 @@ export function configure(config: LogfireConfigOptions = {}): void {
     variables: cnf.variables,
     variablesBaseUrl,
   })
+
+  if (cnf.enableSourceMaps === true) {
+    process.setSourceMapsEnabled(true)
+  }
 
   start()
 }
@@ -414,6 +458,9 @@ function configureSharedApi(apiConfig: logfireApi.LogfireApiConfigOptions, minLe
  */
 function resolveSampling(option: SamplingOptions | undefined): SamplingOptions | undefined {
   if (option) {
+    if (option.head !== undefined && !(option.head >= 0 && option.head <= 1)) {
+      throw new Error(`Expected sampling.head to be a number between 0 and 1, got ${String(option.head)}`)
+    }
     return option
   }
   const envRate = process.env['LOGFIRE_TRACE_SAMPLE_RATE']?.trim()
@@ -447,7 +494,7 @@ function resolveBaseUrl(
     return ''
   }
   if (typeof token === 'function') {
-    const baseUrl = passedUrl ?? env['LOGFIRE_BASE_URL']
+    const baseUrl = passedUrl ?? readNonEmptyEnv(env, 'LOGFIRE_BASE_URL')
     if (baseUrl === undefined || baseUrl === '') {
       throw new Error('advanced.baseUrl or LOGFIRE_BASE_URL is required when token is a function.')
     }
@@ -456,7 +503,7 @@ function resolveBaseUrl(
   if (token === undefined || token === '') {
     return ''
   }
-  const configuredBaseUrl = passedUrl ?? env['LOGFIRE_BASE_URL'] ?? localCredentialsBaseUrl
+  const configuredBaseUrl = passedUrl ?? readNonEmptyEnv(env, 'LOGFIRE_BASE_URL') ?? localCredentialsBaseUrl
   if (configuredBaseUrl !== undefined && configuredBaseUrl !== '') {
     return removeTrailingSlash(configuredBaseUrl)
   }
@@ -470,7 +517,7 @@ function removeTrailingSlash(url: string): string {
 function resolveAuthorizationHeaders(token: LogfireToken | undefined): AuthorizationHeaders {
   if (typeof token === 'function') {
     return async () => ({
-      Authorization: await token(),
+      Authorization: (await token()).trim(),
     })
   }
   return {
@@ -485,6 +532,17 @@ function resolveDistributedTracing(option: LogfireConfigOptions['distributedTrac
   const envDistributedTracing = readNonEmptyEnv(process.env, 'LOGFIRE_DISTRIBUTED_TRACING')
   if (envDistributedTracing !== undefined) {
     return parseBooleanEnv(envDistributedTracing, 'LOGFIRE_DISTRIBUTED_TRACING')
+  }
+  return true
+}
+
+function resolvePendingSpans(option: AdvancedLogfireConfigOptions['pendingSpans']): boolean {
+  if (option !== undefined) {
+    return option
+  }
+  const envPendingSpans = readNonEmptyEnv(process.env, 'LOGFIRE_PENDING_SPANS')
+  if (envPendingSpans !== undefined) {
+    return parseBooleanEnv(envPendingSpans, 'LOGFIRE_PENDING_SPANS')
   }
   return true
 }

@@ -8,17 +8,20 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
   define: defines,
   pack: {
     define: defines,
-    dts: {
-      resolver: 'tsc',
-    },
+    dts: true,
     deps: {
       neverBundle: [/^@opentelemetry/u, /^node:/u, 'logfire'],
     },
-    entry: 'src/index.ts',
+    entry: {
+      index: 'src/index.ts',
+      'react-router': 'src/reactRouter.ts',
+      'tanstack-router': 'src/tanstackRouter.ts',
+      'vue-router': 'src/vueRouter.ts',
+    },
     format: ['esm', 'cjs'],
     hooks: {
       'build:done': () => {
-        copyCjsDeclarations(['index'])
+        copyCjsDeclarations(['index', 'react-router', 'tanstack-router', 'vue-router'])
       },
     },
     minify: true,

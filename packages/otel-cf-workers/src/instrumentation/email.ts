@@ -24,7 +24,7 @@ export function createEmailHandler(emailFn: EmailHandler, initialiser: Initialis
         const args: EmailHandlerArgs = [message, env, ctx]
         await api_context.with(context, executeEmailHandler, undefined, target, args)
       } finally {
-        orig_ctx.waitUntil(exportSpans(tracker))
+        orig_ctx.waitUntil(exportSpans(config.spanProcessors, tracker))
       }
     },
   }

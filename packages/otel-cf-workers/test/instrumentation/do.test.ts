@@ -5,6 +5,7 @@ import { context as apiContext, trace } from '@opentelemetry/api'
 import { describe, expect, it, vitest } from 'vitest'
 import { setConfig } from '../../src/config'
 import { AsyncLocalStorageContextManager } from '../../src/context'
+import type { SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import type { ResolvedTraceConfig } from '../../src/types'
 import { executeDOFetch, instrumentDOClass } from '../../src/instrumentation/do'
 
@@ -61,7 +62,7 @@ function createDurableObjectState(): TestDurableObjectState {
   } as unknown as TestDurableObjectState
 }
 
-const resolvedConfig = {} as ResolvedTraceConfig
+const resolvedConfig = { spanProcessors: [] } as unknown as ResolvedTraceConfig
 
 function createSpan() {
   return {
@@ -80,7 +81,7 @@ function mockTracer(span: Span, onStart?: (name: string, args: unknown[]) => voi
       onStart?.(name, args)
       const options = args.find((arg): arg is SpanOptions => typeof arg === 'object' && arg !== null && 'attributes' in arg)
       if (options?.attributes) {
-        ;(span as Span & { attributes: Record<string, unknown> }).attributes = options.attributes as Record<string, unknown>
+        ;(span as Span & { attributes: Record<string, unknown> }).attributes = options.attributes
       }
       const fn = args.at(-1) as (span: Span) => Promise<unknown>
       return fn(span)
@@ -134,7 +135,7 @@ describe('instrumentDOClass', () => {
     const durableObject = new InstrumentedDurableObject(durableObjectState, {}) as unknown as CustomMethodDurableObjectInstance
 
     try {
-      const increment = Reflect.get(durableObject, 'increment') as (delta: number) => number
+      const increment = Reflect.get(durableObject, 'increment')
 
       expect(increment(2)).toBe(2)
       expect(durableObject.increment(3)).toBe(5)
@@ -162,6 +163,53 @@ describe('instrumentDOClass', () => {
       await Promise.allSettled(durableObjectState.waitUntilPromises)
     } finally {
       consoleError.mockRestore()
+    }
+  })
+})
+
+describe('instrumentDOClass span export', () => {
+  function spyProcessor() {
+    return {
+      forceFlush: vitest.fn<() => Promise<void>>(async () => Promise.resolve()),
+      onEnd: vitest.fn<() => void>(),
+      onStart: vitest.fn<() => void>(),
+      shutdown: vitest.fn<() => Promise<void>>(async () => Promise.resolve()),
+    } satisfies SpanProcessor
+  }
+
+  it('flushes constructor and invocation span processors, and a shared processor only once', async () => {
+    vitest.stubGlobal('scheduler', { wait: async () => Promise.resolve() })
+    const constructorProcessor = spyProcessor()
+    const fetchProcessor = spyProcessor()
+    const alarmProcessor = spyProcessor()
+    const sharedProcessor = spyProcessor()
+    const initialiser = (_env: unknown, trigger: unknown) => {
+      const own = trigger instanceof Request ? fetchProcessor : trigger === 'do-alarm' ? alarmProcessor : constructorProcessor
+      return { spanProcessors: [own, sharedProcessor] } as unknown as ResolvedTraceConfig
+    }
+    const durableObjectState = createDurableObjectState()
+    const InstrumentedDurableObject = instrumentDOClass(LifecycleDurableObject, initialiser)
+    const durableObject = new InstrumentedDurableObject(durableObjectState, {})
+
+    try {
+      await durableObject.fetch(new Request('https://example.com'))
+      await Promise.all(durableObjectState.waitUntilPromises)
+
+      expect(constructorProcessor.forceFlush).toHaveBeenCalledTimes(1)
+      expect(fetchProcessor.forceFlush).toHaveBeenCalledTimes(1)
+      expect(sharedProcessor.forceFlush).toHaveBeenCalledTimes(1)
+      expect(alarmProcessor.forceFlush).toHaveBeenCalledTimes(0)
+
+      const alarm = Reflect.get(durableObject, 'alarm') as () => Promise<void>
+      await alarm()
+      await Promise.all(durableObjectState.waitUntilPromises)
+
+      expect(constructorProcessor.forceFlush).toHaveBeenCalledTimes(2)
+      expect(fetchProcessor.forceFlush).toHaveBeenCalledTimes(1)
+      expect(alarmProcessor.forceFlush).toHaveBeenCalledTimes(1)
+      expect(sharedProcessor.forceFlush).toHaveBeenCalledTimes(2)
+    } finally {
+      vitest.unstubAllGlobals()
     }
   })
 })

@@ -41,6 +41,7 @@ describe('logfire config', () => {
     delete process.env['LOGFIRE_TOKEN']
     delete process.env['LOGFIRE_CREDENTIALS_DIR']
     delete process.env['LOGFIRE_DISTRIBUTED_TRACING']
+    delete process.env['LOGFIRE_PENDING_SPANS']
     configureLogfireApi({ baggage: { spanAttributes: [] }, jsonSchema: 'rich', minLevel: null })
     await shutdownVariables()
   })
@@ -402,6 +403,18 @@ describe('logfire config', () => {
     expect(tokenProvider).toHaveBeenCalledTimes(1)
   })
 
+  it('trims whitespace around the value a token provider returns', async () => {
+    configure({
+      advanced: { baseUrl: 'https://proxy.example.com' },
+      token: () => 'pylf_v1_us_abc123\n',
+    })
+
+    if (typeof logfireConfig.authorizationHeaders !== 'function') {
+      throw new Error('expected authorization headers provider')
+    }
+    await expect(logfireConfig.authorizationHeaders()).resolves.toEqual({ Authorization: 'pylf_v1_us_abc123' })
+  })
+
   it('uses LOGFIRE_BASE_URL for a token provider', () => {
     process.env['LOGFIRE_BASE_URL'] = 'https://proxy.example.com/'
 
@@ -468,6 +481,65 @@ describe('logfire config', () => {
     expect(logfireConfig.baseUrl).toBe('https://env.example.com')
   })
 
+  it('treats a blank LOGFIRE_BASE_URL as unset', () => {
+    process.env['LOGFIRE_BASE_URL'] = ''
+    process.env['LOGFIRE_API_KEY'] = 'pylf_v1_eu_key'
+    configure({ token: 'pylf_v1_eu_abc123' })
+
+    expect(logfireConfig.traceExporterUrl).toBe('https://logfire-eu.pydantic.dev/v1/traces')
+    expect(logfireConfig.variablesBaseUrl).toBe('https://logfire-eu.pydantic.dev')
+
+    delete process.env['LOGFIRE_API_KEY']
+    const dataDir = makeCredentialsDir({
+      logfire_api_url: 'https://local.example.com',
+      project_name: 'local-project',
+      project_url: 'https://example.com/project',
+      token: 'local-token',
+    })
+    configure({ dataDir })
+
+    expect(logfireConfig.baseUrl).toBe('https://local.example.com')
+
+    process.env['LOGFIRE_BASE_URL'] = ' '
+    expect(() => {
+      configure({ token: () => 'pylf_v1_eu_abc123' })
+    }).toThrow('advanced.baseUrl or LOGFIRE_BASE_URL is required when token is a function.')
+  })
+
+  it('trims whitespace around a token before reading its region or sending it', () => {
+    process.env['LOGFIRE_TOKEN'] = 'pylf_v1_eu_abc123\n'
+    configure({})
+
+    expect(logfireConfig.token).toBe('pylf_v1_eu_abc123')
+    expect(logfireConfig.baseUrl).toBe('https://logfire-eu.pydantic.dev')
+    expect(logfireConfig.authorizationHeaders).toEqual({ Authorization: 'pylf_v1_eu_abc123' })
+
+    configure({ token: ' pylf_v1_eu_abc123 ' })
+
+    expect(logfireConfig.token).toBe('pylf_v1_eu_abc123')
+    expect(logfireConfig.baseUrl).toBe('https://logfire-eu.pydantic.dev')
+  })
+
+  it('treats a blank code token as unset and falls back to LOGFIRE_TOKEN, then local credentials', () => {
+    process.env['LOGFIRE_TOKEN'] = 'pylf_v1_eu_env123'
+    configure({ token: '  \n' })
+
+    expect(logfireConfig.token).toBe('pylf_v1_eu_env123')
+    expect(logfireConfig.baseUrl).toBe('https://logfire-eu.pydantic.dev')
+
+    delete process.env['LOGFIRE_TOKEN']
+    process.env['LOGFIRE_CREDENTIALS_DIR'] = makeCredentialsDir({
+      logfire_api_url: 'https://local.example.com',
+      project_name: 'local-project',
+      project_url: 'https://example.com/project',
+      token: 'local-token\n',
+    })
+    configure({ token: '' })
+
+    expect(logfireConfig.token).toBe('local-token')
+    expect(logfireConfig.baseUrl).toBe('https://local.example.com')
+  })
+
   it('uses LOGFIRE_CREDENTIALS_DIR for local credentials', () => {
     const dataDir = makeCredentialsDir({
       logfire_api_url: 'https://env-dir.example.com',
@@ -523,6 +595,32 @@ describe('logfire config', () => {
         },
       })
     }).toThrow('Remote variables require an API key')
+  })
+
+  describe('pending spans', () => {
+    it('defaults to true when neither the option nor the environment variable is set', () => {
+      configure({ sendToLogfire: false })
+      expect(logfireConfig.pendingSpans).toBe(true)
+    })
+
+    it('LOGFIRE_PENDING_SPANS=false disables pending spans when the option is omitted', () => {
+      process.env['LOGFIRE_PENDING_SPANS'] = 'false'
+      configure({ sendToLogfire: false })
+      expect(logfireConfig.pendingSpans).toBe(false)
+    })
+
+    it('an explicit option wins over LOGFIRE_PENDING_SPANS', () => {
+      process.env['LOGFIRE_PENDING_SPANS'] = 'false'
+      configure({ advanced: { pendingSpans: true }, sendToLogfire: false })
+      expect(logfireConfig.pendingSpans).toBe(true)
+    })
+
+    it('rejects a LOGFIRE_PENDING_SPANS value that is not a boolean', () => {
+      process.env['LOGFIRE_PENDING_SPANS'] = 'yes'
+      expect(() => {
+        configure()
+      }).toThrow('Expected LOGFIRE_PENDING_SPANS to be a boolean, got "yes"')
+    })
   })
 
   describe('distributed tracing', () => {
@@ -633,6 +731,18 @@ describe('logfire config', () => {
       process.env['LOGFIRE_TRACE_SAMPLE_RATE'] = '10%'
       configure({ sampling: { head: 0.5 }, sendToLogfire: false })
       expect(logfireConfig.sampling).toEqual({ head: 0.5 })
+    })
+
+    it('rejects an out-of-range sampling.head instead of exporting everything', () => {
+      for (const head of [0, 1]) {
+        configure({ sampling: { head }, sendToLogfire: false })
+        expect(logfireConfig.sampling).toEqual({ head })
+      }
+      for (const head of [10, 1.5, -0.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(() => {
+          configure({ sampling: { head }, sendToLogfire: false })
+        }).toThrow(`Expected sampling.head to be a number between 0 and 1, got ${String(head)}`)
+      }
     })
 
     it('treats an empty or whitespace-only value as unset', () => {

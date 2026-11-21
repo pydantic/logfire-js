@@ -2,18 +2,20 @@ import type { Context } from '@opentelemetry/api'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-proto'
 import type { ReadableSpan, Span, SpanExporter, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { BatchSpanProcessor, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
+import { scrubSpanForExport } from 'logfire'
 
 import { logfireConfig } from './logfireConfig'
 import { USER_AGENT } from './userAgent'
 import { LogfireConsoleSpanExporter } from './LogfireConsoleSpanExporter'
 import type { ConsoleConfig } from './consoleOptions'
 import { resolveConsoleOptions } from './consoleOptions'
+import { isPendingSpan, RemovePendingSpansExporter } from './RemovePendingSpansExporter'
 import { VoidTraceExporter } from './VoidTraceExporter'
 
 export function logfireSpanProcessor(consoleConfig: ConsoleConfig | undefined): SpanProcessor {
   const consoleOptions = resolveConsoleOptions(consoleConfig)
   const consoleProcessor = consoleOptions.enabled ? new SimpleSpanProcessor(new LogfireConsoleSpanExporter(consoleOptions)) : undefined
-  return new LogfireSpanProcessor(new BatchSpanProcessor(traceExporter()), consoleProcessor)
+  return new LogfireSpanProcessor(new BatchSpanProcessor(traceExporter()), consoleProcessor, { pendingSpans: logfireConfig.pendingSpans })
 }
 
 /**
@@ -30,19 +32,27 @@ export function traceExporter(): SpanExporter {
     throw new Error('Logfire token is required')
   }
 
-  return new OTLPTraceExporter({
-    headers: logfireConfig.authorizationHeaders,
-    url: logfireConfig.traceExporterUrl,
-    userAgent: USER_AGENT,
-  })
+  return new RemovePendingSpansExporter(
+    new OTLPTraceExporter({
+      headers: logfireConfig.authorizationHeaders,
+      url: logfireConfig.traceExporterUrl,
+      userAgent: USER_AGENT,
+    })
+  )
 }
 
 export class LogfireSpanProcessor implements SpanProcessor {
   private readonly console: SpanProcessor | undefined
+  private readonly pendingSpans: boolean
   private readonly wrapped: SpanProcessor
 
-  constructor(wrapped: SpanProcessor, consoleProcessor: SpanProcessor | undefined) {
+  constructor(
+    wrapped: SpanProcessor,
+    consoleProcessor: SpanProcessor | undefined,
+    { pendingSpans = true }: { pendingSpans?: boolean } = {}
+  ) {
     this.console = consoleProcessor
+    this.pendingSpans = pendingSpans
     this.wrapped = wrapped
   }
 
@@ -51,11 +61,16 @@ export class LogfireSpanProcessor implements SpanProcessor {
   }
 
   onEnd(span: ReadableSpan): void {
+    // Serialization has to happen when `logfire.span` and friends create the span, because the
+    // OpenTelemetry API rejects non-primitive attribute values. Scrubbing primitives here also covers
+    // instrumentation spans, attributes set after creation, events, and links.
+    scrubSpanForExport(span)
     this.console?.onEnd(span)
-    // Note: this is too late for the regular node instrumentation. The opentelemetry API rejects the non-primitive attribute values.
-    // Instead, the serialization happens at the `logfire.span, logfire.startSpan`, etc.
-    // Object.assign(span.attributes, serializeAttributes(span.attributes))
-    this.wrapped.onEnd(span)
+
+    // Dropped before the batch queue, not at export, so discarded placeholders never take queue slots from real spans.
+    if (this.pendingSpans || !isPendingSpan(span)) {
+      this.wrapped.onEnd(span)
+    }
   }
 
   onStart(span: Span, parentContext: Context): void {

@@ -1,0 +1,79 @@
+name: Docs Preview
+
+on:
+  # zizmor: ignore[dangerous-triggers] -- This trusted dispatcher never checks out
+  # PR content. Maintainer permission is checked before minting an app token.
+  pull_request_target:
+    types: [labeled]
+
+permissions: {}
+
+concurrency:
+  group: docs-preview-${{ github.event.pull_request.number }}-${{ github.event.label.name }}
+  cancel-in-progress: true
+
+jobs:
+  dispatch:
+    if: github.event.label.name == 'trigger:docs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Verify maintainer permission
+        id: maintainer
+        env:
+          ACTOR: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          permission=$(gh api "repos/${REPO}/collaborators/${ACTOR}/permission" --jq .permission)
+          case "$permission" in
+            admin|maintain|write) ;;
+            *) echo "${ACTOR} cannot request a docs preview" >&2; exit 1 ;;
+          esac
+
+      - name: Generate docs app dispatch token
+        id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.2.0
+        with:
+          client-id: ${{ vars.DOCS_CLIENT_ID }}
+          private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
+          owner: pydantic
+          repositories: unified-docs
+          permission-contents: write
+
+      - name: Dispatch exact PR head
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api repos/pydantic/unified-docs/dispatches --method POST \
+            -f event_type=docs-preview \
+            -f 'client_payload[library]=logfire-js' \
+            -f "client_payload[source_repo]=${REPO}" \
+            -f "client_payload[source_pr]=${PR_NUMBER}" \
+            -f "client_payload[source_sha]=${HEAD_SHA}"
+
+      - name: Report dispatch failure
+        if: failure() && steps.maintainer.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            -f "body=Docs preview could not be queued. See ${RUN_URL}. Re-add the trigger:docs label to retry."
+
+      - name: Remove trigger label
+        if: always() && steps.maintainer.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: gh api --silent -X DELETE "repos/${REPO}/issues/${PR_NUMBER}/labels/trigger:docs"

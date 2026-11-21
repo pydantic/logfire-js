@@ -181,7 +181,7 @@ export function createQueueHandler(queueFn: QueueHandler, initialiser: Initialis
         const args: QueueHandlerArgs = [batch, env, ctx]
         await api_context.with(context, executeQueueHandler, undefined, target, args)
       } finally {
-        orig_ctx.waitUntil(exportSpans(tracker))
+        orig_ctx.waitUntil(exportSpans(config.spanProcessors, tracker))
       }
     },
   }

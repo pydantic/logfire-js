@@ -25,7 +25,7 @@
     "stats",
     "monitoring"
   ],
-  "version": "0.23.0",
+  "version": "0.41.2",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -40,6 +40,36 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./react-router": {
+      "import": {
+        "types": "./dist/react-router.d.ts",
+        "default": "./dist/react-router.js"
+      },
+      "require": {
+        "types": "./dist/react-router.d.cts",
+        "default": "./dist/react-router.cjs"
+      }
+    },
+    "./tanstack-router": {
+      "import": {
+        "types": "./dist/tanstack-router.d.ts",
+        "default": "./dist/tanstack-router.js"
+      },
+      "require": {
+        "types": "./dist/tanstack-router.d.cts",
+        "default": "./dist/tanstack-router.cjs"
+      }
+    },
+    "./vue-router": {
+      "import": {
+        "types": "./dist/vue-router.d.ts",
+        "default": "./dist/vue-router.js"
+      },
+      "require": {
+        "types": "./dist/vue-router.d.cts",
+        "default": "./dist/vue-router.cjs"
+      }
     }
   },
   "scripts": {
@@ -47,7 +77,7 @@
     "build": "vp pack",
     "lint": "vp lint",
     "preview": "vp preview",
-    "typecheck": "tsc",
+    "typecheck": "tsc && tsc --project test-fixtures/frustration/tsconfig.json",
     "prepack": "cp ../../LICENSE .",
     "postpublish": "rm LICENSE",
     "test": "vp test --passWithNoTests"
@@ -59,15 +89,16 @@
     "@opentelemetry/exporter-metrics-otlp-http": "catalog:",
     "@opentelemetry/exporter-trace-otlp-http": "catalog:",
     "@opentelemetry/instrumentation": "catalog:",
+    "@opentelemetry/otlp-transformer": "catalog:",
     "@opentelemetry/resources": "catalog:",
     "@opentelemetry/sdk-metrics": "catalog:",
     "logfire": "workspace:*",
     "web-vitals": "catalog:"
   },
   "peerDependencies": {
-    "@pydantic/logfire-session-replay": "workspace:^0.3.1",
     "@opentelemetry/sdk-trace-web": "catalog:",
-    "@opentelemetry/semantic-conventions": "catalog:"
+    "@opentelemetry/semantic-conventions": "catalog:",
+    "@pydantic/logfire-session-replay": "workspace:^"
   },
   "peerDependenciesMeta": {
     "@pydantic/logfire-session-replay": {
@@ -77,10 +108,21 @@
   "devDependencies": {
     "@opentelemetry/context-zone": "catalog:",
     "@opentelemetry/instrumentation-fetch": "catalog:",
+    "@opentelemetry/otlp-exporter-base": "catalog:",
     "@opentelemetry/sdk-trace-web": "catalog:",
     "@opentelemetry/semantic-conventions": "catalog:",
     "@pydantic/logfire-session-replay": "workspace:*",
+    "@tanstack/react-router": "^1.170.44",
+    "@types/react": "^19.3.0",
+    "fast-check": "^4.10.2",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-router": "^8.4.0",
+    "react-router-7": "npm:react-router@^7.18.4",
     "user-agent-data-types": "^0.4.2",
+    "vue": "^3.5.44",
+    "vue-router": "^5.4.0",
+    "vue-router-4": "npm:vue-router@^4.6.4",
     "zone.js": "^0.15.1"
   },
   "files": [

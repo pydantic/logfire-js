@@ -40,7 +40,7 @@ Connect it to Logfire. For local development, sign in with the CLI:
 
 ```bash
 npx logfire --region us auth
-npx logfire init use --name my-project --permission send
+npx logfire init use --name my-project
 ```
 
 The CLI writes `.logfire/logfire_credentials.json`, which the SDK reads automatically. For a deployed app or CI, set a **write token** instead (the credential your app uses to send data): copy one from your project's **Settings > Write tokens** and set it in the environment.

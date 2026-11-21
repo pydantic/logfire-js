@@ -72,6 +72,13 @@ export interface NavigationPayload {
   kind: 'push' | 'replace' | 'pop'
 }
 
+/** User identity reported by the application. Name and email are optional personal data. */
+export interface ReplayUser {
+  id: string
+  name?: string
+  email?: string
+}
+
 export interface ChunkMeta {
   seq: number
   firstTimestamp: number
@@ -83,6 +90,7 @@ export interface ChunkMeta {
   hasFullSnapshot: boolean
   urls: string[]
   distinctId?: string
+  user?: ReplayUser
   sessionAttributes?: SessionAttributes
 }
 
@@ -100,7 +108,8 @@ export interface SessionReplayConfig {
   /**
    * Browser-safe replay upload endpoint, either direct Logfire ingest with a
    * restricted frontend application token or an application-owned proxy. The
-   * SDK posts to `${replayUrl}/${sessionId}?seq=${seq}`.
+   * SDK posts to `${replayUrl}/${recordingId}?seq=${seq}`. A replay continues
+   * across same-tab reloads/navigations; a new tab gets a separate recording id.
    */
   replayUrl: string
   /**
@@ -117,7 +126,10 @@ export interface SessionReplayConfig {
   token?: string | (() => MaybePromise<string>)
   /**
    * Optional external session id source. The browser SDK integration should
-   * pass its RUM session id here.
+   * pass its RUM session id here. This controls sampling and session rotation;
+   * it is not used as the upload/playback id (see `getRecordingId()`). Return a
+   * new id once the session goes idle: replay does not apply
+   * `sessionIdleTimeoutMs` to an external id.
    */
   getSessionId?: () => string | undefined
   /**
@@ -126,14 +138,32 @@ export interface SessionReplayConfig {
    */
   getSessionAttributes?: () => SessionAttributesInput
 
+  /**
+   * Start recording at once. Defaults to true. With `false`, nothing is recorded, sampled, stored, or
+   * uploaded until `start()` is called, for example after the user consents to replay.
+   */
+  autoStart?: boolean
+
   /** Probability of recording each new browser session in full. */
   sessionSampleRate?: number
   /** Probability of buffering each otherwise-unsampled session for uncaught error promotion. */
   onErrorSampleRate?: number
 
-  /** Mask all rendered DOM text. Defaults to true. */
+  /**
+   * Mask all rendered DOM text and text-bearing attributes such as `title`, `alt`, `aria-label`,
+   * `placeholder`, and `data-*`. Defaults to true.
+   */
   maskAllText?: boolean
+  /** Mask the values of all inputs, including hidden inputs. Defaults to true. */
   maskAllInputs?: boolean
+  /**
+   * Replace image sources with a gray placeholder before upload, so playback loads no recorded
+   * image. Covers `img` and `input type="image"` sources, `srcset`, `<picture>` sources, SVG
+   * `<image>` links, video posters, `background` attributes, image preload links, and inline styles
+   * that could reference a URL. Stylesheets, video and audio sources, `<object>`, and `<embed>` are
+   * not covered. Defaults to the value of `maskAllText`.
+   */
+  maskAllImages?: boolean
   maskTextSelector?: string
   blockSelector?: string
 
@@ -144,16 +174,37 @@ export interface SessionReplayConfig {
   /** Minimum recording duration before a replay is uploaded. Defaults to 10 seconds. */
   minSessionDurationMs?: number
   sessionIdleTimeoutMs?: number
+  /** Maximum recording duration before the session ID rotates. Defaults to 2 hours. */
   maxSessionDurationMs?: number
 
   distinctId?: string
   getDistinctId?: () => string | undefined
+  /**
+   * Returns the current user, snapshotted for every chunk as `meta.user`. Only
+   * a non-empty `id`, `name` and `email` are kept; name and email are optional
+   * personal data. Without `getDistinctId`, the same snapshot's `id` becomes
+   * `meta.distinctId`.
+   */
+  getUser?: () => ReplayUser | undefined
 
   captureConsole?: boolean
   captureNetwork?: boolean
   captureNavigation?: boolean
+  /**
+   * Listen for uncaught `error` and `unhandledrejection` events, add them to the replay, and
+   * promote an error-sampled buffer. Defaults to true. The browser SDK turns this off when it
+   * captures global errors itself and forwards them through `captureError()`.
+   */
+  captureGlobalErrors?: boolean
   ignoreUrlPatterns?: RegExp[]
   redactUrlPatterns?: RegExp[]
+  /**
+   * Rewrites each page, navigation, network, and DOM attribute URL after `redactUrlPatterns` has
+   * removed its query and fragment, for example to replace a token or email in the path. URLs inside
+   * error messages, stacks, and console arguments keep the built-in redaction only. When it throws,
+   * the URL keeps the built-in redaction and `onError` receives the error.
+   */
+  transformUrl?: (url: string) => string
 
   onError?: (error: unknown) => void
   fetchImpl?: typeof fetch
@@ -171,6 +222,7 @@ export interface ResolvedSessionReplayConfig {
   onErrorSampleRate: number
   maskAllText: boolean
   maskAllInputs: boolean
+  maskAllImages: boolean
   maskTextSelector: string
   blockSelector: string
   flushIntervalMs: number
@@ -180,11 +232,14 @@ export interface ResolvedSessionReplayConfig {
   maxSessionDurationMs: number
   distinctId: string
   getDistinctId: (() => string | undefined) | undefined
+  getUser: (() => ReplayUser | undefined) | undefined
   captureConsole: boolean
   captureNetwork: boolean
   captureNavigation: boolean
+  captureGlobalErrors: boolean
   ignoreUrlPatterns: RegExp[]
   redactUrlPatterns: RegExp[]
+  transformUrl: ((url: string) => string) | undefined
   onError: ((error: unknown) => void) | undefined
   fetchImpl: typeof fetch
   now: () => number
@@ -192,7 +247,7 @@ export interface ResolvedSessionReplayConfig {
 }
 
 export const DEFAULTS = {
-  sessionSampleRate: 1,
+  sessionSampleRate: 0.1,
   onErrorSampleRate: 1,
   maskAllText: true,
   maskAllInputs: true,
@@ -202,10 +257,11 @@ export const DEFAULTS = {
   maxBufferBytes: 1_000_000,
   minSessionDurationMs: 10_000,
   sessionIdleTimeoutMs: 1_800_000,
-  maxSessionDurationMs: 14_400_000,
+  maxSessionDurationMs: 7_200_000,
   distinctId: '',
   captureConsole: false,
   captureNetwork: true,
   captureNavigation: true,
+  captureGlobalErrors: true,
   redactUrlPatterns: [/.+/u] as RegExp[],
 } as const

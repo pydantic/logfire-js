@@ -1,4 +1,4 @@
-import type { SessionAttributeValue, SessionAttributes, SessionAttributesInput } from './types'
+import type { SessionAttributes, SessionAttributesInput } from './types'
 
 const MAX_SESSION_ATTRIBUTES = 20
 const MAX_SESSION_ATTRIBUTE_STRING_CODE_POINTS = 200
@@ -83,7 +83,7 @@ export function snapshotSessionAttributes(
     Object.defineProperty(attributes, key, {
       configurable: true,
       enumerable: true,
-      value: attributeValue as SessionAttributeValue,
+      value: attributeValue,
       writable: true,
     })
     accepted += 1

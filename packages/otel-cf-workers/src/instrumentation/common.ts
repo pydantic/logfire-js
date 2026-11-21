@@ -1,5 +1,4 @@
-import { trace } from '@opentelemetry/api'
-import { WorkerTracer } from '../tracer.js'
+import type { SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { passthroughGet, wrap } from '../wrap.js'
 
 type ContextAndTracker = { ctx: ExecutionContext; tracker: PromiseTracker }
@@ -46,20 +45,19 @@ export function proxyExecutionContext(context: ExecutionContext): ContextAndTrac
   return { ctx, tracker }
 }
 
-export async function exportSpans(tracker?: PromiseTracker): Promise<void> {
-  const tracer = trace.getTracer('export')
-  if (tracer instanceof WorkerTracer) {
-    await scheduler.wait(1)
-    if (tracker) {
-      await tracker.wait()
-    }
-    const promises = tracer.spanProcessors.map(async (spanProcessor) => {
-      await spanProcessor.forceFlush()
-    })
-    await Promise.allSettled(promises)
-  } else {
-    console.error('The global tracer is not of type WorkerTracer and can not export spans')
+/**
+ * Runs after the handler's context has been exited, so the config's span processors must be
+ * passed in explicitly rather than read from the active context.
+ */
+export async function exportSpans(spanProcessors: SpanProcessor[], tracker?: PromiseTracker): Promise<void> {
+  await scheduler.wait(1)
+  if (tracker) {
+    await tracker.wait()
   }
+  const promises = spanProcessors.map(async (spanProcessor) => {
+    await spanProcessor.forceFlush()
+  })
+  await Promise.allSettled(promises)
 }
 
 /** Like `Promise.allSettled`, but handles modifications to the promises array */

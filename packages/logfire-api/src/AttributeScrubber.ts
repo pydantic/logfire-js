@@ -26,6 +26,12 @@ export interface AttributeScrubber {
    * @returns A tuple: [scrubbedValue, scrubbedNotes]
    */
   scrubValue(path: JsonPath, value: unknown): readonly [unknown, ScrubbedNote[]]
+
+  /**
+   * Whether the application declared a top-level attribute key safe, so neither the key nor its
+   * value is scrubbed.
+   */
+  isSafeAttributeKey?(key: string): boolean
 }
 
 /**
@@ -54,6 +60,8 @@ const DEFAULT_PATTERNS = [
   'auth(?!ors?\\b)',
   'credential',
   'private[._ -]?key',
+  'passphrase',
+  '(?:signing|hmac)[._ -]?key',
   'api[._ -]?key',
   'session',
   'cookie',
@@ -63,7 +71,14 @@ const DEFAULT_PATTERNS = [
   'ssn',
   'social[._ -]?security',
   'credit[._ -]?card',
+  'logfire[._ -]?token',
+  '(?:access|refresh|bearer|(?:\\b|_)id)[._ -]?token',
+  'pylf_v\\d+_',
 ]
+
+// JS-only: the `(?:\b|_)id` boundary above misses camelCase keys such as `userIdToken`, and the
+// case-insensitive DEFAULT_PATTERNS cannot tell `userIdToken` from `paid_token` or `invalid_token`.
+const CAMEL_CASE_ID_TOKEN_PATTERN = /I[Dd][._ -]?[Tt]oken/u
 
 // Should be kept roughly in sync with `logfire._internal.scrubbing.BaseScrubber.SAFE_KEYS`
 const SAFE_KEYS = new Set([
@@ -80,6 +95,7 @@ const SAFE_KEYS = new Set([
   'http.status_code',
   'http.target',
   'http.url',
+  'logfire.debug_ids',
   'logfire.json_schema',
   'logfire.level_name',
   'logfire.level_num',
@@ -100,6 +116,20 @@ const SAFE_KEYS = new Set([
 ])
 
 const MAX_SCRUB_DEPTH = 100
+const EXCEPTION_STACKTRACE_KEY = 'exception.stacktrace'
+// A frame needs its full shape, so a message line such as `user@example.com:10:5` or a multiline
+// message line starting with `at` is still scrubbed. V8 frames start with `at` and end with a
+// location or a native marker; Firefox and Safari frames end with `@` and a URL with a scheme.
+const V8_FRAME_LINE_PATTERN = /^\s*at\s.*(?::\d+:\d+\)?|\((?:native|<anonymous>|index \d+)\))$/u
+const URL_LOCATION_PATTERN = /^[a-z][\w+.-]*:\S*:\d+:\d+$/iu
+
+function isStackFrameLine(line: string): boolean {
+  if (V8_FRAME_LINE_PATTERN.test(line)) {
+    return true
+  }
+  const at = line.lastIndexOf('@')
+  return at >= 0 && URL_LOCATION_PATTERN.test(line.slice(at + 1))
+}
 const MAX_DEPTH_REPLACEMENT = '[Scrubbed due to max depth]'
 const CYCLE_REPLACEMENT = '[Scrubbed due to cycle]'
 
@@ -111,13 +141,25 @@ export class LogfireAttributeScrubber implements BaseScrubber {
   private readonly callback?: ScrubCallback
 
   private readonly pattern: RegExp
+  private readonly safeAttributeKeys: ReadonlySet<string>
+  private readonly safeAttributeKeyPrefixes: readonly string[]
 
-  constructor(patterns?: string[], callback?: ScrubCallback) {
+  constructor(patterns?: string[], callback?: ScrubCallback, safeKeys?: readonly string[], safeKeyPrefixes?: readonly string[]) {
     const allPatterns = [...DEFAULT_PATTERNS, ...(patterns ?? [])]
     this.pattern = new RegExp(allPatterns.join('|'), 'iu')
     if (callback !== undefined) {
       this.callback = callback
     }
+    // An empty prefix would match every key and silently turn off attribute scrubbing.
+    if (safeKeyPrefixes?.includes('') === true) {
+      throw new Error('logfire: scrubbing.safeKeyPrefixes must not contain an empty string')
+    }
+    this.safeAttributeKeys = new Set(safeKeys)
+    this.safeAttributeKeyPrefixes = [...(safeKeyPrefixes ?? [])]
+  }
+
+  isSafeAttributeKey(key: string): boolean {
+    return this.safeAttributeKeys.has(key) || this.safeAttributeKeyPrefixes.some((prefix) => key.startsWith(prefix))
   }
 
   /**
@@ -130,6 +172,10 @@ export class LogfireAttributeScrubber implements BaseScrubber {
     const scrubbedNotes: ScrubbedNote[] = []
     const scrubbedValue = this.scrub(path, value, scrubbedNotes, new WeakSet(), 0)
     return [scrubbedValue as T, scrubbedNotes] as const
+  }
+
+  private findMatch(text: string): RegExpMatchArray | null {
+    return text.match(this.pattern) ?? text.match(CAMEL_CASE_ID_TOKEN_PATTERN)
   }
 
   private redact(path: JsonPath, value: unknown, match: RegExpMatchArray, notes: ScrubbedNote[]): unknown {
@@ -146,10 +192,19 @@ export class LogfireAttributeScrubber implements BaseScrubber {
     return `[Scrubbed due to '${matchedSubstring}']`
   }
 
+  // A stack trace repeats the exception message and its causes, so those lines are scrubbed like the
+  // message. Frame lines are kept, since a file path such as `auth.js` would otherwise redact them.
+  private scrubStackTrace(path: JsonPath, stack: string, notes: ScrubbedNote[], seen: WeakSet<object>, depth: number): string {
+    return stack
+      .split('\n')
+      .map((line) => (isStackFrameLine(line) ? line : (this.scrub(path, line, notes, seen, depth) as string)))
+      .join('\n')
+  }
+
   private scrub(path: JsonPath, value: unknown, notes: ScrubbedNote[], seen: WeakSet<object>, depth: number): unknown {
     if (typeof value === 'string') {
       // Check if the string matches the pattern
-      const match = value.match(this.pattern)
+      const match = this.findMatch(value)
       if (match) {
         // If the entire string is just the matched pattern, consider it safe.
         // e.g., if value == 'password', just leave it.
@@ -170,7 +225,8 @@ export class LogfireAttributeScrubber implements BaseScrubber {
         }
       }
       return value
-    } else if (value instanceof Date) {
+    } else if (value instanceof Date || ArrayBuffer.isView(value)) {
+      // Byte arrays are OpenTelemetry log values in their own right, not maps of their indices.
       return value
     } else if (Array.isArray(value)) {
       if (depth >= MAX_SCRUB_DEPTH) {
@@ -198,13 +254,15 @@ export class LogfireAttributeScrubber implements BaseScrubber {
       try {
         const result = new Map<string, unknown>()
         for (const [k, v] of Object.entries(value)) {
-          if (SAFE_KEYS.has(k) || ['boolean', 'number', 'undefined'].includes(typeof v) || v === null) {
+          if (k === EXCEPTION_STACKTRACE_KEY && typeof v === 'string') {
+            result.set(k, this.scrubStackTrace([...path, k], v, notes, seen, depth + 1))
+          } else if (SAFE_KEYS.has(k) || ['boolean', 'number', 'undefined'].includes(typeof v) || v === null) {
             // Safe key or a primitive value, no scrubbing of the key itself.
             // (In the Python SDK we still scrub primitive values to be extra careful)
             result.set(k, v)
           } else {
             // Check key against the pattern
-            const keyMatch = k.match(this.pattern)
+            const keyMatch = this.findMatch(k)
             if (keyMatch) {
               // Key contains sensitive substring
               const redacted = this.redact([...path, k], v, keyMatch, notes)

@@ -96,9 +96,9 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   if (tag === '[object Map]') {
     return a instanceof Map && b instanceof Map && mapsEqual(a, b)
   }
-  const ka = Object.keys(a as Record<string, unknown>)
+  const ka = Object.keys(a)
   const kb = Object.keys(b as Record<string, unknown>)
-  if (ka.length !== kb.length) {
+  if (ka.length !== kb.length || ka.some((k) => !Object.prototype.propertyIsEnumerable.call(b, k))) {
     return false
   }
   for (const k of ka) {

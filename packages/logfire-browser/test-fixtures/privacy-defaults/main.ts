@@ -91,6 +91,32 @@ async function run(): Promise<void> {
   input.dispatchEvent(new Event('input', { bubbles: true }))
   await delay(50)
 
+  const hiddenInput = document.querySelector<HTMLInputElement>('#hidden-input')
+  const image = document.querySelector<HTMLImageElement>('#private-image')
+  if (hiddenInput === null || image === null) {
+    throw new Error('missing attribute targets')
+  }
+  hiddenInput.value = 'hidden-event-secret'
+  image.setAttribute('title', 'title-mutation-secret')
+  image.style.backgroundImage = "url('/api/image?mutation_style_secret=visible')"
+  image.setAttribute('src', '/api/image?mutation_src_secret=visible')
+  // Images added before they load have no natural size to record yet. One gets its source from
+  // `srcset` alone, at 2x density.
+  image.insertAdjacentHTML(
+    'afterend',
+    '<img id="late-image" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAIAAADwyuo0AAAAEElEQVR42mM4IScHRwzIHABvCggh7qR9+QAAAABJRU5ErkJggg=="><img id="srcset-image" srcset="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAIAAADwyuo0AAAAEElEQVR42mM4IScHRwzIHABvCggh7qR9+QAAAABJRU5ErkJggg== 2x">'
+  )
+  const lateImage = document.querySelector<HTMLImageElement>('#late-image')
+  const srcsetImage = document.querySelector<HTMLImageElement>('#srcset-image')
+  if (lateImage === null || srcsetImage === null) {
+    throw new Error('missing late images')
+  }
+  await Promise.all([lateImage.decode(), srcsetImage.decode()])
+  await delay(50)
+  // Playback must follow a later size change rather than keep the recorded size.
+  lateImage.setAttribute('width', '8')
+  await delay(50)
+
   console.warn('privacy-console-secret', { scenario })
   await fetch('/api/fetch?fetch_secret=visible#fetch_fragment=visible')
   await xhr('/api/xhr?xhr_secret=visible#xhr_fragment=visible')

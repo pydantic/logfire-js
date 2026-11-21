@@ -30,11 +30,14 @@ const cleanup = logfire.configureFrontend({
 })
 ```
 
-`configureFrontend()` enables auto-instrumentation and Web Vitals metrics by
-default. Set `autoInstrumentations: false` or `rum: { webVitals: false }` to
-disable them. Nested capture options preserve unrelated defaults. Replay is
-opt-in, and the returned handle stops the SDK when called. Use `configure()`
-for custom transports and proxies; its capture features remain opt-in.
+`configureFrontend()` enables auto-instrumentation, global error capture, and
+Web Vitals metrics by default. Set `autoInstrumentations: false`,
+`captureGlobalErrors: false`, or `rum: { webVitals: false }` to disable them.
+Nested capture options preserve unrelated defaults. Replay is opt-in, and the
+returned handle stops the SDK when called. Use `profile: 'errors'` for an
+errors-and-replay setup without performance data. Use `configure()` for custom
+transports and proxies; its capture features remain opt-in, except global error
+capture.
 
 `configureFrontend()` removes query strings, fragments, and URL credentials from
 standard page/request URL attributes (`http.url`, `url.full`, `http.target`, and
@@ -132,7 +135,7 @@ logfire.configure({
 
 The SDK stores the session in `sessionStorage`, so it is scoped to the browser
 tab and survives page reloads. Sessions rotate after 30 minutes of inactivity
-or 4 hours of total duration by default. Spans get the OpenTelemetry
+or 2 hours of total duration by default. Spans get the OpenTelemetry
 `session.id` semantic attribute.
 
 Use `getRouteName` for the application's normalized route template and
@@ -140,12 +143,14 @@ Use `getRouteName` for the application's normalized route template and
 for a browser session. Use `getUser` for the application's current user:
 
 ```js
+import { vueRouterRouteName } from '@pydantic/logfire-browser/vue-router'
+
 logfire.configure({
   traceUrl: '/client-traces',
   serviceName: 'browser-app',
   rum: {
     session: {
-      getRouteName: () => router.currentRoute.value.matched.at(-1)?.path,
+      getRouteName: vueRouterRouteName(router),
       getSessionAttributes: () => ({
         account_tier: currentAccount.tier,
         beta_user: currentUser?.isBeta,
@@ -163,7 +168,8 @@ logfire.configure({
 })
 ```
 
-`getRouteName` is evaluated for each span and becomes `logfire.page.route`.
+`getRouteName` is evaluated for each span and becomes `logfire.page.route`. See
+[Route names](#route-names) for the contract and router recipes.
 `getUser` is also evaluated for each span. A non-empty `id` becomes `user.id`;
 non-empty `name` and `email` values become `user.name` and `user.email`.
 Use an opaque application id. Name and email are opt-in PII. The SDK emits
@@ -217,6 +223,303 @@ Use `getBrowserSessionId()` after `configure({ rum: { session: true } })` when
 another browser integration needs the SDK-owned session id before the first
 span is created.
 
+### Route names
+
+Set `getRouteName` in every single-page application. Without it, the only page
+dimension is `logfire.page.url.path`, so each id in a URL makes a separate page.
+`/projects/123` and `/projects/456` become two pages, and page tables, filters,
+and Web Vitals breakdowns split one screen into many rows. The route gives
+every view of one screen the same value, so page-level analysis can group by
+screen instead of by URL.
+
+The callback has this contract:
+
+- Return the matched route template, such as `/projects/:id`. Never return the
+  concrete path.
+- Return a fixed name for catch-all and not-found routes, such as `/*`. Do not
+  fall back to the URL.
+- Do not put ids, slugs, or user data in the value.
+- The SDK calls the callback for every new span. With Web Vitals it also calls
+  it in `configure()`, and with `reportSoftNavs` one task after each URL change.
+  Keep it synchronous and cheap. Read router state, or a variable that the
+  application updates on navigation.
+- Change the value together with the URL. A span that starts after the URL
+  changes but before the value changes gets the previous route.
+- Return `undefined` until the router resolves the first route. The SDK then
+  omits the attribute.
+
+Each recipe below returns one value for both `/acme/shop/agents` and
+`/globex/web/agents`.
+
+#### React Router
+
+Pass the route objects and React Router's `matchRoutes` to
+`reactRouterRouteName`. It reports the route template of the current URL, for
+example `/projects/:id`, and adds no dependency on a React Router version:
+
+```ts
+import { reactRouterRouteName } from '@pydantic/logfire-browser/react-router'
+import { createBrowserRouter, matchRoutes } from 'react-router'
+
+const router = createBrowserRouter(routes)
+
+logfire.configureFrontend({
+  ...frontendOptions,
+  rum: {
+    session: {
+      getRouteName: reactRouterRouteName({ matchRoutes, routes }),
+    },
+  },
+})
+```
+
+Pass the same `routes` as the router, and its `basename` as `basename` when it
+has one. In declarative mode, build the route objects from the `<Route>`
+elements with `createRoutesFromElements`. In React Router 6, import
+`matchRoutes` from `react-router-dom`.
+
+The helper matches the URL path, not `router.state.matches`. A back or forward
+navigation changes the URL before its loaders finish, so a span that starts
+while they run gets the new route. Other navigations change the URL after
+their loaders finish, so spans that start while those loaders run belong to
+the previous page, with its URL and route. Pathless layout and index routes add
+nothing to the template. A splat route keeps its `*`, for example `/files/*`.
+A URL that no route matches reports `/*`. The helper supports routers that
+keep the route in the URL path, such as `createBrowserRouter` and
+`<BrowserRouter>`. It does not support hash or memory routers, or routes that
+the application adds at runtime with `patchRoutesOnNavigation`.
+
+The helper is tested with React Router 7 and 8. React Router 6 has the same
+`matchRoutes` API and is expected to work, but it is not tested. The
+[React Router example](https://github.com/pydantic/logfire-js/tree/main/examples/react-router)
+is a runnable app that uses it.
+
+#### TanStack Router
+
+Pass the router to `tanStackRouterRouteName`. It reports the route template
+that the router matches for the current URL, for example
+`/projects/$projectId`. It reads only the router core that the React, Solid,
+and Vue routers share, and adds no dependency:
+
+```ts
+import { tanStackRouterRouteName } from '@pydantic/logfire-browser/tanstack-router'
+import { createRouter } from '@tanstack/react-router'
+
+const router = createRouter({ routeTree })
+
+logfire.configureFrontend({
+  ...frontendOptions,
+  rum: {
+    session: {
+      getRouteName: tanStackRouterRouteName(router),
+    },
+  },
+})
+```
+
+If the application creates the router after it configures Logfire, pass a
+function that returns the router, such as `tanStackRouterRouteName(() => router)`.
+Until the function returns a router, the SDK omits the route.
+
+The helper matches the current URL, not `router.state.matches`. TanStack
+Router changes the URL before its loaders finish, so a span that starts while a
+loader runs gets the new route. The helper removes the router's `basepath`,
+applies its URL rewrites, and reports the deepest match's `fullPath`. Pathless
+layout routes add nothing to the template. Index routes end with a slash, for
+example `/projects/`. An unknown URL matches only the root route and reports
+`/*`. TanStack Router also matches the longest known prefix of a path. If no
+route matches all of `/projects/1/extra`, the helper reports
+`/projects/$projectId`. A loader that revalidates cached data in the
+background reports the route of the page that is current when it runs, which
+can be a later page.
+
+The helper is tested with TanStack's React router 1.170. The Solid and Vue
+routers share its router core and are expected to work, but they are not
+tested. The
+[TanStack Router example](https://github.com/pydantic/logfire-js/tree/main/examples/tanstack-router)
+is a runnable app that uses it.
+
+#### Vue Router
+
+Pass the router to `vueRouterRouteName`. It reports the route template of the
+current URL, for example `/:org/:project/agents`, and adds no dependency:
+
+```ts
+import { vueRouterRouteName } from '@pydantic/logfire-browser/vue-router'
+import { createRouter, createWebHistory } from 'vue-router'
+
+const router = createRouter({ history: createWebHistory(), routes })
+
+logfire.configureFrontend({
+  ...frontendOptions,
+  rum: {
+    session: {
+      getRouteName: vueRouterRouteName(router),
+    },
+  },
+})
+```
+
+If the application creates the router after it configures Logfire, pass a
+function that returns the router, such as `vueRouterRouteName(() => router)`.
+
+The helper resolves the current history location, not `router.currentRoute`.
+A back or forward navigation changes the URL before its guards finish, so a
+span that starts while they run gets the new route. The history base is not
+part of the template. An alias reports the path of the route that it aliases.
+A URL that no route matches reports `/*`, and a catch-all route reports its own
+path, for example `/:pathMatch(.*)*`. The development build of Vue Router logs
+a warning when the helper resolves a URL that no route matches. A route's
+`beforeEnter` guard does not run when only its params change, such as from
+`/projects/1` to `/projects/2`, so load per-page data in a global
+`router.beforeResolve` guard or in the component.
+
+The helper is tested with Vue Router 4 and 5. The
+[Vue Router example](https://github.com/pydantic/logfire-js/tree/main/examples/vue-router)
+is a runnable app that uses it.
+
+#### Next.js Pages Router
+
+`router.pathname` is the page file path, for example `/blog/[slug]`. Store it
+in `pages/_app.tsx`:
+
+```tsx
+import type { AppProps } from 'next/app'
+import { useRouter } from 'next/router'
+
+import { setRouteName } from '../lib/logfire-route'
+
+export default function App({ Component, pageProps }: AppProps) {
+  setRouteName(useRouter().pathname)
+  return <Component {...pageProps} />
+}
+```
+
+```ts
+// lib/logfire-route.ts
+let routeName: string | undefined
+
+export function setRouteName(value: string | undefined): void {
+  routeName = value
+}
+
+export function getRouteName(): string | undefined {
+  return routeName
+}
+```
+
+Pass `getRouteName` from this module to `rum.session.getRouteName`.
+
+#### Next.js App Router
+
+The App Router has no public API that returns the matched route template.
+Rebuild it from `usePathname()` and `useParams()` in a client component that
+the root layout renders. The function replaces each parameter value with its
+`[name]` segment. It starts from the end of the path, because Next.js lists the
+parameters in segment order and a catch-all is always last:
+
+```tsx
+'use client'
+
+import { useParams, usePathname } from 'next/navigation'
+import { Suspense, useEffect } from 'react'
+
+import { setRouteName } from '../lib/logfire-route'
+
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
+function routeTemplate(pathname: string, params: Record<string, string | string[] | undefined>): string {
+  const segments = pathname.split('/')
+  let end = segments.length - 1
+  for (const [name, value] of Object.entries(params).reverse()) {
+    if (value === undefined) {
+      continue
+    }
+    if (Array.isArray(value)) {
+      const start = segments.length - value.length
+      segments.splice(start, value.length, `[...${name}]`)
+      end = start - 1
+      continue
+    }
+    let index = end
+    while (index > 0 && decodeSegment(segments[index] ?? '') !== value) {
+      index--
+    }
+    if (index > 0) {
+      segments[index] = `[${name}]`
+      end = index - 1
+    }
+  }
+  return segments.join('/') || '/'
+}
+
+function RouteName() {
+  const pathname = usePathname()
+  const params = useParams()
+  useEffect(() => {
+    setRouteName(routeTemplate(pathname, params))
+  }, [pathname, params])
+  return null
+}
+
+export function LogfireRouteName() {
+  return (
+    <Suspense fallback={null}>
+      <RouteName />
+    </Suspense>
+  )
+}
+```
+
+With `cacheComponents` enabled, `useParams()` suspends during prerendering on a
+route whose parameters `generateStaticParams` does not cover. The `Suspense`
+boundary keeps that from failing the build.
+
+This is an approximation, and it has these limits:
+
+- The template does not show route groups.
+- A static segment after a parameter with the same text can take the
+  parameter's place.
+- An optional catch-all (`[[...slug]]`) gives two values. Next.js omits the
+  parameter when it is empty, so `/shop` stays `/shop` while `/shop/a` becomes
+  `/shop/[...slug]`. Map such routes to one name in the application.
+- A not-found page has no parameters, so the helper returns its raw path. No
+  public API tells the component that the page is not found. Set a fixed name,
+  such as `/*`, from the `not-found` page instead.
+- The effect runs after the new page renders, so spans that start during that
+  render get the previous route.
+
+#### SvelteKit
+
+`route.id` is the route directory, for example `/blog/[slug]`. Store it from the
+root `+layout.svelte`, and pass the same `getRouteName` to
+`rum.session.getRouteName`:
+
+```svelte
+<script lang="ts">
+  import { afterNavigate } from '$app/navigation'
+
+  import { setRouteName } from '$lib/logfire-route'
+
+  afterNavigate(({ to }) => {
+    if (to !== null) {
+      setRouteName(to.route.id ?? '/*')
+    }
+  })
+</script>
+```
+
+SvelteKit sets `route.id` to `null` when no route matches, so the recipe uses
+`/*` for not-found pages. `afterNavigate` runs after the new page renders, so spans that start during
+that render get the previous route. `$lib/logfire-route` is the same module as
+in the Next.js Pages Router recipe.
+
 ## RUM Web Vitals
 
 Enable `rum.webVitals` to report Core Web Vitals from real browser sessions:
@@ -236,6 +539,14 @@ enabled. It records LCP, INP, CLS, FCP, and TTFB as short spans named
 `web_vital.lcp`, `web_vital.inp`, `web_vital.cls`, `web_vital.fcp`, and
 `web_vital.ttfb`. These point events carry exact
 `logfire.span_type = 'log'`.
+
+After the browser restores a page from the back/forward cache, the SDK reports
+the Web Vitals of the restored page with
+`web_vital.navigation_type = 'back-forward-cache'`. A restore has no document
+request, so the SDK reports no TTFB for it: no `web_vital.ttfb` span and no
+`logfire.browser.web_vital.ttfb` histogram point. For the same reason, the FCP
+and LCP spans of a restore have no `web_vital.fcp.time_to_first_byte` or
+`web_vital.lcp.time_to_first_byte` attribute.
 
 Each span includes base attributes such as `web_vital.name`,
 `web_vital.value`, `web_vital.delta`, `web_vital.id`, `web_vital.rating`, and
@@ -270,8 +581,100 @@ logfire.configure({
 })
 ```
 
+Web Vitals report the element behind LCP, INP, and the largest layout shift in
+`web_vital.lcp.target`, `web_vital.inp.target`, and
+`web_vital.cls.largest_shift_target`. By default the value is the CSS selector
+that `web-vitals` generates, such as `div.card.wide>p.title` or
+`#:r1:>span`. A selector follows the markup: it changes when class names
+change, and an id that a framework generates at render time gives a different
+value on each page view, so the same element does not group across builds or
+sessions.
+
+To give an element a stable name, add `data-logfire-component` to it or to an
+element that contains it:
+
+```html
+<section data-logfire-component="MessageList">
+  <div class="card wide"><p class="title">...</p></div>
+</section>
+```
+
+Every Web Vital target inside that section is reported as
+`component:MessageList`. The nearest named ancestor wins, an empty value is
+skipped, and the target is limited to 100 characters. Use names that are the
+same for every user and build, and put no user data in them. Name the
+components that you want to tell apart: a name on a page-level wrapper gives
+every unnamed element inside it that one name, which is a coarser group than
+the selectors it replaces. An element with no named ancestor keeps its CSS
+selector, so an application that does not use the attribute reports the same
+targets as before.
+
+A named target also keeps the CSS selector of the element, in
+`web_vital.lcp.target_selector`, `web_vital.inp.target_selector`, and
+`web_vital.cls.largest_shift_target_selector`. Group by the target, and read
+the selector to find which element inside the component a record is about. A
+target that is a selector has no `target_selector` attribute.
+
+To change the naming, pass `rum.webVitals.generateTarget`, which replaces the
+default. It receives the DOM node, and a return value of `undefined` falls back
+to the `web-vitals` selector, so `generateTarget: () => undefined` reports CSS
+selectors for every element. The SDK adds no `target_selector` attribute to a
+target that your function returns.
+
+### Stable selectors
+
+`web-vitals` ends a selector at the first element that has an id. When a
+framework generates that id at render time, the selector changes between page
+views: `#:r1:>span` on one view is `#:r3:>span` on the next. To leave those ids
+out of the selector, set `stableSelectors`:
+
+```ts
+logfire.configure({
+  traceUrl: '/logfire-proxy/v1/traces',
+  rum: {
+    webVitals: {
+      stableSelectors: true,
+    },
+  },
+})
+```
+
+The SDK then treats an element with a generated id as an element with no id,
+and the selector continues to the next ancestor that has a stable id, or to the
+document: `#:r1:>span` becomes `#app>div.card>span`. The 100-character limit
+stays. A selector with no generated id in it is not changed.
+
+The SDK detects these ids:
+
+| Source                                                 | Examples                                                                                           |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| React `useId`, and ids that a library builds on it     | `:r1:`, `:R1mcq:`, `«r1»`, `_r_1_`, `radix-:r1:`, `headlessui-menu-button-:r1:`, `react-aria-:r1:` |
+| Counter ids from Radix UI, Headless UI, and React Aria | `radix-1`, `headlessui-menu-button-1`, `react-aria-1`                                              |
+
+Limits:
+
+- An id from a different generator is not detected, and neither is a React id
+  with a custom `identifierPrefix`. The selector keeps those ids.
+- A hand-written id that matches a pattern is skipped: an id that holds a
+  React-style token, such as `tab-:r2:`, or an id that starts with `radix`,
+  `headlessui`, or `react-aria` and ends with a number, such as
+  `radix-demo-2`. The selector then holds the tag and class names of that
+  element and continues to the next ancestor id, so it is longer but stays
+  stable.
+- Class names stay in the selector. Class names that a build tool generates
+  still change between builds; use `data-logfire-component` for those elements.
+- `web-vitals` does not ask the SDK for a target in two cases, so these targets
+  can still hold a generated id: an LCP element that was removed from the page
+  is reported by its id, and an INP target that was removed is reported by the
+  selector that the browser recorded.
+
+The option changes the selector only. A component name still wins, and its
+`target_selector` attribute holds the selector with no generated id. With your
+own `generateTarget`, the option applies where that function returns
+`undefined`.
+
 Web Vitals observers live for the page lifetime. The first successful startup
-fixes `reportAllChanges`, `generateTarget`,
+fixes `reportAllChanges`, `generateTarget`, `stableSelectors`,
 `includeProcessedEventEntries`, and `reportSoftNavs`; later `configure()` calls can update the tracer
 and metric destination but ignore changed observer options with a diagnostic
 warning. If the initial lazy load or observer startup fails, a later
@@ -318,14 +721,16 @@ spans for raw-sample drilldown, session/replay correlation, exact page context,
 and attribution selectors. When metrics are configured, Logfire Platform should
 treat these histograms as the aggregate Web Vitals surface.
 
-By default, Web Vitals use the standard document-level measurement method.
-Web Vital span URL attributes describe the navigation that produced the
-measurement, even when its callback runs after the browser URL changes. When
-the browser supplies that historical URL, the span omits
-`logfire.page.route`, because the current route callback cannot reconstruct the
-historical route template. If the browser does not supply a valid navigation
-URL for a document report, the span falls back to the current sanitized URL
-and route.
+By default, Web Vitals use the standard document-level measurement method. Web
+Vital span URL attributes describe the navigation that produced the measurement,
+even when its callback runs after the browser URL changes. The span's
+`logfire.page.route` is the route of that same navigation. The SDK remembers the
+first route that `getRouteName` returned while each navigation's URL was
+current, and it uses that route for a late report, even after the application
+changes its route state or returns to the same URL. If the SDK never observed a
+route for that navigation, the span omits `logfire.page.route` instead of using
+the current route. If the browser does not supply a valid navigation URL for a
+document report, the span falls back to the current sanitized URL and route.
 
 Chromium 151 and newer can also report metrics separately for browser-detected
 soft navigations in single-page applications:
@@ -346,13 +751,17 @@ soft navigation requires a user interaction, URL change, and resulting paint,
 so browser detection can differ from application router events. Enabling it
 also finalizes the initial navigation when the first soft navigation occurs.
 Soft-navigation LCP considers newly painted content, which can differ from a
-cold load of the same URL, and soft-navigation TTFB is reported as `0` rather
-than as request latency.
+cold load of the same URL. A soft navigation has no document request, so the SDK
+reports no TTFB for it: no `web_vital.ttfb` span and no
+`logfire.browser.web_vital.ttfb` histogram point. For the same reason, the FCP
+and LCP spans of a soft navigation have no `web_vital.fcp.time_to_first_byte` or
+`web_vital.lcp.time_to_first_byte` attribute.
 
-Soft-navigation spans use the metric's sanitized navigation URL and also omit
-`logfire.page.route`. To add a low-cardinality route dimension to metrics,
-derive it from the metric's `navigationURL` in
-`rum.webVitals.metrics.attributes`.
+Soft-navigation spans use the metric's sanitized navigation URL. They carry
+`logfire.page.route` when the SDK observed a route for that navigation, and omit
+it otherwise. Web Vitals metrics do not carry the route. To add a
+low-cardinality route dimension to metrics, derive it from the metric's
+`navigationURL` in `rum.webVitals.metrics.attributes`.
 
 ## RUM Long Animation Frames
 
@@ -456,6 +865,29 @@ await cleanup.sessionReplay?.stop() // replay only; tracing remains active
 await cleanup() // full SDK cleanup
 ```
 
+By default, replay records one session in ten in full (`sessionSampleRate: 0.1`).
+It buffers every other session in memory and uploads it only if an error occurs
+(`onErrorSampleRate: 1`). Each uploaded recording counts toward your replay
+usage, so choose the full-session rate from your traffic:
+
+| Sessions per day  | `sessionSampleRate` |
+| ----------------- | ------------------- |
+| Fewer than 10,000 | `0.25`              |
+| 10,000 to 100,000 | `0.1`               |
+| More than 100,000 | `0.01`              |
+
+Record every session in development:
+
+```js
+logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  sessionReplay: sessionReplayIntegration({
+    sessionSampleRate: location.hostname === 'localhost' ? 1 : 0.1,
+  }),
+})
+```
+
 `sessionReplay` implies default browser session attributes. Replay chunks and
 browser spans share `session.id`. Spans started after
 replay has loaded and sampled into `full` or `buffer` mode get
@@ -476,9 +908,19 @@ subsequent replay events only peek at the session id and do not refresh the
 timeout. Span starts are the ongoing automatic activity;
 `getBrowserSessionId()` also explicitly touches the session.
 
-When `sessionReplay.getDistinctId` is not configured, replay uses the current
-`rum.session.getUser()?.id` so replay rows and span `user.id` agree. An explicit
-`getDistinctId` remains authoritative. A static `sessionReplay.distinctId`
+Each replay chunk snapshots `rum.session.getUser()` once and reports its `id`,
+`name`, and `email` as `meta.user`, so recordings can be displayed and searched
+by the same user as spans. Name and email are optional personal data; omit
+them from `getUser` unless replay viewers need them. Other fields of the
+returned object are not sent, and the user is never written to rrweb events or
+`sessionStorage`. `meta.user` is omitted when `getUser` is not configured,
+returns no user, or throws, and later chunks follow login, logout, and user
+switches.
+
+When `sessionReplay.getDistinctId` is not configured, replay uses the same
+snapshot's `id` as `meta.distinctId`, so replay rows and span `user.id` agree.
+An explicit `getDistinctId` remains authoritative, and `distinctId` and
+`user.id` are then reported independently. A static `sessionReplay.distinctId`
 remains the fallback while the selected live getter returns `undefined`.
 
 `configureFrontend()` reuses the restricted frontend application token
@@ -524,11 +966,14 @@ restrictive Content Security Policy blocks the compressor worker. The fallback
 preserves the batch and is remembered for the active replay controller, but it
 may briefly use the main thread.
 
-Replay masks all rendered text and input values by default, leaves console
+Replay masks all rendered text, input values, and images by default, leaves console
 capture off, and removes query strings and fragments from captured page,
 fetch/XHR, and navigation URLs. Network and navigation capture remain enabled.
 These defaults are inherited when the corresponding browser options are
 omitted.
+
+Image masking (`maskAllImages`) follows `maskAllText` unless it is set
+explicitly, and replaces image sources with a placeholder before upload.
 
 Use `blockSelector` to omit a subtree. Set `maskAllText: false` only when
 visible text recording is acceptable; `maskTextSelector` can then selectively
@@ -544,6 +989,100 @@ or disable the extension for the local app. Vite workspace examples may also
 need to load `@rrweb/record`'s browser ESM build
 (`@rrweb/record/dist/record.js`) rather than its CommonJS build when importing
 unpublished workspace output directly.
+
+## Errors
+
+`configure()` and `configureFrontend()` report uncaught errors and unhandled
+promise rejections as error-level spans named `Uncaught error` and
+`Unhandled promise rejection`. The application does not need its own `error` or
+`unhandledrejection` listener. Resource load failures, such as a broken image,
+are not reported. Pass `captureGlobalErrors: false` to turn global capture off.
+
+Errors that the SDK raises about itself, such as an invalid configuration or a
+lost replay chunk, carry the span attribute `logfire.sdk.internal = true`. Use it
+to separate SDK failures from application errors in queries and alerts. Errors
+from application code never carry it, including an error that an application
+callback throws into the SDK.
+
+Report caught errors with `reportError()`:
+
+```ts
+try {
+  await saveOrder()
+} catch (error) {
+  logfire.reportError('Order save failed', error, { route: '/checkout' })
+}
+```
+
+An error object is reported once. When the application reports an error and
+then rethrows it, or reports it from its own `window` `error` listener, global
+capture skips it. Global capture waits for the rest of the event dispatch before
+it reports, so a listener registered after `configure()` still takes precedence.
+
+With session replay, every `reportError()` call, including the calls that
+global capture makes, adds the error to the replay and promotes an
+error-buffered replay to a recorded one. The replay package's own global error
+listeners are turned off, so an uncaught error appears in the replay once.
+Replay loads after `configure()` returns. The SDK holds up to 10 errors reported
+in the meantime and adds them when replay starts, with the time each error
+occurred as `timestamp` in the error event. Such an error still promotes the
+replay, but the recording starts after it.
+
+## Errors and replay profile
+
+Use `profile: 'errors'` when the application needs errors and the replays around
+them, not performance data:
+
+```ts
+import * as logfire from '@pydantic/logfire-browser'
+import { sessionReplayIntegration } from '@pydantic/logfire-session-replay/integration'
+
+logfire.configureFrontend({
+  baseUrl: 'https://logfire-us.pydantic.dev',
+  token: '<frontend-application-token>',
+  profile: 'errors',
+  sessionReplay: sessionReplayIntegration(),
+})
+```
+
+The profile keeps direct ingest, the restricted frontend application token, and
+the default privacy settings. It changes these defaults:
+
+- Tail sampling exports a trace only when one of its spans has an error level,
+  an error status, or an HTTP 5xx response. The whole trace is kept, so the
+  click and the request around a failure stay together. Healthy traces are
+  dropped in the browser.
+- Web Vitals spans and metrics, and document-load spans, are off. Long Animation
+  Frames stay off.
+- Session replay records only sessions with an error: `sessionSampleRate`
+  defaults to `0` and `onErrorSampleRate` to `1`. Replay keeps a bounded buffer
+  in memory and uploads it when an error is reported.
+
+Options that you pass explicitly take precedence. For example,
+`rum: { webVitals: true }` keeps Web Vitals, `sampling: { head: 0.5 }` adds head
+sampling to the profile's tail rule, and `sessionReplay: { ...sessionReplayIntegration(), sessionSampleRate: 0.05 }`
+records 5% of sessions in full.
+
+### Verify the setup
+
+You can check the setup in the Logfire UI. You do not need CLI access or SQL
+queries.
+
+1. Trigger a handled error, for example a button handler that calls
+   `logfire.reportError('Checkout failed', new Error('verification'))`.
+2. Trigger an unhandled error, for example
+   `setTimeout(() => { throw new Error('verification uncaught') })`.
+3. Use the application normally for a few clicks without errors.
+4. In the frontend application's Live view, find the two error-level spans:
+   `Checkout failed` with the click span that started it in the same trace, and
+   `Uncaught error`. The healthy clicks from step 3 do not appear.
+5. The error spans carry `logfire.session_replay.id`. Open that replay. It
+   contains both errors as error events, and it starts before the first one,
+   because the buffer covers the time before the error.
+
+A replay needs at least 10 seconds of recording before it uploads
+(`minSessionDurationMs`), so keep the page open until at least 10 seconds of
+recording have elapsed.
 
 ## Custom span processors
 
@@ -665,12 +1204,73 @@ Same-page reconfiguration requires bundler deduplication of both
 physical package copies is unsupported because their lifecycle state is not
 shared.
 
-Browser pages also get OpenTelemetry's built-in batch-processor auto-flush on
-document hide. The underlying batch span processor calls `forceFlush()` when the
-document becomes hidden or emits `pagehide`, which helps export spans during
-navigation away from the page. You can disable that OpenTelemetry behavior with
+Browser pages also flush on document hide. Logfire calls the tracer provider's
+`forceFlush()` when the document becomes hidden or the window emits `pagehide`,
+which helps export spans during navigation away from the page. The flush sends
+the newest spans first in a small keepalive request, and the older spans in a
+second request. You can disable that OpenTelemetry behavior with
 `batchSpanProcessorConfig.disableAutoFlushOnDocumentHide`, but doing so means
 only explicit cleanup or normal batch timing will flush spans.
+
+Recovery is disabled by default. Set `tracePersistence: true` in `configure()` or
+`configureFrontend()` to retain unacknowledged trace requests in `sessionStorage`, including
+requests already in flight when navigation starts. When the SDK starts in the next
+same-origin document in that tab, it retries those requests with their original
+span IDs, timestamps, resource, and session attributes. It removes each copy after
+successful acknowledgment. This is at-least-once delivery: even an ordinary
+navigation can cause duplicates if the collector accepted a request but its
+acknowledgment did not reach the old document. Only enable recovery if your
+application can accept duplicate spans; do not assume backend deduplication.
+
+The newest chunk sized for keepalive is sent without a stored copy, to avoid
+replaying an upload that survives navigation. If keepalive is rejected or disabled
+because its shared budget is exhausted, that chunk can be lost. An oversized
+newest span remains eligible for recovery. Other requests can still be duplicated
+when an acknowledgment is lost.
+
+The SDK stores the scrubbed OTLP payload, without request headers or credentials.
+Recovery is isolated by the absolute trace endpoint, a SHA-256 fingerprint of the
+configured request headers, and an optional key. For a proxy whose destination
+depends on cookies or other state outside those headers, pass
+`tracePersistence: { key: 'stable-destination-id' }` in place of `true`, and
+change the key when the destination changes. Each request uses a snapshot of its resolved headers, including on retries.
+
+Storage is limited to 32 requests and 2 MiB of UTF-16 data across SDK destinations;
+the oldest copies are evicted first, and requests larger than the limit are not
+saved. Copies expire after five minutes. Recovery needs Web Crypto, Web Locks,
+and writable session storage; it is best effort when those are unavailable, storage is full,
+the tab closes, or no instrumented same-origin page opens before expiry. Spans
+that were never created, such as resource spans on departures before `load`, are
+outside this recovery path. Each request waits for its destination fingerprint
+before it is saved and sent, including the first request after headers change.
+
+Web Locks prevent another live SDK instance or same-origin iframe from retrying
+requests still owned by a live document. Background recovery sends at most four
+requests concurrently, shares the export concurrency limit, and gives new exports
+priority. It does not delay `forceFlush()`. Successful requests and permanent
+HTTP failures are removed; transient failures are retained for the next document.
+
+Set `tracePersistence: false` in `configure()` or `configureFrontend()` to disable
+both storing and recovering requests. Existing copies then remain unused until
+they expire on a later enabled startup or the browser clears the tab's storage.
+
+A record that must arrive even if the page unloads soon after, such as the start
+of a page-load measurement, can be exported at once with `forceFlush()`. The
+request leaves while the page is still alive, so the document-hide flush does
+not have to carry it:
+
+```js
+import * as logfire from '@pydantic/logfire-browser'
+
+logfire.info('page load started', { route: '/dashboard' })
+logfire.forceFlush().catch(() => undefined)
+```
+
+`forceFlush()` exports every span that the active configuration has buffered.
+Like the document-hide flush, it sends the newest spans first in a small
+keepalive request, and the older spans in a second request. So the record you
+just ended leads, even when the buffer already holds a whole page load. It rejects when the export fails, and resolves at once when no configuration is
+active.
 
 ## Pending spans
 

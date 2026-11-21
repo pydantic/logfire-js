@@ -84,7 +84,7 @@ describe('queue consumer instrumentation', () => {
   it('ends the span without an error status when the handler succeeds', async () => {
     const queueFn = vitest.fn<() => Promise<void>>().mockResolvedValue(undefined)
 
-    await executeQueueHandler(queueFn as unknown as ExportedHandlerQueueHandler, [createBatch(), {}, createExecutionContext()])
+    await executeQueueHandler(queueFn, [createBatch(), {}, createExecutionContext()])
 
     const spans = exporter.getFinishedSpans()
     expect(spans).toHaveLength(1)

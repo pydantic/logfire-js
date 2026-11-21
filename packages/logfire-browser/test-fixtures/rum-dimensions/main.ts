@@ -77,6 +77,9 @@ const cleanup = logfire.configure({
     captureNetwork: false,
     flushIntervalMs: 60_000,
     ignoreUrlPatterns: [/\/receipts(?:\/|$)/u],
+    // Each phase records for less than the default 10s minimum, which would
+    // otherwise discard every replay on cleanup().
+    minSessionDurationMs: 0,
     load: async () => {
       const replayModule = await import('lf-rum-dimensions-recorder')
       return {
@@ -135,6 +138,9 @@ async function run(): Promise<void> {
 
   state.phase = 'after-reload'
   setStatus('after-reload')
+  // A reloaded page resumes the tab's recording only after it holds the recording's lock. Spans
+  // created before that carry no recording link, because another tab could own the recording.
+  await replayRuntime?.flush()
   logfire.info('normal-after-reload')
   routeName = '/settings'
   await delay(2_100)
@@ -147,6 +153,8 @@ async function run(): Promise<void> {
 
   // Replay observes external browser-session rotation on its one-second poll.
   await delay(1_100)
+  document.querySelector<HTMLButtonElement>('#interaction')?.click()
+  logfire.info('normal-recording-after-rotation')
   document.querySelector('#status')?.setAttribute('data-replay-session', 'rotated')
   await replayRuntime?.flush()
   await cleanup()

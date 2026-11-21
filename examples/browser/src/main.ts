@@ -16,6 +16,8 @@ logfire.configure({
           load: () => import('lf-browser-recorder'),
           maskAllInputs: true,
           replayUrl: `${proxyOrigin}/client-replay`,
+          // Every local session is recorded so a run always produces a replay. Production apps use a lower rate.
+          sessionSampleRate: 1,
         }
       : false,
   rum: {

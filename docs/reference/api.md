@@ -54,6 +54,10 @@ Configuration helpers and utilities:
 - `serializeAttributes()`
 - `LogfireAttributeScrubber`
 - `NoopAttributeScrubber`
+- `scrubSpanForExport()`, `scrubbedSpanCopy()`, and `scrubLogRecordForExport()`, with the
+  `ExportScrubbingOptions` and `ScrubbableLogRecord` types: apply the configured scrubber to a
+  finished span, a copy of one, or a log record. The runtime packages call these before export;
+  use them in a custom span or log record processor that exports on its own.
 - `PendingSpanProcessor`
 - `TailSamplingProcessor`
 - `ULIDGenerator`

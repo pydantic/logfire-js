@@ -1,0 +1,20 @@
+{
+  "name": "vue-router-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "tsc && vp build",
+    "preview": "vp preview",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@pydantic/logfire-browser": "workspace:*",
+    "vue": "^3.5.44",
+    "vue-router": "^5.4.0"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}

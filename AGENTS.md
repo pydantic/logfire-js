@@ -14,9 +14,11 @@ This repository is the Pydantic Logfire JavaScript SDK monorepo. It provides Ope
 - `packages/otel-cf-workers` publishes `@pydantic/otel-cf-workers`, the lower-level Cloudflare Workers OpenTelemetry implementation used by the Logfire wrapper.
 - `packages/logfire-browser` publishes `@pydantic/logfire-browser`, which adapts Logfire to browser tracing.
 - `packages/logfire-session-replay` publishes `@pydantic/logfire-session-replay`, the optional standalone rrweb recorder used by the browser package's session replay integration.
+- `packages/logfire-agent-sandboxes` publishes `@pydantic/logfire-agent-sandboxes`, which connects Node.js to Logfire Agent Sandboxes through the `MontyRemote` gRPC pool from the `@pydantic/monty` peer dependency. Its docs page (`docs/agent-sandboxes.md`) is hidden in navigation until the feature leaves beta.
+- `packages/logfire-ai-sdk-code-mode` publishes `@pydantic/logfire-ai-sdk-code-mode`, the code mode for the Vercel AI SDK: `codeMode()` gives an agent one `run_code` tool that runs Python in one sandbox session per run, with the agent's tools as the typed stubs pydantic-ai CodeMode shows the model. Its prompt (`src/prompt.ts`) and messages are ported from pydantic-ai at the pinned commit, except the `osPolicy` clock line, ported from a later commit, and the `sleep: 'zero'` sentence, which is this package's own (both noted in `src/prompt.ts`). `fixtures/signatures/` holds the parity fixtures, including pydantic-ai's whole `run_code` description: `vp test` with `UPDATE_FIXTURES=1` rewrites the generated ones, and `python3 scripts/render-fixtures.py` renders the expected output with pydantic-ai (`--ref main` checks for upstream changes).
 - `vite.shared.ts` holds the build helpers every package config imports: `packageDefines()` stamps `PACKAGE_VERSION` and `PACKAGE_TIMESTAMP` from the package's own `package.json`, and `copyCjsDeclarations()` emits the `.d.cts` files.
 - `vite.config.ts` and `tsconfig.base.json` at the repository root hold the shared format, lint, task, and TypeScript configuration.
-- `examples/` contains runnable examples for Express, Next.js, Deno, Cloudflare Workers, browser usage, and related integrations.
+- `examples/` contains runnable examples for Express, Next.js, Deno, Cloudflare Workers, browser usage, browser route grouping with React Router, TanStack Router, and Vue Router, Agent Sandboxes, and related integrations. `examples/agent-sandboxes` doubles as a smoke test (`pnpm run test:examples`) that relays to a local `monty subprocess` worker instead of Logfire. The router examples run in the Playwright browser acceptance suite (`packages/logfire-session-replay/browser-tests/router-examples.pw.ts`), so keep their routes and link names in sync with that test.
 
 ## Environment
 
@@ -84,6 +86,8 @@ Add a changeset when a package-visible change needs a release note or version bu
 pnpm run changeset-add
 ```
 
+Merging a PR that contains a changeset releases it: the CI release job commits the version bump straight to `main` and publishes to npm. There is no Version Packages PR, so check the bump type in the changeset before merging.
+
 ## Architecture Notes
 
 - `logfire` wraps OpenTelemetry tracing APIs with convenience methods such as `span`, `startSpan`, `info`, `debug`, `warn`, and `error`.
@@ -98,6 +102,12 @@ pnpm run changeset-add
 - Prefer existing package patterns, helpers, and OpenTelemetry abstractions over introducing new wrappers.
 - Keep changes scoped to the package or example relevant to the task.
 - Update examples or docs when public behavior, configuration, or package usage changes.
+- `docs/navigation.yml` owns the TypeScript subtree embedded in the Logfire docs.
+  Update it alongside changes to published JS docs pages; keep public slugs and
+  existing aliases stable unless a redirect is intentional. The Logfire Python
+  repository only supplies the subtree's placement. Unified-docs reads this
+  manifest from logfire-js `main`; trigger its docs deployment after merging a
+  navigation change. No `pydantic/logfire` change is needed.
 - Add or update tests for behavior changes. If a package has minimal tests or `--passWithNoTests`, still run typecheck/build for that package when relevant.
 - Avoid adding production dependencies without a clear need; keep workspace dependency and lockfile changes together.
 - Do not put agent-specific or vendor-specific instructions here unless they are explicitly about repository compatibility. Use generic wording that applies to any coding agent.

@@ -4,12 +4,32 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Logfire privacy defaults acceptance</title>
+    <style>
+      /* The fixture image does not decode, and a broken image with alt text ignores its size attributes. */
+      #private-image {
+        display: block;
+        width: 40px;
+        height: 30px;
+      }
+    </style>
   </head>
   <body>
     <main>
       <h1 id="initial-text">initial-visible-secret</h1>
       <p id="mutated-text">before mutation</p>
       <input id="private-input" value="input-value-secret" data-query-bearing="?attribute_secret=visible" />
+      <input id="hidden-input" type="hidden" value="hidden-value-secret" />
+      <img
+        id="private-image"
+        alt="alt-secret"
+        title="title-secret"
+        aria-label="aria-secret"
+        data-user="data-secret"
+        data-state="open"
+        src="/api/image?src_secret=visible"
+        srcset="/api/image?srcset_secret=visible 1x"
+        style="background-image: url('/api/image?style_secret=visible')"
+      />
       <p id="status">starting</p>
     </main>
     <script type="module" src="/main.ts"></script>

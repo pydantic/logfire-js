@@ -1,5 +1,6 @@
 import type { Attributes, ContextManager } from '@opentelemetry/api'
 import type { InstrumentationConfigMap as WebAutoInstrumentationConfigMap } from '@opentelemetry/auto-instrumentations-web'
+import { getWebAutoInstrumentations } from '@opentelemetry/auto-instrumentations-web'
 import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import type { Instrumentation } from '@opentelemetry/instrumentation'
@@ -26,6 +27,7 @@ import {
 import type { BaggageOptions, JsonSchemaMode, LogfireApiConfigOptions, MinLevel, SamplingOptions, ScrubbingOptions } from 'logfire'
 import {
   configureLogfireApi,
+  DebugIdSpanProcessor,
   debug,
   error,
   fatal,
@@ -35,8 +37,11 @@ import {
   log,
   logfireApiConfig,
   LogfireAttributeScrubber,
+  isSdkInternalError,
+  markSdkInternalError,
   NoopAttributeScrubber,
   notice,
+  readInjectedRelease,
   reportError,
   resolveBaseUrl,
   resolveSendToLogfire,
@@ -59,21 +64,33 @@ import type { RUMOptions } from './browserSession'
 import type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
 import { startBrowserLongAnimationFrames } from './longAnimationFrames'
 import type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
-import { BrowserSessionReplayState, startBrowserSessionReplay } from './sessionReplay'
-import type { BrowserSessionReplayControl, BrowserSessionReplayOptions } from './sessionReplay'
-import { startBrowserWebVitals } from './webVitals'
+import { BrowserSessionReplayState, snapshotErrorForReplay, startBrowserSessionReplay } from './sessionReplay'
+import type { BrowserSessionReplayControl, BrowserSessionReplayOptions, BrowserSessionReplayStopOptions } from './sessionReplay'
+import { observeDocumentPage, observeNavigatedPages, startBrowserWebVitals } from './webVitals'
 import type { BrowserWebVitalsOptions } from './webVitals'
+import { DocumentHideChunkingExporter } from './DocumentHideChunkingExporter'
+import { RecoveringSpanExporter, resolveTracePersistence } from './RecoveringSpanExporter'
+import type { BrowserTracePersistenceOptions } from './RecoveringSpanExporter'
+import { keepFailedTraces } from './errorsProfile'
+import type { FrontendProfile } from './errorsProfile'
+import { installGlobalErrorCapture, ReportedErrors } from './globalErrors'
+import { installDocumentHideFlush } from './documentHideFlush'
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
 import {
   activateProviderGeneration,
   assertProviderLifecycleAvailable,
   beginProviderCleanup,
   deactivateProviderDelegate,
+  forceFlushActiveProvider,
   getStableBrowserTracer,
   initializeProviderLifecycleGlobals,
   settleProviderCleanup,
 } from './providerLifecycle'
 import { assertBrowserReplayUrl, createTelemetryUrlPatterns, isBrowserReplayUrlValid } from './telemetryUrls'
+import { collapseUserInteractionSpans } from './userInteraction'
+import { startBrowserFrustration } from './browserFrustration'
+import { resolveBrowserFrustrationOptions } from './interactionFrustration'
+export type { BrowserFrustrationOptions } from './interactionFrustration'
 export { DiagLogLevel } from '@opentelemetry/api'
 export * from 'logfire'
 export { getBrowserSessionId } from './browserSession'
@@ -87,13 +104,25 @@ export type {
   RUMOptions,
 } from './browserSession'
 export type { BrowserMetricsOptions, BrowserWebVitalsMetricOptions } from './browserMetrics'
+export type { FrontendProfile } from './errorsProfile'
 export type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
-export type { BrowserSessionReplayOptions } from './sessionReplay'
+export type { BrowserSessionReplayOptions, BrowserSessionReplayStopOptions } from './sessionReplay'
 export type { BrowserWebVitalsOptions } from './webVitals'
+export type { BrowserTracePersistenceOptions } from './RecoveringSpanExporter'
 
 type TraceExporterConfig = NonNullable<typeof OTLPTraceExporter extends new (config: infer T) => unknown ? T : never>
 export type BrowserInstrumentationInput = Instrumentation | Instrumentation[] | (() => Instrumentation | Instrumentation[])
 export type AutoInstrumentationsConfig = WebAutoInstrumentationConfigMap & { enabled?: boolean }
+
+export interface BrowserBatchSpanProcessorConfig extends BatchSpanProcessorBrowserConfig {
+  /**
+   * Estimated size, in bytes, of the request that carries the newest spans when the document
+   * hides or `forceFlush()` runs. Defaults to 12 000. The flush sends that request first, so it is
+   * the one most likely to outlive a navigation, and the rest of the batch follows in a second
+   * request.
+   */
+  documentHideKeepaliveBytes?: number
+}
 
 export interface BrowserResourceTimingOptions {
   /** Resource timing detail. Defaults to `summary` when configured. */
@@ -104,7 +133,17 @@ export interface BrowserSessionReplayHandle {
   readonly mode: 'full' | 'buffer' | 'off'
   readonly recording: boolean
   flush(): Promise<void>
-  stop(): Promise<void>
+  /**
+   * Load and start replay configured with `autoStart: false`, for example once the user consents.
+   * Calling it again, after an automatic start, or after `stop()` changes nothing.
+   */
+  start(): Promise<void>
+  /**
+   * Stop replay for this configuration; tracing continues. Replay does not restart. Pass
+   * `{ discard: true }` when consent is withdrawn, so buffered events are dropped instead of
+   * uploaded.
+   */
+  stop(options?: BrowserSessionReplayStopOptions): Promise<void>
 }
 
 export interface BrowserConfigureHandle {
@@ -116,11 +155,17 @@ export interface LogfireConfigOptions {
   /**
    * The configuration of the batch span processor.
    */
-  batchSpanProcessorConfig?: BatchSpanProcessorBrowserConfig
+  batchSpanProcessorConfig?: BrowserBatchSpanProcessorConfig
   /**
    * Active OpenTelemetry baggage keys to copy to Logfire manual spans/logs as span attributes.
    */
   baggage?: BaggageOptions
+  /**
+   * Report uncaught errors and unhandled promise rejections through `reportError()`. Defaults to
+   * true. An error object that the application already reported, for example before rethrowing it,
+   * is not reported again.
+   */
+  captureGlobalErrors?: boolean
   /**
    * Whether to log the spans to the console in addition to sending them to the Logfire API.
    */
@@ -152,9 +197,9 @@ export interface LogfireConfigOptions {
    */
   jsonSchema?: JsonSchemaMode
   /**
-   * Lazily register OpenTelemetry browser auto-instrumentations after the
-   * Logfire browser provider and session span processor are ready. Disabled by
-   * default. Pass an object to configure `getWebAutoInstrumentations()`.
+   * Register OpenTelemetry browser auto-instrumentations after the Logfire browser provider and
+   * session span processor are ready, before `configure()` returns. Disabled by default. Pass an
+   * object to configure `getWebAutoInstrumentations()`.
    */
   autoInstrumentations?: boolean | AutoInstrumentationsConfig
   /**
@@ -222,7 +267,10 @@ export interface LogfireConfigOptions {
   serviceName?: string
 
   /**
-   * Version of this service.
+   * Version of this service. Source map resolution needs a real per-build value, such as the commit SHA or release tag.
+   *
+   * Defaults to the release identifier that `logfire sourcemap inject` stamped into the loaded bundle, then to `0.0.1`.
+   * The `0.0.1` fallback is deprecated and is removed in the next major version.
    */
   serviceVersion?: string
 
@@ -230,6 +278,15 @@ export interface LogfireConfigOptions {
    * configures the trace exporter.
    */
   traceExporterConfig?: TraceExporterConfig
+
+  /**
+   * Retain unacknowledged, scrubbed trace requests in sessionStorage for recovery by the next
+   * same-origin document. Disabled by default. Set true to opt in to possible duplicate delivery.
+   * Bounded to 2 MiB and five minutes. Requires Web Crypto, Web Locks, and sessionStorage.
+   * Pass { key } instead when a proxy's destination depends on cookies or other state outside
+   * request headers.
+   */
+  tracePersistence?: boolean | BrowserTracePersistenceOptions
 
   /**
    * Any additional HTTP headers to be sent with the trace exporter requests.
@@ -259,6 +316,14 @@ export interface FrontendConfigOptions extends Omit<
   token: string
   /** Auto-instrumentation is enabled by default. Pass false to disable it. */
   autoInstrumentations?: boolean | AutoInstrumentationsConfig
+  /**
+   * `errors` sets defaults for an application that wants errors and the replays around them rather
+   * than performance data. It exports only traces that contain an error-level span, an error
+   * status, or an HTTP 5xx response; turns off Web Vitals, their metrics, and document-load spans;
+   * and records replay only for sessions with an error (`sessionSampleRate: 0`). Options passed
+   * explicitly take precedence.
+   */
+  profile?: FrontendProfile
   /** Web Vitals and their metrics are enabled by default. Nested options preserve these defaults. */
   rum?: RUMOptions
   /** Metric reader and exporter tuning. The frontend application owns the transport. */
@@ -285,7 +350,7 @@ export interface FrontendConfigOptions extends Omit<
  */
 export function configureFrontend(options: FrontendConfigOptions): BrowserConfigureHandle {
   if (options.token.length === 0) {
-    throw new Error('logfire-browser: frontend application token must not be empty')
+    throw markSdkInternalError(new Error('logfire-browser: frontend application token must not be empty'))
   }
 
   const frontendOrigin = (url: string, label: string): URL => {
@@ -293,7 +358,7 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
     try {
       origin = new URL(url)
     } catch (error) {
-      throw new Error(`logfire-browser: ${label} must be an HTTP(S) origin`, { cause: error })
+      throw markSdkInternalError(new Error(`logfire-browser: ${label} must be an HTTP(S) origin`, { cause: error }))
     }
     if (
       (origin.protocol !== 'https:' && origin.protocol !== 'http:') ||
@@ -303,7 +368,7 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
       origin.search !== '' ||
       origin.hash !== ''
     ) {
-      throw new Error(`logfire-browser: ${label} must be an HTTP(S) origin`)
+      throw markSdkInternalError(new Error(`logfire-browser: ${label} must be an HTTP(S) origin`))
     }
     return origin
   }
@@ -318,18 +383,22 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
     environment: _environment,
     sessionReplay,
     captureUrlQueryAndFragment,
+    profile,
+    metrics: _metrics,
     ...captureOptions
   } = options as FrontendConfigOptions & Pick<LogfireConfigOptions, 'serviceName' | 'environment'>
-  const webVitals = options.rum?.webVitals
+  const errorsProfile = profile === 'errors'
+  const webVitals = options.rum?.webVitals ?? (errorsProfile ? false : undefined)
   let replay: BrowserSessionReplayOptions | undefined
   if (sessionReplay !== undefined && sessionReplay !== false) {
     const { destination, ...replayOptions } = sessionReplay
     if (destination !== undefined && (typeof destination.token !== 'string' || destination.token.length === 0)) {
-      throw new Error('logfire-browser: session replay frontend application token must not be empty')
+      throw markSdkInternalError(new Error('logfire-browser: session replay frontend application token must not be empty'))
     }
     const replayOrigin = destination ? frontendOrigin(destination.baseUrl, 'session replay frontend application baseUrl') : baseUrl
     replay = {
       ...replayOptions,
+      ...(errorsProfile ? { sessionSampleRate: replayOptions.sessionSampleRate ?? 0 } : {}),
       headers: destination ? () => ({ Authorization: `Bearer ${destination.token}` }) : headers,
       replayUrl: new URL('/v1/replay', replayOrigin).toString(),
     }
@@ -337,7 +406,9 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
 
   return configure({
     ...captureOptions,
-    autoInstrumentations: options.autoInstrumentations ?? true,
+    autoInstrumentations:
+      options.autoInstrumentations ?? (errorsProfile ? { '@opentelemetry/instrumentation-document-load': { enabled: false } } : true),
+    ...(errorsProfile ? { sampling: { tail: keepFailedTraces, ...options.sampling } } : {}),
     ...(captureUrlQueryAndFragment === true ? {} : { spanProcessors: [new BrowserUrlSpanProcessor(), ...(options.spanProcessors ?? [])] }),
     rum: {
       ...options.rum,
@@ -349,19 +420,38 @@ export function configureFrontend(options: FrontendConfigOptions): BrowserConfig
               metrics: typeof webVitals === 'object' ? (webVitals.metrics ?? true) : true,
             },
     },
-    metrics: {
-      ...options.metrics,
-      metricExporterHeaders: headers,
-      metricUrl: endpoint('/v1/metrics'),
-    },
+    // Browser metrics carry only Web Vitals, so the profile skips the meter provider without them.
+    ...(errorsProfile && webVitals === false
+      ? {}
+      : {
+          metrics: {
+            ...options.metrics,
+            metricExporterHeaders: headers,
+            metricUrl: endpoint('/v1/metrics'),
+          },
+        }),
     ...(replay === undefined ? {} : { sessionReplay: replay }),
     traceExporterHeaders: headers,
     traceUrl: endpoint('/v1/traces'),
   })
 }
 
+// Startup errors only need to promote the replay; the cap bounds what a failing startup loop can hold.
+const MAX_PENDING_REPLAY_ERRORS = 10
+
 function defaultTraceExporterHeaders() {
   return {}
+}
+
+// The Node SDK throws on an invalid rate, but a throw here would stop the page that calls
+// configure(). A rate above 1 or NaN kept every trace and a negative one dropped every trace,
+// with no sign, so the browser warns and keeps every trace.
+function resolveHeadRate(head: number | undefined): number | undefined {
+  if (head === undefined || (head >= 0 && head <= 1)) {
+    return head
+  }
+  diag.warn(`logfire-browser: ignoring sampling.head ${String(head)}; expected a number between 0 and 1, so every trace is kept`)
+  return undefined
 }
 
 function resolveBrowserWebVitalsOptions(webVitals: RUMOptions['webVitals'] | undefined): BrowserWebVitalsOptions | undefined {
@@ -387,12 +477,12 @@ function resolveBrowserResourceTimingOptions(resourceTiming: unknown): BrowserRe
     return undefined
   }
   if (typeof resourceTiming !== 'object' || resourceTiming === null || Array.isArray(resourceTiming)) {
-    throw new Error('logfire-browser: resourceTiming must be an object')
+    throw markSdkInternalError(new Error('logfire-browser: resourceTiming must be an object'))
   }
 
   const detail = (resourceTiming as { detail?: unknown }).detail ?? 'summary'
   if (detail !== 'summary' && detail !== 'full') {
-    throw new Error('logfire-browser: resourceTiming.detail must be "summary" or "full"')
+    throw markSdkInternalError(new Error('logfire-browser: resourceTiming.detail must be "summary" or "full"'))
   }
   return { detail }
 }
@@ -403,7 +493,7 @@ function resolveBrowserMetricsOptions(metrics: LogfireConfigOptions['metrics']):
   }
 
   if (metrics.metricUrl === '') {
-    throw new Error('logfire-browser: metrics.metricUrl must be a non-empty browser-safe metrics URL')
+    throw markSdkInternalError(new Error('logfire-browser: metrics.metricUrl must be a non-empty browser-safe metrics URL'))
   }
 
   return metrics
@@ -435,18 +525,21 @@ function resolveBrowserSessionOptions(
   const webVitalsOptions = resolveBrowserWebVitalsOptions(rum?.webVitals)
   const longAnimationFramesOptions = resolveBrowserLongAnimationFramesOptions(rum?.longAnimationFrames)
   const sessionReplayRequiresSession = sessionReplayOptions !== undefined
-  if (webVitalsOptions === undefined && longAnimationFramesOptions === undefined && !sessionReplayRequiresSession) {
+  const frustrationEnabled = resolveBrowserFrustrationOptions(rum?.frustration) !== undefined
+  if (webVitalsOptions === undefined && longAnimationFramesOptions === undefined && !sessionReplayRequiresSession && !frustrationEnabled) {
     return rum?.session
   }
 
   if (rum?.session === false) {
     if (sessionReplayRequiresSession) {
-      throw new Error(
-        'logfire-browser: sessionReplay requires browser session attributes; remove rum.session: false or disable sessionReplay'
+      throw markSdkInternalError(
+        new Error('logfire-browser: sessionReplay requires browser session attributes; remove rum.session: false or disable sessionReplay')
       )
     }
-    const feature = webVitalsOptions === undefined ? 'rum.longAnimationFrames' : 'rum.webVitals'
-    throw new Error(`logfire-browser: ${feature} requires browser session attributes; remove rum.session: false or disable ${feature}`)
+    const feature = frustrationEnabled ? 'rum.frustration' : webVitalsOptions === undefined ? 'rum.longAnimationFrames' : 'rum.webVitals'
+    throw markSdkInternalError(
+      new Error(`logfire-browser: ${feature} requires browser session attributes; remove rum.session: false or disable ${feature}`)
+    )
   }
 
   return rum?.session ?? true
@@ -513,17 +606,13 @@ function resolveAutoInstrumentationsConfig(
   }
 }
 
-function noopUnregister(): void {
-  return undefined
-}
-
 function startBrowserInstrumentations(options: {
   autoInstrumentations: LogfireConfigOptions['autoInstrumentations']
   instrumentations: LogfireConfigOptions['instrumentations']
   resourceTiming: LogfireConfigOptions['resourceTiming']
   telemetryUrls: { metricUrl?: string | undefined; replayUrl?: string | undefined; traceUrl: string }
   tracerProvider: WebTracerProvider
-}): () => Promise<void> {
+}): () => void {
   const unregisterConfigured: (() => void)[] = []
   const configuredInputs = options.instrumentations ?? []
   const inputs = configuredInputs.length === 0 ? ([[]] as BrowserInstrumentationInput[]) : configuredInputs
@@ -547,52 +636,45 @@ function startBrowserInstrumentations(options: {
     options.resourceTiming,
     options.telemetryUrls
   )
-  const unregisterAutoInstrumentationsPromise =
-    autoInstrumentationsConfig === undefined
-      ? undefined
-      : import('@opentelemetry/auto-instrumentations-web')
-          .then(({ getWebAutoInstrumentations }) => {
-            const instrumentations = getWebAutoInstrumentations(autoInstrumentationsConfig)
-            try {
-              return registerInstrumentations({
-                instrumentations,
-                tracerProvider: options.tracerProvider,
-              })
-            } catch (error) {
-              disableInstrumentations(instrumentations)
-              throw error
-            }
-          })
-          .catch((error: unknown) => {
-            diag.error('logfire-browser: failed to start browser auto-instrumentations', error)
-            return noopUnregister
-          })
+  // Registered synchronously: the instrumentations patch `addEventListener`, `fetch`, and XHR,
+  // and a listener or a `fetch` reference the application takes before the patch is never traced.
+  let unregisterAutoInstrumentations: (() => void) | undefined
+  if (autoInstrumentationsConfig !== undefined) {
+    let instrumentations: Instrumentation[] = []
+    try {
+      instrumentations = getWebAutoInstrumentations(autoInstrumentationsConfig)
+      collapseUserInteractionSpans(instrumentations)
+      unregisterAutoInstrumentations = registerInstrumentations({
+        instrumentations,
+        tracerProvider: options.tracerProvider,
+      })
+    } catch (error) {
+      disableInstrumentations(instrumentations)
+      diag.error('logfire-browser: failed to start browser auto-instrumentations', error)
+    }
+  }
 
-  let cleanupPromise: Promise<void> | undefined
-  return async () => {
-    cleanupPromise ??= (async () => {
-      const unregisterAutoInstrumentations = await unregisterAutoInstrumentationsPromise
-      const unregisters = [
-        ...unregisterConfigured,
-        ...(unregisterAutoInstrumentations === undefined ? [] : [unregisterAutoInstrumentations]),
-      ]
-      let firstError: Error | undefined
-      for (let index = unregisters.length - 1; index >= 0; index -= 1) {
-        try {
-          unregisters[index]?.()
-        } catch (error) {
-          // Normalized at capture, like the other error accumulators in this file: an unregister
-          // callback is user supplied, so it can throw `undefined` or `null`, which the raw value
-          // as the `??=` sentinel misread as no failure or overwrote with a later error.
-          firstError ??= error instanceof Error ? error : new Error('logfire-browser: instrumentation unregister failed', { cause: error })
-        }
+  let unregistered = false
+  return () => {
+    if (unregistered) {
+      return
+    }
+    unregistered = true
+    const unregisters = [...unregisterConfigured, ...(unregisterAutoInstrumentations === undefined ? [] : [unregisterAutoInstrumentations])]
+    let firstError: Error | undefined
+    for (let index = unregisters.length - 1; index >= 0; index -= 1) {
+      try {
+        unregisters[index]?.()
+      } catch (error) {
+        // Normalized at capture, like the other error accumulators in this file: an unregister
+        // callback is user supplied, so it can throw `undefined` or `null`, which the raw value
+        // as the `??=` sentinel misread as no failure or overwrote with a later error.
+        firstError ??= error instanceof Error ? error : new Error('logfire-browser: instrumentation unregister failed', { cause: error })
       }
-      if (firstError !== undefined) {
-        // eslint-disable-next-line no-throw-literal -- always an Error, normalized at capture
-        throw firstError
-      }
-    })()
-    return cleanupPromise
+    }
+    if (firstError !== undefined) {
+      throw firstError
+    }
   }
 }
 
@@ -636,16 +718,17 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   const resourceTimingOptions = resolveBrowserResourceTimingOptions(options.resourceTiming)
   const webVitalsMetricOptions = resolveBrowserWebVitalsMetricOptions(webVitalsOptions)
   if (webVitalsMetricOptions !== undefined && browserMetricsOptions === undefined) {
-    throw new Error('logfire-browser: rum.webVitals.metrics requires top-level metrics.metricUrl')
+    throw markSdkInternalError(new Error('logfire-browser: rum.webVitals.metrics requires top-level metrics.metricUrl'))
   }
   const browserSessionOptions = resolveBrowserSessionOptions(options.rum, sessionReplayOptions)
+  const capturesGlobalErrors = options.captureGlobalErrors !== false
   initializeProviderLifecycleGlobals(options.contextManager)
 
   const resource = resourceFromAttributes(options.resourceAttributes ?? {}).merge(
     resourceFromAttributes({
       [ATTR_BROWSER_LANGUAGE]: navigator.language,
       [ATTR_SERVICE_NAME]: options.serviceName ?? 'logfire-browser',
-      [ATTR_SERVICE_VERSION]: options.serviceVersion ?? '0.0.1',
+      [ATTR_SERVICE_VERSION]: options.serviceVersion ?? readInjectedRelease() ?? '0.0.1',
       [ATTR_TELEMETRY_SDK_LANGUAGE]: TELEMETRY_SDK_LANGUAGE_VALUE_WEBJS,
       [ATTR_TELEMETRY_SDK_NAME]: 'logfire-browser',
       ...(options.environment !== undefined && options.environment !== ''
@@ -666,32 +749,48 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
 
   diag.info('logfire-browser: starting')
 
-  const headRate = options.sampling?.head
+  const headRate = resolveHeadRate(options.sampling?.head)
   const sampler =
     headRate !== undefined && headRate < 1.0 ? new ParentBasedSampler({ root: new TraceIdRatioBasedSampler(headRate) }) : undefined
 
   // Browser configure intentionally does not install PendingSpanProcessor.
   // Use startPendingSpan() for explicit, per-span pending placeholders.
+  const { documentHideKeepaliveBytes, ...batchSpanProcessorConfig } = options.batchSpanProcessorConfig ?? {}
+  const resolveHeaders = async () =>
+    resolveTraceExporterHeaders(options.traceExporterConfig?.headers, options.traceExporterHeaders ?? defaultTraceExporterHeaders)
+  const exporterConfig = { ...options.traceExporterConfig, url: options.traceUrl }
+  const tracePersistence = resolveTracePersistence(options.tracePersistence)
+  const recoveringExporter =
+    tracePersistence === undefined
+      ? undefined
+      : new RecoveringSpanExporter(
+          (headers, url) => new OTLPTraceExporter({ ...exporterConfig, url, headers }),
+          exporterConfig,
+          resolveHeaders,
+          tracePersistence
+        )
+  const traceExporter = new DocumentHideChunkingExporter(
+    recoveringExporter ?? new OTLPTraceExporter({ ...exporterConfig, headers: resolveHeaders }),
+    documentHideKeepaliveBytes,
+    options.traceExporterConfig?.concurrencyLimit
+  )
+  // The processor's own document-hide flush stays off: its `pagehide` listener is on `document`,
+  // where the event never arrives, and its `visibilitychange` listener runs before application
+  // listeners registered later. `installDocumentHideFlush` below replaces both.
+  const processorConfig: BatchSpanProcessorBrowserConfig = { ...batchSpanProcessorConfig, disableAutoFlushOnDocumentHide: true }
   let spanProcessor: SpanProcessor = new LogfireSpanProcessor(
-    new BatchSpanProcessor(
-      new OTLPTraceExporter({
-        ...options.traceExporterConfig,
-        headers: async () =>
-          resolveTraceExporterHeaders(options.traceExporterConfig?.headers, options.traceExporterHeaders ?? defaultTraceExporterHeaders),
-        url: options.traceUrl,
-      }),
-      options.batchSpanProcessorConfig
-    ),
+    new BatchSpanProcessor(traceExporter, processorConfig),
     Boolean(options.console)
   )
 
   if (options.sampling?.tail) {
-    spanProcessor = new TailSamplingProcessor(spanProcessor, options.sampling.tail) as unknown as SpanProcessor
+    spanProcessor = new TailSamplingProcessor(spanProcessor, options.sampling.tail)
   }
 
   const browserSessionManager = configureBrowserSession(browserSessionOptions)
   const browserSessionReplayState = new BrowserSessionReplayState()
-  const spanProcessors: SpanProcessor[] = []
+  // First, so the exporting processors that follow see the debug IDs it adds at span end.
+  const spanProcessors: SpanProcessor[] = [new DebugIdSpanProcessor()]
   if (browserSessionManager !== undefined) {
     spanProcessors.push(new BrowserSessionSpanProcessor(browserSessionManager, browserSessionReplayState))
   }
@@ -713,7 +812,19 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   }
 
   const sharedApiConfigSnapshot = snapshotSharedLogfireApiConfig()
-  const generationToken = activateProviderGeneration(tracerProvider)
+  const flushNewestFirst = async () => {
+    await traceExporter.withNewestFirstFlush(async () => tracerProvider.forceFlush())
+    await recoveringExporter?.forceFlush()
+  }
+  const generationToken = activateProviderGeneration(tracerProvider, flushNewestFirst)
+  const removeDocumentHideFlush =
+    batchSpanProcessorConfig.disableAutoFlushOnDocumentHide === true
+      ? () => undefined
+      : installDocumentHideFlush(() => {
+          flushNewestFirst().catch((error: unknown) => {
+            diag.error('logfire-browser: failed to flush spans on document hide', error)
+          })
+        })
   try {
     const apiConfig: LogfireApiConfigOptions = {
       errorFingerprinting: options.errorFingerprinting ?? false,
@@ -736,6 +847,7 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
     }
     logfireApiConfig.tracer = getStableBrowserTracer(logfireApiConfig.otelScope)
   } catch (error) {
+    removeDocumentHideFlush()
     beginProviderCleanup(generationToken)
     deactivateProviderDelegate(generationToken)
     restoreSharedLogfireApiConfig(sharedApiConfigSnapshot)
@@ -777,22 +889,54 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
   })
 
   let readySessionReplay: BrowserSessionReplayControl | undefined
-  const sessionReplayStartupPromise =
-    sessionReplayOptions === undefined || browserSessionManager === undefined
-      ? undefined
-      : startBrowserSessionReplay(sessionReplayOptions, browserSessionManager, browserSessionReplayState, {
-          metricUrl: browserMetricsOptions?.metricUrl,
-          traceUrl: options.traceUrl,
-        }).then((sessionReplay) => {
-          readySessionReplay = sessionReplay
-          return sessionReplay
-        })
+  // Errors reported while replay loads, forwarded once it starts so that a startup error still
+  // promotes an error-sampled replay. Undefined before replay starts loading, once it has settled,
+  // and when it is not configured, so no error is kept before consent.
+  let pendingReplayErrors: { error: unknown; timestamp: number }[] | undefined
+  const forwardPendingReplayErrors = (sessionReplay: BrowserSessionReplayControl | undefined) => {
+    const pending = pendingReplayErrors ?? []
+    pendingReplayErrors = undefined
+    if (sessionReplay !== undefined) {
+      for (const { error, timestamp } of pending) {
+        forwardToReplay(sessionReplay, error, timestamp)
+      }
+    }
+  }
+  let replayStopped = false
+  let replayDiscarded = false
+  let sessionReplayStartupPromise: Promise<BrowserSessionReplayControl | undefined> | undefined
+  const startSessionReplayOnce = (): Promise<BrowserSessionReplayControl | undefined> | undefined => {
+    if (
+      sessionReplayStartupPromise !== undefined ||
+      replayStopped ||
+      sessionReplayOptions === undefined ||
+      browserSessionManager === undefined
+    ) {
+      return sessionReplayStartupPromise
+    }
+    pendingReplayErrors = []
+    sessionReplayStartupPromise = startBrowserSessionReplay(sessionReplayOptions, browserSessionManager, browserSessionReplayState, {
+      capturesGlobalErrors,
+      // A stop() while the package loads, such as withdrawn consent, must not attach the recorder.
+      isStopped: () => replayStopped,
+      metricUrl: browserMetricsOptions?.metricUrl,
+      traceUrl: options.traceUrl,
+    }).then((sessionReplay) => {
+      readySessionReplay = sessionReplay
+      forwardPendingReplayErrors(sessionReplay)
+      return sessionReplay
+    })
+    return sessionReplayStartupPromise
+  }
+  if (sessionReplayOptions?.autoStart !== false) {
+    // Startup reports its own failures and never rejects.
+    startSessionReplayOnce()?.catch(() => undefined)
+  }
 
   let replayOperationTail = Promise.resolve()
   let replayStopPromise: Promise<void> | undefined
-  let replayStopped = false
   const sessionReplayHandle: BrowserSessionReplayHandle | undefined =
-    sessionReplayStartupPromise === undefined
+    sessionReplayOptions === undefined || browserSessionManager === undefined
       ? undefined
       : {
           get mode() {
@@ -814,21 +958,69 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
             replayOperationTail = flushPromise
             return flushPromise
           },
+          start: async () => {
+            await startSessionReplayOnce()
+          },
           // eslint-disable-next-line @typescript-eslint/promise-function-async
-          stop() {
+          stop(stopOptions) {
+            if (stopOptions?.discard === true && !replayDiscarded) {
+              replayDiscarded = true
+              // Withdrawn consent does not wait behind a pending flush or a graceful stop.
+              readySessionReplay?.stop({ discard: true }).catch(() => undefined)
+            }
             if (replayStopPromise !== undefined) {
               return replayStopPromise
             }
             replayStopped = true
+            pendingReplayErrors = undefined
             browserSessionReplayState.clear()
             replayStopPromise = replayOperationTail.then(async () => {
               const sessionReplay = await sessionReplayStartupPromise
-              await sessionReplay?.stop()
+              await (replayDiscarded ? sessionReplay?.stop({ discard: true }) : sessionReplay?.stop())
             })
             replayOperationTail = replayStopPromise
             return replayStopPromise
           },
         }
+
+  const reportedErrors = new ReportedErrors()
+  // An application can call reportError() from sessionReplay.onError, which a failing capture calls.
+  let forwardingToReplay = false
+  const forwardToReplay = (replay: BrowserSessionReplayControl, reported: unknown, timestamp?: number) => {
+    if (replayStopped || forwardingToReplay) {
+      return
+    }
+    forwardingToReplay = true
+    try {
+      if (timestamp === undefined) {
+        replay.captureError(reported)
+      } else {
+        replay.captureError(reported, { timestamp })
+      }
+    } finally {
+      forwardingToReplay = false
+    }
+  }
+  // The application or another package can own a hook already; it keeps receiving every error.
+  const previousOnReportError = logfireApiConfig.onReportError
+  const onReportError = (reported: unknown) => {
+    reportedErrors.add(reported)
+    if (readySessionReplay !== undefined) {
+      forwardToReplay(readySessionReplay, reported)
+    } else if (pendingReplayErrors !== undefined && !replayStopped && pendingReplayErrors.length < MAX_PENDING_REPLAY_ERRORS) {
+      pendingReplayErrors.push({ error: snapshotErrorForReplay(reported), timestamp: Date.now() })
+    }
+    previousOnReportError?.(reported)
+  }
+  logfireApiConfig.onReportError = onReportError
+  const removeGlobalErrorCapture = capturesGlobalErrors
+    ? installGlobalErrorCapture({
+        isReported: (reported) => reportedErrors.has(reported),
+        report: (message, reported) => {
+          reportError(message, reported)
+        },
+      })
+    : undefined
 
   const browserMetricsStartupPromise =
     browserMetricsOptions === undefined
@@ -840,6 +1032,14 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
             return undefined
           })
 
+  // Synchronous, because Web Vitals start only after their module (and browser metrics) load.
+  if (webVitalsOptions !== undefined && browserSessionManager !== undefined) {
+    observeDocumentPage(browserSessionManager)
+  }
+  const removeNavigatedPageObserver =
+    webVitalsOptions?.reportSoftNavs === true && browserSessionManager !== undefined
+      ? observeNavigatedPages(browserSessionManager)
+      : undefined
   const webVitalsStartupPromise =
     webVitalsOptions === undefined
       ? undefined
@@ -881,8 +1081,6 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
           try {
             return startBrowserLongAnimationFrames({
               ...longAnimationFramesOptions,
-              autoFlushOnDocumentHide: options.batchSpanProcessorConfig?.disableAutoFlushOnDocumentHide !== true,
-              forceFlush: async () => tracerProvider.forceFlush(),
               sessionManager: browserSessionManager,
               tracer: tracerProvider.getTracer('logfire-long-animation-frames'),
             })
@@ -891,6 +1089,24 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
             return undefined
           }
         })()
+
+  const frustrationOptions = resolveBrowserFrustrationOptions(options.rum?.frustration)
+  const stopFrustration =
+    frustrationOptions !== undefined && browserSessionManager !== undefined
+      ? (() => {
+          try {
+            return startBrowserFrustration({
+              ...frustrationOptions,
+              sessionManager: browserSessionManager,
+              replayState: browserSessionReplayState,
+              tracer: tracerProvider.getTracer('logfire-browser-frustration'),
+            })
+          } catch (error) {
+            diag.error('logfire-browser: failed to start frustration reporting', error)
+            return undefined
+          }
+        })()
+      : undefined
 
   let cleanupPromise: Promise<void> | undefined
 
@@ -919,6 +1135,13 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
       }
 
       diag.info('logfire-browser: shutting down')
+      stopFrustration?.()
+      removeDocumentHideFlush()
+      removeNavigatedPageObserver?.()
+      removeGlobalErrorCapture?.()
+      if (logfireApiConfig.onReportError === onReportError) {
+        logfireApiConfig.onReportError = previousOnReportError
+      }
       if (sessionReplayHandle !== undefined) {
         await runCleanupStep('session replay shutdown', async () => sessionReplayHandle.stop())
       }
@@ -952,6 +1175,10 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
       }
 
       const cleanupError = firstCleanupError === undefined ? undefined : new Error(firstCleanupError.message, { cause: firstCleanupError })
+      // The wrapper repeats the message of a step that can run application code, such as a span processor.
+      if (cleanupError !== undefined && isSdkInternalError(firstCleanupError)) {
+        markSdkInternalError(cleanupError)
+      }
       settleProviderCleanup(generationToken, cleanupError)
       if (cleanupError !== undefined) {
         throw cleanupError
@@ -968,7 +1195,24 @@ export function configure(options: LogfireConfigOptions): BrowserConfigureHandle
       value: sessionReplayHandle,
     })
   }
+  recoveringExporter?.startRecovery().catch((error: unknown) => {
+    diag.warn('logfire-browser: trace recovery unavailable', error)
+  })
   return cleanup
+}
+
+/**
+ * Exports the spans that the active configuration has buffered, without waiting for the batch
+ * delay. Call it after a record that must arrive even if the page unloads soon after, such as the
+ * start or the end of a page-load measurement. The request leaves while the page is still alive, so
+ * the document-hide flush does not have to carry the record. Like that flush, it sends the newest
+ * spans first in a request small enough for `keepalive`, and the older spans in a second request.
+ * So the record leads even when the buffer holds a whole page load. The promise rejects when the
+ * export fails, so a caller that does not await it must catch the rejection. It resolves at once
+ * when no configuration is active.
+ */
+export async function forceFlush(): Promise<void> {
+  await forceFlushActiveProvider()
 }
 
 const defaultExport: {
@@ -983,6 +1227,7 @@ const defaultExport: {
   debug: typeof debug
   error: typeof error
   fatal: typeof fatal
+  forceFlush: typeof forceFlush
   info: typeof info
   instrument: typeof instrument
   getBrowserSessionId: typeof getBrowserSessionId
@@ -1008,6 +1253,7 @@ const defaultExport: {
   DiagLogLevel,
   error,
   fatal,
+  forceFlush,
   getBrowserSessionId,
   info,
   instrument,

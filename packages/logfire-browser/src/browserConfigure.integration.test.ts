@@ -1,13 +1,15 @@
 /**
  * @vitest-environment jsdom
  */
+import { gunzipSync } from 'node:zlib'
+
 import { diag } from '@opentelemetry/api'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-web'
-import { startSessionReplay } from '@pydantic/logfire-session-replay'
+import { CustomTag, ReplayUploadError, startSessionReplay } from '@pydantic/logfire-session-replay'
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test'
 
 import { clearConfiguredBrowserSessionForTests } from './browserSession'
-import { configure, startSpan } from './index'
+import { configure, forceFlush, info, reportError, startSpan } from './index'
 
 const originalFetch = globalThis.fetch
 const originalPerformanceObserver = globalThis.PerformanceObserver
@@ -51,6 +53,9 @@ const optionalFeatureMocks = vi.hoisted(() => {
     },
     registerWebVital(callback: (metric: unknown) => void) {
       webVitalCallback = callback
+    },
+    reportWebVital(metric: unknown) {
+      webVitalCallback?.(metric)
     },
     reset() {
       metricsStartupError = undefined
@@ -101,10 +106,14 @@ vi.mock('web-vitals/attribution', () => ({
   },
 }))
 
+const otlpExports = vi.hoisted((): string[][] => [])
+const otlpResult = vi.hoisted(() => ({ code: 0 }))
+
 vi.mock('@opentelemetry/exporter-trace-otlp-http', () => ({
   OTLPTraceExporter: class {
-    export(_spans: unknown, resultCallback: (result: { code: number }) => void): void {
-      resultCallback({ code: 0 })
+    export(spans: { name: string }[], resultCallback: (result: { code: number }) => void): void {
+      otlpExports.push(spans.map((span) => span.name))
+      resultCallback({ code: otlpResult.code })
     }
 
     async shutdown(): Promise<void> {
@@ -123,98 +132,249 @@ afterEach(() => {
   clearConfiguredBrowserSessionForTests()
   sessionStorage.clear()
   optionalFeatureMocks.reset()
+  otlpExports.length = 0
+  otlpResult.code = 0
   vi.restoreAllMocks()
 })
 
 describe('public browser configure startup ordering', () => {
-  it.each(['replay-first', 'auto-first'] as const)(
-    'suppresses every SDK endpoint with installed auto-instrumentation when %s',
-    async (order) => {
-      const rawFetch = vi.fn<typeof fetch>(async () =>
-        Promise.resolve(new Response('{}', { headers: { 'content-length': '2' }, status: 200 }))
-      )
-      Object.defineProperty(globalThis, 'fetch', { configurable: true, value: rawFetch, writable: true })
-      const exporter = new InMemorySpanExporter()
-      const events: string[] = []
-      let replayRuntime: ReturnType<typeof startSessionReplay> | undefined
-      let releaseReplayModule: (() => void) | undefined
-      const replayModuleGate = new Promise<void>((resolve) => {
-        releaseReplayModule = resolve
-      })
-      const replayModule = {
-        startSessionReplay(config: Parameters<typeof startSessionReplay>[0]) {
-          replayRuntime = startSessionReplay(config)
-          events.push('replay-ready')
-          return replayRuntime
-        },
-      }
-
-      const cleanup = configure({
-        autoInstrumentations: {
-          '@opentelemetry/instrumentation-document-load': { enabled: false },
-          '@opentelemetry/instrumentation-fetch': { enabled: true },
-          '@opentelemetry/instrumentation-user-interaction': { enabled: false },
-          '@opentelemetry/instrumentation-xml-http-request': { enabled: false },
-        },
-        metrics: {
-          metricReaderConfig: { exportIntervalMillis: 60_000, exportTimeoutMillis: 1_000 },
-          metricUrl: '/client-metrics',
-        },
-        sessionReplay: {
-          captureConsole: false,
-          captureNavigation: false,
-          captureNetwork: true,
-          flushIntervalMs: 60_000,
-          minSessionDurationMs: 0,
-          load: async () => {
-            if (order === 'auto-first') {
-              await replayModuleGate
-            }
-            return replayModule
-          },
-          replayUrl: '/client-replay',
-          sessionSampleRate: 1,
-        },
-        spanProcessors: [new SimpleSpanProcessor(exporter)],
-        traceUrl: '/client-traces',
-      })
-
-      try {
-        if (order === 'auto-first') {
-          await waitUntil(() => globalThis.fetch !== rawFetch)
-          events.push('auto-ready')
-          releaseReplayModule?.()
-          await waitUntil(() => replayRuntime !== undefined)
-        } else {
-          await waitUntil(() => replayRuntime !== undefined)
-          const replayFetch = globalThis.fetch
-          await waitUntil(() => globalThis.fetch !== replayFetch)
-          events.push('auto-ready')
-        }
-
-        expect(events).toEqual(order === 'auto-first' ? ['auto-ready', 'replay-ready'] : ['replay-ready', 'auto-ready'])
-        await globalThis.fetch('/api/application')
-        const exporterBypass = Reflect.get(globalThis.fetch, '__original') as typeof fetch
-        await exporterBypass('/client-traces')
-        await globalThis.fetch('/client-metrics')
-        await replayRuntime?.flush()
-        await delay(350)
-
-        const spans = exporter.getFinishedSpans()
-        expect(spans).toHaveLength(1)
-        expect(JSON.stringify(spans[0]?.attributes)).toContain('/api/application')
-        for (const endpoint of ['client-traces', 'client-metrics', 'client-replay']) {
-          expect(spans.some((span) => JSON.stringify(span.attributes).includes(endpoint))).toBe(false)
-        }
-        const issuedUrls = rawFetch.mock.calls.map(([input]) => fetchInputUrl(input))
-        expect(issuedUrls).toEqual(expect.arrayContaining(['http://localhost:3000/api/application', '/client-traces', '/client-metrics']))
-        expect(issuedUrls.some((url) => /^\/client-replay\/[^/?#]+\?seq=0$/u.test(url))).toBe(true)
-      } finally {
-        Object.defineProperty(globalThis, 'fetch', { configurable: true, value: rawFetch, writable: true })
-        await cleanup()
-      }
+  it('installs auto-instrumentation before configure returns and suppresses every SDK endpoint', async () => {
+    const rawFetch = vi.fn<typeof fetch>(async () =>
+      Promise.resolve(new Response('{}', { headers: { 'content-length': '2' }, status: 200 }))
+    )
+    Object.defineProperty(globalThis, 'fetch', { configurable: true, value: rawFetch, writable: true })
+    const exporter = new InMemorySpanExporter()
+    const events: string[] = []
+    let replayRuntime: ReturnType<typeof startSessionReplay> | undefined
+    const replayModule = {
+      startSessionReplay(config: Parameters<typeof startSessionReplay>[0]) {
+        replayRuntime = startSessionReplay(config)
+        events.push('replay-ready')
+        return replayRuntime
+      },
     }
-  )
+
+    const cleanup = configure({
+      autoInstrumentations: {
+        '@opentelemetry/instrumentation-document-load': { enabled: false },
+        '@opentelemetry/instrumentation-fetch': { enabled: true },
+        '@opentelemetry/instrumentation-user-interaction': { enabled: false },
+        '@opentelemetry/instrumentation-xml-http-request': { enabled: false },
+      },
+      metrics: {
+        metricReaderConfig: { exportIntervalMillis: 60_000, exportTimeoutMillis: 1_000 },
+        metricUrl: '/client-metrics',
+      },
+      sessionReplay: {
+        captureConsole: false,
+        captureNavigation: false,
+        captureNetwork: true,
+        flushIntervalMs: 60_000,
+        minSessionDurationMs: 0,
+        load: () => replayModule,
+        replayUrl: '/client-replay',
+        sessionSampleRate: 1,
+      },
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      expect(globalThis.fetch).not.toBe(rawFetch)
+      events.push('auto-ready')
+      await waitUntil(() => replayRuntime !== undefined)
+
+      expect(events).toEqual(['auto-ready', 'replay-ready'])
+      await globalThis.fetch('/api/application')
+      const exporterBypass = Reflect.get(globalThis.fetch, '__original') as typeof fetch
+      await exporterBypass('/client-traces')
+      await globalThis.fetch('/client-metrics')
+      await replayRuntime?.flush()
+      await delay(350)
+
+      const spans = exporter.getFinishedSpans()
+      expect(spans).toHaveLength(1)
+      expect(JSON.stringify(spans[0]?.attributes)).toContain('/api/application')
+      for (const endpoint of ['client-traces', 'client-metrics', 'client-replay']) {
+        expect(spans.some((span) => JSON.stringify(span.attributes).includes(endpoint))).toBe(false)
+      }
+      const issuedUrls = rawFetch.mock.calls.map(([input]) => fetchInputUrl(input))
+      expect(issuedUrls).toEqual(expect.arrayContaining(['http://localhost:3000/api/application', '/client-traces', '/client-metrics']))
+      expect(issuedUrls.some((url) => /^\/client-replay\/[^/?#]+\?seq=0$/u.test(url))).toBe(true)
+    } finally {
+      Object.defineProperty(globalThis, 'fetch', { configurable: true, value: rawFetch, writable: true })
+      await cleanup()
+    }
+  })
+
+  it.each(['handled', 'uncaught'] as const)('promotes an error-buffered replay once for a %s error', async (kind) => {
+    const replayFetch = vi.fn<typeof fetch>(async () => Promise.resolve(new Response(null, { status: 202 })))
+    let replayRuntime: ReturnType<typeof startSessionReplay> | undefined
+    const replayModule = {
+      startSessionReplay(config: Parameters<typeof startSessionReplay>[0]) {
+        replayRuntime = startSessionReplay(config)
+        return replayRuntime
+      },
+    }
+    const cleanup = configure({
+      sessionReplay: {
+        captureConsole: false,
+        captureNavigation: false,
+        captureNetwork: false,
+        fetchImpl: replayFetch,
+        flushIntervalMs: 60_000,
+        load: () => replayModule,
+        minSessionDurationMs: 0,
+        onErrorSampleRate: 1,
+        replayUrl: '/client-replay',
+        sessionSampleRate: 0,
+      },
+      spanProcessors: [new SimpleSpanProcessor(new InMemorySpanExporter())],
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      await waitUntil(() => replayRuntime !== undefined)
+      expect(replayRuntime?.mode).toBe('buffer')
+      const error = new Error(kind)
+      if (kind === 'handled') {
+        reportError('Handled error', error)
+      } else {
+        window.dispatchEvent(new ErrorEvent('error', { error, message: error.message }))
+      }
+      // The browser SDK reports an uncaught error after the dispatch, so the replay's own listener must not promote it first.
+      const modeAfterDispatch = replayRuntime?.mode
+      await delay(0)
+
+      expect(modeAfterDispatch).toBe(kind === 'handled' ? 'full' : 'buffer')
+      expect(replayRuntime?.mode).toBe('full')
+    } finally {
+      await cleanup()
+    }
+    // Shutdown uploads the promoted buffer.
+    const events = replayFetch.mock.calls.flatMap(([, init]) => decodeReplayEvents(init?.body))
+    const errorEvents = events.filter((event) => event.type === 5 && event.data?.tag === CustomTag.Error)
+    expect(errorEvents.map((event) => event.data?.payload?.message)).toEqual([kind])
+  })
+
+  it('promotes an error-buffered replay for an error reported before replay started', async () => {
+    const replayFetch = vi.fn<typeof fetch>(async () => Promise.resolve(new Response(null, { status: 202 })))
+    let replayRuntime: ReturnType<typeof startSessionReplay> | undefined
+    let releaseLoad!: () => void
+    const loadGate = new Promise<void>((resolve) => {
+      releaseLoad = resolve
+    })
+    const cleanup = configure({
+      sessionReplay: {
+        captureConsole: false,
+        captureNavigation: false,
+        captureNetwork: false,
+        fetchImpl: replayFetch,
+        flushIntervalMs: 60_000,
+        load: async () => {
+          await loadGate
+          return {
+            startSessionReplay(config: Parameters<typeof startSessionReplay>[0]) {
+              replayRuntime = startSessionReplay(config)
+              return replayRuntime
+            },
+          }
+        },
+        minSessionDurationMs: 0,
+        onErrorSampleRate: 1,
+        replayUrl: '/client-replay',
+        sessionSampleRate: 0,
+      },
+      spanProcessors: [new SimpleSpanProcessor(new InMemorySpanExporter())],
+      traceUrl: '/client-traces',
+    })
+    const reportedAt = Date.now()
+
+    try {
+      reportError('Startup failed', new Error('startup'))
+      releaseLoad()
+      await waitUntil(() => replayRuntime !== undefined)
+
+      expect(replayRuntime?.mode).toBe('full')
+    } finally {
+      await cleanup()
+    }
+    const events = replayFetch.mock.calls.flatMap(([, init]) => decodeReplayEvents(init?.body))
+    const errorEvents = events.filter((event) => event.type === 5 && event.data?.tag === CustomTag.Error)
+    expect(errorEvents.map((event) => event.data?.payload?.message)).toEqual(['startup'])
+    expect(errorEvents[0]?.data?.payload?.timestamp).toBeGreaterThanOrEqual(reportedAt)
+    expect(errorEvents[0]?.data?.payload?.timestamp).toBeLessThanOrEqual(errorEvents[0]?.timestamp ?? 0)
+  })
+
+  it('exports replay upload failures and dependent sequence gaps without recording payloads', async () => {
+    const exporter = new InMemorySpanExporter()
+    const onError = vi.fn<(error: unknown) => void>()
+    let replayConfig: Parameters<typeof startSessionReplay>[0] | undefined
+    const cleanup = configure({
+      sessionReplay: {
+        load: () => ({
+          startSessionReplay(config) {
+            replayConfig = config
+            return {
+              recording: true,
+              mode: 'full',
+              getSessionId: () => 'session',
+              flush: async () => Promise.resolve(),
+              stop: async () => Promise.resolve(),
+            }
+          },
+        }),
+        onError,
+        replayUrl: '/client-replay',
+      },
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+      traceUrl: '/client-traces',
+    })
+    try {
+      await waitUntil(() => replayConfig !== undefined)
+      const failure = new ReplayUploadError({
+        cause: new Error('private payload must not be exported'),
+        droppedSeqs: [8, 9],
+        reason: 'unconfirmed',
+        seq: 7,
+        sessionId: 'recording',
+        status: 503,
+      })
+      replayConfig?.onError?.(failure)
+      expect(onError).toHaveBeenCalledExactlyOnceWith(failure)
+      const failures = exporter.getFinishedSpans().filter((span) => span.attributes['replay.upload.reason'] === 'unconfirmed')
+      expect(failures).toHaveLength(1)
+      expect(failures[0]?.attributes).toMatchObject({
+        'logfire.sdk.internal': true,
+        'replay.recording_id': 'recording',
+        'replay.chunk.seq': 7,
+        'replay.upload.status_code': 503,
+        'replay.upload.dropped_seqs': '[8,9]',
+        'replay.upload.dependent_drop_count': 2,
+      })
+      expect(JSON.stringify(failures[0]?.attributes)).not.toContain('private payload')
+
+      // A full upload queue rejects the batch before it gets a sequence.
+      const rejected = new ReplayUploadError({
+        cause: new Error('replay upload queue is full'),
+        reason: 'not-sent',
+        seq: undefined,
+        sessionId: 'recording',
+      })
+      replayConfig?.onError?.(rejected)
+      expect(onError).toHaveBeenLastCalledWith(rejected)
+      const unsequenced = exporter.getFinishedSpans().filter((span) => span.attributes['replay.upload.reason'] === 'not-sent')
+      expect(unsequenced).toHaveLength(1)
+      expect(unsequenced[0]?.attributes['replay.chunk.seq']).toBeUndefined()
+      expect(unsequenced[0]?.attributes).toMatchObject({
+        'replay.recording_id': 'recording',
+        'replay.upload.dropped_seqs': '[]',
+        'replay.upload.dependent_drop_count': 0,
+      })
+    } finally {
+      await cleanup()
+    }
+  })
 
   it('keeps real span creation safe when the lazy replay runtime getters throw', async () => {
     const replayError = new Error('replay reporter failed')
@@ -331,6 +491,86 @@ describe('public browser configure startup ordering', () => {
     }
   })
 
+  it('keeps the document route when the application navigates before Web Vitals load', async () => {
+    const exporter = new InMemorySpanExporter()
+    let route = '/home'
+    history.replaceState({}, '', '/')
+    const cleanup = configure({
+      rum: { session: { getRouteName: () => route }, webVitals: true },
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      route = '/products/:id'
+      history.pushState({}, '', '/products/123')
+      await waitUntil(() => optionalFeatureMocks.hasWebVitalCallback)
+      await delay(0)
+      optionalFeatureMocks.reportWebVital({
+        attribution: { loadState: 'complete' },
+        delta: 1200,
+        entries: [],
+        id: 'document-lcp',
+        name: 'LCP',
+        navigationType: 'navigate',
+        navigationURL: `${location.origin}/`,
+        rating: 'good',
+        value: 1200,
+      })
+      const span = exporter.getFinishedSpans().find(({ name }) => name === 'web_vital.lcp')
+      expect(span?.attributes['logfire.page.url.path']).toBe('/')
+      expect(span?.attributes['logfire.page.route']).toBe('/home')
+    } finally {
+      await cleanup()
+      history.replaceState({}, '', '/')
+    }
+  })
+
+  it('keeps a soft navigation route that only the URL change observed', async () => {
+    const exporter = new InMemorySpanExporter()
+    const navigation = new EventTarget()
+    Object.defineProperty(globalThis, 'navigation', { configurable: true, value: navigation })
+    let route = '/home'
+    history.replaceState({}, '', '/')
+    const cleanup = configure({
+      rum: { session: { getRouteName: () => route }, webVitals: { reportSoftNavs: true } },
+      spanProcessors: [new SimpleSpanProcessor(exporter)],
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      const navigationStartTime = performance.now()
+      history.pushState({}, '', '/products/123')
+      navigation.dispatchEvent(new Event('currententrychange'))
+      route = '/products/:id'
+      await delay(0)
+      route = '/settings'
+      history.pushState({}, '', '/settings')
+      await waitUntil(() => optionalFeatureMocks.hasWebVitalCallback)
+      await delay(0)
+      optionalFeatureMocks.reportWebVital({
+        attribution: { loadState: 'complete' },
+        delta: 900,
+        entries: [],
+        id: 'soft-lcp',
+        name: 'LCP',
+        navigationId: 1,
+        navigationStartTime,
+        navigationType: 'soft-navigation',
+        navigationURL: `${location.origin}/products/123`,
+        rating: 'good',
+        value: 900,
+      })
+      const span = exporter.getFinishedSpans().find(({ name }) => name === 'web_vital.lcp')
+      expect(span?.attributes['logfire.page.url.path']).toBe('/products/123')
+      expect(span?.attributes['logfire.page.route']).toBe('/products/:id')
+    } finally {
+      await cleanup()
+      Reflect.deleteProperty(globalThis, 'navigation')
+      history.replaceState({}, '', '/')
+    }
+  })
+
   it('exports ranked Long Animation Frame spans through browser session context', async () => {
     let now = 0
     vi.spyOn(performance, 'now').mockImplementation(() => now)
@@ -416,6 +656,17 @@ async function waitUntilDeadline(predicate: () => boolean, deadline: number): Pr
   return waitUntilDeadline(predicate, deadline)
 }
 
+interface ReplayEvent {
+  data?: { payload?: { message?: string; timestamp?: number }; tag?: string }
+  timestamp?: number
+  type: number
+}
+
+function decodeReplayEvents(body: BodyInit | null | undefined): ReplayEvent[] {
+  const envelope = JSON.parse(gunzipSync(body as Uint8Array).toString('utf8')) as { events: ReplayEvent[] }
+  return envelope.events
+}
+
 async function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, milliseconds)
@@ -428,3 +679,85 @@ function fetchInputUrl(input: RequestInfo | URL): string {
   }
   return input instanceof URL ? input.href : input.url
 }
+
+describe('public browser forceFlush', () => {
+  it('exports a buffered record before the batch delay', async () => {
+    const cleanup = configure({
+      batchSpanProcessorConfig: { scheduledDelayMillis: 60_000 },
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      info('page load started')
+      expect(otlpExports).toEqual([])
+
+      await forceFlush()
+
+      expect(otlpExports).toEqual([['page load started']])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('sends the newest record first, apart from the older records', async () => {
+    const cleanup = configure({
+      batchSpanProcessorConfig: { documentHideKeepaliveBytes: 1, scheduledDelayMillis: 60_000 },
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      info('page load started')
+      info('resource loaded')
+      info('page load finished')
+
+      await forceFlush()
+
+      expect(otlpExports).toEqual([['page load finished'], ['page load started', 'resource loaded']])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('sends every record in one request when the exporter allows one request at a time', async () => {
+    const cleanup = configure({
+      batchSpanProcessorConfig: { documentHideKeepaliveBytes: 1, scheduledDelayMillis: 60_000 },
+      traceExporterConfig: { concurrencyLimit: 1 },
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      info('page load started')
+      info('page load finished')
+
+      await forceFlush()
+
+      expect(otlpExports).toEqual([['page load started', 'page load finished']])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('rejects when the export fails', async () => {
+    const cleanup = configure({
+      batchSpanProcessorConfig: { scheduledDelayMillis: 60_000 },
+      traceUrl: '/client-traces',
+    })
+
+    try {
+      info('page load started')
+      otlpResult.code = 1
+
+      // The tracer provider rejects with the error of each span processor that failed.
+      await expect(forceFlush()).rejects.toEqual([new Error('BatchSpanProcessor: span export failed')])
+    } finally {
+      otlpResult.code = 0
+      await cleanup()
+    }
+  })
+
+  it('resolves when no configuration is active', async () => {
+    await forceFlush()
+
+    expect(otlpExports).toEqual([])
+  })
+})

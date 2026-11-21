@@ -6,9 +6,17 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { startChromeDevTools } from './chrome-devtools-browser.mjs'
+
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const browserPackageName = '@pydantic/logfire-browser'
 const replayPackageName = '@pydantic/logfire-session-replay'
+// Subpath exports of the browser package and the function each one exports.
+const browserSubpaths = [
+  ['react-router', 'reactRouterRouteName'],
+  ['tanstack-router', 'tanStackRouterRouteName'],
+  ['vue-router', 'vueRouterRouteName'],
+]
 const toolVersions = {
   '@types/node': '22.19.5',
   typescript: '6.0.3',
@@ -239,6 +247,11 @@ function assertTarEntries(entries, name) {
     'package/dist/index.js',
     'package/package.json',
   ]
+  if (name === browserPackageName) {
+    for (const [subpath] of browserSubpaths) {
+      required.push(...['cjs', 'd.cts', 'd.ts', 'js'].map((extension) => `package/dist/${subpath}.${extension}`))
+    }
+  }
   for (const entry of required) {
     check(entries.includes(entry), `${name} tarball is missing ${entry}`)
   }
@@ -271,6 +284,13 @@ function assertManifest(manifest, name, expectedVersion, replayVersion) {
       `browser optional replay peer is ${String(replayPeer)}, expected ${[...acceptedReplayPeers].join(' or ')}`
     )
     check(manifest.peerDependenciesMeta?.[replayPackageName]?.optional === true, 'browser replay peer is not optional')
+    for (const [subpath] of browserSubpaths) {
+      const entry = manifest.exports?.[`./${subpath}`]
+      check(entry?.import?.default === `./dist/${subpath}.js`, `${name} ./${subpath} import export is incorrect`)
+      check(entry?.import?.types === `./dist/${subpath}.d.ts`, `${name} ./${subpath} import types export is incorrect`)
+      check(entry?.require?.default === `./dist/${subpath}.cjs`, `${name} ./${subpath} require export is incorrect`)
+      check(entry?.require?.types === `./dist/${subpath}.d.cts`, `${name} ./${subpath} require types export is incorrect`)
+    }
   }
 }
 
@@ -336,6 +356,14 @@ async function createConsumer(directory, dependencies, includeTooling) {
 
 async function writeNodeSmokeFiles(directory, includeReplay) {
   const rootLiteral = JSON.stringify(directory)
+  const consumerLiteral = JSON.stringify(includeReplay ? 'with-replay' : 'without-replay')
+  const subpathAssertions = browserSubpaths
+    .map(([subpath, exportName]) => {
+      const specifier = JSON.stringify(`${browserPackageName}/${subpath}`)
+      return `assert.equal(typeof (await import(${specifier})).${exportName}, 'function')
+resolutions.push({ consumer: ${consumerLiteral}, path: import.meta.resolve(${specifier}) })`
+    })
+    .join('\n')
   const replayAssertions = includeReplay
     ? `
 const replay = await import(${JSON.stringify(replayPackageName)})
@@ -352,7 +380,8 @@ import { realpath } from 'node:fs/promises'
 const browser = await import(${JSON.stringify(browserPackageName)})
 assert.equal(typeof browser.configure, 'function')
 assert.equal(typeof browser.getBrowserSessionId, 'function')
-const resolutions = [{ consumer: ${JSON.stringify(includeReplay ? 'with-replay' : 'without-replay')}, path: import.meta.resolve(${JSON.stringify(browserPackageName)}) }]
+const resolutions = [{ consumer: ${consumerLiteral}, path: import.meta.resolve(${JSON.stringify(browserPackageName)}) }]
+${subpathAssertions}
 ${replayAssertions}
 for (const item of resolutions) item.path = await realpath(new URL(item.path))
 console.log(JSON.stringify({ consumerRoot: ${rootLiteral}, resolutions }))
@@ -369,9 +398,21 @@ const browser = require(${JSON.stringify(browserPackageName)})
 const replay = require(${JSON.stringify(replayPackageName)})
 assert.equal(typeof browser.configure, 'function')
 assert.equal(typeof replay.startSessionReplay, 'function')
+${browserSubpaths
+  .map(
+    ([subpath, exportName]) =>
+      `assert.equal(typeof require(${JSON.stringify(`${browserPackageName}/${subpath}`)}).${exportName}, 'function')`
+  )
+  .join('\n')}
 console.log(JSON.stringify({ resolutions: [
   { consumer: 'with-replay', path: fs.realpathSync(require.resolve(${JSON.stringify(browserPackageName)})) },
-  { consumer: 'with-replay', path: fs.realpathSync(require.resolve(${JSON.stringify(replayPackageName)})) }
+  { consumer: 'with-replay', path: fs.realpathSync(require.resolve(${JSON.stringify(replayPackageName)})) },
+${browserSubpaths
+  .map(
+    ([subpath]) =>
+      `  { consumer: 'with-replay', path: fs.realpathSync(require.resolve(${JSON.stringify(`${browserPackageName}/${subpath}`)})) },`
+  )
+  .join('\n')}
 ] }))
 `
   )
@@ -385,6 +426,25 @@ const cleanup: () => Promise<void> = configure({ traceUrl: '/traces' })
 void cleanup
 void replay
 void startSessionReplay
+${browserSubpaths.map(([subpath, exportName]) => `import { ${exportName} } from ${JSON.stringify(`${browserPackageName}/${subpath}`)}`).join('\n')}
+const routeNames: (() => string | undefined)[] = [
+  reactRouterRouteName({ matchRoutes: () => null, routes: [] }),
+  tanStackRouterRouteName(() => undefined),
+  vueRouterRouteName(() => undefined),
+]
+void routeNames
+`
+  )
+  // A .cts file resolves the require condition, so it checks the .d.cts types.
+  await writeFile(
+    join(directory, 'types.cts'),
+    `${browserSubpaths.map(([subpath, exportName]) => `import ${exportName}Module = require(${JSON.stringify(`${browserPackageName}/${subpath}`)})`).join('\n')}
+const cjsRouteNames: (() => string | undefined)[] = [
+  reactRouterRouteNameModule.reactRouterRouteName({ matchRoutes: () => null, routes: [] }),
+  tanStackRouterRouteNameModule.tanStackRouterRouteName(() => undefined),
+  vueRouterRouteNameModule.vueRouterRouteName(() => undefined),
+]
+void cjsRouteNames
 `
   )
   await writeFile(
@@ -399,7 +459,7 @@ void startSessionReplay
           strict: true,
           target: 'ES2024',
         },
-        include: ['types.ts'],
+        include: ['types.ts', 'types.cts'],
       },
       null,
       2
@@ -420,43 +480,51 @@ async function verifyBrowserConsumers(fixtureSourceRoot, artifacts, options, roo
 
   const vp = join(consumerRoot, 'node_modules/.bin/vp')
   const receipts = {}
-  receipts.selfObservation = await runFixture({
-    commands,
-    config: join(fixtureRoot, 'self-observation/vite.config.ts'),
-    cwd: consumerRoot,
-    openUrl: 'http://127.0.0.1:4175/nested/page/',
-    port: 4175,
-    session: sessionName('self', options),
-    verify: [process.execPath, [join(fixtureRoot, 'self-observation/verify.mjs')]],
-    vp,
-    waitExpression: "['observing', 'failed'].includes(window.__logfireSelfObservation?.phase)",
-    cleanupExpression: '(async () => { await window.__logfireSelfObservation.cleanup() })()',
-  })
-  const privacy = await runPrivacyFixtures({
-    commands,
-    config: join(fixtureRoot, 'privacy-defaults/vite.config.ts'),
-    cwd: consumerRoot,
-    options,
-    verifyPath: join(fixtureRoot, 'privacy-defaults/verify.mjs'),
-    vp,
-  })
-  receipts.privacyDefault = privacy.default
-  receipts.privacyOptIn = privacy.optIn
-  commands.push(
-    run(join(consumerRoot, 'node_modules/.bin/tsc'), ['--project', join(fixtureRoot, 'optional-feature-api/tsconfig.json')], consumerRoot)
-      .record
-  )
-  receipts.optionalFeatureApi = await runFixture({
-    commands,
-    config: join(fixtureRoot, 'optional-feature-api/vite.config.ts'),
-    cwd: consumerRoot,
-    openUrl: 'http://127.0.0.1:4179/',
-    port: 4179,
-    session: sessionName('optional', options),
-    verify: [process.execPath, [join(fixtureRoot, 'optional-feature-api/verify.mjs')]],
-    vp,
-    waitExpression: "['complete', 'failed'].includes(window.__logfireOptionalFeatureApi?.phase)",
-  })
+  const browser = await startChromeDevTools()
+  try {
+    receipts.selfObservation = await runFixture({
+      browser,
+      commands,
+      config: join(fixtureRoot, 'self-observation/vite.config.ts'),
+      cwd: consumerRoot,
+      openUrl: 'http://127.0.0.1:4175/nested/page/',
+      port: 4175,
+      session: sessionName('self', options),
+      verify: [process.execPath, [join(fixtureRoot, 'self-observation/verify.mjs')]],
+      vp,
+      waitExpression: "['observing', 'failed'].includes(window.__logfireSelfObservation?.phase)",
+      cleanupExpression: '(async () => { await window.__logfireSelfObservation.cleanup() })()',
+    })
+    const privacy = await runPrivacyFixtures({
+      browser,
+      commands,
+      config: join(fixtureRoot, 'privacy-defaults/vite.config.ts'),
+      cwd: consumerRoot,
+      options,
+      verifyPath: join(fixtureRoot, 'privacy-defaults/verify.mjs'),
+      vp,
+    })
+    receipts.privacyDefault = privacy.default
+    receipts.privacyOptIn = privacy.optIn
+    commands.push(
+      run(join(consumerRoot, 'node_modules/.bin/tsc'), ['--project', join(fixtureRoot, 'optional-feature-api/tsconfig.json')], consumerRoot)
+        .record
+    )
+    receipts.optionalFeatureApi = await runFixture({
+      browser,
+      commands,
+      config: join(fixtureRoot, 'optional-feature-api/vite.config.ts'),
+      cwd: consumerRoot,
+      openUrl: 'http://127.0.0.1:4179/',
+      port: 4179,
+      session: sessionName('optional', options),
+      verify: [process.execPath, [join(fixtureRoot, 'optional-feature-api/verify.mjs')]],
+      vp,
+      waitExpression: "['complete', 'failed'].includes(window.__logfireOptionalFeatureApi?.phase)",
+    })
+  } finally {
+    await browser.close()
+  }
   return { commands, receipts }
 }
 
@@ -520,7 +588,7 @@ async function copyFixture(sourceRoot, destinationRoot, name) {
   }
 }
 
-async function runFixture({ cleanupExpression, commands, config, cwd, openUrl, port, session, verify, vp, waitExpression }) {
+async function runFixture({ browser, cleanupExpression, commands, config, cwd, openUrl, port, session, verify, vp, waitExpression }) {
   const server = startFixtureServer(vp, config, port, cwd)
   let output = ''
   server.stdout.on('data', (chunk) => {
@@ -531,21 +599,13 @@ async function runFixture({ cleanupExpression, commands, config, cwd, openUrl, p
   })
   try {
     await waitForServer(`http://127.0.0.1:${String(port)}/`, server, () => output)
-    commands.push(run('agent-browser', ['--session', session, 'open', openUrl], cwd).record)
-    commands.push(run('agent-browser', ['--session', session, 'wait', '--fn', waitExpression], cwd).record)
-    const verified = run(verify[0], verify[1], cwd)
-    commands.push(verified.record)
-    if (cleanupExpression !== undefined) {
-      commands.push(run('agent-browser', ['--session', session, 'eval', cleanupExpression], cwd).record)
-    }
-    return parseJsonOutput(verified.stdout, `${session} verifier`)
+    return await runBrowserScenario({ browser, cleanupExpression, commands, cwd, openUrl, session, verify, waitExpression })
   } finally {
-    runAllowFailure('agent-browser', ['--session', session, 'close'], cwd)
     await stopProcessTree(server)
   }
 }
 
-async function runPrivacyFixtures({ commands, config, cwd, options, verifyPath, vp }) {
+async function runPrivacyFixtures({ browser, commands, config, cwd, options, verifyPath, vp }) {
   const port = 4178
   const server = startFixtureServer(vp, config, port, cwd)
   let output = ''
@@ -557,7 +617,8 @@ async function runPrivacyFixtures({ commands, config, cwd, options, verifyPath, 
   })
   try {
     await waitForServer(`http://127.0.0.1:${String(port)}/`, server, () => output)
-    const defaultReceipt = runBrowserScenario({
+    const defaultReceipt = await runBrowserScenario({
+      browser,
       commands,
       cwd,
       openUrl: 'http://127.0.0.1:4178/default/?page_secret=default-page-secret#default-fragment-secret',
@@ -566,7 +627,8 @@ async function runPrivacyFixtures({ commands, config, cwd, options, verifyPath, 
       waitExpression: "['complete', 'failed'].includes(window.__logfirePrivacyDefaults?.phase)",
     })
     await new Promise((resolve_) => setTimeout(resolve_, 1_000))
-    const optInReceipt = runBrowserScenario({
+    const optInReceipt = await runBrowserScenario({
+      browser,
       commands,
       cwd,
       openUrl: 'http://127.0.0.1:4178/opt-in/?page_secret=opt-in-page-secret#opt-in-fragment-secret',
@@ -580,19 +642,28 @@ async function runPrivacyFixtures({ commands, config, cwd, options, verifyPath, 
   }
 }
 
-function runBrowserScenario({ cleanupExpression, commands, cwd, openUrl, session, verify, waitExpression }) {
+async function runBrowserScenario({ browser, cleanupExpression, commands, cwd, openUrl, session, verify, waitExpression }) {
+  const page = await browser.openPage(session, openUrl)
+  commands.push(browserRecord(cwd, 'new_page', session, openUrl))
   try {
-    commands.push(run('agent-browser', ['--session', session, 'open', openUrl], cwd).record)
-    commands.push(run('agent-browser', ['--session', session, 'wait', '--fn', waitExpression], cwd).record)
+    await page.waitFor(waitExpression)
+    commands.push(browserRecord(cwd, 'evaluate_script', session, `wait for ${waitExpression}`))
     const verified = run(verify[0], verify[1], cwd)
     commands.push(verified.record)
     if (cleanupExpression !== undefined) {
-      commands.push(run('agent-browser', ['--session', session, 'eval', cleanupExpression], cwd).record)
+      await page.evaluate(`async () => await (${cleanupExpression})`)
+      commands.push(browserRecord(cwd, 'evaluate_script', session, cleanupExpression))
     }
     return parseJsonOutput(verified.stdout, `${session} verifier`)
   } finally {
-    commands.push(run('agent-browser', ['--session', session, 'close'], cwd).record)
+    await page.close()
+    commands.push(browserRecord(cwd, 'close_page', session))
   }
+}
+
+// Evidence records keep the shape of the command records that run() returns.
+function browserRecord(cwd, tool, ...arguments_) {
+  return { args: [tool, ...arguments_], command: 'chrome-devtools-mcp', cwd: relative(repositoryRoot, cwd) || '.', status: 0 }
 }
 
 function startFixtureServer(vp, config, port, cwd) {
@@ -624,14 +695,20 @@ async function waitForServer(url, process_, output) {
 }
 
 async function stopProcessTree(process_) {
-  if (process_.exitCode !== null) {
+  if (hasExited(process_)) {
     return
   }
   signalProcessTree(process_, 'SIGTERM')
   await Promise.race([new Promise((resolve_) => process_.once('exit', resolve_)), new Promise((resolve_) => setTimeout(resolve_, 5_000))])
-  if (process_.exitCode === null) {
+  if (!hasExited(process_)) {
     signalProcessTree(process_, 'SIGKILL')
   }
+}
+
+// A process that a signal ends keeps a null exitCode. Signalling its empty
+// process group again fails with EPERM on macOS.
+function hasExited(process_) {
+  return process_.exitCode !== null || process_.signalCode !== null
 }
 
 function signalProcessTree(process_, signal) {
@@ -714,13 +791,12 @@ function equalSourceStates(left, right) {
 }
 
 function run(executable, arguments_, cwd, options = {}) {
-  const timeout = basenameForError(executable) === 'agent-browser' ? 60_000 : 10 * 60_000
   const result = spawnSync(executable, arguments_, {
     cwd,
     encoding: 'utf8',
     env: options.env ?? { ...process.env, CI: 'true' },
     maxBuffer: 32 * 1024 * 1024,
-    timeout,
+    timeout: 10 * 60_000,
   })
   if (result.error !== undefined || result.status !== 0) {
     throw new Error(
@@ -749,10 +825,6 @@ async function runNodeSmoke(filename, cwd) {
       env: { CI: 'true' },
     }
   )
-}
-
-function runAllowFailure(executable, arguments_, cwd) {
-  return spawnSync(executable, arguments_, { cwd, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 })
 }
 
 function runBytes(executable, arguments_, cwd) {

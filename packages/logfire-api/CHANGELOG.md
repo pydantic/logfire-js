@@ -1,5 +1,102 @@
 # @pydantic/logfire-api
 
+## 0.26.2
+
+### Patch Changes
+
+- 134b53b: Treat a blank `LOGFIRE_BASE_URL` as unset, so the base URL falls back to local credentials or the token's region instead of becoming empty
+
+## 0.26.1
+
+### Patch Changes
+
+- 3a779ab: Report a timeout or dropped connection while reading a platform API response as a timeout or failed request, not as invalid JSON.
+- 1545bce: Fix equality evaluators accepting objects with different enumerable keys when the corresponding values are undefined.
+- 1cee829: Keep `reportError` and `span` from throwing when an error's `message`, `name` or `stack` getter throws, so the span still ends with an error status and the original error is rethrown.
+- 35edb41: Stop a throwing tail sampling callback from failing the application code that started or ended the span. The error goes to `diag.error` and that span makes no sampling decision.
+- 3f486ec: Read a token's region from its prefix, so a token whose suffix format this version does not recognise still goes to its own region instead of silently falling back to US.
+
+## 0.26.0
+
+### Minor Changes
+
+- d967f55: Let a consumer of browser telemetry separate SDK failures from application errors without matching message text.
+  
+  Exception spans for errors that `@pydantic/logfire-browser` and `@pydantic/logfire-session-replay` raise about themselves now carry `logfire.sdk.internal = true`, whether the error reaches `reportError()` through global error capture or through the application's `sessionReplay.onError` callback. A failing `span()` or `instrument()` callback that throws such an error is marked too, and so is the `Session replay upload was not confirmed` log. Errors from application code carry no attribute, including an error that an application callback throws into the SDK.
+
+## 0.25.1
+
+### Patch Changes
+
+- 6ab7b5a: Require zod 4.6.6 or later. Earlier versions validate every element of an oversized constrained collection before checking its bounds, so a large input can exhaust memory ([GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)).
+
+## 0.25.0
+
+### Minor Changes
+
+- b0fa53a: Record which build produced each exception, so Logfire can resolve minified and bundled stack traces to original source.
+  
+  - Exception spans and their `exception` events carry `logfire.debug_ids`, a JSON string mapping each file URL in the stack to the debug ID that a source map inject step registered in `globalThis._logfireDebugIds` (or the vendor-neutral `globalThis._debugIds`). This covers `reportError()`, failing `span()` and `instrument()` callbacks, browser global error and unhandled rejection handlers, Node process hooks, and exceptions that instrumentations record. Without a registered debug ID, spans are unchanged. `logfire` exports `DebugIdSpanProcessor` for custom tracer providers.
+  - When `serviceVersion` is not set, the browser, Node and Workers SDKs use the release identifier the inject step stamped into the bundle (`globalThis._logfireRelease`). Source map resolution needs a real per-build version, such as the commit SHA or release tag. The browser's `0.0.1` fallback is deprecated and is removed in the next major version.
+  - `@pydantic/logfire-node` adds `enableSourceMaps`, which calls `process.setSourceMapsEnabled(true)` so a service that ships `.map` files next to its code records stack traces with original files and lines, without uploading maps. Do not combine it with `source-map-support`.
+
+## 0.24.0
+
+### Minor Changes
+
+- fa16e89: Let applications declare attribute keys that scrubbing leaves alone.
+  
+  Scrubbing checks attribute values as well as keys and runs on every exported span, including spans created with the OpenTelemetry tracer directly. An application that records code-defined labels, such as a step name containing `auth` or `session`, had them redacted, and the only way around it was a `callback` that kept each match.
+  
+  The `scrubbing` option now accepts `safeKeys` (exact attribute keys) and `safeKeyPrefixes` (key prefixes such as `app.checkout.`). Neither the key nor the value of a matching top-level attribute is scrubbed, on span, span event, span link and log record attributes, in message template fields, and in the attributes passed to the API helpers. Nested keys, span status messages and log bodies are still scrubbed. An empty prefix is rejected, since it would exempt every key. The browser SDK forwards both options and keeps exempting its own session and URL attributes.
+
+## 0.23.4
+
+### Patch Changes
+
+- 1d7eaf5: Require dependency versions that are free of known security advisories. `@pydantic/logfire-node` now needs `@opentelemetry/auto-instrumentations-node` 0.79.0 or later, because earlier releases bundle database instrumentations that record the database username in `db.user` on every span (GHSA for pg, mysql, mysql2, knex, mongoose, tedious, oracledb, and cassandra-driver). `logfire` now needs `handlebars` 4.7.10 or later, so dependency scanners no longer flag the 4.7.9 advisories.
+
+## 0.23.3
+
+### Patch Changes
+
+- 93e84cf: Apply scrubbing to every exported span, not only to the attributes passed to `logfire.span`, `logfire.info`, and the other API helpers. Spans from automatic instrumentation, attributes set after a span starts, span event attributes, span link attributes, span status messages, and Node.js log records are now scrubbed before export. Cloudflare Workers tail mode (`instrumentTail`) now scrubs too and accepts the `scrubbing` option.
+  
+  Exception messages are now scrubbed consistently. Before, the `exception.message` attribute could be redacted while the same message stayed in the exception event, the span status, and the first line of the stack trace. The message and `Caused by` lines of `exception.stacktrace` are now scrubbed too; stack frame lines are kept.
+  
+  In the browser, values of custom session attributes (`logfire.session.*`) are scrubbed too, matching only the application's own attribute name against the patterns. `configureFrontend` now removes query strings and fragments from every attribute whose key ends in `.url` (such as `web_vital.lcp.url`) and from the URLs in exception stack traces. Session replay applies `redactUrlPatterns` to error messages, sources, and stacks, and to console arguments, and `sessionReplay.captureGlobalErrors` is passed to the replay recorder when browser global error capture is off.
+
+## 0.23.2
+
+### Patch Changes
+
+- 3374365: Stop a `Contains` mismatch reason from failing or flattening on a value `JSON.stringify` cannot represent.
+  
+  `truncatedRepr` read `.length` off the result outside its own try, so an output property whose
+  value is `undefined` reported an evaluator failure instead of the mismatch it had found. A `BigInt`
+  anywhere in the output threw, and the `String(value)` fallback rendered the whole object as
+  `[object Object]`, losing every other field. Both now go through `attributeJsonReplacer`, the same
+  replacer the attribute seam applies.
+- 348e8d5: Scrub OAuth-style token names (`access_token`, `refresh_token`, `id_token`, `bearer_token`), `logfire_token`, `passphrase`, `signing_key`, `hmac_key`, and Logfire token values (`pylf_v1_...`) from attributes by default, matching the Python SDK's default scrubbing patterns. camelCase keys such as `userIdToken` are scrubbed too. As in the Python SDK, string values that contain these phrases are also redacted, so a message like `'Failed to refresh access token'` is now scrubbed. A bare `token` and LLM usage fields such as `max_tokens` are still left alone.
+
+## 0.23.1
+
+### Patch Changes
+
+- b85bf8c: Fix fresh installs failing with `ERESOLVE` since the OpenTelemetry JS 3.0 release. The OpenTelemetry dependency ranges now stop before `@opentelemetry/api` 1.10, `@opentelemetry/auto-instrumentations-node` 0.82, `@opentelemetry/auto-instrumentations-web` 0.69 and `@opentelemetry/instrumentation-user-interaction` 0.68, which require the 3.0 line. A new install resolves to the 1.9 / 2.x / 0.2xx line again. Support for OpenTelemetry JS 3.0 will follow in a later release.
+
+## 0.23.0
+
+### Minor Changes
+
+- 9b493c5: Keep spans of a dropped trace out of the export when they start after the trace was dropped. Tail sampling exported such a span unconditionally, so a healthy trace whose root ended early, such as a click whose handler ran after the click span ended, leaked its later spans. Such a span is now buffered and exported only when it, or a span after it, meets the sampling criteria. `logfireApiConfig.onReportError` is a new hook that receives the original error of every `reportError()` call; the browser SDK uses it to connect reported errors to session replay.
+
+## 0.22.10
+
+### Patch Changes
+
+- d0c4d99: Require `js-yaml` 4.3.2 or newer so YAML datasets loaded through `logfire/evals` get the fix that bounds CPU use for crafted merge keys (GHSA-2883-xcg3-v3hh).
+
 ## 0.22.9
 
 ### Patch Changes

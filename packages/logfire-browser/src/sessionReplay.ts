@@ -1,6 +1,7 @@
 import { diag } from '@opentelemetry/api'
+import { ATTRIBUTES_SDK_INTERNAL_KEY, markSdkInternalError, warning } from 'logfire'
 
-import type { BrowserSessionManager } from './browserSession'
+import type { BrowserSessionManager, BrowserUser } from './browserSession'
 import type { BrowserMetricsOptions } from './browserMetrics'
 import { assertBrowserReplayUrl, createTelemetryUrlPatterns } from './telemetryUrls'
 
@@ -11,16 +12,34 @@ export type MaybePromise<T> = T | Promise<T>
 export interface BrowserSessionReplayRuntime {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
+  /** Absent from replay packages older than 0.9. */
+  readonly uploading?: boolean | undefined
   getSessionId(): string
+  /** Absent from replay packages older than 0.6. */
+  captureError?(error: unknown, options?: { timestamp?: number }): void
+  /** Present in replay packages that separate a DOM recording from its RUM session. */
+  getRecordingId?(): string
   flush(): Promise<void>
-  stop(): Promise<void>
+  /** Replay packages without `start()` ignore `discard` and upload buffered events. */
+  stop(options?: BrowserSessionReplayStopOptions): Promise<void>
+}
+
+export interface BrowserSessionReplayStopOptions {
+  /**
+   * Drop buffered events and queued chunks instead of uploading them, for withdrawn consent. A
+   * request already on the wire completes. An older replay package without `start()` ignores it.
+   */
+  discard?: boolean
 }
 
 export interface BrowserSessionReplayControl {
   readonly recording: boolean
   readonly mode: 'full' | 'buffer' | 'off'
+  readonly uploading?: boolean | undefined
+  captureError(error: unknown, options?: { timestamp?: number }): void
+  getRecordingId?(): string
   flush(): Promise<void>
-  stop(): Promise<void>
+  stop(options?: BrowserSessionReplayStopOptions): Promise<void>
 }
 
 export interface BrowserSessionReplayPackageConfig {
@@ -33,6 +52,7 @@ export interface BrowserSessionReplayPackageConfig {
   onErrorSampleRate?: number
   maskAllText?: boolean
   maskAllInputs?: boolean
+  maskAllImages?: boolean
   maskTextSelector?: string
   blockSelector?: string
   flushIntervalMs?: number
@@ -43,11 +63,15 @@ export interface BrowserSessionReplayPackageConfig {
   distinctId?: string
   /** Explicit live replay identity. This takes precedence over rum.session.getUser. */
   getDistinctId?: () => string | undefined
+  /** Current user snapshotted into each replay chunk. The browser SDK passes rum.session.getUser. */
+  getUser?: () => BrowserUser | undefined
   captureConsole?: boolean
   captureNetwork?: boolean
   captureNavigation?: boolean
+  captureGlobalErrors?: boolean
   ignoreUrlPatterns?: RegExp[]
   redactUrlPatterns?: RegExp[]
+  transformUrl?: (url: string) => string
   onError?: (error: unknown) => void
   fetchImpl?: typeof fetch
 }
@@ -82,12 +106,24 @@ export interface BrowserSessionReplayOptions {
    * Only restricted frontend application tokens are safe in browsers.
    */
   token?: string | (() => MaybePromise<string>)
+  /**
+   * Load and start replay with the rest of the SDK. Defaults to true. With
+   * `false`, replay is not loaded, records nothing, and keeps no reported
+   * errors until `sessionReplay.start()` is called on the configure handle, for
+   * example after the user consents to replay.
+   */
+  autoStart?: boolean
 
   sessionSampleRate?: number
   onErrorSampleRate?: number
 
   maskAllText?: boolean
   maskAllInputs?: boolean
+  /**
+   * Replace recorded image sources with a placeholder before upload. Defaults to the value of
+   * `maskAllText`. An older replay package ignores it and records image URLs.
+   */
+  maskAllImages?: boolean
   maskTextSelector?: string
   blockSelector?: string
 
@@ -104,8 +140,19 @@ export interface BrowserSessionReplayOptions {
   captureConsole?: boolean
   captureNetwork?: boolean
   captureNavigation?: boolean
+  /**
+   * Whether the replay recorder installs its own uncaught error listeners. Browser global error
+   * capture replaces them with forwarded errors, so this only applies when that capture is off.
+   */
+  captureGlobalErrors?: boolean
   ignoreUrlPatterns?: RegExp[]
   redactUrlPatterns?: RegExp[]
+  /**
+   * Rewrites each replay page, navigation, network, and DOM attribute URL after
+   * `redactUrlPatterns` has removed its query and fragment, for example to
+   * replace a token or email in the path.
+   */
+  transformUrl?: (url: string) => string
 
   onError?: (error: unknown) => void
   fetchImpl?: typeof fetch
@@ -116,6 +163,7 @@ export type BrowserSessionReplaySpanMode = 'full' | 'buffer'
 export interface BrowserSessionReplaySpanState {
   active: true
   mode: BrowserSessionReplaySpanMode
+  recordingId?: string
 }
 
 export class BrowserSessionReplayState {
@@ -134,12 +182,27 @@ export class BrowserSessionReplayState {
     if (this.replay?.recording !== true || (mode !== 'full' && mode !== 'buffer')) {
       return undefined
     }
+    // A full recording can end before its minimum duration and upload nothing. Only full spans
+    // link to a replay, so buffer spans stay marked.
+    if (mode === 'full' && this.replay.uploading === false) {
+      return undefined
+    }
 
-    return { active: true, mode }
+    const recordingId = this.replay.getRecordingId?.()
+    // A new recorder has no recording id during rotation. Do not link spans
+    // from the new RUM session to the recorder that is still shutting down.
+    if (recordingId?.length === 0) {
+      return undefined
+    }
+    return { active: true, mode, ...(recordingId === undefined ? {} : { recordingId }) }
   }
 }
 
 interface BrowserSessionReplayTelemetryOptions {
+  /** The browser SDK captures global errors and forwards them through `captureError()`. */
+  capturesGlobalErrors?: boolean
+  /** Whether replay was stopped while the package loaded, in which case it must not start. */
+  isStopped?: () => boolean
   metricUrl?: BrowserMetricsOptions['metricUrl'] | undefined
   traceUrl: string
 }
@@ -162,10 +225,13 @@ export async function startBrowserSessionReplay(
     browserSessionManager.touch()
     const initialSessionId = browserSessionManager.peekSessionId()
     if (initialSessionId === undefined) {
-      throw new Error('logfire-browser: sessionReplay requires an active browser session id')
+      throw markSdkInternalError(new Error('logfire-browser: sessionReplay requires an active browser session id'))
     }
 
     const replayModule = await options.load()
+    if (telemetryOptions.isStopped?.() === true) {
+      return undefined
+    }
     const replayConfig = createReplayConfig(options, browserSessionManager, telemetryOptions)
     const replay = replayModule.startSessionReplay(replayConfig)
     const wrappedReplay = wrapReplayRuntime(replay, replayState, options.onError)
@@ -188,7 +254,8 @@ function createReplayConfig(
   telemetryOptions: BrowserSessionReplayTelemetryOptions
 ): BrowserSessionReplayPackageConfig {
   const config: BrowserSessionReplayPackageConfig = {
-    getSessionId: () => browserSessionManager.peekSessionId(),
+    // getSession() applies the idle timeout, so an idle tab rotates its replay with its RUM session.
+    getSessionId: () => browserSessionManager.getSession().id,
     getSessionAttributes: () => browserSessionManager.peekSessionAttributes() ?? {},
     ignoreUrlPatterns: [
       ...createTelemetryUrlPatterns([
@@ -219,6 +286,9 @@ function createReplayConfig(
   if (options.maskAllInputs !== undefined) {
     config.maskAllInputs = options.maskAllInputs
   }
+  if (options.maskAllImages !== undefined) {
+    config.maskAllImages = options.maskAllImages
+  }
   if (options.maskTextSelector !== undefined) {
     config.maskTextSelector = options.maskTextSelector
   }
@@ -239,9 +309,8 @@ function createReplayConfig(
   }
   if (options.getDistinctId !== undefined) {
     config.getDistinctId = options.getDistinctId
-  } else {
-    config.getDistinctId = () => browserSessionManager.getUser()?.id
   }
+  config.getUser = () => browserSessionManager.getUser()
   if (options.captureConsole !== undefined) {
     config.captureConsole = options.captureConsole
   }
@@ -251,19 +320,61 @@ function createReplayConfig(
   if (options.captureNavigation !== undefined) {
     config.captureNavigation = options.captureNavigation
   }
+  if (telemetryOptions.capturesGlobalErrors === true) {
+    config.captureGlobalErrors = false
+  } else if (options.captureGlobalErrors !== undefined) {
+    config.captureGlobalErrors = options.captureGlobalErrors
+  }
   if (options.redactUrlPatterns !== undefined) {
     config.redactUrlPatterns = options.redactUrlPatterns
   }
-  if (options.onError !== undefined) {
-    config.onError = (error) => {
-      safeReportError(options.onError, error)
+  if (options.transformUrl !== undefined) {
+    config.transformUrl = options.transformUrl
+  }
+  config.onError = (error) => {
+    // Keep the recorder optional: inspect its public error shape without a runtime
+    // import that would eagerly bundle rrweb. Do not include the payload or cause.
+    try {
+      if (error instanceof Error && error.name === 'ReplayUploadError' && 'reason' in error && 'sessionId' in error && 'seq' in error) {
+        warning('Session replay upload was not confirmed', {
+          [ATTRIBUTES_SDK_INTERNAL_KEY]: true,
+          'replay.upload.reason': error.reason,
+          'replay.recording_id': error.sessionId,
+          'replay.chunk.seq': error.seq,
+          'replay.upload.status_code': 'status' in error ? error.status : undefined,
+          'replay.upload.dropped_seqs': 'droppedSeqs' in error ? error.droppedSeqs : [],
+          'replay.upload.dependent_drop_count': 'droppedSeqs' in error && Array.isArray(error.droppedSeqs) ? error.droppedSeqs.length : 0,
+        })
+      }
+    } catch {
+      // Telemetry and hostile error getters must not prevent the application's callback.
     }
+    safeReportError(options.onError, error)
   }
   if (options.fetchImpl !== undefined) {
     config.fetchImpl = options.fetchImpl
   }
 
   return config
+}
+
+/**
+ * Keeps only the message and stack that replay records, so an error held until replay starts does
+ * not retain the reported value.
+ */
+export function snapshotErrorForReplay(error: unknown): unknown {
+  if (typeof error !== 'object' || error === null) {
+    return error
+  }
+  try {
+    const { message, stack } = error as { message?: unknown; stack?: unknown }
+    return {
+      ...(typeof message === 'string' ? { message } : {}),
+      ...(typeof stack === 'string' ? { stack } : {}),
+    }
+  } catch {
+    return {}
+  }
 }
 
 function safeReportError(onError: ((error: unknown) => void) | undefined, error: unknown): void {
@@ -287,7 +398,20 @@ function wrapReplayRuntime(
   onError: ((error: unknown) => void) | undefined
 ): BrowserSessionReplayControl {
   let stopPromise: Promise<void> | undefined
+  const getRecordingId = replay.getRecordingId?.bind(replay)
   return {
+    ...(getRecordingId === undefined
+      ? {}
+      : {
+          getRecordingId: () => {
+            try {
+              return getRecordingId()
+            } catch (error) {
+              safeReportError(onError, error)
+              return ''
+            }
+          },
+        }),
     get mode() {
       try {
         return replay.mode
@@ -304,6 +428,25 @@ function wrapReplayRuntime(
         return false
       }
     },
+    get uploading() {
+      try {
+        return replay.uploading
+      } catch (error) {
+        safeReportError(onError, error)
+        return false
+      }
+    },
+    captureError: (error, options) => {
+      try {
+        if (options === undefined) {
+          replay.captureError?.(error)
+        } else {
+          replay.captureError?.(error, options)
+        }
+      } catch (captureError) {
+        safeReportError(onError, captureError)
+      }
+    },
     flush: async () => {
       try {
         await replay.flush()
@@ -311,16 +454,22 @@ function wrapReplayRuntime(
         safeReportError(onError, error)
       }
     },
-    stop: async () => {
-      stopPromise ??= (async () => {
+    stop: async (options) => {
+      const stopReplay = async (): Promise<void> => {
         try {
-          await replay.stop()
+          await (options === undefined ? replay.stop() : replay.stop(options))
         } catch (error) {
           safeReportError(onError, error)
         } finally {
           replayState.clear()
         }
-      })()
+      }
+      if (stopPromise === undefined) {
+        stopPromise = stopReplay()
+      } else if (options?.discard === true) {
+        // A discard can follow a graceful stop that is still uploading.
+        await stopReplay()
+      }
       return stopPromise
     },
   }

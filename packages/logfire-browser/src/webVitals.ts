@@ -16,6 +16,8 @@ import type { BrowserSessionManager } from './browserSession'
 import { normalizeScriptEntry } from './scriptAttributes'
 
 import { setOwn } from './ownRecord'
+import { generateStableSelector } from './webVitalSelector'
+import { generateDefaultTarget, generateStableDefaultTarget, splitWebVitalTarget } from './webVitalTarget'
 
 const LOGFIRE_SPAN_TYPE_KEY = 'logfire.span_type'
 const ATTR_LOGFIRE_PAGE_ROUTE = 'logfire.page.route'
@@ -35,8 +37,20 @@ export interface BrowserWebVitalsOptions {
   reportSoftNavs?: boolean
   /**
    * Customize how DOM targets are stringified by `web-vitals/attribution`.
+   * Defaults to `component:<name>` for an element that has, or is inside an
+   * element that has, a `data-logfire-component` attribute. A function that
+   * returns `undefined` falls back to the CSS selector that `web-vitals`
+   * generates, so `() => undefined` reports that selector for every element.
    */
   generateTarget?: (element: Node | null) => string | undefined
+  /**
+   * Leave ids that a framework generates at render time, such as a React
+   * `useId` id, out of the CSS selector of a target. It applies where the
+   * target is a selector: an element with no component name, and an element
+   * for which `generateTarget` returns `undefined`. A selector with no
+   * generated id in it does not change. Defaults to false.
+   */
+  stableSelectors?: boolean
   /**
    * Whether INP attribution should include processed event entries internally.
    * Defaults to false to reduce memory pressure; entries are not exported as
@@ -84,6 +98,7 @@ interface ObserverOptions {
   includeProcessedEventEntries: boolean
   reportAllChanges: boolean | undefined
   reportSoftNavs: boolean | undefined
+  stableSelectors: boolean
 }
 
 interface ReportOptionSource {
@@ -91,6 +106,7 @@ interface ReportOptionSource {
   includeProcessedEventEntries?: boolean | undefined
   reportAllChanges?: boolean | undefined
   reportSoftNavs?: boolean | undefined
+  stableSelectors?: boolean | undefined
 }
 
 function createHandle(
@@ -136,6 +152,17 @@ function setPrimitiveAttribute(attributes: Attributes, key: string, value: unkno
   }
 }
 
+function resolveGenerateTarget(options: ReportOptionSource): NonNullable<BrowserWebVitalsOptions['generateTarget']> {
+  const { generateTarget } = options
+  if (generateTarget === undefined) {
+    return options.stableSelectors === true ? generateStableDefaultTarget : generateDefaultTarget
+  }
+  if (options.stableSelectors !== true) {
+    return generateTarget
+  }
+  return (node) => generateTarget(node) ?? generateStableSelector(node)
+}
+
 function createBaseReportOptions(options: ReportOptionSource = {}): AttributionReportOpts {
   const reportOptions: AttributionReportOpts = {}
   if (options.reportAllChanges !== undefined) {
@@ -144,9 +171,7 @@ function createBaseReportOptions(options: ReportOptionSource = {}): AttributionR
   if (options.reportSoftNavs !== undefined) {
     reportOptions.reportSoftNavs = options.reportSoftNavs
   }
-  if (options.generateTarget !== undefined) {
-    reportOptions.generateTarget = options.generateTarget
-  }
+  reportOptions.generateTarget = resolveGenerateTarget(options)
   return reportOptions
 }
 
@@ -171,16 +196,33 @@ function createBaseAttributes(metric: MetricWithAttribution): Attributes {
   return attributes
 }
 
+function readTarget(value: unknown): ReturnType<typeof splitWebVitalTarget> {
+  // Only the default generateTarget adds a selector, so a target from the application stays as it is.
+  const options = registeredObserverOptions ?? observerOptionsDuringStartup
+  return options?.generateTarget === undefined ? splitWebVitalTarget(value) : { target: value }
+}
+
+// web-vitals gives a placeholder TTFB of 0 to each soft navigation and each back/forward cache
+// restore, which have no request to time. The navigation type is the test, because a prerendered
+// document has a real 0.
+function hasNoDocumentRequest(metric: MetricWithAttribution): boolean {
+  return metric.navigationType === 'soft-navigation' || metric.navigationType === 'back-forward-cache'
+}
+
 function createMetricAttributes(metric: MetricWithAttribution): Attributes {
   const attributes = createBaseAttributes(metric)
 
   switch (metric.name) {
     case 'LCP': {
       const { attribution } = metric
-      setPrimitiveAttribute(attributes, 'web_vital.lcp.target', attribution.target)
-      setPrimitiveAttribute(attributes, 'web_vital.lcp.element', attribution.target)
+      const { selector, target } = readTarget(attribution.target)
+      setPrimitiveAttribute(attributes, 'web_vital.lcp.target', target)
+      setPrimitiveAttribute(attributes, 'web_vital.lcp.element', target)
+      setPrimitiveAttribute(attributes, 'web_vital.lcp.target_selector', selector)
       setPrimitiveAttribute(attributes, 'web_vital.lcp.url', attribution.url)
-      setPrimitiveAttribute(attributes, 'web_vital.lcp.time_to_first_byte', attribution.timeToFirstByte)
+      if (!hasNoDocumentRequest(metric)) {
+        setPrimitiveAttribute(attributes, 'web_vital.lcp.time_to_first_byte', attribution.timeToFirstByte)
+      }
       setPrimitiveAttribute(attributes, 'web_vital.lcp.resource_load_delay', attribution.resourceLoadDelay)
       setPrimitiveAttribute(attributes, 'web_vital.lcp.resource_load_duration', attribution.resourceLoadDuration)
       setPrimitiveAttribute(attributes, 'web_vital.lcp.element_render_delay', attribution.elementRenderDelay)
@@ -188,7 +230,9 @@ function createMetricAttributes(metric: MetricWithAttribution): Attributes {
     }
     case 'INP': {
       const { attribution } = metric
-      setPrimitiveAttribute(attributes, 'web_vital.inp.target', attribution.interactionTarget)
+      const { selector, target } = readTarget(attribution.interactionTarget)
+      setPrimitiveAttribute(attributes, 'web_vital.inp.target', target)
+      setPrimitiveAttribute(attributes, 'web_vital.inp.target_selector', selector)
       setPrimitiveAttribute(attributes, 'web_vital.inp.interaction_type', attribution.interactionType)
       setPrimitiveAttribute(attributes, 'web_vital.inp.interaction_time', attribution.interactionTime)
       setPrimitiveAttribute(attributes, 'web_vital.inp.input_delay', attribution.inputDelay)
@@ -206,7 +250,9 @@ function createMetricAttributes(metric: MetricWithAttribution): Attributes {
     }
     case 'CLS': {
       const { attribution } = metric
-      setPrimitiveAttribute(attributes, 'web_vital.cls.largest_shift_target', attribution.largestShiftTarget)
+      const { selector, target } = readTarget(attribution.largestShiftTarget)
+      setPrimitiveAttribute(attributes, 'web_vital.cls.largest_shift_target', target)
+      setPrimitiveAttribute(attributes, 'web_vital.cls.largest_shift_target_selector', selector)
       setPrimitiveAttribute(attributes, 'web_vital.cls.largest_shift_time', attribution.largestShiftTime)
       setPrimitiveAttribute(attributes, 'web_vital.cls.largest_shift_value', attribution.largestShiftValue)
       setPrimitiveAttribute(attributes, 'web_vital.cls.load_state', attribution.loadState)
@@ -214,7 +260,9 @@ function createMetricAttributes(metric: MetricWithAttribution): Attributes {
     }
     case 'FCP': {
       const { attribution } = metric
-      setPrimitiveAttribute(attributes, 'web_vital.fcp.time_to_first_byte', attribution.timeToFirstByte)
+      if (!hasNoDocumentRequest(metric)) {
+        setPrimitiveAttribute(attributes, 'web_vital.fcp.time_to_first_byte', attribution.timeToFirstByte)
+      }
       setPrimitiveAttribute(attributes, 'web_vital.fcp.first_byte_to_fcp', attribution.firstByteToFCP)
       setPrimitiveAttribute(attributes, 'web_vital.fcp.load_state', attribution.loadState)
       break
@@ -264,7 +312,11 @@ function createPageContextAttributes(metric: MetricWithAttribution, sessionManag
       navigationUrl = undefined
     }
   }
-  const url = navigationUrl ?? (isSoftNavigation ? undefined : getCurrentUrl())
+  const currentUrl = getCurrentUrl()
+  // Observing the current page first lets a metric that reports while its own
+  // page is still current use that page's route.
+  const currentRoute = sessionManager.getRouteName(currentUrl)
+  const url = navigationUrl ?? (isSoftNavigation ? undefined : currentUrl)
   if (url !== undefined) {
     try {
       const urlAttributes = sessionManager.getUrlAttributes(url)
@@ -275,8 +327,18 @@ function createPageContextAttributes(metric: MetricWithAttribution, sessionManag
     }
   }
 
-  if (!isSoftNavigation && navigationUrl === undefined) {
-    setPrimitiveAttribute(attributes, ATTR_LOGFIRE_PAGE_ROUTE, sessionManager.getRouteName())
+  // The callback returns the route at report time. A metric can report after a
+  // later navigation, so a historical navigation URL uses the route observed for it.
+  if (navigationUrl !== undefined) {
+    // web-vitals defaults a missing navigation start time to 0.
+    const softNavigationStartTime = isSoftNavigation ? (metric.navigationStartTime ?? 0) : undefined
+    setPrimitiveAttribute(
+      attributes,
+      ATTR_LOGFIRE_PAGE_ROUTE,
+      sessionManager.getNavigationRouteName(navigationUrl, softNavigationStartTime)
+    )
+  } else if (!isSoftNavigation) {
+    setPrimitiveAttribute(attributes, ATTR_LOGFIRE_PAGE_ROUTE, currentRoute)
   }
   return attributes
 }
@@ -331,10 +393,14 @@ function reportWebVital(
 }
 
 function registerWebVitals(webVitals: WebVitalsAttributionModule, requestedOptions: BrowserWebVitalsStartOptions): void {
-  const options = (observerOptionsDuringStartup ??= normalizeObserverOptions(requestedOptions))
+  observerOptionsDuringStartup ??= normalizeObserverOptions(requestedOptions)
+  const options = observerOptionsDuringStartup
   const reportOptions = createBaseReportOptions(options)
   const report = (metric: MetricWithAttribution) => {
     if (registeredObserverOptions === undefined || currentOwner?.active !== true) {
+      return
+    }
+    if (metric.name === 'TTFB' && hasNoDocumentRequest(metric)) {
       return
     }
     reportWebVital(metric, currentMetricRecorder, currentSessionManager, currentTracer)
@@ -350,10 +416,48 @@ function registerWebVitals(webVitals: WebVitalsAttributionModule, requestedOptio
     if (registeredWebVitals.has(name)) {
       continue
     }
-    register(report, registrationOptions as never)
+    register(report, registrationOptions)
     registeredWebVitals.add(name)
   }
   registeredObserverOptions = options
+}
+
+/**
+ * Web Vitals load lazily, and the application can navigate before the first one reports. A
+ * document metric keeps its route only if its page was observed while its URL was current.
+ */
+export function observeDocumentPage(sessionManager: BrowserSessionManager): void {
+  sessionManager.getRouteName(getCurrentUrl())
+}
+
+/**
+ * A soft-navigation metric keeps its route only if its page was observed while its URL was
+ * current, and the application can navigate again before anything else observes it. Browsers that
+ * report soft navigations also implement the Navigation API, so this needs no `history` patching.
+ */
+export function observeNavigatedPages(sessionManager: BrowserSessionManager): () => void {
+  const navigation = (globalThis as { navigation?: Navigation }).navigation
+  if (navigation === undefined) {
+    return () => undefined
+  }
+
+  let pending: ReturnType<typeof setTimeout> | undefined
+  const observe = () => {
+    pending = undefined
+    sessionManager.getRouteName(getCurrentUrl())
+  }
+  // Some routers change the URL before they update the route, so the route is read one task
+  // later. A pending observation is rescheduled, so only the URL the application settles on is
+  // observed, and a stale route is never kept for it.
+  const onEntryChange = () => {
+    clearTimeout(pending)
+    pending = setTimeout(observe, 0)
+  }
+  navigation.addEventListener('currententrychange', onEntryChange)
+  return () => {
+    clearTimeout(pending)
+    navigation.removeEventListener('currententrychange', onEntryChange)
+  }
 }
 
 export async function startBrowserWebVitals(options: BrowserWebVitalsStartOptions): Promise<BrowserWebVitalsHandle> {
@@ -425,6 +529,7 @@ function normalizeObserverOptions(options: BrowserWebVitalsOptions): ObserverOpt
     includeProcessedEventEntries: options.includeProcessedEventEntries ?? false,
     reportAllChanges: options.reportAllChanges,
     reportSoftNavs: options.reportSoftNavs,
+    stableSelectors: options.stableSelectors ?? false,
   }
 }
 
@@ -433,6 +538,7 @@ function sameObserverOptions(left: ObserverOptions, right: ObserverOptions): boo
     left.generateTarget === right.generateTarget &&
     left.includeProcessedEventEntries === right.includeProcessedEventEntries &&
     (left.reportAllChanges ?? false) === (right.reportAllChanges ?? false) &&
-    (left.reportSoftNavs ?? false) === (right.reportSoftNavs ?? false)
+    (left.reportSoftNavs ?? false) === (right.reportSoftNavs ?? false) &&
+    left.stableSelectors === right.stableSelectors
   )
 }

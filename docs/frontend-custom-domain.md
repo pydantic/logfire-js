@@ -175,4 +175,4 @@ Use browser developer tools to confirm that:
 
 For a proxy that authenticates application sessions or injects a normal project
 write token server-side, follow the
-[authenticated backend proxy guidance](packages/browser.md#authenticated-application-proxy).
+[authenticated backend proxy guidance](packages/browser/advanced.md#authenticated-application-proxy).

@@ -11,30 +11,37 @@ import { ATTR_EXCEPTION_MESSAGE, ATTR_EXCEPTION_STACKTRACE } from '@opentelemetr
 
 import { LogfireAttributeScrubber, NoopAttributeScrubber, NoopScrubber } from './AttributeScrubber'
 import {
+  ATTRIBUTES_DEBUG_IDS_KEY,
   ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY,
   ATTRIBUTES_LEVEL_KEY,
   ATTRIBUTES_MESSAGE_KEY,
   ATTRIBUTES_MESSAGE_TEMPLATE_KEY,
   ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY,
   ATTRIBUTES_SCRUBBED_KEY,
+  ATTRIBUTES_SDK_INTERNAL_KEY,
   ATTRIBUTES_SPAN_TYPE_KEY,
   ATTRIBUTES_TAGS_KEY,
   INVALID_SPAN_ID,
   JSON_NULL_FIELDS_KEY,
   JSON_SCHEMA_KEY,
 } from './constants'
+import { debugIdsAttributeForStack } from './debugIds'
 import { canonicalizeError, computeFingerprint } from './fingerprint'
 import { logfireFormatWithExtras, truncateString } from './formatter'
 import { Level } from './levels'
 import type { LogFireLevel } from './levels'
 import { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire, serializeAttributes } from './logfireApiConfig'
+import { beginScrubbedSpan, recordScrubbedAttributes } from './exportScrubbing'
 import { PendingSpanProcessor } from './PendingSpanProcessor'
 import { setPendingSpanSuppressed } from './pendingSpanSuppression'
 import { SpanLevel, checkTraceIdRatio, levelOrDuration } from './sampling'
+import { isSdkInternalError } from './sdkInternalError'
 import { TailSamplingProcessor } from './TailSamplingProcessor'
 import { ULIDGenerator } from './ULIDGenerator'
 
 export * from './AttributeScrubber'
+export { scrubbedSpanCopy, scrubLogRecordForExport, scrubSpanForExport } from './exportScrubbing'
+export type { ExportScrubbingOptions, ScrubbableLogRecord } from './exportScrubbing'
 export { canonicalizeError, computeFingerprint } from './fingerprint'
 export { configureLogfireApi, logfireApiConfig, resolveBaseUrl, resolveSendToLogfire } from './logfireApiConfig'
 export type {
@@ -47,10 +54,12 @@ export type {
   MinLevel,
   ScrubbingOptions,
 } from './logfireApiConfig'
-export { ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY } from './constants'
+export { ATTRIBUTES_DEBUG_IDS_KEY, ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY, ATTRIBUTES_SDK_INTERNAL_KEY } from './constants'
+export { DebugIdSpanProcessor, debugIdsForStack, readInjectedRelease, stampSpanDebugIds } from './debugIds'
 export { Level } from './levels'
 export { PendingSpanProcessor } from './PendingSpanProcessor'
 export * from './sampling'
+export { isSdkInternalError, markSdkInternalError } from './sdkInternalError'
 export { serializeAttributes } from './serializeAttributes'
 export { TailSamplingProcessor, type TailSamplingProcessorOptions } from './TailSamplingProcessor'
 export * from './ULIDGenerator'
@@ -403,6 +412,7 @@ function buildInstrumentedCallSerializationAttributes(msgTemplate: string, attri
 function safeSetSpanAttribute(span: Span, key: string, value: SerializedAttributeValue): void {
   try {
     span.setAttribute(key, value)
+    recordScrubbedAttributes(span, { [key]: value })
   } catch {
     // Late-added metadata is best-effort and must never change function outcome.
   }
@@ -456,11 +466,13 @@ function startSpanWithSettings(
   // Logs are always INTERNAL: a runtime options object carrying `kind` must not
   // change the exported kind of zero-duration Logfire logs.
   const kind = resolvedOptions.log === true ? undefined : resolvedOptions.kind
+  beginScrubbedSpan(spanStart.attributes)
   const span = logfireApiConfig.tracer.startSpan(
     spanStart.name,
     { attributes: spanStart.attributes, ...(kind !== undefined ? { kind } : {}) },
     getSpanStartContext(resolvedOptions.parentSpan)
   )
+  recordScrubbedAttributes(span, spanStart.attributes)
 
   return span
 }
@@ -491,6 +503,7 @@ function startPendingSpanWithSettings(
     { attributes: spanStart.attributes, ...spanKindOptions },
     setPendingSpanSuppressed(parentContext)
   )
+  recordScrubbedAttributes(realSpan, spanStart.attributes)
 
   if (!realSpan.isRecording()) {
     return realSpan
@@ -502,19 +515,17 @@ function startPendingSpanWithSettings(
     return realSpan
   }
 
+  const placeholderAttributes = {
+    ...spanStart.attributes,
+    [ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY]: readableSpan.parentSpanContext?.spanId ?? INVALID_SPAN_ID,
+    [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span',
+  }
   const placeholder = logfireApiConfig.tracer.startSpan(
     spanStart.name,
-    {
-      attributes: {
-        ...spanStart.attributes,
-        [ATTRIBUTES_PENDING_SPAN_REAL_PARENT_KEY]: readableSpan.parentSpanContext?.spanId ?? INVALID_SPAN_ID,
-        [ATTRIBUTES_SPAN_TYPE_KEY]: 'pending_span',
-      },
-      startTime,
-      ...spanKindOptions,
-    },
+    { attributes: placeholderAttributes, startTime, ...spanKindOptions },
     TheTraceAPI.setSpan(parentContext, realSpan)
   )
+  recordScrubbedAttributes(placeholder, placeholderAttributes)
   placeholder.end(startTime)
 
   return realSpan
@@ -597,6 +608,7 @@ function spanWithSettings<R>(
   const { serializationAttributes, serializedAttributes } = buildSerializedLogfireAttributes(msgTemplate, attributes, { tags, level })
 
   const context = parentSpan ? TheTraceAPI.setSpan(TheContextAPI.active(), parentSpan) : TheContextAPI.active()
+  beginScrubbedSpan(serializedAttributes)
   return logfireApiConfig.tracer.startActiveSpan(
     spanName ?? msgTemplate,
     {
@@ -605,6 +617,7 @@ function spanWithSettings<R>(
     },
     context,
     (span: Span) => {
+      recordScrubbedAttributes(span, serializedAttributes)
       let result: R
       try {
         result = callback(span)
@@ -789,12 +802,24 @@ function recordSpanException(span: Span, thrown: unknown, spanSerializationAttri
     }
   }
 
-  span.recordException(recordExceptionValue)
+  recordExceptionSafely(span, recordExceptionValue, thrown)
   span.setStatus({ code: SpanStatusCode.ERROR, message: `${errorName}: ${errorMessage}` })
   span.setAttribute(ATTRIBUTES_LEVEL_KEY, Level.Error)
 
   if (isError && logfireApiConfig.enableErrorFingerprinting) {
     recordErrorFingerprint(span, thrown)
+  }
+
+  let stack: string | undefined
+  if (typeof recordExceptionValue !== 'string') {
+    stack = recordExceptionValue instanceof Error ? getSafeErrorStack(recordExceptionValue) : recordExceptionValue.stack
+  }
+  const debugIds = stack === undefined ? undefined : debugIdsAttributeForStack(stack)
+  if (debugIds !== undefined) {
+    safeSetSpanAttribute(span, ATTRIBUTES_DEBUG_IDS_KEY, debugIds)
+  }
+  if (isSdkInternalError(thrown)) {
+    safeSetSpanAttribute(span, ATTRIBUTES_SDK_INTERNAL_KEY, true)
   }
 
   if (causeValue !== undefined) {
@@ -848,6 +873,23 @@ function getSafeErrorStack(error: Error): string | undefined {
   }
 }
 
+function recordExceptionSafely(span: Span, value: Exception, error: unknown): void {
+  try {
+    span.recordException(value)
+  } catch {
+    if (error instanceof Error) {
+      const code = getErrorCode(error)
+      const stack = getSafeErrorStack(error)
+      span.recordException({
+        ...(code !== undefined ? { code } : {}),
+        message: getSafeErrorMessage(error),
+        name: getSafeErrorName(error),
+        ...(stack !== undefined ? { stack } : {}),
+      })
+    }
+  }
+}
+
 function recordErrorFingerprint(span: Span, error: Error): void {
   try {
     safeSetSpanAttribute(span, ATTRIBUTES_EXCEPTION_FINGERPRINT_KEY, computeFingerprint(error))
@@ -890,8 +932,12 @@ function formatErrorStackWithCauses(error: Error, seen: WeakSet<Error> = new Wea
 }
 
 function getErrorCode(error: Error): string | number | undefined {
-  const code = (error as { code?: unknown }).code
-  return typeof code === 'string' || typeof code === 'number' ? code : undefined
+  try {
+    const code = (error as { code?: unknown }).code
+    return typeof code === 'string' || typeof code === 'number' ? code : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function normalizeRecordException(error: Error): Exception {
@@ -1018,11 +1064,26 @@ function reportErrorWithSettings(
     }
   }
 
+  const stack = normalized.attributes[ATTR_EXCEPTION_STACKTRACE]
+  const debugIds = typeof stack === 'string' ? debugIdsAttributeForStack(stack) : undefined
+  if (debugIds !== undefined) {
+    attributes[ATTRIBUTES_DEBUG_IDS_KEY] = debugIds
+  }
+  if (isSdkInternalError(error)) {
+    attributes[ATTRIBUTES_SDK_INTERNAL_KEY] = true
+  }
+
   const span = startSpanWithSettings(settings, message, attributes, reportErrorOptionsToLogOptions(options))
 
-  span.recordException(normalized.recordExceptionValue)
+  recordExceptionSafely(span, normalized.recordExceptionValue, error)
   span.setStatus({ code: SpanStatusCode.ERROR, message: normalized.statusMessage })
   span.end()
+
+  try {
+    logfireApiConfig.onReportError?.(error)
+  } catch {
+    // A runtime package's error hook must not break error reporting.
+  }
 }
 
 export function reportError(

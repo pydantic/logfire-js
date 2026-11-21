@@ -15,11 +15,14 @@ import {
   LogfireAttributeScrubber,
   NoopAttributeScrubber,
   notice,
+  readInjectedRelease,
   reportError,
   resolveBaseUrl,
   resolveSendToLogfire,
+  scrubSpanForExport,
   serializeAttributes,
   span,
+  stampSpanDebugIds,
   startPendingSpan,
   startSpan,
   trace,
@@ -61,8 +64,12 @@ export interface InProcessConfigOptions extends ConfigOptionsBase {
   scrubbing?: false | ScrubbingOptions
 }
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface TailConfigOptions extends ConfigOptionsBase {}
+export interface TailConfigOptions extends ConfigOptionsBase {
+  /**
+   * Options for scrubbing sensitive data before spans are handed to the tail worker. Set to False to disable.
+   */
+  scrubbing?: false | ScrubbingOptions
+}
 
 function envString(env: Env, key: string): string | undefined {
   if (typeof env !== 'object' || env === null) {
@@ -72,7 +79,21 @@ function envString(env: Env, key: string): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
-function configureScrubbing(config: InProcessConfigOptions): void {
+// Read when the config function runs, after the inject snippet at the top of the bundle set the release.
+function withInjectedRelease(service: TraceConfig['service']): TraceConfig['service'] {
+  const release = service.version === undefined ? readInjectedRelease() : undefined
+  return release === undefined ? service : { ...service, version: release }
+}
+
+// The debug ID registry lives in this isolate's globalThis, so stamping must happen here rather than in a tail worker.
+function stampDebugIds(spans: ReadableSpan[]): ReadableSpan[] {
+  for (const span of spans) {
+    stampSpanDebugIds(span)
+  }
+  return spans
+}
+
+function configureScrubbing(config: Pick<InProcessConfigOptions, 'scrubbing'>): void {
   if (config.scrubbing !== undefined) {
     configureLogfireApi({ scrubbing: config.scrubbing })
   }
@@ -86,7 +107,7 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
     const baseUrl = resolveBaseUrl(env as LogfireEnv, config.baseUrl, token)
     const resolvedEnvironment = config.environment ?? envDeploymentEnvironment
 
-    const additionalSpanProcessors = config.additionalSpanProcessors ?? []
+    const additionalSpanProcessors = [...(config.additionalSpanProcessors ?? [])]
 
     if (config.console === true) {
       additionalSpanProcessors.push(new SimpleSpanProcessor(new LogfireCloudflareConsoleSpanExporter()))
@@ -101,18 +122,22 @@ function getInProcessConfig(config: InProcessConfigOptions): (env: Env) => Trace
         userAgent: USER_AGENT,
       },
       idGenerator: new ULIDGenerator(),
-      postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(spans),
+      postProcessor: (spans: ReadableSpan[]) => postProcessAttributes(stampDebugIds(spans)),
+      service: withInjectedRelease(config.service),
       ...(resolvedEnvironment !== undefined ? { environment: resolvedEnvironment } : {}),
     } satisfies TraceConfig
   }
 }
 
 export function getTailConfig(config: TailConfigOptions): (env: Env) => TraceConfig {
+  configureScrubbing(config)
   return (_env: Env): TraceConfig => {
     return {
       ...config,
       exporter: new TailWorkerExporter(),
       idGenerator: new ULIDGenerator(),
+      postProcessor: stampDebugIds,
+      service: withInjectedRelease(config.service),
     }
   }
 }
@@ -145,12 +170,17 @@ function postProcessAttributes(spans: ReadableSpan[]) {
         delete span.attributes[attrKey]
       }
     }
+    // `serializeAttributes` scrubs only spans the logfire API did not create; the API scrubbed the
+    // others at creation and records what it scrubbed for the export pass below.
+    const createdByLogfireApi = 'logfire.span_type' in span.attributes
     // Applied key by key with own-property writes: `Object.assign` runs the inherited `__proto__`
     // setter, which would discard that attribute right after the serializer preserved it.
     const serialized = serializeAttributes(span.attributes)
     for (const [key, value] of Object.entries(serialized)) {
       Object.defineProperty(span.attributes, key, { configurable: true, enumerable: true, value, writable: true })
     }
+    // Covers attributes set after creation, events, and links without scrubbing a value twice.
+    scrubSpanForExport(span, createdByLogfireApi ? {} : { alreadyScrubbed: serialized })
   }
   return spans
 }

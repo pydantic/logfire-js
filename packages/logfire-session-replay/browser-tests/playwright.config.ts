@@ -1,18 +1,43 @@
 import { resolve } from 'node:path'
 
 import { defineConfig } from '@playwright/test'
+import { frustrationServers, frustrationTests } from './frustration-fixtures'
+import { quickRedirectServers } from './quick-redirect-fixtures'
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
-const fixtureServers = [
-  {
-    command: 'pnpm exec vp dev --config packages/logfire-session-replay/test-fixtures/delivery/vite.config.ts',
-    url: 'http://127.0.0.1:4177/',
-  },
+const fixtureServers: { command: string; env?: Record<string, string>; url: string }[] = [
+  ...quickRedirectServers,
   {
     command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/privacy-defaults/vite.config.ts',
     url: 'http://127.0.0.1:4178/',
   },
+  {
+    command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/rum-dimensions/vite.config.ts',
+    url: 'http://127.0.0.1:4180/receipts',
+  },
+  {
+    command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/soft-navigation-web-vitals/vite.config.ts',
+    url: 'http://127.0.0.1:4182/',
+  },
+  {
+    command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/errors-profile/vite.config.ts',
+    url: 'http://127.0.0.1:4184/receipts',
+  },
+  {
+    command: 'pnpm exec vp dev --config packages/logfire-browser/test-fixtures/debug-ids/vite.config.ts',
+    url: 'http://127.0.0.1:4192/receipts',
+  },
+  ...['react-router', 'tanstack-router', 'vue-router'].map((example, index) => ({
+    command: `pnpm exec vp dev --config examples/${example}/vite.config.ts`,
+    // router-examples.pw.ts answers for this origin, so the examples export locally.
+    env: { VITE_LOGFIRE_BASE_URL: 'http://logfire.test', VITE_LOGFIRE_TOKEN: 'router-example-token' },
+    url: `http://127.0.0.1:${String(4186 + index)}/`,
+  })),
 ]
+
+// CI verifies recording identity and frustration detection in all three engines.
+// A developer machine can opt into that matrix after installing those browsers.
+const identityBrowsers = process.env['REPLAY_BROWSER_MATRIX'] === 'all' ? (['firefox', 'webkit'] as const) : []
 
 export default defineConfig({
   expect: {
@@ -23,18 +48,35 @@ export default defineConfig({
   outputDir: resolve(repositoryRoot, 'test-results'),
   reporter: process.env['CI'] === undefined ? 'line' : [['github'], ['line']],
   testDir: '.',
-  testMatch: 'session-replay.pw.ts',
+  testMatch: '*.pw.ts',
   timeout: 30_000,
   use: {
-    browserName: 'chromium',
     trace: 'retain-on-failure',
   },
-  webServer: fixtureServers.map(({ command, url }) => ({
-    command,
-    cwd: repositoryRoot,
-    reuseExistingServer: false,
-    timeout: 30_000,
-    url,
-  })),
+  projects: [
+    { name: 'chromium', use: { browserName: 'chromium' } },
+    ...identityBrowsers.map((browserName) => ({
+      name: browserName,
+      use: { browserName },
+      testMatch: 'session-replay.pw.ts',
+      grep: /recording identity|CSP recording/u,
+    })),
+    ...identityBrowsers.map((browserName) => ({
+      name: `frustration-${browserName}`,
+      use: { browserName },
+      testMatch: frustrationTests,
+    })),
+  ],
+  webServer: [
+    ...frustrationServers,
+    ...fixtureServers.map(({ command, env, url }) => ({
+      command,
+      ...(env === undefined ? {} : { env }),
+      cwd: repositoryRoot,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      url,
+    })),
+  ],
   workers: 1,
 })

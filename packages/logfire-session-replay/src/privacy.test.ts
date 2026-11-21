@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vite-plus/test'
 
-import { matchesUrlPatterns, redactUrl } from './privacy'
+import {
+  cutText,
+  isElementIdReference,
+  matchesUrlPatterns,
+  mayReferenceCssUrl,
+  redactSrcset,
+  redactUrl,
+  redactUrlsInText,
+  sameDocumentFragment,
+  truncateText,
+} from './privacy'
 
 const baseUrl = 'https://app.example.test/current/page'
 
@@ -19,6 +29,30 @@ describe('redactUrl', () => {
     expect(redactUrl('https://[invalid]?token=secret#details', [/.+/u], baseUrl)).toBe('https://[invalid]')
   })
 
+  it('keeps only the scheme of opaque and blob URLs', () => {
+    expect(redactUrl('mailto:jane@example.test?subject=hi', [/.+/u], baseUrl)).toBe('mailto:')
+    expect(redactUrl('tel:+15550100', [/.+/u], baseUrl)).toBe('tel:')
+    expect(redactUrl('data:image/png;base64,AAAA', [/.+/u], baseUrl)).toBe('data:')
+    expect(redactUrl('blob:https://app.example.test/0f6e3c1a', [/.+/u], baseUrl)).toBe('blob:')
+  })
+
+  it('applies a transform after the built-in redaction', () => {
+    const transform = (url: string) => url.replace(/\/reset\/[^/?#]+/u, '/reset/:token')
+
+    expect(redactUrl('/reset/abc123?next=/home', [/.+/u], baseUrl, transform)).toBe('https://app.example.test/reset/:token')
+    expect(redactUrl('/reset/abc123?next=/home', [], baseUrl, transform)).toBe('/reset/:token?next=/home')
+  })
+
+  it('keeps the built-in redaction when a transform throws or returns a non-string', () => {
+    const throwing = () => {
+      throw new Error('transform failed')
+    }
+    const nonString = (() => undefined) as unknown as (url: string) => string
+
+    expect(redactUrl('/reset/abc123?token=secret', [/.+/u], baseUrl, throwing)).toBe('https://app.example.test/reset/abc123')
+    expect(redactUrl('/reset/abc123?token=secret', [/.+/u], baseUrl, nonString)).toBe('https://app.example.test/reset/abc123')
+  })
+
   it('does not mutate global or sticky pattern state across repeated matches', () => {
     const global = /token=/gu
     const sticky = /https:/uy
@@ -30,5 +64,192 @@ describe('redactUrl', () => {
     expect(matchesUrlPatterns('https://example.test/?token=three', [sticky])).toBe(true)
     expect(global.lastIndex).toBe(3)
     expect(sticky.lastIndex).toBe(2)
+  })
+})
+
+describe('isElementIdReference', () => {
+  it('accepts plain element ids and a bare fragment', () => {
+    expect(['#icon-home', '#icon_home', '#icon:home', '#sprite.close', '#'].map(isElementIdReference)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+    ])
+  })
+
+  it('rejects values that are not fragment-only or that look like hash routes or parameters', () => {
+    const values = [
+      'icon',
+      '/sprite.svg#icon',
+      'https://app.example.test/#icon',
+      '#/reset-password/abc123',
+      '#!/orders',
+      '#/orders?token=secret',
+      '#access_token=secret&state=1',
+      '#jane%40example.test',
+      '#icon home',
+      '##icon',
+    ]
+    expect(values.map(isElementIdReference)).toEqual(values.map(() => false))
+  })
+})
+
+describe('sameDocumentFragment', () => {
+  const pageUrl = 'https://app.example.test/current/page?tab=1#top'
+
+  it('returns the element id fragment of a URL that points into the page', () => {
+    expect(sameDocumentFragment('https://app.example.test/current/page?tab=1#section-2', pageUrl)).toBe('#section-2')
+    expect(sameDocumentFragment('#section-2', pageUrl)).toBe('#section-2')
+  })
+
+  it('returns nothing for other documents, route-like fragments, and no fragment', () => {
+    const values = [
+      'https://app.example.test/current/page#section-2',
+      'https://app.example.test/other#section-2',
+      'https://other.example.test/current/page?tab=1#section-2',
+      'https://app.example.test/current/page?tab=1#/reset?token=secret',
+      'https://app.example.test/current/page?tab=1#access_token=secret',
+      'https://app.example.test/current/page?tab=1#',
+      'https://app.example.test/current/page?tab=1',
+      'https://[invalid]#section',
+    ]
+    expect(values.map((value) => sameDocumentFragment(value, pageUrl))).toEqual(values.map(() => undefined))
+  })
+})
+
+describe('redactUrlsInText', () => {
+  it('redacts matching URLs inside stack frames and keeps line and column numbers', () => {
+    const stack = [
+      'Error: boom',
+      '    at load (https://app.example.test/app.js?token=secret:10:5)',
+      'load@https://app.example.test/app.js?token=secret#frag:10:5',
+      '    at https://cdn.example.test/lib.js?q=a)b:3:1',
+    ].join('\n')
+
+    expect(redactUrlsInText(stack, [/.+/u], baseUrl, { stackTrace: true })).toBe(
+      [
+        'Error: boom',
+        '    at load (https://app.example.test/app.js:10:5)',
+        'load@https://app.example.test/app.js:10:5',
+        '    at https://cdn.example.test/lib.js:3:1',
+      ].join('\n')
+    )
+  })
+
+  it('does not restore digits that end a query value', () => {
+    expect(redactUrlsInText('fetch https://api.example.test/x?token=abc:123456 failed', [/.+/u], baseUrl)).toBe(
+      'fetch https://api.example.test/x failed'
+    )
+    expect(redactUrlsInText('fetch https://api.example.test/x?token=abc:123:456 failed', [/.+/u], baseUrl)).toBe(
+      'fetch https://api.example.test/x failed'
+    )
+    expect(
+      redactUrlsInText('    at f (https://api.example.test/x.js?token=abc:123:456:10:5)', [/.+/u], baseUrl, { stackTrace: true })
+    ).toBe('    at f (https://api.example.test/x.js:10:5)')
+    expect(redactUrlsInText('at https://api.example.test/x?secret=123:456', [/.+/u], baseUrl)).toBe('at https://api.example.test/x')
+    expect(redactUrlsInText('user@https://api.example.test/x?secret=123:456', [/.+/u], baseUrl)).toBe('user@https://api.example.test/x')
+  })
+
+  it('removes a query that contains an apostrophe and keeps quotes around a URL', () => {
+    expect(redactUrlsInText("GET https://api.example.test/x?name=O'Reilly&token=secret failed", [/.+/u], baseUrl)).toBe(
+      'GET https://api.example.test/x failed'
+    )
+    expect(redactUrlsInText("see 'https://api.example.test/x?token=secret' (or https://api.example.test/y?k=1)", [/.+/u], baseUrl)).toBe(
+      "see 'https://api.example.test/x' (or https://api.example.test/y)"
+    )
+  })
+
+  it('handles a long run of closing punctuation in linear time', () => {
+    const text = `https://example.test/?q=${')'.repeat(32_000)}x`
+    const started = performance.now()
+
+    expect(redactUrlsInText(text, [/.+/u], baseUrl)).toBe('https://example.test/')
+    // Generous bound: the unanchored punctuation regex took seconds for this input.
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
+  it('tests each URL embedded in a match against the patterns', () => {
+    const privateOnly = [/^https:\/\/private\./u]
+
+    expect(
+      redactUrlsInText('go https://public.example.test/login?next=https://private.example.test/x?token=secret', privateOnly, baseUrl)
+    ).toBe('go https://public.example.test/login')
+    expect(redactUrlsInText('go https://public.example.test/login?next=/home', privateOnly, baseUrl)).toBe(
+      'go https://public.example.test/login?next=/home'
+    )
+  })
+
+  it('redacts many URLs on one line in linear time', () => {
+    const line = Array.from({ length: 10_000 }, (_, index) => `https://x.example.test/${index.toString()}?t=1`).join(' ')
+    const started = performance.now()
+    const redacted = redactUrlsInText(line, [/.+/u], baseUrl)
+
+    expect(redacted).toBe(Array.from({ length: 10_000 }, (_, index) => `https://x.example.test/${index.toString()}`).join(' '))
+    // Generous bound: the quadratic scan took seconds for this input.
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
+  it('only redacts URLs that match a pattern', () => {
+    const text = 'at https://app.example.test/a.js?t=1:1:1 and https://cdn.example.test/b.js?t=2:2:2'
+
+    expect(redactUrlsInText(text, [/cdn\./u], baseUrl, { stackTrace: true })).toBe(
+      'at https://app.example.test/a.js?t=1:1:1 and https://cdn.example.test/b.js:2:2'
+    )
+    expect(redactUrlsInText(text, [], baseUrl)).toBe(text)
+  })
+})
+
+describe('redactSrcset', () => {
+  const redact = (url: string) => redactUrl(url, [/.+/u], baseUrl)
+
+  it('redacts each candidate URL and keeps descriptors and separators', () => {
+    expect(redactSrcset('/a.png?t=1 1x, /b.png?t=2 2x', redact)).toBe(
+      'https://app.example.test/a.png 1x, https://app.example.test/b.png 2x'
+    )
+    expect(redactSrcset('/a.png?t=1 480w,/b.png?t=2 800w', redact)).toBe(
+      'https://app.example.test/a.png 480w,https://app.example.test/b.png 800w'
+    )
+  })
+
+  it('ends a candidate at trailing commas of a URL without descriptors', () => {
+    expect(redactSrcset('/a.png?t=1, /b.png?t=2', redact)).toBe('https://app.example.test/a.png, https://app.example.test/b.png')
+  })
+
+  it('keeps a comma inside a URL as part of that URL', () => {
+    expect(redactSrcset('data:image/png;base64,AAAA 1x', redact)).toBe('data: 1x')
+  })
+})
+
+describe('mayReferenceCssUrl', () => {
+  it.each([
+    'background: url("/bg.png?t=1")',
+    'background: URL(/bg.png)',
+    'mask: -webkit-image-set("/a.png" 1x)',
+    'background-image: image-set("/a.png" 1x)',
+    "font: src('/font.woff2')",
+    'background: u\\72l(/image?token=secret)',
+    '--avatar-url: none',
+  ])('detects a possible URL reference in %s', (value) => {
+    expect(mayReferenceCssUrl(value)).toBe(true)
+  })
+
+  it('leaves styles without URL tokens alone', () => {
+    expect(mayReferenceCssUrl('color: red; display: block')).toBe(false)
+  })
+})
+
+describe('truncateText', () => {
+  it('keeps text within the limit', () => {
+    expect(truncateText('short', 10)).toBe('short')
+    expect(cutText('short', 10)).toEqual(['short', 0])
+  })
+
+  it('cuts longer text and reports the dropped length', () => {
+    expect(truncateText('abcdefghij', 4)).toBe('abcd...(+6 chars)')
+  })
+
+  it('does not split a surrogate pair', () => {
+    expect(cutText('abc\u{1F600}def', 4)).toEqual(['abc', 5])
   })
 })

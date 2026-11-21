@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Browser telemetry safety fixture</title>
+  </head>
+  <body>
+    <h1>Browser telemetry safety fixture</h1>
+    <p role="status">starting</p>
+    <button id="healthy">Save immediately</button>
+    <button id="healthy-again">Save immediately again</button>
+    <button id="broken">Unresponsive action</button>
+    <input aria-label="Private input" value="safety-input-canary" />
+    <a href="/safety.html?next=true">Navigate away</a>
+    <p id="feedback"></p>
+    <section id="workload"></section>
+    <script type="module" src="./safety.ts"></script>
+  </body>
+</html>

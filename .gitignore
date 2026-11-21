@@ -5,6 +5,10 @@ coverage
 packages/*/coverage
 playwright-report
 test-results
+.playwright-cli/
+.stryker-tmp
+reports/frustration-mutation.json
+reports/frustration-soak/
 .env
 scratch/
 **/.turbo

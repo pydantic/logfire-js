@@ -1,5 +1,358 @@
 # @pydantic/logfire-browser
 
+## 0.41.2
+
+### Patch Changes
+
+- 19a7b90: Warn about a `sampling.head` outside `0` to `1` or `NaN` and keep every trace. Before, a head above `1` or `NaN` kept every trace and a negative head dropped every trace, with no sign of the mistake. The Node SDK throws for such a value; the browser SDK warns through the OpenTelemetry diagnostic logger instead, so a mistake in the option cannot stop the page that calls `configure()`.
+- Updated dependencies [134b53b]
+  - logfire@0.26.2
+
+## 0.41.1
+
+### Patch Changes
+
+- 28286fe: Stop setting a time to first byte of `0` on the FCP and LCP spans of soft navigations and back/forward cache restores. Neither has a document request to time, so the `web-vitals` library fills the `timeToFirstByte` part of the FCP and LCP attribution with a placeholder `0`. The SDK copied that placeholder to `web_vital.fcp.time_to_first_byte` and `web_vital.lcp.time_to_first_byte`, so an average or percentile of those attributes read lower than the value for real document requests.
+  
+  **Behavior change:** this affects every application that has `rum.webVitals` on, because each back/forward cache restore reports FCP and LCP in browsers that measure them. Soft navigations are affected only with `reportSoftNavs: true`. The `web_vital.fcp` and `web_vital.lcp` spans of these two navigation types no longer have a `web_vital.fcp.time_to_first_byte` or `web_vital.lcp.time_to_first_byte` attribute, so the attribute is `NULL` in a query. Averages and percentiles of the attribute rise to the value for real document requests. A filter such as `time_to_first_byte = 0` no longer matches these spans, and an expression that adds or subtracts the attribute gives `NULL` for them unless you wrap the attribute in `COALESCE(..., 0)`. The other parts still add up to `web_vital.value`, because the removed part was `0`. Data recorded by earlier versions keeps the `0` readings: exclude them with `web_vital.navigation_type NOT IN ('soft-navigation', 'back-forward-cache')`. The FCP and LCP values, the other attribution attributes, and the histograms do not change. A document load still carries the attribute, and a prerendered document still reports its real `0`.
+
+## 0.41.0
+
+### Minor Changes
+
+- d685120: Add `rum.webVitals.stableSelectors`, and keep the CSS selector of a Web Vital target that has a component name.
+  
+  `web-vitals` ends the selector of a target at the first element that has an id. When a framework generates that id at render time, such as a React `useId` id (`:r1:`, `«r1»`, `_r_1_`) or a library id built on one (`radix-:r1:`), the selector is different on each page view and does not group. With `stableSelectors: true`, the SDK treats an element with a generated id as an element with no id, so `#:r1:>span` becomes `#app>div.card>span`. The documentation lists the detected ids and the limits.
+  
+  A target that is reported as `component:<name>` now also has its CSS selector in `web_vital.lcp.target_selector`, `web_vital.inp.target_selector`, or `web_vital.cls.largest_shift_target_selector`.
+  
+  **Behavior change:** none for the target attributes until an application sets `stableSelectors: true`. With the option on, a selector that held a generated id is replaced by a selector without it, so new records for those elements no longer match the selectors stored earlier. A selector with no generated id in it stays the same, character for character. A hand-written id that looks generated is also left out: one that holds a React-style token, such as `tab-:r2:`, or one that starts with `radix`, `headlessui`, or `react-aria` and ends with a number, such as `radix-demo-2`. The `target_selector` attributes are new and appear only on records whose target is a `data-logfire-component` name; an application that passes its own `rum.webVitals.generateTarget` gets none.
+
+## 0.40.1
+
+### Patch Changes
+
+- ade61a6: Stop reporting a time to first byte of `0` for back/forward cache restores. When the browser restores a page from the back/forward cache, the `web-vitals` library emits a placeholder TTFB of `0`, because a restore has no document request to time. The SDK recorded that placeholder as a `web_vital.ttfb` span and as a `logfire.browser.web_vital.ttfb` histogram point, so TTFB averages and percentiles read lower than the real value. By default the histogram has no `web_vital.navigation_type` attribute, so a metric query could not exclude those points.
+  
+  **Behavior change:** this affects every application that has `rum.webVitals` on. A back/forward cache restore now gives no `web_vital.ttfb` span and no TTFB histogram point, so the number of TTFB records drops, and TTFB averages and percentiles rise to the value for real document requests. The size of the change depends on how often your pages are restored from the back/forward cache. Data recorded by earlier versions keeps the `0` readings: exclude them from span queries with `web_vital.navigation_type != 'back-forward-cache'`. Histogram points recorded by earlier versions can be separated only if they carry `web_vital.navigation_type`, which needs `reportSoftNavs` or a `rum.webVitals.metrics.attributes` callback that adds it. Without that attribute, expect a step up in TTFB charts at the upgrade. LCP, INP, CLS, and FCP are still reported for a restore, and a history navigation that loads the document again (`back-forward`) still reports its TTFB.
+
+## 0.40.0
+
+### Minor Changes
+
+- b21d321: Give Web Vital targets a stable name with a `data-logfire-component` attribute. The SDK reports the element behind LCP, INP, and the largest layout shift (`web_vital.lcp.target`, `web_vital.inp.target`, `web_vital.cls.largest_shift_target`) as the CSS selector that `web-vitals` generates. That selector holds class names and generated ids, such as `#:r1:>span`, so the same element gets a different value between builds and page views and does not group. An element that has the attribute, or is inside an element that has it, is now reported as `component:<name>`, for example `component:MessageList`.
+  
+  **Behavior change:** none until an application adds the attribute. An element with no named ancestor keeps the same CSS selector as before, and an application that passes its own `rum.webVitals.generateTarget` is not affected, because that function replaces the default naming. After an application adds the attribute, new records for the named elements hold `component:<name>` and not a selector, so they no longer match the selectors stored earlier for those elements. To keep CSS selectors for every element, pass `generateTarget: () => undefined`.
+
+### Patch Changes
+
+- 1c00811: Stop reporting a time to first byte of `0` for soft navigations. With `rum.webVitals.reportSoftNavs` on, the `web-vitals` library emits a placeholder TTFB of `0` for each soft navigation, because a route change inside a single-page application has no document request to time. The SDK recorded that placeholder as a `web_vital.ttfb` span and as a `logfire.browser.web_vital.ttfb` histogram point, so every TTFB average or percentile that did not exclude `web_vital.navigation_type = 'soft-navigation'` read lower than the real value.
+  
+  **Behavior change:** this affects only applications that set `reportSoftNavs: true`. They now get no `web_vital.ttfb` span and no TTFB histogram point for a soft navigation, so the number of TTFB records drops and TTFB averages and percentiles no longer include those `0` readings. A query that already excludes soft navigations returns the same result. Data recorded by earlier versions keeps the `0` readings, so keep that filter for time ranges that include them. LCP, INP, CLS, and FCP are still reported for soft navigations.
+
+## 0.39.0
+
+### Minor Changes
+
+- 68d4231: Let applications start session replay only after the user consents. With `autoStart: false`, replay records, stores, and sends nothing, and keeps no reported errors, until `start()` is called; the browser SDK does not load the replay package before then either (`cleanup.sessionReplay.start()`). `stop({ discard: true })` handles withdrawn consent: it detaches the recorder and drops buffered and queued replay data instead of uploading it. A `stop()` while the replay package is still loading now keeps the recorder from starting at all, where it previously attached and then stopped it.
+
+### Patch Changes
+
+- Updated dependencies [68d4231]
+  - @pydantic/logfire-session-replay@0.13.0
+
+## 0.38.0
+
+### Minor Changes
+
+- 5a363fd: Mask images in session replays by default, so a replay no longer records the URLs of the images a user saw, and playback no longer loads those images from their original hosts. The new `maskAllImages` option follows `maskAllText` unless it is set explicitly. Before upload, the recorder replaces image sources with a gray placeholder in full snapshots and DOM changes: `img` and `input type="image"` sources, `srcset`, `<picture>` sources, SVG `<image>` links, video posters, `background` attributes, and image preload links. A masked image has the natural size of the image it replaces, including one that loads after it was recorded, so playback lays it out as the page did. Inline styles that could reference a URL, such as CSS backgrounds, are removed even with `redactUrlPatterns: []`. Stylesheets, video and audio sources, `<object>`, and `<embed>` are not covered.
+  
+  **Behavior change:** with the default `maskAllText: true`, replays now show placeholders where images were. To record image URLs again while text stays masked, set `maskAllImages: false`. Recordings made with `maskAllText: false` are unchanged unless `maskAllImages: true` is set.
+
+### Patch Changes
+
+- Updated dependencies [5a363fd]
+  - @pydantic/logfire-session-replay@0.12.0
+
+## 0.37.0
+
+### Minor Changes
+
+- f317488: Accept `tracePersistence: true` to turn on trace recovery with default settings. An empty options object (`{}`) was the only way to turn it on, and it did not read as an opt-in. `{}` and `{ key }` still work.
+
+## 0.36.0
+
+### Minor Changes
+
+- 5ff079d: Add opt-in recovery for trace requests cancelled by same-origin navigation, including requests already in flight. Set `tracePersistence: {}` to retain scrubbed requests in sessionStorage and retry them from the next instrumented document with their original span IDs and timestamps.
+  
+  Recovery is disabled by default because lost acknowledgments can cause duplicate delivery, including during ordinary navigation. Retention is bounded to 32 requests, 2 MiB, and five minutes, and excludes request headers and credentials. Recovery requires Web Crypto, Web Locks, and available session storage. It is isolated by endpoint and configured headers; use `tracePersistence.key` to isolate proxy destinations selected by other state. Background retries do not delay forceFlush or take priority over new exports.
+  
+  The newest chunk sized for keepalive is excluded from recovery to avoid replaying successful unload uploads. That chunk can be lost if keepalive fails or its shared budget is exhausted. Other requests can still be duplicated after an acknowledgment is lost.
+
+## 0.35.1
+
+### Patch Changes
+
+- Updated dependencies [3a779ab]
+- Updated dependencies [1545bce]
+- Updated dependencies [1cee829]
+- Updated dependencies [35edb41]
+- Updated dependencies [3f486ec]
+  - logfire@0.26.1
+
+## 0.35.0
+
+### Minor Changes
+
+- d967f55: Let a consumer of browser telemetry separate SDK failures from application errors without matching message text.
+  
+  Exception spans for errors that `@pydantic/logfire-browser` and `@pydantic/logfire-session-replay` raise about themselves now carry `logfire.sdk.internal = true`, whether the error reaches `reportError()` through global error capture or through the application's `sessionReplay.onError` callback. A failing `span()` or `instrument()` callback that throws such an error is marked too, and so is the `Session replay upload was not confirmed` log. Errors from application code carry no attribute, including an error that an application callback throws into the SDK.
+
+### Patch Changes
+
+- Updated dependencies [d967f55]
+  - logfire@0.26.0
+  - @pydantic/logfire-session-replay@0.11.0
+
+## 0.34.1
+
+### Patch Changes
+
+- Updated dependencies [6ab7b5a]
+  - logfire@0.25.1
+
+## 0.34.0
+
+### Minor Changes
+
+- b0fa53a: Record which build produced each exception, so Logfire can resolve minified and bundled stack traces to original source.
+  
+  - Exception spans and their `exception` events carry `logfire.debug_ids`, a JSON string mapping each file URL in the stack to the debug ID that a source map inject step registered in `globalThis._logfireDebugIds` (or the vendor-neutral `globalThis._debugIds`). This covers `reportError()`, failing `span()` and `instrument()` callbacks, browser global error and unhandled rejection handlers, Node process hooks, and exceptions that instrumentations record. Without a registered debug ID, spans are unchanged. `logfire` exports `DebugIdSpanProcessor` for custom tracer providers.
+  - When `serviceVersion` is not set, the browser, Node and Workers SDKs use the release identifier the inject step stamped into the bundle (`globalThis._logfireRelease`). Source map resolution needs a real per-build version, such as the commit SHA or release tag. The browser's `0.0.1` fallback is deprecated and is removed in the next major version.
+  - `@pydantic/logfire-node` adds `enableSourceMaps`, which calls `process.setSourceMapsEnabled(true)` so a service that ships `.map` files next to its code records stack traces with original files and lines, without uploading maps. Do not combine it with `source-map-support`.
+
+### Patch Changes
+
+- Updated dependencies [b0fa53a]
+  - logfire@0.25.0
+
+## 0.33.1
+
+### Patch Changes
+
+- 60f72af: Record one session in ten by default instead of every session, so replay usage and the privacy exposure stay proportionate when a rate is not chosen.
+  
+  - **Behavior change:** `sessionSampleRate` now defaults to `0.1` (was `1`). `onErrorSampleRate` stays `1`, so every other session is buffered and uploaded if an error occurs. Before, the error buffer never applied, because every session was already recorded in full. To keep recording every session, set `sessionSampleRate: 1`.
+  - The replay docs now recommend a rate for each traffic level and show how to record every session in development.
+- Updated dependencies [60f72af]
+  - @pydantic/logfire-session-replay@0.10.0
+
+## 0.33.0
+
+### Minor Changes
+
+- fa16e89: Let applications declare attribute keys that scrubbing leaves alone.
+  
+  Scrubbing checks attribute values as well as keys and runs on every exported span, including spans created with the OpenTelemetry tracer directly. An application that records code-defined labels, such as a step name containing `auth` or `session`, had them redacted, and the only way around it was a `callback` that kept each match.
+  
+  The `scrubbing` option now accepts `safeKeys` (exact attribute keys) and `safeKeyPrefixes` (key prefixes such as `app.checkout.`). Neither the key nor the value of a matching top-level attribute is scrubbed, on span, span event, span link and log record attributes, in message template fields, and in the attributes passed to the API helpers. Nested keys, span status messages and log bodies are still scrubbed. An empty prefix is rejected, since it would exempt every key. The browser SDK forwards both options and keeps exempting its own session and URL attributes.
+
+### Patch Changes
+
+- Updated dependencies [fa16e89]
+  - logfire@0.24.0
+
+## 0.32.2
+
+### Patch Changes
+
+- 5ce9e62: Keep errors from page nodes that the page script cannot access out of the application's global error handler.
+  
+  In Firefox, a node that the page script cannot access, such as one a browser extension inserted, throws `Permission denied to access property "..."` when it is read. Session replay could throw `Permission denied to access property "nodeType"` from rrweb's mutation handling on every DOM change, and the click instrumentation could throw `Permission denied to access property "localName"` when it built the target's XPath. Both reached `window.onerror`.
+  
+  - Session replay now registers an rrweb error handler. rrweb drops errors from its observer callbacks and keeps recording, and the `onError` option receives each distinct message once.
+  - The browser SDK skips the span for an interaction whose target the instrumentation cannot read, and logs one diagnostic warning.
+
+## 0.32.1
+
+### Patch Changes
+
+- b52cc46: Stop session replay when uploads can no longer succeed, and link spans only to replays that exist.
+  
+  - After a `4xx` rejection that every later chunk would also get (other than `408`, `413`, `425`, and `429`), such as a revoked token or a usage block (`401`, `402`, `403`), replay stops and detaches the recorder. Before, each tab serialized a full DOM snapshot for another rejected upload about once a minute until it closed.
+  - Browser replay now follows the RUM session's idle timeout, so a tab that goes idle starts a new replay with its new RUM session.
+  - The replay handle has a new `uploading` getter. The browser SDK marks spans with `logfire.session_replay.mode: 'full'` only once the recording passes its minimum duration and uploads, so visits that end earlier no longer point at replays that were never uploaded.
+- Updated dependencies [b52cc46]
+  - @pydantic/logfire-session-replay@0.9.0
+
+## 0.32.0
+
+### Minor Changes
+
+- 19ea2d8: Give session replay more control over the URLs and page text it records.
+  
+  The new `transformUrl` option rewrites each replay page, navigation, network, and DOM attribute URL after query and fragment removal, so applications can replace tokens or email addresses in paths. The rewritten URLs are also the ones replay search shows. `@pydantic/logfire-browser` forwards the option from `sessionReplay`.
+  
+  URL redaction now also covers the `srcset`, `imagesrcset`, `poster`, `data`, `xlink:href`, `background`, and `cite` attributes. Inline styles that could reference a URL, through `url`, `image-set`, `src(`, or a CSS escape, are removed whole, so such elements can lose background images or other styling in replays. URLs with an opaque scheme, such as `mailto:`, `tel:`, `data:`, and `blob:`, now keep only the scheme instead of their content.
+  
+  `maskAllInputs` now masks hidden input values. `maskAllText` now masks the text-bearing attributes `title`, `alt`, `aria-label`, `placeholder`, and similar, button labels set through `value`, and `data-*` attributes, except common UI state and theme attributes such as `data-state` and `data-theme` and the values `true` and `false`. Replay error messages and stacks are limited to 1,024 and 8,192 characters.
+
+### Patch Changes
+
+- Updated dependencies [19ea2d8]
+  - @pydantic/logfire-session-replay@0.8.0
+
+## 0.31.2
+
+### Patch Changes
+
+- Updated dependencies [1d7eaf5]
+  - logfire@0.23.4
+
+## 0.31.1
+
+### Patch Changes
+
+- 93e84cf: Apply scrubbing to every exported span, not only to the attributes passed to `logfire.span`, `logfire.info`, and the other API helpers. Spans from automatic instrumentation, attributes set after a span starts, span event attributes, span link attributes, span status messages, and Node.js log records are now scrubbed before export. Cloudflare Workers tail mode (`instrumentTail`) now scrubs too and accepts the `scrubbing` option.
+  
+  Exception messages are now scrubbed consistently. Before, the `exception.message` attribute could be redacted while the same message stayed in the exception event, the span status, and the first line of the stack trace. The message and `Caused by` lines of `exception.stacktrace` are now scrubbed too; stack frame lines are kept.
+  
+  In the browser, values of custom session attributes (`logfire.session.*`) are scrubbed too, matching only the application's own attribute name against the patterns. `configureFrontend` now removes query strings and fragments from every attribute whose key ends in `.url` (such as `web_vital.lcp.url`) and from the URLs in exception stack traces. Session replay applies `redactUrlPatterns` to error messages, sources, and stacks, and to console arguments, and `sessionReplay.captureGlobalErrors` is passed to the replay recorder when browser global error capture is off.
+- Updated dependencies [93e84cf]
+  - logfire@0.23.3
+
+## 0.31.0
+
+### Minor Changes
+
+- fa27344: Send the newest spans first when an application calls `forceFlush()`, like the document-hide flush does. `forceFlush()` now sends the newest spans in a small keepalive request and the older spans in a second request started at the same time. Before, it sent the whole buffer in one request. Once a page has loaded, that request is too large for `keepalive`, so an unload soon after could cancel it, together with the record the application flushed it for. An application can now call `forceFlush()` after the end of a page-load measurement, not only after its start. `batchSpanProcessorConfig.documentHideKeepaliveBytes` sets the size of the first request for both flushes.
+  
+  Both flushes now split only when the trace exporter has two free request slots, and otherwise send one request. Before, a document-hide flush with only one free slot, for example with `traceExporterConfig.concurrencyLimit: 1`, lost its older spans, because the exporter rejected the second request.
+
+## 0.30.0
+
+### Minor Changes
+
+- 8a7e6da: Add opt-in rage-click detection and experimental slow/dead-click heuristics, with session context and optional replay correlation.
+
+### Patch Changes
+
+- f5448dc: Add the URL path to fetch and XHR span names again with current OpenTelemetry instrumentations. Since `@opentelemetry/instrumentation-fetch` and `instrumentation-xml-http-request` 0.221, these spans have `url.full` instead of `http.url`, so a fresh install named them only by method, for example `GET` instead of `GET /api/thing`. The span processor now reads `url.full` first and falls back to `http.url`.
+- 2ebfe0a: Serialize and retry hidden-tab replay uploads in keepalive-sized chunks, pack page-close chunks into the keepalive budget by compressed size, and export structured replay upload failures through the browser SDK.
+- Updated dependencies [3374365]
+- Updated dependencies [348e8d5]
+  - logfire@0.23.2
+
+## 0.29.0
+
+### Minor Changes
+
+- 0a3dafd: Stop losing the older spans of a page that unloads soon after it loads. The document-hide flush sends the newest spans first in a small keepalive request, and it now starts the request for the older spans in the same task. Before, it waited for the first response, which an unloading page never receives, so the older spans were never sent. On a page that redirects at once, such as a redirect to a login page, that dropped almost every span except the newest. The flush now needs two free export slots, so an exporter with `concurrencyLimit: 1` rejects the second request.
+  
+  Add `forceFlush()`, which exports the buffered spans of the active configuration at once. Call it after a record that must arrive even if the page unloads soon after, such as the start of a page-load measurement.
+
+## 0.28.1
+
+### Patch Changes
+
+- b85bf8c: Fix fresh installs failing with `ERESOLVE` since the OpenTelemetry JS 3.0 release. The OpenTelemetry dependency ranges now stop before `@opentelemetry/api` 1.10, `@opentelemetry/auto-instrumentations-node` 0.82, `@opentelemetry/auto-instrumentations-web` 0.69 and `@opentelemetry/instrumentation-user-interaction` 0.68, which require the 3.0 line. A new install resolves to the 1.9 / 2.x / 0.2xx line again. Support for OpenTelemetry JS 3.0 will follow in a later release.
+- Updated dependencies [b85bf8c]
+  - logfire@0.23.1
+
+## 0.28.0
+
+### Minor Changes
+
+- c157b5d: Group React Router, TanStack Router, and Vue Router pages by route without a handwritten `getRouteName`. Each helper returns the callback for `rum.session.getRouteName` and reports the route template of the current URL, such as `/projects/:id`, or `/*` for a URL that no route matches:
+  
+  - `reactRouterRouteName({ routes, matchRoutes, basename })` from `@pydantic/logfire-browser/react-router`, for `createBrowserRouter` and `<BrowserRouter>`, tested with React Router 7 and 8.
+  - `tanStackRouterRouteName(router)` from `@pydantic/logfire-browser/tanstack-router`, tested with TanStack's React router. It reads only the router core that the Solid and Vue routers share.
+  - `vueRouterRouteName(router)` from `@pydantic/logfire-browser/vue-router`, tested with Vue Router 4 and 5.
+  
+  The helpers add no router dependency. They match the current URL instead of the router's rendered state, so spans that start while a back or forward navigation loads get the new route. The documented recipes they replace reported the previous route during that time, and the TanStack Router recipe reported `/` for every page of an application with a `basepath`.
+
+## 0.27.0
+
+### Minor Changes
+
+- dfd8b27: Let one document at a time write a session replay recording. A duplicated tab could continue another tab's recording and upload different events under the same sequence numbers, which the Platform rejects, so the recording lost events. A document now uploads under a recording only while it holds that recording's Web Lock, and continues from the sequence that a record shared through `localStorage` confirms. A copy whose recording another tab holds starts a new recording after up to one second. Recording still starts at once. Until a continued recording's lock is granted, `getRecordingId()` returns an empty string and spans have no recording link. The lock is released at `pagehide`, so pages stay eligible for the back-forward cache. Browsers without Web Locks or writable `localStorage` keep the previous behavior.
+
+### Patch Changes
+
+- Updated dependencies [dfd8b27]
+  - @pydantic/logfire-session-replay@0.7.0
+
+## 0.26.0
+
+### Minor Changes
+
+- 9b493c5: Report browser errors and keep the replays around them without application-owned listeners or a custom sampler.
+  
+  - `configure()` and `configureFrontend()` now report uncaught errors and unhandled promise rejections as error-level spans named `Uncaught error` and `Unhandled promise rejection`. Resource load failures are not reported. An error object that the application already reported, for example before rethrowing it or from its own `window` `error` listener, is reported once. Pass `captureGlobalErrors: false` to turn global capture off.
+  - Every `reportError()` call now adds the error to an active session replay and promotes an error-buffered replay, so a handled error gets a replay, not only an uncaught one. Up to 10 errors reported before replay has loaded are held and added when it starts, with the time they occurred, so an error during page startup still promotes the replay. The browser SDK turns off the replay package's own global error listeners, so an uncaught error appears in the replay once.
+  - `configureFrontend({ profile: 'errors' })` sets defaults for errors and replay without performance data: it exports only traces with an error-level span, an error status, or an HTTP 5xx response; turns off Web Vitals, their metrics, and document-load spans; and records replay only for sessions with an error. Options passed explicitly take precedence.
+  - The automatic click span now ends when the last listener for the click returns, or throws, instead of when the first one returns. The first listener is often a library's capture listener, such as the replay recorder's, so the span ended before the application's handler ran, and tail sampling decided the trace without the handler's work. A click whose first listener threw also never ended its span.
+- f2e4bc5: Give each tab replay an upload/playback ID distinct from its RUM session ID. Preserve it across same-tab reloads and navigations, but start a new replay for another tab or after two hours. Add `getRecordingId()` to the standalone recorder and `logfire.session_replay.id` to browser spans. Start a new replay when its saved sequence cannot be safely resumed.
+  
+  Requires Platform compatibility readers before upgrading. New tabs produce separate billable replays; same-tab reloads continue the existing replay. The RUM `session.id` attribute and `getSessionId()` remain unchanged; standalone callers linking to playback must use `getRecordingId()`.
+- 9b493c5: Trace the clicks and requests that an application sets up during startup. The browser auto-instrumentations loaded through a dynamic import, so they patched `addEventListener`, `fetch`, and XHR only after `configure()` had returned. A listener registered before the patch, such as the delegated listeners that a framework root registers when it mounts right after configuration, never produced click spans, and requests sent before the patch were not traced. `configure()` and `configureFrontend()` now register the auto-instrumentations before they return, so applications that passed them through `instrumentations` only to register them early can return to `autoInstrumentations`. The auto-instrumentations are part of the main bundle, which adds about 8 kB gzipped for applications that bundle the browser SDK.
+- 1c7f0e7: Rotate browser and standalone replay session IDs after two hours of active recording by default, instead of four hours. Browser telemetry and integrated replay keep the same session ID when they rotate.
+  
+  Applications that configure a custom maximum duration retain that setting.
+
+### Patch Changes
+
+- 59666aa: Keep each page's route on its Web Vitals when the application navigates before anything else observed that page. The SDK learned a page's route only when a span started or a Web Vital reported while its URL was current, so an early client-side navigation, or a quick second one, left Web Vitals without `logfire.page.route`. `configure()` now records the initial page and its route when Web Vitals are enabled, and with `reportSoftNavs` it also records each page the application navigates to, in browsers with the Navigation API (all browsers that report soft navigations).
+- Updated dependencies [cc4c206]
+- Updated dependencies [f2e4bc5]
+- Updated dependencies [9b493c5]
+- Updated dependencies [9b493c5]
+- Updated dependencies [1c7f0e7]
+  - @pydantic/logfire-session-replay@0.6.0
+  - logfire@0.23.0
+
+## 0.25.0
+
+### Minor Changes
+
+- 4bc2a78: Export the newest spans first when the document hides, in one request small enough to outlive a navigation. The document-hide flush now listens for `visibilitychange` on `window`, so a span that an application ends in its own `document` listener is part of the flush whenever that listener registered, and for `pagehide` on `window`, where the event is dispatched. `batchSpanProcessorConfig.documentHideKeepaliveBytes` sets the size of the first request.
+
+### Patch Changes
+
+- 364ca24: A click now exports one span, not one span for each event listener that the click reaches. Without Zone.js, the OpenTelemetry user interaction instrumentation started a new click span for every listener and parented it to the span of the previous listener. A single click on a page with many listeners became a deep chain of identical click spans. The automatic user interaction instrumentation now keeps the first span for each event. Every later listener runs in the context of that span, so the spans and requests that a listener starts are still its children. The click span ends when the first listener returns, so its duration does not include the time of later listeners. A user interaction instrumentation that you pass through `instrumentations` keeps the upstream behavior.
+
+## 0.24.3
+
+### Patch Changes
+
+- Updated dependencies [d0c4d99]
+  - logfire@0.22.10
+
+## 0.24.2
+
+### Patch Changes
+
+- 782bb85: Document Web Vital spans now carry `logfire.page.route`. Since soft-navigation support, every document Web Vital had a navigation URL, so the SDK omitted the route from all of them. Page loads and their Web Vitals then grouped differently in route-based views. The SDK now remembers the first route that `getRouteName` returned while each navigation's URL was current, and it stamps that route on Web Vitals for the same navigation, including soft navigations and metrics that report after the user navigates away. When no route was observed for a navigation, the attribute is still omitted.
+
+## 0.24.1
+
+### Patch Changes
+
+- Updated dependencies [f9b75ca]
+  - @pydantic/logfire-session-replay@0.5.0
+
+## 0.24.0
+
+### Minor Changes
+
+- 8cd4707: Include the reported user in session replay chunk metadata. Browser spans already carried `user.id`, `user.name`, and `user.email` from `rum.session.getUser()`, but replay chunks carried only `distinctId`, so a replay service could not show who a recording belongs to or find it by email. Each chunk now snapshots the user once into an optional `meta.user` with only `id`, `name`, and `email`, and derives `distinctId` from that same snapshot unless `sessionReplay.getDistinctId` overrides it. Standalone replay users can pass the new `getUser` option.
+
+### Patch Changes
+
+- Updated dependencies [8cd4707]
+  - @pydantic/logfire-session-replay@0.4.0
+
 ## 0.23.0
 
 ### Minor Changes

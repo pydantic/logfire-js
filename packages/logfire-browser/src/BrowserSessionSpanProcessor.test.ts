@@ -1,4 +1,5 @@
-import type { Context } from '@opentelemetry/api'
+import { ROOT_CONTEXT } from '@opentelemetry/api'
+import { INTERACTION_CONTEXT } from './interactionContext'
 import type { Span } from '@opentelemetry/sdk-trace-web'
 import { afterEach, describe, expect, it } from 'vite-plus/test'
 
@@ -19,6 +20,11 @@ class TestSpan {
 
   setAttribute(key: string, value: unknown): this {
     this.attributes[key] = value
+    return this
+  }
+
+  setAttributes(values: Record<string, unknown>): this {
+    Object.assign(this.attributes, values)
     return this
   }
 }
@@ -76,18 +82,21 @@ function createSpan(): TestSpan {
 function setLocation(location: { href: string } | undefined): void {
   Object.defineProperty(globalThis, 'location', {
     configurable: true,
-    value: location as Location | undefined,
+    value: location,
   })
 }
 
 function startSpan(processor: BrowserSessionSpanProcessor, span: TestSpan): void {
-  processor.onStart(span as unknown as Span, {} as Context)
+  processor.onStart(span as unknown as Span, ROOT_CONTEXT)
 }
 
-function createReplayRuntime(mode: BrowserSessionReplayRuntime['mode']): BrowserSessionReplayRuntime {
+function createReplayRuntime(
+  mode: BrowserSessionReplayRuntime['mode']
+): BrowserSessionReplayRuntime & Pick<Required<BrowserSessionReplayRuntime>, 'captureError'> {
   return {
     mode,
     recording: true,
+    captureError: () => undefined,
     flush: async () => Promise.resolve(),
     getSessionId: () => 'session-1',
     stop: async () => Promise.resolve(),
@@ -95,6 +104,17 @@ function createReplayRuntime(mode: BrowserSessionReplayRuntime['mode']): Browser
 }
 
 describe('BrowserSessionSpanProcessor', () => {
+  it('preserves frozen interaction identity without reading current route or user context', () => {
+    const processor = createProcessor()
+    const span = createSpan()
+    const attributes = {
+      'session.id': 'original-session',
+      'logfire.page.route': '/original',
+      'logfire.session_replay.id': 'original-recording',
+    }
+    processor.onStart(span as unknown as Span, ROOT_CONTEXT.setValue(INTERACTION_CONTEXT, attributes))
+    expect(span.attributes).toEqual(attributes)
+  })
   afterEach(() => {
     if (originalLocationDescriptor === undefined) {
       Reflect.deleteProperty(globalThis, 'location')
@@ -135,6 +155,23 @@ describe('BrowserSessionSpanProcessor', () => {
       'session.id': 'session-1',
       'user.id': 'user-1',
     })
+  })
+
+  it('remembers the route of each URL for later Web Vital reports', () => {
+    let route = '/products/:id'
+    const sessionManager = new BrowserSessionManager({
+      getRouteName: () => route,
+      storage: null,
+    })
+    const processor = new BrowserSessionSpanProcessor(sessionManager)
+    setLocation({ href: 'https://example.com/products/123?token=secret' })
+    startSpan(processor, createSpan())
+
+    route = '/settings'
+    setLocation({ href: 'https://example.com/settings' })
+    startSpan(processor, createSpan())
+
+    expect(sessionManager.getNavigationRouteName(new URL('https://example.com/products/123'))).toBe('/products/:id')
   })
 
   it('keeps page context for non-Web-Vital spans from the Web Vitals tracer', () => {
@@ -461,6 +498,27 @@ describe('BrowserSessionSpanProcessor', () => {
     })
   })
 
+  it('links the DOM recording without replacing the RUM session id', () => {
+    const replayState = new BrowserSessionReplayState()
+    replayState.setReplay({ ...createReplayRuntime('full'), getRecordingId: () => 'recording-1' })
+    const span = createSpan()
+    startSpan(createProcessor({}, replayState), span)
+    expect(span.attributes).toEqual({
+      'logfire.session_replay.active': true,
+      'logfire.session_replay.mode': 'full',
+      'logfire.session_replay.id': 'recording-1',
+      'session.id': 'session-1',
+    })
+  })
+
+  it('does not link a span while the recording identity is unavailable', () => {
+    const replayState = new BrowserSessionReplayState()
+    replayState.setReplay({ ...createReplayRuntime('full'), getRecordingId: () => '' })
+    const span = createSpan()
+    startSpan(createProcessor({}, replayState), span)
+    expect(span.attributes).toEqual({ 'session.id': 'session-1' })
+  })
+
   it('reads live replay mode on each span start', () => {
     let mode: BrowserSessionReplayRuntime['mode'] = 'buffer'
     const replayState = new BrowserSessionReplayState()
@@ -469,6 +527,7 @@ describe('BrowserSessionSpanProcessor', () => {
         return mode
       },
       recording: true,
+      captureError: () => undefined,
       flush: async () => Promise.resolve(),
       stop: async () => Promise.resolve(),
     })
@@ -525,6 +584,7 @@ describe('BrowserSessionSpanProcessor', () => {
       get recording(): boolean {
         throw new Error('recording unavailable')
       },
+      captureError: () => undefined,
       flush: async () => Promise.resolve(),
       stop: async () => Promise.resolve(),
     })

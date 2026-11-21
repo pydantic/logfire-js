@@ -25,7 +25,7 @@
     "stats",
     "monitoring"
   ],
-  "version": "0.18.25",
+  "version": "0.24.0",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -108,7 +108,13 @@
     "@opentelemetry/sdk-metrics": "catalog:",
     "@opentelemetry/sdk-node": "catalog:",
     "@opentelemetry/sdk-trace-base": "catalog:",
-    "@opentelemetry/semantic-conventions": "catalog:"
+    "@opentelemetry/semantic-conventions": "catalog:",
+    "@pydantic/logfire-fleet-otel": "^0.2.1"
+  },
+  "peerDependenciesMeta": {
+    "@pydantic/logfire-fleet-otel": {
+      "optional": true
+    }
   },
   "files": [
     "dist",

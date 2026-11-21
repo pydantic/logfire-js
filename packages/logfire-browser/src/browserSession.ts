@@ -1,12 +1,16 @@
 import type { BrowserWebVitalsOptions } from './webVitals'
 import type { BrowserLongAnimationFramesOptions } from './longAnimationFrames'
+import type { BrowserFrustrationOptions } from './interactionFrustration'
 
 import { setOwn } from './ownRecord'
+import { PageRouteHistory } from './pageRoutes'
 
 export const BROWSER_SESSION_ACTIVITY_WRITE_DELAY_MS = 1_000
 const MAX_SESSION_ATTRIBUTES = 20
 const MAX_SESSION_ATTRIBUTE_STRING_CODE_POINTS = 200
 const SESSION_ATTRIBUTE_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u
+// A long single-page session can visit many URLs. Web Vitals report for the
+// current and recent navigations only, so older entries are not needed.
 
 export type BrowserSessionAttributeValue = string | number | boolean
 export type BrowserSessionAttributesInput = Record<string, BrowserSessionAttributeValue | undefined>
@@ -50,7 +54,7 @@ export interface BrowserSessionOptions {
    */
   idleTimeoutMs?: number
   /**
-   * Hard cap on one browser session. Defaults to 4 hours.
+   * Hard cap on one browser session. Defaults to 2 hours.
    */
   maxDurationMs?: number
   /**
@@ -75,6 +79,8 @@ export interface BrowserSessionState {
 }
 
 export interface RUMOptions {
+  /** Opt-in frustration heuristics. Dead-click detection is experimental and disabled by default. */
+  frustration?: boolean | BrowserFrustrationOptions
   /**
    * Enable browser session identity and session/page span attributes.
    */
@@ -102,6 +108,16 @@ export interface BrowserSessionManagerOptions extends BrowserSessionOptions {
    * Internal injection point for deterministic tests.
    */
   generateId?: () => string
+  /**
+   * Internal injection point for deterministic tests. Must share the
+   * performance timeline that Web Vitals navigation start times use.
+   */
+  performanceNow?: () => number
+  /**
+   * Internal injection point for deterministic tests. Returns the start times
+   * of the browser-detected soft navigations so far.
+   */
+  softNavigationStartTimes?: () => readonly number[]
 }
 
 export const DEFAULT_BROWSER_SESSION_OPTIONS: {
@@ -110,7 +126,7 @@ export const DEFAULT_BROWSER_SESSION_OPTIONS: {
   storageKey: string
 } = {
   idleTimeoutMs: 30 * 60_000,
-  maxDurationMs: 4 * 60 * 60_000,
+  maxDurationMs: 2 * 60 * 60_000,
   storageKey: 'lf_browser_session',
 }
 
@@ -119,6 +135,21 @@ function getDefaultSessionStorage(): Storage | null {
     return (globalThis as { sessionStorage?: Storage }).sessionStorage ?? null
   } catch {
     return null
+  }
+}
+
+// Routers do not match on the query string, and applications often remove it
+// with `history.replaceState` after load. The fragment stays because hash
+// routers match on it.
+function routeUrlKey(url: URL): string {
+  return `${url.origin}${url.pathname}${url.hash}`
+}
+
+function readSoftNavigationStartTimes(): number[] {
+  try {
+    return globalThis.performance.getEntriesByType('soft-navigation').map((entry) => entry.startTime)
+  } catch {
+    return []
   }
 }
 
@@ -256,6 +287,9 @@ export class BrowserSessionManager {
   private readonly storageKey: string
   private readonly urlAttributes: BrowserSessionOptions['urlAttributes'] | undefined
   private readonly sessionChangeListeners = new Set<(session: BrowserSessionState) => void>()
+  private readonly pageRoutes = new PageRouteHistory()
+  private readonly performanceNow: () => number
+  private readonly softNavigationStartTimes: () => readonly number[]
   private memorySession: BrowserSessionState | undefined
   private pendingSession: BrowserSessionState | undefined
   private persistenceTimer: ReturnType<typeof setTimeout> | undefined
@@ -263,6 +297,8 @@ export class BrowserSessionManager {
   constructor(options: BrowserSessionManagerOptions = {}) {
     this.generateId = options.generateId ?? generateBrowserSessionId
     this.routeNameCallback = options.getRouteName
+    this.performanceNow = options.performanceNow ?? (() => globalThis.performance.now())
+    this.softNavigationStartTimes = options.softNavigationStartTimes ?? readSoftNavigationStartTimes
     this.sessionAttributesCallback = options.getSessionAttributes
     this.userCallback = options.getUser
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_BROWSER_SESSION_OPTIONS.idleTimeoutMs
@@ -337,13 +373,45 @@ export class BrowserSessionManager {
     }
   }
 
-  getRouteName(): string | undefined {
+  /**
+   * Returns the callback's current route. When `currentUrl` is given, the
+   * manager also remembers the route for that URL, so a Web Vital that reports
+   * after a later navigation can use the route of its own navigation.
+   */
+  getRouteName(currentUrl?: URL): string | undefined {
+    let routeName: string | undefined
     try {
-      const routeName = this.routeNameCallback?.()
-      return typeof routeName === 'string' ? routeName : undefined
+      const value: unknown = this.routeNameCallback?.()
+      routeName = typeof value === 'string' ? value : undefined
     } catch {
-      return undefined
+      routeName = undefined
     }
+    if (currentUrl !== undefined) {
+      // A page without a route still ends the previous page, so a later visit
+      // to an earlier URL is not mistaken for that earlier navigation.
+      const at = this.performanceNow()
+      this.pageRoutes.observe(routeUrlKey(currentUrl), routeName, at, () =>
+        this.softNavigationStartTimes().some((startTime) => startTime <= at)
+      )
+    }
+    return routeName
+  }
+
+  /**
+   * Returns the first route observed while the navigation to `navigationUrl`
+   * was current, or `undefined` when none was observed. Document navigations
+   * omit `softNavigationStartTime`.
+   */
+  getNavigationRouteName(navigationUrl: URL, softNavigationStartTime?: number): string | undefined {
+    const key = routeUrlKey(navigationUrl)
+    if (softNavigationStartTime === undefined) {
+      return this.pageRoutes.documentRoute(key)
+    }
+    const nextStartTime = Math.min(
+      ...this.softNavigationStartTimes().filter((startTime) => startTime > softNavigationStartTime),
+      Number.POSITIVE_INFINITY
+    )
+    return this.pageRoutes.softNavigationRoute(key, softNavigationStartTime, nextStartTime)
   }
 
   getUser(): BrowserUser | undefined {

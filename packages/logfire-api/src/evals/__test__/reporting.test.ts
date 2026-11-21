@@ -435,7 +435,7 @@ describe('report-level evaluators land on the experiment span', () => {
     const analyse = (output: unknown): unknown => {
       const report: EvaluationReport = {
         analyses: [],
-        cases: [makeReportCase({ expected_output: 'A', output } as never)],
+        cases: [makeReportCase({ expected_output: 'A', output })],
         failures: [],
         name: 'bigint-label',
         report_evaluator_failures: [],

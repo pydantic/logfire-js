@@ -1,5 +1,160 @@
 # logfire
 
+## 0.24.0
+
+### Minor Changes
+
+- 5487d49: `configure()` now throws when `sampling.head` is outside `0` to `1` or is `NaN`, instead of keeping every trace for a value above `1` or `NaN` and dropping every trace for a negative one
+
+### Patch Changes
+
+- 134b53b: Treat a blank `LOGFIRE_BASE_URL` as unset, so the base URL falls back to local credentials or the token's region instead of becoming empty
+- 3db06cb: Trim whitespace around the value a `token` provider function returns. A trailing newline, such as one left by reading a secret file, made Node reject the `Authorization` header and drop every export.
+- Updated dependencies [134b53b]
+  - logfire@0.26.2
+
+## 0.23.1
+
+### Patch Changes
+
+- 3c7ea50: Report uncaught exceptions and unhandled rejections whose value is not an `Error`, such as `throw 'boom'`, `Promise.reject(null)`, or an error whose `message` getter throws. They now get a span named `Uncaught error` or `Unhandled promise rejection`, the same names the browser package uses.
+
+## 0.23.0
+
+### Minor Changes
+
+- 2008307: `distributedTracing: false` now ignores all incoming context, including W3C baggage, instead of only trace context. Outgoing requests still carry trace context and baggage. This matches the Python SDK.
+
+### Patch Changes
+
+- f40d840: Trim whitespace around a string token from `configure({ token })` or `LOGFIRE_TOKEN`. A token with a trailing newline, as secret stores often write it, used to lose its region and fall back to the US endpoint, and its export requests failed with an invalid `Authorization` header. A blank `configure({ token })` now counts as unset, so `LOGFIRE_TOKEN` and local credentials apply, as they do for a blank `LOGFIRE_TOKEN`.
+- Updated dependencies [3a779ab]
+- Updated dependencies [1545bce]
+- Updated dependencies [1cee829]
+- Updated dependencies [35edb41]
+- Updated dependencies [3f486ec]
+  - logfire@0.26.1
+
+## 0.22.0
+
+### Minor Changes
+
+- 60b41cb: Add `configure({ fleet })` to manage the SDK from Logfire Fleet, with the optional `@pydantic/logfire-fleet-otel` peer dependency.
+
+### Patch Changes
+
+- bcd72a4: `metrics: false` no longer leaves the OpenTelemetry NodeSDK to build an OTLP metric reader from `OTEL_METRICS_EXPORTER`, which sent metrics to `localhost:4318` and could stall `shutdown()` for seconds.
+
+## 0.21.2
+
+### Patch Changes
+
+- Updated dependencies [d967f55]
+  - logfire@0.26.0
+
+## 0.21.1
+
+### Patch Changes
+
+- Updated dependencies [6ab7b5a]
+  - logfire@0.25.1
+
+## 0.21.0
+
+### Minor Changes
+
+- b0fa53a: Record which build produced each exception, so Logfire can resolve minified and bundled stack traces to original source.
+  
+  - Exception spans and their `exception` events carry `logfire.debug_ids`, a JSON string mapping each file URL in the stack to the debug ID that a source map inject step registered in `globalThis._logfireDebugIds` (or the vendor-neutral `globalThis._debugIds`). This covers `reportError()`, failing `span()` and `instrument()` callbacks, browser global error and unhandled rejection handlers, Node process hooks, and exceptions that instrumentations record. Without a registered debug ID, spans are unchanged. `logfire` exports `DebugIdSpanProcessor` for custom tracer providers.
+  - When `serviceVersion` is not set, the browser, Node and Workers SDKs use the release identifier the inject step stamped into the bundle (`globalThis._logfireRelease`). Source map resolution needs a real per-build version, such as the commit SHA or release tag. The browser's `0.0.1` fallback is deprecated and is removed in the next major version.
+  - `@pydantic/logfire-node` adds `enableSourceMaps`, which calls `process.setSourceMapsEnabled(true)` so a service that ships `.map` files next to its code records stack traces with original files and lines, without uploading maps. Do not combine it with `source-map-support`.
+
+### Patch Changes
+
+- Updated dependencies [b0fa53a]
+  - logfire@0.25.0
+
+## 0.20.0
+
+### Minor Changes
+
+- fa16e89: Let applications declare attribute keys that scrubbing leaves alone.
+  
+  Scrubbing checks attribute values as well as keys and runs on every exported span, including spans created with the OpenTelemetry tracer directly. An application that records code-defined labels, such as a step name containing `auth` or `session`, had them redacted, and the only way around it was a `callback` that kept each match.
+  
+  The `scrubbing` option now accepts `safeKeys` (exact attribute keys) and `safeKeyPrefixes` (key prefixes such as `app.checkout.`). Neither the key nor the value of a matching top-level attribute is scrubbed, on span, span event, span link and log record attributes, in message template fields, and in the attributes passed to the API helpers. Nested keys, span status messages and log bodies are still scrubbed. An empty prefix is rejected, since it would exempt every key. The browser SDK forwards both options and keeps exempting its own session and URL attributes.
+
+### Patch Changes
+
+- Updated dependencies [fa16e89]
+  - logfire@0.24.0
+
+## 0.19.2
+
+### Patch Changes
+
+- 1d7eaf5: Require dependency versions that are free of known security advisories. `@pydantic/logfire-node` now needs `@opentelemetry/auto-instrumentations-node` 0.79.0 or later, because earlier releases bundle database instrumentations that record the database username in `db.user` on every span (GHSA for pg, mysql, mysql2, knex, mongoose, tedious, oracledb, and cassandra-driver). `logfire` now needs `handlebars` 4.7.10 or later, so dependency scanners no longer flag the 4.7.9 advisories.
+- Updated dependencies [1d7eaf5]
+  - logfire@0.23.4
+
+## 0.19.1
+
+### Patch Changes
+
+- 93e84cf: Apply scrubbing to every exported span, not only to the attributes passed to `logfire.span`, `logfire.info`, and the other API helpers. Spans from automatic instrumentation, attributes set after a span starts, span event attributes, span link attributes, span status messages, and Node.js log records are now scrubbed before export. Cloudflare Workers tail mode (`instrumentTail`) now scrubs too and accepts the `scrubbing` option.
+  
+  Exception messages are now scrubbed consistently. Before, the `exception.message` attribute could be redacted while the same message stayed in the exception event, the span status, and the first line of the stack trace. The message and `Caused by` lines of `exception.stacktrace` are now scrubbed too; stack frame lines are kept.
+  
+  In the browser, values of custom session attributes (`logfire.session.*`) are scrubbed too, matching only the application's own attribute name against the patterns. `configureFrontend` now removes query strings and fragments from every attribute whose key ends in `.url` (such as `web_vital.lcp.url`) and from the URLs in exception stack traces. Session replay applies `redactUrlPatterns` to error messages, sources, and stacks, and to console arguments, and `sessionReplay.captureGlobalErrors` is passed to the replay recorder when browser global error capture is off.
+- Updated dependencies [93e84cf]
+  - logfire@0.23.3
+
+## 0.19.0
+
+### Minor Changes
+
+- e9e0922: Add `advanced.pendingSpans` and the `LOGFIRE_PENDING_SPANS` environment variable. Set either to `false` to stop sending pending spans to Logfire.
+
+### Patch Changes
+
+- Updated dependencies [3374365]
+- Updated dependencies [348e8d5]
+  - logfire@0.23.2
+
+## 0.18.30
+
+### Patch Changes
+
+- b85bf8c: Fix fresh installs failing with `ERESOLVE` since the OpenTelemetry JS 3.0 release. The OpenTelemetry dependency ranges now stop before `@opentelemetry/api` 1.10, `@opentelemetry/auto-instrumentations-node` 0.82, `@opentelemetry/auto-instrumentations-web` 0.69 and `@opentelemetry/instrumentation-user-interaction` 0.68, which require the 3.0 line. A new install resolves to the 1.9 / 2.x / 0.2xx line again. Support for OpenTelemetry JS 3.0 will follow in a later release.
+- Updated dependencies [b85bf8c]
+  - logfire@0.23.1
+
+## 0.18.29
+
+### Patch Changes
+
+- 361152f: Stop sending duplicate pending spans for spans that finish before their export batch goes out. The OTLP exporter now drops a pending span when its final span is in the same batch, matching the Python SDK. Short spans no longer count twice toward ingestion.
+
+## 0.18.28
+
+### Patch Changes
+
+- Updated dependencies [9b493c5]
+  - logfire@0.23.0
+
+## 0.18.27
+
+### Patch Changes
+
+- Updated dependencies [d0c4d99]
+  - logfire@0.22.10
+
+## 0.18.26
+
+### Patch Changes
+
+- 0eee64b: Honor `distributedTracing: false`. Incoming `traceparent` headers were still extracted because NodeSDK fell back to its default propagators; they are now ignored, while outgoing requests still carry trace context. W3C baggage now propagates in both modes, matching the documented baggage behavior.
+
 ## 0.18.25
 
 ### Patch Changes

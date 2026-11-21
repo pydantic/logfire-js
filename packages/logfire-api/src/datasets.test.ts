@@ -310,6 +310,62 @@ describe('hosted datasets API client', () => {
     await expect(client.listDatasets()).rejects.toBeInstanceOf(DatasetTransportError)
   })
 
+  it('maps a timeout while reading the response body to a timeout error', async () => {
+    const client = new LogfireAPIClient({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: vi.fn<typeof fetch>(async (_input, init) =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                init?.signal?.addEventListener('abort', () => {
+                  controller.error(init.signal?.reason)
+                })
+              },
+            })
+          )
+        )
+      ),
+      timeoutMs: 5,
+    })
+
+    await expect(client.listDatasets()).rejects.toThrow(new DatasetTimeoutError('Logfire platform API request timed out'))
+  })
+
+  it('still reports a fully read body that is not JSON as invalid JSON', async () => {
+    const client = new LogfireAPIClient({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: fetchSequence([], [new Response('not json')]),
+    })
+
+    await expect(client.listDatasets()).rejects.toThrow(
+      new DatasetTransportError('Logfire platform API response was not valid JSON: Unexpected token \'o\', "not json" is not valid JSON')
+    )
+  })
+
+  it('reports a connection lost while reading the response body as a failed request', async () => {
+    const client = new LogfireAPIClient({
+      apiKey: 'lf-api-key',
+      baseUrl: 'https://example.com',
+      fetch: fetchSequence(
+        [],
+        [
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(new TypeError('terminated'))
+              },
+            })
+          ),
+        ]
+      ),
+    })
+
+    await expect(client.listDatasets()).rejects.toThrow(new DatasetTransportError('Logfire platform API request failed: terminated'))
+  })
+
   it('maps timeouts to timeout errors', async () => {
     vi.useFakeTimers()
     const fetchImpl = vi.fn<typeof fetch>(

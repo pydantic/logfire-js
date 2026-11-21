@@ -3,7 +3,8 @@ import { context as api_context, SpanKind, SpanStatusCode, trace } from '@opente
 import type { Initialiser } from '../config.js'
 import { getActiveConfig, setConfig } from '../config.js'
 import { ATTR_FAAS_COLDSTART, ATTR_FAAS_TRIGGER } from '../semconv.js'
-import type { DOConstructorTrigger } from '../types.js'
+import type { SpanProcessor } from '@opentelemetry/sdk-trace-base'
+import type { DOConstructorTrigger, ResolvedTraceConfig } from '../types.js'
 import { passthroughGet, unwrap, wrap } from '../wrap.js'
 import { exportSpans, PromiseTracker } from './common.js'
 import { instrumentStorage } from './do-storage.js'
@@ -151,13 +152,20 @@ export async function executeDOAlarm(alarmFn: NonNullable<AlarmFn>, id: DurableO
   return promise
 }
 
+// Spans started while constructing the object belong to the constructor's config and still
+// need flushing alongside the ones from the current fetch or alarm.
+function processorsToFlush(constructorConfig: ResolvedTraceConfig, config: ResolvedTraceConfig): SpanProcessor[] {
+  return [...new Set([...constructorConfig.spanProcessors, ...config.spanProcessors])]
+}
+
 function instrumentFetchFn(
   fetchFn: FetchFn,
   initialiser: Initialiser,
   env: Env,
   state: DurableObjectState,
   rawState: DurableObjectState,
-  tracker: PromiseTracker
+  tracker: PromiseTracker,
+  constructorConfig: ResolvedTraceConfig
 ): FetchFn {
   const fetchHandler: ProxyHandler<FetchFn> = {
     async apply(target, thisArg, argArray: Parameters<FetchFn>) {
@@ -169,7 +177,7 @@ function instrumentFetchFn(
         return await api_context.with(context, executeDOFetch, undefined, bound, request, state.id)
       } finally {
         rawState.waitUntil(
-          exportSpans(tracker).catch((error: unknown) => {
+          exportSpans(processorsToFlush(constructorConfig, config), tracker).catch((error: unknown) => {
             console.error('Error exporting Durable Object fetch spans:', error)
           })
         )
@@ -185,7 +193,8 @@ function instrumentAlarmFn(
   env: Env,
   state: DurableObjectState,
   rawState: DurableObjectState,
-  tracker: PromiseTracker
+  tracker: PromiseTracker,
+  constructorConfig: ResolvedTraceConfig
 ) {
   if (!alarmFn) {
     return undefined
@@ -200,7 +209,7 @@ function instrumentAlarmFn(
         await api_context.with(context, executeDOAlarm, undefined, bound, state.id)
       } finally {
         rawState.waitUntil(
-          exportSpans(tracker).catch((error: unknown) => {
+          exportSpans(processorsToFlush(constructorConfig, config), tracker).catch((error: unknown) => {
             console.error('Error exporting Durable Object alarm spans:', error)
           })
         )
@@ -216,16 +225,17 @@ function instrumentDurableObject(
   env: Env,
   state: DurableObjectState,
   rawState: DurableObjectState,
-  tracker: PromiseTracker
+  tracker: PromiseTracker,
+  constructorConfig: ResolvedTraceConfig
 ) {
   const objHandler: ProxyHandler<DurableObject> = {
     get(target, prop, receiver) {
       if (prop === 'fetch') {
         const fetchFn = Reflect.get(target, prop)
-        return instrumentFetchFn(fetchFn, initialiser, env, state, rawState, tracker)
+        return instrumentFetchFn(fetchFn, initialiser, env, state, rawState, tracker, constructorConfig)
       } else if (prop === 'alarm') {
         const alarmFn = Reflect.get(target, prop)
-        return instrumentAlarmFn(alarmFn, initialiser, env, state, rawState, tracker)
+        return instrumentAlarmFn(alarmFn, initialiser, env, state, rawState, tracker, constructorConfig)
       } else {
         const result = Reflect.get(target, prop)
         if (typeof result === 'function') {
@@ -256,7 +266,7 @@ export function instrumentDOClass<Env = Record<string, unknown>>(doClass: DOClas
       }
       const doObj = api_context.with(context, createDO)
 
-      return instrumentDurableObject(doObj, initialiser, env, state, orig_state, tracker)
+      return instrumentDurableObject(doObj, initialiser, env, state, orig_state, tracker, constructorConfig)
     },
   }
   return wrap(doClass, classHandler)

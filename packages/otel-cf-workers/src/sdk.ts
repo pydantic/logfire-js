@@ -1,10 +1,9 @@
 import { propagation } from '@opentelemetry/api'
-import type { Resource } from '@opentelemetry/resources'
-import { resourceFromAttributes } from '@opentelemetry/resources'
 
 import type { Initialiser } from './config.js'
 import { parseConfig } from './config.js'
 import { WorkerTracerProvider } from './provider.js'
+import { ActiveConfigPropagator } from './propagator.js'
 import type { Trigger, TraceConfig, ResolvedTraceConfig } from './types.js'
 import { unwrap } from './wrap.js'
 import { createFetchHandler, instrumentGlobalFetch } from './instrumentation/fetch.js'
@@ -14,15 +13,6 @@ import type { DOClass } from './instrumentation/do.js'
 import { instrumentDOClass } from './instrumentation/do.js'
 import { createScheduledHandler } from './instrumentation/scheduled.js'
 import { createEmailHandler } from './instrumentation/email.js'
-import {
-  ATTR_SERVICE_NAME,
-  ATTR_SERVICE_NAMESPACE,
-  ATTR_SERVICE_VERSION,
-  ATTR_TELEMETRY_SDK_LANGUAGE,
-  ATTR_TELEMETRY_SDK_NAME,
-  ATTR_TELEMETRY_SDK_VERSION,
-} from '@opentelemetry/semantic-conventions'
-import { ATTR_DEPLOYMENT_ENVIRONMENT_NAME, ATTR_FAAS_MAX_MEMORY } from './semconv.js'
 
 type FetchHandler = ExportedHandlerFetchHandler
 type ScheduledHandler = ExportedHandlerScheduledHandler
@@ -44,29 +34,12 @@ export function isAlarm(trigger: Trigger): trigger is 'do-alarm' {
   return trigger === 'do-alarm'
 }
 
-const OTEL_CF_WORKERS_PACKAGE_NAME = '@pydantic/otel-cf-workers'
-
-const createResource = (config: ResolvedTraceConfig): Resource => {
-  const workerResourceAttrs = {
-    'cloud.provider': 'cloudflare',
-    'cloud.platform': 'cloudflare.workers',
-    'cloud.region': 'earth',
-    [ATTR_FAAS_MAX_MEMORY]: 134217728,
-    [ATTR_TELEMETRY_SDK_LANGUAGE]: 'js',
-    [ATTR_TELEMETRY_SDK_NAME]: OTEL_CF_WORKERS_PACKAGE_NAME,
-    [ATTR_TELEMETRY_SDK_VERSION]: PACKAGE_VERSION,
-  }
-  const serviceResource = resourceFromAttributes({
-    [ATTR_SERVICE_NAME]: config.service.name,
-    [ATTR_SERVICE_NAMESPACE]: config.service.namespace,
-    [ATTR_SERVICE_VERSION]: config.service.version,
-    ...(config.environment !== undefined ? { [ATTR_DEPLOYMENT_ENVIRONMENT_NAME]: config.environment } : {}),
-  })
-  const resource = resourceFromAttributes(workerResourceAttrs)
-  return resource.merge(serviceResource)
-}
-
 let initialised = false
+/**
+ * Once-per-isolate setup. Global fetch/cache patching follows the first resolved config;
+ * everything that can differ between tenants (span processors, resource, propagator,
+ * sampling) is read from each request's config instead.
+ */
 function init(config: ResolvedTraceConfig): void {
   if (!initialised) {
     if (config.instrumentation.instrumentGlobalCache === true) {
@@ -75,11 +48,8 @@ function init(config: ResolvedTraceConfig): void {
     if (config.instrumentation.instrumentGlobalFetch === true) {
       instrumentGlobalFetch()
     }
-    propagation.setGlobalPropagator(config.propagator)
-    const resource = createResource(config)
-
-    const provider = new WorkerTracerProvider(config.spanProcessors, resource, config.scope, config.idGenerator)
-    provider.register()
+    propagation.setGlobalPropagator(new ActiveConfigPropagator(config.propagator))
+    new WorkerTracerProvider().register()
     initialised = true
   }
 }

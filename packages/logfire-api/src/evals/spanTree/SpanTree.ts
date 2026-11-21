@@ -332,7 +332,7 @@ export function spanQueryToSnakeCase(query: SpanQuery): SpanQuery {
       out[key] = rawValue
     }
   }
-  return out as SpanQuery
+  return out
 }
 
 function queryValue(query: SpanQuery, snakeKey: string, camelKey: string): unknown {

@@ -29,7 +29,7 @@
     "stats",
     "monitoring"
   ],
-  "version": "0.22.9",
+  "version": "0.26.2",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -107,7 +107,7 @@
     "zod": "catalog:"
   },
   "optionalDependencies": {
-    "logfire-cli": "^0.1.7"
+    "logfire-cli": "^0.1.20"
   },
   "devDependencies": {
     "@opentelemetry/api": "catalog:",

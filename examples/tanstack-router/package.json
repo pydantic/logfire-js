@@ -1,0 +1,23 @@
+{
+  "name": "tanstack-router-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "tsc && vp build",
+    "preview": "vp preview",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@pydantic/logfire-browser": "workspace:*",
+    "@tanstack/react-router": "^1.170.44",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "catalog:"
+  }
+}

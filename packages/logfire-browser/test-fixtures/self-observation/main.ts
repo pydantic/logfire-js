@@ -56,6 +56,9 @@ const cleanup = logfire.configure({
     captureNetwork: true,
     flushIntervalMs: 500,
     ignoreUrlPatterns: [/\/receipts(?:\/|$)/u],
+    // The verifier expects replay within seconds, sooner than the default
+    // ten-second minimum session duration.
+    minSessionDurationMs: 0,
     load: async () => {
       const replayModule = await import('lf-self-observation-recorder')
       return {

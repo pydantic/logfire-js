@@ -128,9 +128,10 @@ class ChunksFormatter {
     return result
   }
 
-  private cleanValue(fieldName: string, value: string, scrubber: BaseScrubber): [string, ScrubbedNote[]] {
-    // Scrub before truncating so the scrubber can see the full value
-    if (scrubber.SAFE_KEYS.includes(fieldName)) {
+  private cleanValue(fieldName: string, value: string, scrubber: BaseScrubber, isTopLevelKey: boolean): [string, ScrubbedNote[]] {
+    // Scrub before truncating so the scrubber can see the full value. Application-declared safe keys
+    // cover top-level attributes only, so a dotted field that walks into a nested value is scrubbed.
+    if (scrubber.SAFE_KEYS.includes(fieldName) || (isTopLevelKey && scrubber.isSafeAttributeKey?.(fieldName) === true)) {
       return [truncateString(value, MESSAGE_FORMATTED_VALUE_LENGTH_LIMIT), []]
     }
 
@@ -197,7 +198,12 @@ class ChunksFormatter {
         }
 
         // Clean and scrub the value
-        const [cleanValue, valueScrubbed] = this.cleanValue(actualFieldName, formattedValue, scrubber)
+        const [cleanValue, valueScrubbed] = this.cleanValue(
+          actualFieldName,
+          formattedValue,
+          scrubber,
+          Object.hasOwn(record, actualFieldName)
+        )
         scrubbed.push(...valueScrubbed)
 
         const argChunk: ArgChunk = { type: 'arg', value: cleanValue }

@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url'
 
 import { defineConfig } from 'vite-plus'
 
-interface ReplayReceipt {
+export interface ReplayReceipt {
+  accepted: boolean
   authorization: string | undefined
   body: string
   byteLength: number
@@ -61,7 +62,7 @@ export default defineConfig({
           if (request.method === 'GET' && url.pathname === '/csp/') {
             response.setHeader(
               'content-security-policy',
-              "default-src 'self'; script-src 'self'; connect-src 'self'; worker-src 'none'; style-src 'self'"
+              "default-src 'self'; script-src 'self'; connect-src 'self'; worker-src 'none'; style-src 'self'; require-trusted-types-for 'script'; trusted-types 'none'"
             )
             next()
             return
@@ -124,7 +125,8 @@ export default defineConfig({
           }
           readBody(request, (body) => {
             const scenarioReceipts = receipts.get(scenario) ?? []
-            scenarioReceipts.push({
+            const receipt: ReplayReceipt = {
+              accepted: true,
               authorization: headerValue(request.headers.authorization),
               body: body.toString('base64'),
               byteLength: body.byteLength,
@@ -132,13 +134,29 @@ export default defineConfig({
               receivedAt: Date.now(),
               seq: Number(url.searchParams.get('seq')),
               url: request.url ?? '/',
-            })
+            }
+            scenarioReceipts.push(receipt)
             receipts.set(scenario, scenarioReceipts)
             if (scenario === 'unload') {
               heldResponses.push(response)
               return
             }
+            if (scenario === 'gap' && receipt.seq === 1) {
+              // Longer than the SDK retry budget, so the chunk is lost without waiting 30s.
+              receipt.accepted = false
+              response.statusCode = 429
+              response.setHeader('retry-after', '3600')
+              response.end()
+              return
+            }
+            if (scenario === 'rejected') {
+              receipt.accepted = false
+              response.statusCode = 401
+              response.end()
+              return
+            }
             if (scenario === 'retry-after' && scenarioReceipts.length === 1) {
+              receipt.accepted = false
               response.statusCode = 429
               response.setHeader('retry-after', '1')
               response.end()
@@ -152,6 +170,10 @@ export default defineConfig({
     },
   ],
   server: {
+    // Tests exercise shipped recorder behavior, not Vite's dev WebSocket.
+    // Leaving that socket open prevents a real Chromium BFCache restore.
+    ws: false,
+    forwardConsole: false,
     host: '127.0.0.1',
     port: 4177,
     strictPort: true,

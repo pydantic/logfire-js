@@ -83,15 +83,11 @@ export function datasetToObject<I, O, M>(dataset: Dataset<I, O, M>, options: ToO
 
 export function datasetFromObject<I = unknown, O = unknown, M = unknown>(data: unknown, options: FromOptions = {}): Dataset<I, O, M> {
   const parsed = serializedDatasetSchema.parse(data)
-  const evaluatorRegistry = buildRegistry<EvaluatorClass<I, O, M>>(
-    listRegisteredEvaluators() as readonly EvaluatorClass<I, O, M>[],
-    options.customEvaluators as readonly EvaluatorClass<I, O, M>[] | undefined,
-    getEvaluatorClass as (name: string) => EvaluatorClass<I, O, M> | undefined
-  )
+  const evaluatorRegistry = buildRegistry<EvaluatorClass<I, O, M>>(listRegisteredEvaluators(), options.customEvaluators, getEvaluatorClass)
   const reportRegistry = buildRegistry<ReportEvaluatorClass<I, O, M>>(
-    listRegisteredReportEvaluators() as readonly ReportEvaluatorClass<I, O, M>[],
-    options.customReportEvaluators as readonly ReportEvaluatorClass<I, O, M>[] | undefined,
-    getReportEvaluatorClass as (name: string) => ReportEvaluatorClass<I, O, M> | undefined
+    listRegisteredReportEvaluators(),
+    options.customReportEvaluators,
+    getReportEvaluatorClass
   )
   const primaryArgKeys = new Map(Object.entries({ ...BUILTIN_PRIMARY_ARG_KEYS, ...options.primaryArgKeys }))
 

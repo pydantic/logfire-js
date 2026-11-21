@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 
-import { runCli } from './delegate'
+import { runNativeCli } from './delegate'
 
-if (!runCli()) {
-  process.exitCode = 1
-}
+process.exitCode = runNativeCli(process.argv.slice(2), PACKAGE_VERSION)

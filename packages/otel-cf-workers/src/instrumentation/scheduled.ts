@@ -58,7 +58,7 @@ export function createScheduledHandler(scheduledFn: ScheduledHandler, initialise
         const args: ScheduledHandlerArgs = [controller, env, ctx]
         await api_context.with(context, executeScheduledHandler, undefined, target, args)
       } finally {
-        orig_ctx.waitUntil(exportSpans(tracker))
+        orig_ctx.waitUntil(exportSpans(config.spanProcessors, tracker))
       }
     },
   }

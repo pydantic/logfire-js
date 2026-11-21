@@ -1,5 +1,128 @@
 # @pydantic/logfire-cf-workers
 
+## 2.2.4
+
+### Patch Changes
+
+- Updated dependencies [134b53b]
+  - logfire@0.26.2
+
+## 2.2.3
+
+### Patch Changes
+
+- Updated dependencies [3a779ab]
+- Updated dependencies [1545bce]
+- Updated dependencies [1cee829]
+- Updated dependencies [d7a4f7f]
+- Updated dependencies [35edb41]
+- Updated dependencies [3f486ec]
+  - logfire@0.26.1
+  - @pydantic/otel-cf-workers@2.1.7
+
+## 2.2.2
+
+### Patch Changes
+
+- Updated dependencies [d967f55]
+  - logfire@0.26.0
+
+## 2.2.1
+
+### Patch Changes
+
+- Updated dependencies [6ab7b5a]
+  - logfire@0.25.1
+
+## 2.2.0
+
+### Minor Changes
+
+- b0fa53a: Record which build produced each exception, so Logfire can resolve minified and bundled stack traces to original source.
+  
+  - Exception spans and their `exception` events carry `logfire.debug_ids`, a JSON string mapping each file URL in the stack to the debug ID that a source map inject step registered in `globalThis._logfireDebugIds` (or the vendor-neutral `globalThis._debugIds`). This covers `reportError()`, failing `span()` and `instrument()` callbacks, browser global error and unhandled rejection handlers, Node process hooks, and exceptions that instrumentations record. Without a registered debug ID, spans are unchanged. `logfire` exports `DebugIdSpanProcessor` for custom tracer providers.
+  - When `serviceVersion` is not set, the browser, Node and Workers SDKs use the release identifier the inject step stamped into the bundle (`globalThis._logfireRelease`). Source map resolution needs a real per-build version, such as the commit SHA or release tag. The browser's `0.0.1` fallback is deprecated and is removed in the next major version.
+  - `@pydantic/logfire-node` adds `enableSourceMaps`, which calls `process.setSourceMapsEnabled(true)` so a service that ships `.map` files next to its code records stack traces with original files and lines, without uploading maps. Do not combine it with `source-map-support`.
+
+### Patch Changes
+
+- Updated dependencies [b0fa53a]
+  - logfire@0.25.0
+
+## 2.1.0
+
+### Minor Changes
+
+- fa16e89: Let applications declare attribute keys that scrubbing leaves alone.
+  
+  Scrubbing checks attribute values as well as keys and runs on every exported span, including spans created with the OpenTelemetry tracer directly. An application that records code-defined labels, such as a step name containing `auth` or `session`, had them redacted, and the only way around it was a `callback` that kept each match.
+  
+  The `scrubbing` option now accepts `safeKeys` (exact attribute keys) and `safeKeyPrefixes` (key prefixes such as `app.checkout.`). Neither the key nor the value of a matching top-level attribute is scrubbed, on span, span event, span link and log record attributes, in message template fields, and in the attributes passed to the API helpers. Nested keys, span status messages and log bodies are still scrubbed. An empty prefix is rejected, since it would exempt every key. The browser SDK forwards both options and keeps exempting its own session and URL attributes.
+
+### Patch Changes
+
+- Updated dependencies [fa16e89]
+  - logfire@0.24.0
+
+## 2.0.28
+
+### Patch Changes
+
+- Updated dependencies [1d7eaf5]
+  - logfire@0.23.4
+
+## 2.0.27
+
+### Patch Changes
+
+- 93e84cf: Apply scrubbing to every exported span, not only to the attributes passed to `logfire.span`, `logfire.info`, and the other API helpers. Spans from automatic instrumentation, attributes set after a span starts, span event attributes, span link attributes, span status messages, and Node.js log records are now scrubbed before export. Cloudflare Workers tail mode (`instrumentTail`) now scrubs too and accepts the `scrubbing` option.
+  
+  Exception messages are now scrubbed consistently. Before, the `exception.message` attribute could be redacted while the same message stayed in the exception event, the span status, and the first line of the stack trace. The message and `Caused by` lines of `exception.stacktrace` are now scrubbed too; stack frame lines are kept.
+  
+  In the browser, values of custom session attributes (`logfire.session.*`) are scrubbed too, matching only the application's own attribute name against the patterns. `configureFrontend` now removes query strings and fragments from every attribute whose key ends in `.url` (such as `web_vital.lcp.url`) and from the URLs in exception stack traces. Session replay applies `redactUrlPatterns` to error messages, sources, and stacks, and to console arguments, and `sessionReplay.captureGlobalErrors` is passed to the replay recorder when browser global error capture is off.
+- Updated dependencies [93e84cf]
+  - logfire@0.23.3
+
+## 2.0.26
+
+### Patch Changes
+
+- Updated dependencies [bbc4362]
+- Updated dependencies [3374365]
+- Updated dependencies [348e8d5]
+  - @pydantic/otel-cf-workers@2.1.6
+  - logfire@0.23.2
+
+## 2.0.25
+
+### Patch Changes
+
+- Updated dependencies [b85bf8c]
+  - logfire@0.23.1
+  - @pydantic/otel-cf-workers@2.1.5
+
+## 2.0.24
+
+### Patch Changes
+
+- Updated dependencies [9b493c5]
+  - logfire@0.23.0
+
+## 2.0.23
+
+### Patch Changes
+
+- Updated dependencies [d0c4d99]
+  - logfire@0.22.10
+
+## 2.0.22
+
+### Patch Changes
+
+- 07cf8b6: Send each Cloudflare Worker request's spans to the exporter, resource, and propagator from that request's resolved config. Before, the first request in an isolate fixed these for all later requests. A `ResolveConfigFn` that picked a destination or service name per request or trigger could then send one tenant's telemetry to another tenant's collector. `@pydantic/logfire-cf-workers` reads its config only from `env`, so it was not affected in practice. It now also copies `additionalSpanProcessors` instead of appending the console exporter to the caller's array on every request.
+- Updated dependencies [07cf8b6]
+  - @pydantic/otel-cf-workers@2.1.4
+
 ## 2.0.21
 
 ### Patch Changes

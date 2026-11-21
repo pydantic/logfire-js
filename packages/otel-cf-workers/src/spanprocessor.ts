@@ -6,7 +6,7 @@ import { ExportResultCode } from '@opentelemetry/core'
 import type { Action, State } from './vendor/ts-checked-fsm/StateMachine.js'
 import { stateMachine } from './vendor/ts-checked-fsm/StateMachine.js'
 
-import { getActiveConfig } from './config.js'
+import { getConfig } from './config.js'
 import type { TailSampleFn } from './sampling.js'
 import type { PostProcessorFn } from './types.js'
 
@@ -116,6 +116,9 @@ export class BatchTraceSpanProcessor implements SpanProcessor {
   private readonly traceLookup = new Map<string, AnyTraceState>()
   private readonly localRootSpanLookup = new Map<string, string>()
   private readonly inprogressExports = new Map<string, Promise<ExportResult>>()
+  // Recorded when a trace starts, so a trace that ends while another request's config is
+  // active still uses its own tail sampler and post-processor.
+  private readonly traceExportSettings = new Map<string, Omit<StartExportArguments, 'exporter'>>()
   private readonly exporter: SpanExporter
 
   constructor(exporter: SpanExporter) {
@@ -134,13 +137,13 @@ export class BatchTraceSpanProcessor implements SpanProcessor {
   }
 
   private export(localRootSpanId: string) {
-    const config = getActiveConfig()
-    if (!config) {
+    const settings = this.traceExportSettings.get(localRootSpanId)
+    this.traceExportSettings.delete(localRootSpanId)
+    if (!settings) {
       throw new Error('Config is undefined. This is a bug in the instrumentation logic')
     }
 
-    const { sampling, postProcessor } = config
-    const exportArgs = { exporter: this.exporter, tailSampler: sampling.tailSampler, postProcessor }
+    const exportArgs = { exporter: this.exporter, ...settings }
     const newState = this.action(localRootSpanId, { actionName: 'startExport', args: exportArgs })
     if (newState.stateName === 'exporting') {
       const promise = newState.promise
@@ -168,6 +171,15 @@ export class BatchTraceSpanProcessor implements SpanProcessor {
     const parentRootSpanId = parentSpanId !== undefined ? this.localRootSpanLookup.get(parentSpanId) : undefined
     const localRootSpanId = parentRootSpanId ?? spanId
     this.localRootSpanLookup.set(spanId, localRootSpanId)
+    if (localRootSpanId === spanId) {
+      const config = getConfig(parentContext)
+      if (config) {
+        this.traceExportSettings.set(localRootSpanId, {
+          postProcessor: config.postProcessor,
+          tailSampler: config.sampling.tailSampler,
+        })
+      }
+    }
 
     this.action(localRootSpanId, { actionName: 'startSpan', span })
   }

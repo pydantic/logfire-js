@@ -24,9 +24,7 @@ import {
 
 function evaluatorBranches(schema: Record<string, unknown>, name: string): Record<string, unknown>[] {
   const properties = schema['properties'] as { evaluators: { items: { anyOf: Record<string, unknown>[] } } }
-  return properties.evaluators.items.anyOf.filter(
-    (branch) => branch['const'] === name || Object.hasOwn((branch['properties'] ?? {}) as object, name)
-  )
+  return properties.evaluators.items.anyOf.filter((branch) => branch['const'] === name || Object.hasOwn(branch['properties'] ?? {}, name))
 }
 
 const sleep = async (ms: number): Promise<void> =>
@@ -118,11 +116,7 @@ describe('EvaluatorSpec encoding', () => {
     expect(pair).toBeInstanceOf(PairEvaluator)
     expect((pair as PairEvaluator).evaluate()).toBe(true)
 
-    const value = decodeEvaluator(
-      { ValueEvaluator: 42 },
-      { ValueEvaluator: ValueEvaluator as never },
-      new Map([['ValueEvaluator', 'value']])
-    )
+    const value = decodeEvaluator({ ValueEvaluator: 42 }, { ValueEvaluator }, new Map([['ValueEvaluator', 'value']]))
     expect(value).toBeInstanceOf(ValueEvaluator)
     expect((value as ValueEvaluator).value).toBe(42)
 
@@ -153,11 +147,7 @@ describe('EvaluatorSpec encoding', () => {
       }
     }
 
-    const decoded = decodeReportEvaluator(
-      { TableReportEvaluator: { title: 'custom' } },
-      { TableReportEvaluator: TableReportEvaluator as never },
-      new Map()
-    )
+    const decoded = decodeReportEvaluator({ TableReportEvaluator: { title: 'custom' } }, { TableReportEvaluator }, new Map())
     expect(decoded).toBeInstanceOf(TableReportEvaluator)
     expect((decoded as TableReportEvaluator).title).toBe('custom')
     expect(() => decodeReportEvaluator('MissingReport', {}, new Map())).toThrow('Unknown report evaluator name: "MissingReport"')
@@ -185,7 +175,7 @@ describe('EvaluatorSpec encoding', () => {
     }
 
     const schema = buildDatasetJsonSchema({
-      customEvaluators: [SchemaEvaluator as never, NullSchemaEvaluator as never],
+      customEvaluators: [SchemaEvaluator, NullSchemaEvaluator],
     })
     const text = JSON.stringify(schema)
     expect(text).toContain('"SchemaEvaluator"')
@@ -274,9 +264,9 @@ describe('EvaluatorSpec encoding', () => {
       }
     }
 
-    const withoutKey = buildDatasetJsonSchema({ customEvaluators: [TwoArgEvaluator as never] })
+    const withoutKey = buildDatasetJsonSchema({ customEvaluators: [TwoArgEvaluator] })
     const withKey = buildDatasetJsonSchema({
-      customEvaluators: [TwoArgEvaluator as never],
+      customEvaluators: [TwoArgEvaluator],
       primaryArgKeys: { TwoArgEvaluator: 'subject' },
     })
 
@@ -296,9 +286,9 @@ describe('EvaluatorSpec encoding', () => {
         return true
       }
     }
-    registerEvaluator(BothWaysEvaluator as never)
+    registerEvaluator(BothWaysEvaluator)
 
-    const schema = buildDatasetJsonSchema({ customEvaluators: [BothWaysEvaluator as never] }) as {
+    const schema = buildDatasetJsonSchema({ customEvaluators: [BothWaysEvaluator] }) as {
       properties: { evaluators: { items: { anyOf: { const?: string }[] } } }
     }
     const branches = schema.properties.evaluators.items.anyOf.filter((branch) => branch.const === 'BothWaysEvaluator')
@@ -327,15 +317,15 @@ describe('Dataset YAML round-trip', () => {
     expect(thrown).toBeInstanceOf(Error)
     expect((thrown as Error).message).toBe(
       [
-        'merge keys exceeded maxTotalMergeKeys (10000) (142:24)',
+        'merge keys exceeded maxTotalMergeKeys (10000) (141:24)',
         '',
+        ' 138 | a137: &a137 { <<: *a136, k137: 137 }',
         ' 139 | a138: &a138 { <<: *a137, k138: 138 }',
         ' 140 | a139: &a139 { <<: *a138, k139: 139 }',
         ' 141 | a140: &a140 { <<: *a139, k140: 140 }',
-        ' 142 | a141: &a141 { <<: *a140, k141: 141 }',
         '------------------------------^',
+        ' 142 | a141: &a141 { <<: *a140, k141: 141 }',
         ' 143 | a142: &a142 { <<: *a141, k142: 142 }',
-        ' 144 | a143: &a143 { <<: *a142, k143: 143 }',
       ].join('\n')
     )
   })
@@ -486,7 +476,7 @@ describe('Dataset YAML round-trip', () => {
       }
     }
 
-    registerEvaluator(GloballyRegisteredEvaluator as never)
+    registerEvaluator(GloballyRegisteredEvaluator)
     const restored = Dataset.fromObject(
       {
         cases: [{ inputs: 1 }],
@@ -531,7 +521,7 @@ describe('Dataset YAML round-trip', () => {
 
     const dataset = new Dataset({ cases: [], name: 'x' })
     const schema = dataset.jsonSchema({
-      customEvaluators: [ForwardedKeyEvaluator as never],
+      customEvaluators: [ForwardedKeyEvaluator],
       primaryArgKeys: { ForwardedKeyEvaluator: 'subject' },
     })
 

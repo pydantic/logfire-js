@@ -1,3 +1,5 @@
+import { markSdkInternalError } from 'logfire'
+
 export type TelemetryUrlKind = 'exact' | 'replay-base'
 
 export interface TelemetryUrl {
@@ -25,7 +27,7 @@ export function createTelemetryUrlPatterns(endpoints: readonly TelemetryUrl[]): 
 
 export function assertBrowserReplayUrl(replayUrl: string): void {
   if (replayUrl.length === 0) {
-    throw new Error('logfire-browser: sessionReplay.replayUrl must be a non-empty browser URL')
+    throw markSdkInternalError(new Error('logfire-browser: sessionReplay.replayUrl must be a non-empty browser URL'))
   }
   const bases = new Set([getLocationHref(), getDocumentBaseUri()].filter((base): base is string => base !== undefined))
   if (bases.size === 0) {
@@ -33,13 +35,13 @@ export function assertBrowserReplayUrl(replayUrl: string): void {
   }
   const resolvedUrls = [...bases].map((base) => resolveUrl(replayUrl, base))
   if (resolvedUrls.some((resolved) => resolved === undefined)) {
-    throw new Error('logfire-browser: sessionReplay.replayUrl must be a valid browser URL')
+    throw markSdkInternalError(new Error('logfire-browser: sessionReplay.replayUrl must be a valid browser URL'))
   }
   if (resolvedUrls.some((resolved) => resolved?.pathname === '/')) {
-    throw new Error('logfire-browser: sessionReplay.replayUrl must use a non-root path')
+    throw markSdkInternalError(new Error('logfire-browser: sessionReplay.replayUrl must use a non-root path'))
   }
   if (resolvedUrls.some((resolved) => resolved?.search !== '' || resolved.hash !== '')) {
-    throw new Error('logfire-browser: sessionReplay.replayUrl must not contain a query or fragment')
+    throw markSdkInternalError(new Error('logfire-browser: sessionReplay.replayUrl must not contain a query or fragment'))
   }
 }
 

@@ -1,7 +1,7 @@
 import { startSessionReplay } from 'lf-replay-delivery'
 import type { SessionReplay } from '@pydantic/logfire-session-replay'
 
-type Scenario = 'csp' | 'retry-after' | 'short' | 'unload' | 'utf8'
+type Scenario = 'csp' | 'gap' | 'rejected' | 'retry-after' | 'short' | 'unload' | 'utf8'
 type Phase = 'starting' | 'ready' | 'complete' | 'failed'
 
 interface DeliveryState {
@@ -9,6 +9,7 @@ interface DeliveryState {
   error?: string
   errors: string[]
   phase: Phase
+  recording?: boolean
   scenario: Scenario
 }
 
@@ -27,10 +28,8 @@ run().catch(fail)
 async function run(): Promise<void> {
   await fetch(`/fixture/reset?scenario=${scenario}`, { method: 'POST' })
   if (scenario === 'csp') {
-    window.addEventListener('securitypolicyviolation', (event) => {
-      if (event.effectiveDirective === 'worker-src' || event.violatedDirective === 'worker-src') {
-        state.cspViolations += 1
-      }
+    window.addEventListener('securitypolicyviolation', () => {
+      state.cspViolations += 1
     })
   }
 
@@ -43,7 +42,8 @@ async function run(): Promise<void> {
     headers: () => ({ 'X-Replay-Marker': scenario }),
     ignoreUrlPatterns: [/\/fixture\//u, /\/replay\//u],
     maskAllText: false,
-    maxBufferBytes: 1_000_000,
+    // The unload markers exceed the 1 MB raw packing ceiling together, so pagehide must split them.
+    maxBufferBytes: scenario === 'unload' ? 3_000_000 : 1_000_000,
     minSessionDurationMs: scenario === 'short' ? 5_000 : 0,
     onError: (error: unknown) => {
       state.errors.push(error instanceof Error ? error.message : String(error))
@@ -73,6 +73,10 @@ async function run(): Promise<void> {
     await delay(100)
   } else if (scenario === 'retry-after') {
     await replay.flush()
+  } else if (scenario === 'gap') {
+    await runGap(replay)
+  } else if (scenario === 'rejected') {
+    await runRejected(replay)
   } else {
     await fetch(`/application/fetch?scenario=${scenario}`, { method: 'POST', body: 'é🚀' })
     await sendXhr(`/application/xhr?scenario=${scenario}`, 'é🚀')
@@ -85,14 +89,55 @@ async function run(): Promise<void> {
   setStatus('complete')
 }
 
+// The lost chunk creates #late; the change after the gap only replays if the
+// SDK re-anchors with a full snapshot that contains it.
+async function runGap(replay: SessionReplay): Promise<void> {
+  const payload = document.querySelector('#payload')
+  if (payload === null) {
+    throw new Error('missing payload node')
+  }
+  payload.textContent = 'gap-before'
+  await nextFrame()
+  await replay.flush()
+  const late = document.createElement('span')
+  late.id = 'late'
+  late.textContent = 'gap-lost'
+  payload.appendChild(late)
+  await nextFrame()
+  await replay.flush()
+  await delay(100)
+  late.textContent = 'gap-after'
+  await nextFrame()
+  await replay.flush()
+}
+
+// The fixture answers 401, as for a revoked token. Replay stops instead of resyncing.
+async function runRejected(replay: SessionReplay): Promise<void> {
+  const payload = document.querySelector('#payload')
+  if (payload === null) {
+    throw new Error('missing payload node')
+  }
+  payload.textContent = 'rejected-before'
+  await nextFrame()
+  await replay.flush()
+  for (let attempt = 0; replay.recording && attempt < 100; attempt++) {
+    // eslint-disable-next-line no-await-in-loop -- polls until the deferred stop runs.
+    await delay(10)
+  }
+  state.recording = replay.recording
+  payload.textContent = 'rejected-after'
+  await nextFrame()
+}
+
 async function prepareUnload(): Promise<void> {
   const payload = document.querySelector('#payload')
   if (payload === null) {
     throw new Error('missing payload node')
   }
-  payload.textContent = `unload-marker-one:${pseudoRandomText(26_000, 1)}`
+  // Each marker compresses far below the keepalive budget, so both chunks can use keepalive.
+  payload.textContent = `unload-marker-one:${pseudoRandomText(1_000, 1).repeat(600)}`
   await nextFrame()
-  payload.textContent = `unload-marker-two:${pseudoRandomText(26_000, 2)}`
+  payload.textContent = `unload-marker-two:${pseudoRandomText(1_000, 2).repeat(600)}`
   await nextFrame()
   await nextFrame()
 }
@@ -144,6 +189,12 @@ function scenarioFromPath(pathname: string): Scenario {
   }
   if (pathname.startsWith('/csp/')) {
     return 'csp'
+  }
+  if (pathname.startsWith('/gap/')) {
+    return 'gap'
+  }
+  if (pathname.startsWith('/rejected/')) {
+    return 'rejected'
   }
   if (pathname.startsWith('/retry-after/')) {
     return 'retry-after'

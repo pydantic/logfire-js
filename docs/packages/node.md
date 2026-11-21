@@ -56,6 +56,9 @@ logfire.configure({
 When `token` is a function, set `advanced.baseUrl` or `LOGFIRE_BASE_URL`.
 Logfire cannot infer the API base URL from a token provider.
 
+Set `advanced.pendingSpans: false` or `LOGFIRE_PENDING_SPANS=false` to send
+only finished spans. See [Pending Spans](../configuration.md#pending-spans).
+
 ## Automatic Instrumentation
 
 Call `configure()` before importing instrumented libraries:
@@ -239,6 +242,24 @@ changing Node's default crash behavior. Any telemetry flush scheduled from that
 hook is best-effort only. `unhandledRejection` observes, reports, and flushes on
 the current Logfire path; this SDK does not restore Node's default fatal
 unhandled-rejection behavior.
+
+## Source Maps
+
+If your service ships its `.map` files next to the built code, `enableSourceMaps`
+makes Node rewrite recorded stack traces to your original files and lines:
+
+```ts
+logfire.configure({
+  enableSourceMaps: true,
+  serviceVersion: process.env.COMMIT_SHA,
+})
+```
+
+It calls `process.setSourceMapsEnabled(true)`. Node reads maps only for files
+loaded after that, so run `configure()` before your application modules load,
+for example from a file passed to `node --import`. Do not install
+`source-map-support` alongside: it replaces `Error.prepareStackTrace`, which
+turns Node's own source map handling off.
 
 ## Related Guides
 

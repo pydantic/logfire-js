@@ -329,6 +329,32 @@ describe('captureNetwork', () => {
     stop()
   })
 
+  it('applies the URL transform to fetch and XHR URLs after redaction', async () => {
+    Object.defineProperty(window, 'fetch', {
+      value: async () => new Response('', { status: 200 }),
+      writable: true,
+      configurable: true,
+    })
+    const OriginalXhr = window.XMLHttpRequest
+    installFakeXhr()
+    const emit = vi.fn()
+    const transformUrl = (url: string) => url.replace(/\/users\/[^/]+/u, '/users/:email')
+    const stop = captureNetwork(emit, { ignoreUrlPatterns: [], redactUrlPatterns: [/.+/u], now: () => 0, transformUrl })
+
+    await window.fetch('https://api.example.com/users/jane@example.test/orders?token=xyz')
+    const xhr = new window.XMLHttpRequest() as unknown as FakeXhr
+    xhr.open('get', 'https://api.example.com/users/jane@example.test?token=xyz')
+    xhr.send()
+    xhr.complete(200)
+
+    expect(emit.mock.calls.map((call) => (call[1] as NetworkPayload).url)).toEqual([
+      'https://api.example.com/users/:email/orders',
+      'https://api.example.com/users/:email',
+    ])
+    stop()
+    Object.defineProperty(window, 'XMLHttpRequest', { value: OriginalXhr, writable: true, configurable: true })
+  })
+
   it('normalizes stateful redact URL patterns for repeated fetch decisions', async () => {
     Object.defineProperty(window, 'fetch', {
       value: async () => new Response('', { status: 200 }),
@@ -437,12 +463,12 @@ describe('captureNetwork', () => {
     const originalSend = vi.fn(function () {
       return sendResult
     })
-    prototype.open = originalOpen as unknown as typeof prototype.open
-    prototype.send = originalSend as unknown as typeof prototype.send
+    prototype.open = originalOpen
+    prototype.send = originalSend
     const stop = captureNetwork(vi.fn(), { ignoreUrlPatterns: [], redactUrlPatterns: [], now: () => 0 })
     const xhr = new window.XMLHttpRequest()
-    const wrappedOpen = xhr.open as unknown as (method: string, url: string) => unknown
-    const wrappedSend = xhr.send as unknown as () => unknown
+    const wrappedOpen: (method: string, url: string) => unknown = xhr.open
+    const wrappedSend: () => unknown = xhr.send
 
     expect(wrappedOpen.call(xhr, 'GET', '/exact-arguments')).toBe(openResult)
     expect(wrappedSend.call(xhr)).toBe(sendResult)
@@ -574,6 +600,18 @@ describe('captureNavigation', () => {
     stop()
   })
 
+  it('applies the URL transform to SPA navigation URLs', () => {
+    const emit = vi.fn()
+    const stop = captureNavigation(emit, {
+      redactUrlPatterns: [/.+/u],
+      transformUrl: (url) => url.replace(/\/reset-password\/[^/]+/u, '/reset-password/:token'),
+    })
+    history.pushState({}, '', '/reset-password/abc123?next=home')
+
+    expect((emit.mock.calls[0]![1] as NavigationPayload).url).toBe(`${window.location.origin}/reset-password/:token`)
+    stop()
+  })
+
   it('preserves raw navigation URLs when redaction is explicitly empty', () => {
     const emit = vi.fn()
     const stop = captureNavigation(emit, { redactUrlPatterns: [] })
@@ -639,8 +677,8 @@ describe('captureNavigation', () => {
     const predecessorReplace = vi.fn(function () {
       return replaceResult
     })
-    history.pushState = predecessorPush as unknown as typeof history.pushState
-    history.replaceState = predecessorReplace as unknown as typeof history.replaceState
+    history.pushState = predecessorPush
+    history.replaceState = predecessorReplace
     try {
       const stop = captureNavigation(vi.fn())
       const wrappedPush = history.pushState as unknown as (data: unknown, unused: string, url: string) => unknown
@@ -686,7 +724,7 @@ class FakeXhr extends EventTarget {
 
 function installFakeXhr(): void {
   Object.defineProperty(window, 'XMLHttpRequest', {
-    value: FakeXhr as unknown as typeof XMLHttpRequest,
+    value: FakeXhr,
     writable: true,
     configurable: true,
   })

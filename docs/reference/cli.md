@@ -11,10 +11,10 @@ The `logfire` package delegates its `logfire` command to the native Logfire CLI:
 npx logfire --help
 ```
 
-The optional native package contains one binary for the current operating system
-and architecture. If optional dependencies are disabled, reinstall without
-`--omit=optional` or `--no-optional` before using the command. Importing the
-JavaScript SDK does not execute the CLI.
+On a supported platform, npm installs the native CLI as an optional dependency.
+If you disabled optional dependencies, reinstall without `--omit=optional` or
+`--no-optional` before using the command. You can import the JavaScript SDK
+without the CLI.
 
 ## Version
 
@@ -32,12 +32,16 @@ credential store:
 
 ```bash
 npx logfire --region us auth
-npx logfire auth whoami
+npx logfire whoami
 ```
 
-Use `--region eu` for the EU service, `--base-url` for a self-hosted service, and
+Use `--region eu` for the EU service, `--base-url` for a custom Logfire API URL, and
 `--org` to select an exact organization. List remembered profiles without opening
 the credential store with `npx logfire auth status`.
+
+If you signed in with the previous JavaScript CLI, sign in again. The native CLI
+does not use the login stored in `~/.logfire/default.toml`. Project credentials
+in `.logfire/logfire_credentials.json` still work.
 
 ## Connect a project
 
@@ -50,7 +54,7 @@ npx logfire init
 Or make the choice explicit for scripts and coding agents:
 
 ```bash
-npx logfire --org my-org --no-input init use --name my-project --permission send
+npx logfire --org my-org --no-input init use --name my-project
 ```
 
 To create a project instead, use `init new --name my-project`. These commands
@@ -86,6 +90,9 @@ npx logfire token write
 
 Token values are printed once. Treat them as secrets and do not paste them into
 logs, issues, or chat.
+
+If you used `read-tokens create --save` with the previous CLI, note that
+`token read` prints the token; it does not save it to a file.
 
 For non-interactive use, add `--no-input --output json` and select `--org`
 explicitly. Run `npx logfire help <command>` for the complete command-specific

@@ -2,6 +2,7 @@
 import type { Context } from '@opentelemetry/api'
 import { ROOT_CONTEXT } from '@opentelemetry/api'
 import type { ReadableSpan, Span, SpanProcessor } from '@opentelemetry/sdk-trace-web'
+import { configureLogfireApi } from 'logfire'
 import { describe, expect, it, vi } from 'vite-plus/test'
 
 import { LogfireSpanProcessor } from './LogfireSpanProcessor'
@@ -35,6 +36,27 @@ describe('LogfireSpanProcessor', () => {
     expect(wrapped.onStart).toHaveBeenCalledTimes(1)
   })
 
+  it('appends the path from url.full to fetch span names', () => {
+    const wrapped = makeWrapped()
+    const processor = new LogfireSpanProcessor(wrapped, false)
+    const span = makeSpan({ 'url.full': 'https://example.com/api/thing?q=1' })
+
+    processor.onStart(span, ROOT_CONTEXT)
+
+    expect(span.name).toBe('GET /api/thing')
+    expect(wrapped.onStart).toHaveBeenCalledTimes(1)
+  })
+
+  it('prefers url.full over http.url', () => {
+    const wrapped = makeWrapped()
+    const processor = new LogfireSpanProcessor(wrapped, false)
+    const span = makeSpan({ 'http.url': 'https://example.com/old', 'url.full': 'https://example.com/new' })
+
+    processor.onStart(span, ROOT_CONTEXT)
+
+    expect(span.name).toBe('GET /new')
+  })
+
   it('leaves the name alone when http.url is not an absolute url', () => {
     const wrapped = makeWrapped()
     const processor = new LogfireSpanProcessor(wrapped, false)
@@ -57,6 +79,98 @@ describe('LogfireSpanProcessor', () => {
     }).not.toThrow()
     expect(span.name).toBe('GET')
     expect(wrapped.onStart).toHaveBeenCalledTimes(1)
+  })
+
+  it('scrubs spans before export but keeps the SDK session and URL attributes', () => {
+    const wrapped = makeWrapped()
+    const processor = new LogfireSpanProcessor(wrapped, false)
+    const span = {
+      attributes: {
+        'session.id': 'session-1',
+        'logfire.session.tier': 'paid',
+        'logfire.session.password': 'hunter2',
+        'logfire.session_replay.id': 'recording-1',
+        'logfire.page.url.full': 'https://app.example.com/?page_secret=kept',
+        'web_vital.lcp.url': 'https://cdn.example.com/a.jpg?secret=kept',
+        'browser.main_thread_window.script.0.source_url': 'https://app.example.com/auth.js',
+        'app.url': 'https://app.example.com/?secret=abc',
+        'app.password': 'hunter2',
+      },
+      events: [],
+      links: [],
+      name: 'GET',
+      status: { code: 0 },
+    } as unknown as ReadableSpan
+
+    processor.onEnd(span)
+
+    expect(span.attributes).toEqual({
+      'session.id': 'session-1',
+      'logfire.session.tier': 'paid',
+      'logfire.session.password': "[Scrubbed due to 'password']",
+      'logfire.session_replay.id': 'recording-1',
+      'logfire.page.url.full': 'https://app.example.com/?page_secret=kept',
+      'web_vital.lcp.url': 'https://cdn.example.com/a.jpg?secret=kept',
+      'browser.main_thread_window.script.0.source_url': 'https://app.example.com/auth.js',
+      'app.url': "[Scrubbed due to 'secret']",
+      'app.password': "[Scrubbed due to 'password']",
+      'logfire.scrubbed': JSON.stringify([
+        { matched_substring: 'password', path: ['attributes', 'logfire.session', 'password'] },
+        { matched_substring: 'secret', path: ['attributes', 'app.url'] },
+        { matched_substring: 'password', path: ['attributes', 'app.password'] },
+      ]),
+    })
+    expect(wrapped.onEnd).toHaveBeenCalledWith(span)
+  })
+
+  it('keeps application-declared safe keys alongside the SDK session attributes', () => {
+    configureLogfireApi({ scrubbing: { safeKeyPrefixes: ['app.checkout.'], safeKeys: ['app.result'] } })
+    try {
+      const processor = new LogfireSpanProcessor(makeWrapped(), false)
+      const span = {
+        attributes: {
+          'session.id': 'session-1',
+          'app.result': 'success_authenticated',
+          'app.checkout.step': 'bootstrap_auth_dependency',
+          'app.label': 'auth_ok',
+        },
+        events: [],
+        links: [],
+        name: 'checkout',
+        status: { code: 0 },
+      } as unknown as ReadableSpan
+
+      processor.onEnd(span)
+
+      expect(span.attributes).toEqual({
+        'session.id': 'session-1',
+        'app.result': 'success_authenticated',
+        'app.checkout.step': 'bootstrap_auth_dependency',
+        'app.label': "[Scrubbed due to 'auth']",
+        'logfire.scrubbed': JSON.stringify([{ matched_substring: 'auth', path: ['attributes', 'app.label'] }]),
+      })
+    } finally {
+      configureLogfireApi({ scrubbing: {} })
+    }
+  })
+
+  it('scrubs session-named keys that an application puts on events and links', () => {
+    const processor = new LogfireSpanProcessor(makeWrapped(), false)
+    const span = {
+      attributes: {},
+      events: [{ attributes: { 'session.id': 'secret-1', 'logfire.page.url.full': 'https://app.example.com/?secret=abc' } }],
+      links: [{ attributes: { 'logfire.session_replay.id': 'secret-2' } }],
+      name: 'GET',
+      status: { code: 0 },
+    } as unknown as ReadableSpan
+
+    processor.onEnd(span)
+
+    expect(span.events[0]?.attributes).toEqual({
+      'session.id': "[Scrubbed due to 'session']",
+      'logfire.page.url.full': "[Scrubbed due to 'secret']",
+    })
+    expect(span.links[0]?.attributes).toEqual({ 'logfire.session_replay.id': "[Scrubbed due to 'session']" })
   })
 
   it('renames interaction spans from the event type and target', () => {

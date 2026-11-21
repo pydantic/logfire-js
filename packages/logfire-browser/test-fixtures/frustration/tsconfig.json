@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "../../../../tsconfig.base.json",
+  "include": ["*.ts", "../../src/vite-env.d.ts"],
+  "compilerOptions": {
+    "declaration": false,
+    "isolatedDeclarations": false,
+    "types": ["user-agent-data-types"],
+    // Typecheck against source so no build is needed. vite.config.ts aliases the same names to dist at runtime.
+    "paths": {
+      "@pydantic/logfire-browser": ["../../src/index.ts"],
+      "@pydantic/logfire-session-replay": ["../../../logfire-session-replay/src/index.ts"]
+    }
+  }
+}

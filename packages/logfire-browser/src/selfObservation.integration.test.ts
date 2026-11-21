@@ -59,6 +59,7 @@ describe('installed fetch instrumentation and public standalone replay', () => {
       await exporterBypass('/client-traces')
       await globalThis.fetch('/client-metrics')
       await replay.flush()
+      const recordingId = replay.getRecordingId()
       await new Promise((resolve) => {
         setTimeout(resolve, 350)
       })
@@ -84,7 +85,7 @@ describe('installed fetch instrumentation and public standalone replay', () => {
         'http://localhost:3000/api/application',
         '/client-traces',
         '/client-metrics',
-        '/client-replay/browser-session?seq=0',
+        `/client-replay/${recordingId}?seq=0`,
       ])
     }
   )
