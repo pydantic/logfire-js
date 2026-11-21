@@ -7,8 +7,8 @@ description: Run untrusted agent code in Logfire Agent Sandboxes from Node.js wi
 
 Logfire Agent Sandboxes run Python code that your agents write in isolated, remote
 [Pydantic Monty](https://pydantic.dev/docs/monty/) sandboxes hosted by Logfire, and send the result back to your
-application. The code never runs in your process, and it can reach the outside world only through the host functions
-you pass to it.
+application. The code never runs in your process. Give it access to application services through host functions,
+and to persistent files through volumes mounted by a profile.
 
 `@pydantic/logfire-agent-sandboxes` connects to them from Node.js. It returns a `MontyRemote` pool from
 `@pydantic/monty` that is already set up with your API key, your Logfire region, and the current trace context.
@@ -73,7 +73,7 @@ try {
 ## Let sandbox code call your functions
 
 Pass your own functions in `externalLookup`. Sandbox code calls them by name, and each call runs in your application.
-This is the only way sandbox code can reach anything outside the sandbox, so expose only the functions the code needs.
+Expose only the functions the code needs. Profile-mounted volumes provide a separate way to access persistent files.
 
 ```ts
 import { agentSandboxes } from '@pydantic/logfire-agent-sandboxes'
@@ -91,6 +91,102 @@ console.log(output.output) // Checking the weather
 ```
 
 Host functions can also be `async`.
+
+## Share files through a profile
+
+A **volume** stores files independently of a sandbox session. A **profile** selects which volumes a session can
+access. A **mount** connects a volume to a path inside the sandbox, such as `/data`, with read-only or read-write access.
+Use volumes for input datasets or artifacts that another session needs to read.
+
+### Create the volume and profile
+
+Agent Sandboxes must be enabled for your project. Managing profiles and volumes requires permission to edit project
+information. Create and manage them in the hosted UI. The SDK uses your execution API key to start sessions with
+an existing profile; it does not create volumes, profiles, or mounts.
+
+1. Open **Agent Sandboxes > Volumes**, select **Create volume**, and name it `Shared files`.
+2. Open **Profiles**, select **Create profile**, and name it `File writer`.
+3. Select **Mounts** on that profile. Select the volume, enter `/data` as the mount path, choose **Read and write**,
+   and select **Mount volume**.
+4. Open the profile's action menu and select **Copy profile ID**. Set that ID in your application's environment:
+
+   ```bash
+   export SANDBOX_PROFILE_ID='your-profile-id'
+   ```
+
+Use the profile ID, not its display name. The profile and the execution API key must belong to the same project.
+If the **Profiles** or **Volumes** tab is missing, check that Agent Sandboxes is enabled and ask support to confirm
+availability for your deployment.
+
+### Write and read a file
+
+> This example writes a file in Logfire's hosted storage. Use a test volume and synthetic data while trying it.
+
+With `LOGFIRE_API_KEY` and `SANDBOX_PROFILE_ID` set, run:
+
+```ts
+import { agentSandboxes } from '@pydantic/logfire-agent-sandboxes'
+
+const profileId = process.env.SANDBOX_PROFILE_ID
+if (!profileId) throw new Error('Set SANDBOX_PROFILE_ID to the copied profile ID')
+
+await using pool = await agentSandboxes()
+{
+  await using writer = await pool.checkout({ profile: profileId, ephemeral: true })
+  await writer.feedRun("from pathlib import Path\nPath('/data/shared.txt').write_text('shared volume bytes')")
+}
+{
+  await using reader = await pool.checkout({ profile: profileId, ephemeral: true })
+  console.log(await reader.feedRun("from pathlib import Path\nPath('/data/shared.txt').read_text()"))
+}
+```
+
+Expected output:
+
+```text
+shared volume bytes
+```
+
+The second session can read the first session's file even though both sessions are ephemeral. `ephemeral` controls
+saved interpreter state, not volume storage.
+
+### Give readers read-only access
+
+1. In **Profiles**, create a second profile named `File reader`.
+2. Select **Mounts**, select the same `Shared files` volume, enter `/data`, choose **Read only**, and select **Mount volume**.
+3. Copy this profile's ID and set it as `SANDBOX_READER_PROFILE_ID` in your application's environment.
+
+Use that ID for reader sessions:
+
+```ts
+import { agentSandboxes } from '@pydantic/logfire-agent-sandboxes'
+
+const readerProfileId = process.env.SANDBOX_READER_PROFILE_ID
+if (!readerProfileId) throw new Error('Set SANDBOX_READER_PROFILE_ID to the read-only profile ID')
+
+await using pool = await agentSandboxes()
+await using reader = await pool.checkout({ profile: readerProfileId, ephemeral: true })
+console.log(await reader.feedRun("from pathlib import Path\nPath('/data/shared.txt').read_text()"))
+```
+
+This prints `shared volume bytes` without granting the session permission to change the file.
+
+### Verify access and persistence
+
+- A session with the read-only profile can read `/data/shared.txt`. Writing to it raises `PermissionError`.
+- **Unmount** removes a profile's access without deleting the files. Mounting the volume at another path preserves
+  them. Start a new session after changing mounts.
+- Interpreter snapshots preserve Python state. Load a snapshot into a fresh session. It reads the volume's current
+  files; it does not undo file changes or recover deleted files.
+- Deleting a volume removes access to its files for every profile that mounts it. Physical cleanup completes asynchronously.
+
+A profile can mount at most 16 volumes. Mount paths must be absolute and must not overlap. Hosted volumes support
+read-only and read-write access. They are not an attachment to an existing S3 bucket or a directory on your machine.
+Populate files by writing through a mounted sandbox, passing input data through your application as needed.
+
+If a checkout reports that a writable volume is busy, your project may allow only one writer at a time. Close the
+existing writer before trying a new checkout. A read-only profile lets readers access the volume without claiming
+write access.
 
 ## Persist, snapshot, and fork sessions
 
