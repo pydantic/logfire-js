@@ -75,6 +75,7 @@ See the quick start code sample for an example of how it works.
 Instrumenting Durable Objects work very similar to the regular Worker auto-instrumentation. Instead of wrapping the handler in an `instrument` call, you wrap the Durable Object class with the `instrumentDO` function.
 
 ```typescript
+import { DurableObject } from 'cloudflare:workers'
 import { instrumentDO } from '@pydantic/otel-cf-workers'
 import type { ResolveConfigFn } from '@pydantic/otel-cf-workers'
 
@@ -88,9 +89,13 @@ const config: ResolveConfigFn = (env: Env, _trigger) => {
   }
 }
 
-class OtelDO implements DurableObject {
+class OtelDO extends DurableObject {
   async fetch(request: Request): Promise<Response> {
     return new Response('Hello World!')
+  }
+
+  async greet(name: string): Promise<string> {
+    return `Hello ${name}!`
   }
 }
 
@@ -98,6 +103,8 @@ const TestOtelDO = instrumentDO(OtelDO, config)
 
 export { TestOtelDO }
 ```
+
+Classes that extend `DurableObject` from `cloudflare:workers` and classes that implement the `DurableObject` interface are both supported. `fetch`, `alarm`, RPC methods and WebSocket handlers each run in their own span, and `this.ctx.storage` calls in methods are traced. In a class that extends `DurableObject`, the constructor receives the runtime's own `ctx` and `env`, so storage calls made there, or references to `ctx.storage` kept from there, are not traced. Spans started in a Durable Object class that is not wrapped with `instrumentDO` are dropped with a one-time warning.
 
 ## Creating custom spans
 

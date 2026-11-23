@@ -21,28 +21,28 @@ type FetchFn = DurableObject['fetch']
 type AlarmFn = DurableObject['alarm']
 type Env = Record<string, unknown>
 
+// The stub stays the runtime's own object, with only `fetch` replaced: a Proxy around it turns
+// RPC property reads (`await stub.value`) into functions and is not serializable as a stub.
 function instrumentBindingStub(stub: DurableObjectStub, nsName: string): DurableObjectStub {
-  const stubHandler: ProxyHandler<typeof stub> = {
-    get(target, prop) {
-      if (prop === 'fetch') {
-        const fetcher = Reflect.get(target, prop)
-        const attrs = {
-          name: `Durable Object ${nsName}`,
-          'do.namespace': nsName,
-          'do.id': target.id.toString(),
-          'do.id.name': target.id.name,
-        }
-        return instrumentClientFetch(fetcher, (config) => ({ ...config.fetch, includeTraceContext: true }), attrs)
-      } else {
-        return passthroughGet(target, prop)
-      }
-    },
+  const attrs = {
+    name: `Durable Object ${nsName}`,
+    'do.namespace': nsName,
+    'do.id': stub.id.toString(),
+    'do.id.name': stub.id.name,
   }
-  return wrap(stub, stubHandler)
+  const fetcher = instrumentClientFetch(stub.fetch, (config) => ({ ...config.fetch, includeTraceContext: true }), attrs)
+  try {
+    Object.defineProperty(stub, 'fetch', { configurable: true, value: fetcher, writable: true })
+  } catch {
+    // Keeps the uninstrumented fetch: the call still works, only its client span is lost.
+  }
+  return stub
 }
 
-function instrumentBindingGet(getFn: DurableObjectNamespace['get'], nsName: string): DurableObjectNamespace['get'] {
-  const getHandler: ProxyHandler<DurableObjectNamespace['get']> = {
+type StubGetter = DurableObjectNamespace['get'] | DurableObjectNamespace['getByName']
+
+function instrumentBindingGet<F extends StubGetter>(getFn: F, nsName: string): F {
+  const getHandler: ProxyHandler<F> = {
     apply(target, thisArg, argArray) {
       const stub: DurableObjectStub = Reflect.apply(target, thisArg, argArray)
       return instrumentBindingStub(stub, nsName)
@@ -54,8 +54,8 @@ function instrumentBindingGet(getFn: DurableObjectNamespace['get'], nsName: stri
 export function instrumentDOBinding(ns: DurableObjectNamespace, nsName: string): DurableObjectNamespace {
   const nsHandler: ProxyHandler<typeof ns> = {
     get(target, prop) {
-      if (prop === 'get') {
-        const fn = Reflect.get(ns, prop)
+      if (prop === 'get' || prop === 'getByName') {
+        const fn: StubGetter = Reflect.get(ns, prop)
         return instrumentBindingGet(fn, nsName)
       } else {
         return passthroughGet(target, prop)
@@ -88,7 +88,8 @@ export function instrumentState(state: DurableObjectState, tracker: PromiseTrack
 }
 
 let cold_start = true
-export type DOClass<Env = Record<string, unknown>> = new (state: DurableObjectState, env: Env) => DurableObject
+// Classes that extend `DurableObject` from `cloudflare:workers` are RPC-branded and may omit `fetch`.
+export type DOClass<Env = Record<string, unknown>> = new (state: DurableObjectState, env: Env) => DurableObject | Rpc.DurableObjectBranded
 export async function executeDOFetch(fetchFn: FetchFn, request: Request, id: DurableObjectId): Promise<Response> {
   const spanContext = getParentContextFromHeaders(request.headers)
   const captureHeaders = getActiveConfig()?.handlers?.fetch?.captureHeaders
@@ -219,6 +220,93 @@ function instrumentAlarmFn(
   return wrap(alarmFn, alarmHandler)
 }
 
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return typeof (value as PromiseLike<unknown> | null | undefined)?.then === 'function'
+}
+
+// Stays synchronous for synchronous methods so callers that use the result directly keep working.
+export function executeDORpc(method: string, fn: () => unknown, id: DurableObjectId): unknown {
+  const tracer = trace.getTracer('DO rpcHandler')
+  const options: SpanOptions = {
+    attributes: {
+      [ATTR_FAAS_COLDSTART]: cold_start,
+      'do.id': id.toString(),
+      'rpc.method': method,
+      ...(id.name !== undefined ? { 'do.name': id.name } : {}),
+    },
+    kind: SpanKind.SERVER,
+  }
+  cold_start = false
+  return tracer.startActiveSpan(`Durable Object RPC ${method}`, options, (span) => {
+    const fail = (error: unknown): never => {
+      span.recordException(error as Exception)
+      span.setStatus({ code: SpanStatusCode.ERROR })
+      span.end()
+      throw error
+    }
+    let result: unknown
+    try {
+      result = fn()
+    } catch (error) {
+      return fail(error)
+    }
+    if (isPromiseLike(result)) {
+      return Promise.resolve(result).then((value) => {
+        span.end()
+        return value
+      }, fail)
+    }
+    span.end()
+    return result
+  })
+}
+
+// Covers RPC methods and the WebSocket hibernation handlers, which the runtime calls on the
+// object itself rather than through fetch or alarm.
+function instrumentMethod(
+  doObj: DurableObject,
+  method: string,
+  fn: (...args: unknown[]) => unknown,
+  initialiser: Initialiser,
+  env: Env,
+  state: DurableObjectState,
+  rawState: DurableObjectState,
+  tracker: PromiseTracker,
+  constructorConfig: ResolvedTraceConfig
+) {
+  const methodHandler: ProxyHandler<typeof fn> = {
+    apply(target, _thisArg, argArray: unknown[]) {
+      const trigger: DOConstructorTrigger = {
+        id: state.id.toString(),
+        ...(state.id.name !== undefined ? { name: state.id.name } : {}),
+      }
+      const config = initialiser(env, trigger)
+      const context = setConfig(config)
+      const flush = () => {
+        rawState.waitUntil(
+          exportSpans(processorsToFlush(constructorConfig, config), tracker).catch((error: unknown) => {
+            console.error(`Error exporting Durable Object ${method} spans:`, error)
+          })
+        )
+      }
+      const bound = (): unknown => Reflect.apply(target, doObj, argArray)
+      let result: unknown
+      try {
+        result = api_context.with(context, executeDORpc, undefined, method, bound, state.id)
+      } catch (error) {
+        flush()
+        throw error
+      }
+      if (isPromiseLike(result)) {
+        return Promise.resolve(result).finally(flush)
+      }
+      flush()
+      return result
+    },
+  }
+  return wrap(fn, methodHandler)
+}
+
 function instrumentDurableObject(
   doObj: DurableObject,
   initialiser: Initialiser,
@@ -239,6 +327,19 @@ function instrumentDurableObject(
       } else {
         const result = Reflect.get(target, prop)
         if (typeof result === 'function') {
+          if (typeof prop === 'string' && prop !== 'constructor') {
+            return instrumentMethod(
+              target,
+              prop,
+              result as (...args: unknown[]) => unknown,
+              initialiser,
+              env,
+              state,
+              rawState,
+              tracker,
+              constructorConfig
+            )
+          }
           return result.bind(receiver)
         }
         return result
@@ -248,7 +349,37 @@ function instrumentDurableObject(
   return wrap(doObj, objHandler)
 }
 
+// Classes that extend `DurableObject` from `cloudflare:workers` inherit a native constructor that
+// rejects anything but the runtime's own state object, so they cannot receive the proxied state.
+// Checking for a native base avoids importing `cloudflare:workers`, which only resolves in workerd.
+function extendsNativeClass(doClass: Function): boolean {
+  let proto: unknown = Object.getPrototypeOf(doClass)
+  while (typeof proto === 'function' && proto !== Function.prototype) {
+    if (Function.prototype.toString.call(proto).includes('[native code]')) {
+      return true
+    }
+    proto = Object.getPrototypeOf(proto)
+  }
+  return false
+}
+
+// The base constructor stores the raw state and env as `ctx` and `env`; replacing them lets the
+// object's own methods reach the instrumented storage and bindings.
+function exposeInstrumented(doObj: object, state: DurableObjectState, env: Env): void {
+  for (const [key, value] of [
+    ['ctx', state],
+    ['env', env],
+  ] as const) {
+    try {
+      Object.defineProperty(doObj, key, { configurable: true, enumerable: true, value, writable: true })
+    } catch {
+      // Keeps the raw value: the object still works, only its storage and binding spans are lost.
+    }
+  }
+}
+
 export function instrumentDOClass<Env = Record<string, unknown>>(doClass: DOClass<Env>, initialiser: Initialiser): DOClass<Env> {
+  const classStyle = extendsNativeClass(doClass)
   const classHandler: ProxyHandler<DOClass<Env>> = {
     construct(target, [orig_state, orig_env]: ConstructorParameters<DOClass<Env>>) {
       const trigger: DOConstructorTrigger = {
@@ -262,7 +393,12 @@ export function instrumentDOClass<Env = Record<string, unknown>>(doClass: DOClas
       const env = instrumentEnv(orig_env as Record<string, unknown>)
       const DOClassTarget = target
       const createDO = (): DurableObject => {
-        return new DOClassTarget(state, env as Env)
+        if (classStyle) {
+          const doObj = new DOClassTarget(orig_state, orig_env) as DurableObject
+          exposeInstrumented(doObj, state, env)
+          return doObj
+        }
+        return new DOClassTarget(state, env as Env) as DurableObject
       }
       const doObj = api_context.with(context, createDO)
 

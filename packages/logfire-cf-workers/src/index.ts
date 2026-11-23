@@ -41,7 +41,7 @@ export * from './exportTailEventsToLogfire'
 type Env = unknown
 type LogfireEnv = Record<string, string | undefined>
 type WorkerHandler = ExportedHandler
-type DOClass<Env = unknown> = new (state: DurableObjectState, env: Env) => DurableObject
+type DOClass<Env = unknown> = new (state: DurableObjectState, env: Env) => DurableObject | Rpc.DurableObjectBranded
 
 type ConfigOptionsBase = Pick<
   TraceConfig,
@@ -147,7 +147,8 @@ export function instrumentInProcess<T>(handler: T, config: InProcessConfigOption
   return baseInstrument(handler as WorkerHandler, getInProcessConfig(config)) as T
 }
 
-export function instrumentDO<Env = unknown, T extends DOClass<Env> = DOClass<Env>>(doClass: T, config: InProcessConfigOptions): T {
+// `Env` cannot be inferred from `T`, so its default must accept a class typed with any env.
+export function instrumentDO<Env = never, T extends DOClass<Env> = DOClass<Env>>(doClass: T, config: InProcessConfigOptions): T {
   configureScrubbing(config)
   return baseInstrumentDO(doClass, getInProcessConfig(config)) as T
 }

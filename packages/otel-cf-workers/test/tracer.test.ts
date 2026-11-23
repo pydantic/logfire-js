@@ -1,7 +1,7 @@
 import { context, defaultTextMapSetter, ROOT_CONTEXT, trace } from '@opentelemetry/api'
 import { CompositePropagator, W3CTraceContextPropagator } from '@opentelemetry/core'
 import { InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { parseConfig, setConfig } from '../src/config'
 import { BatchTraceSpanProcessor } from '../src/spanprocessor'
@@ -68,5 +68,21 @@ describe('config captured in a context', () => {
     await Promise.all(configC.spanProcessors.map(async (processor) => processor.forceFlush()))
 
     expect(exporterC.getFinishedSpans().map((finished) => finished.name)).toEqual(['started in c (c)'])
+  })
+})
+
+describe('span started without a config', () => {
+  it('returns a non-recording span and warns once instead of throwing', () => {
+    const tracer = new WorkerTracer()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const first = tracer.startSpan('uninstrumented', {}, ROOT_CONTEXT)
+    const second = tracer.startSpan('uninstrumented again', {}, ROOT_CONTEXT)
+
+    expect(first.isRecording()).toBe(false)
+    expect(trace.isSpanContextValid(first.spanContext())).toBe(false)
+    expect(second.isRecording()).toBe(false)
+    expect(warn).toHaveBeenCalledTimes(1)
+    warn.mockRestore()
   })
 })
