@@ -3,11 +3,13 @@
 import type { Span, SpanOptions, Tracer, SpanStatusCode } from '@opentelemetry/api'
 import { context as apiContext, trace } from '@opentelemetry/api'
 import { describe, expect, it, vitest } from 'vitest'
-import { setConfig } from '../../src/config'
+import { getActiveConfig, setConfig } from '../../src/config'
 import { AsyncLocalStorageContextManager } from '../../src/context'
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import type { ResolvedTraceConfig } from '../../src/types'
+import type { DOClass } from '../../src/instrumentation/do'
 import { executeDOFetch, instrumentDOClass } from '../../src/instrumentation/do'
+import { unwrap } from '../../src/wrap'
 
 apiContext.setGlobalContextManager(new AsyncLocalStorageContextManager())
 
@@ -141,7 +143,8 @@ describe('instrumentDOClass', () => {
       expect(durableObject.increment(3)).toBe(5)
 
       await durableObject.callFetch()
-      expect(durableObjectState.waitUntilPromises).toHaveLength(2)
+      // One span export per method call (increment twice, callFetch once) plus fetch's own waitUntil.
+      expect(durableObjectState.waitUntilPromises).toHaveLength(4)
       await Promise.allSettled(durableObjectState.waitUntilPromises)
     } finally {
       consoleError.mockRestore()
@@ -152,7 +155,7 @@ describe('instrumentDOClass', () => {
     const consoleError = vitest.spyOn(console, 'error').mockImplementation(() => undefined)
     const durableObjectState = createDurableObjectState()
     const InstrumentedDurableObject = instrumentDOClass(LifecycleDurableObject, () => resolvedConfig)
-    const durableObject = new InstrumentedDurableObject(durableObjectState, {})
+    const durableObject = new InstrumentedDurableObject(durableObjectState, {}) as DurableObject
 
     try {
       await durableObject.fetch(new Request('https://example.com'))
@@ -163,6 +166,80 @@ describe('instrumentDOClass', () => {
       await Promise.allSettled(durableObjectState.waitUntilPromises)
     } finally {
       consoleError.mockRestore()
+    }
+  })
+})
+
+// A bound function reports `[native code]`, which stands in for the workerd `DurableObject` base
+// class and its check that the constructor receives the runtime's own state object.
+function createNativeDurableObjectBase(expectedState: DurableObjectState) {
+  class Base {
+    ctx: DurableObjectState
+    env: unknown
+    constructor(state: DurableObjectState, env: unknown) {
+      if (state !== expectedState) {
+        throw new TypeError("Failed to construct 'DurableObjectBase': constructor parameter 1 is not of type 'DurableObjectState'.")
+      }
+      this.ctx = state
+      this.env = env
+    }
+  }
+  const NativeBase: typeof Base = Base.bind(null)
+  Object.defineProperty(NativeBase, 'prototype', { value: Base.prototype })
+  return NativeBase
+}
+
+describe('instrumentDOClass with a class that extends DurableObject', () => {
+  it('constructs with the raw state and exposes the instrumented state and env as ctx and env', () => {
+    const durableObjectState = createDurableObjectState()
+    const env = { SECRET: 'value' }
+    class ExtendsDurableObject extends createNativeDurableObjectBase(durableObjectState) {
+      seenInConstructor: DurableObjectState
+      constructor(state: DurableObjectState, constructorEnv: unknown) {
+        super(state, constructorEnv)
+        this.seenInConstructor = this.ctx
+      }
+      fetch(): Response {
+        return new Response()
+      }
+    }
+    const InstrumentedDurableObject = instrumentDOClass(ExtendsDurableObject as unknown as DOClass, () => resolvedConfig)
+    const durableObject = new InstrumentedDurableObject(durableObjectState, env) as unknown as ExtendsDurableObject
+
+    expect(durableObject.seenInConstructor).toBe(durableObjectState)
+    expect(durableObject.ctx).not.toBe(durableObjectState)
+    expect(unwrap(durableObject.ctx)).toBe(durableObjectState)
+    expect(durableObject.env).not.toBe(env)
+    expect(unwrap(durableObject.env as object)).toBe(env)
+  })
+
+  it('runs RPC methods with the config active and exports their spans', async () => {
+    vitest.stubGlobal('scheduler', { wait: async () => Promise.resolve() })
+    const durableObjectState = createDurableObjectState()
+    const rpcProcessor = {
+      forceFlush: vitest.fn<() => Promise<void>>(async () => Promise.resolve()),
+      onEnd: vitest.fn<() => void>(),
+      onStart: vitest.fn<() => void>(),
+      shutdown: vitest.fn<() => Promise<void>>(async () => Promise.resolve()),
+    } satisfies SpanProcessor
+    const rpcConfig = { spanProcessors: [rpcProcessor] } as unknown as ResolvedTraceConfig
+    class RpcDurableObject extends createNativeDurableObjectBase(durableObjectState) {
+      async hello(name: string): Promise<{ greeting: string; config: ResolvedTraceConfig | undefined }> {
+        await Promise.resolve()
+        return { greeting: `hello ${name}`, config: getActiveConfig() }
+      }
+    }
+    const InstrumentedDurableObject = instrumentDOClass(RpcDurableObject as unknown as DOClass, () => rpcConfig)
+    const durableObject = new InstrumentedDurableObject(durableObjectState, {}) as unknown as RpcDurableObject
+
+    try {
+      const result = await durableObject.hello('bob')
+      await Promise.all(durableObjectState.waitUntilPromises)
+
+      expect(result).toEqual({ greeting: 'hello bob', config: rpcConfig })
+      expect(rpcProcessor.forceFlush).toHaveBeenCalledTimes(1)
+    } finally {
+      vitest.unstubAllGlobals()
     }
   })
 })
@@ -189,7 +266,7 @@ describe('instrumentDOClass span export', () => {
     }
     const durableObjectState = createDurableObjectState()
     const InstrumentedDurableObject = instrumentDOClass(LifecycleDurableObject, initialiser)
-    const durableObject = new InstrumentedDurableObject(durableObjectState, {})
+    const durableObject = new InstrumentedDurableObject(durableObjectState, {}) as DurableObject
 
     try {
       await durableObject.fetch(new Request('https://example.com'))

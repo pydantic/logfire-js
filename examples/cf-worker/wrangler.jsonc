@@ -29,6 +29,10 @@
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
 	 */
 	"vars": {},
+	"durable_objects": {
+		"bindings": [{ "name": "COUNTER", "class_name": "Counter" }],
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Counter"] }],
 	/**
 	 * Note: Use secrets to store sensitive data.
 	 * https://developers.cloudflare.com/workers/configuration/secrets/

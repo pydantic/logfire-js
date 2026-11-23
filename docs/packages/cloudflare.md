@@ -79,19 +79,29 @@ Use `instrumentDO()` for Durable Object classes. It uses the same Logfire
 configuration path as `instrument()`, including `LOGFIRE_TOKEN`,
 `LOGFIRE_ENVIRONMENT`, `LOGFIRE_BASE_URL`, and scrubbing configuration.
 
+Wrap every Durable Object class that calls Logfire. Each Durable Object runs in
+its own invocation, so the Worker's `instrument()` call does not cover it. Spans
+started in an unwrapped class are dropped, and Logfire logs a warning once.
+
 ```ts
+import { DurableObject } from 'cloudflare:workers'
+import * as logfire from 'logfire'
 import { instrument, instrumentDO } from '@pydantic/logfire-cf-workers'
 
-class CounterDurableObject implements DurableObject {
-  constructor(private state: DurableObjectState) {}
+interface Env {
+  COUNTER: DurableObjectNamespace<CounterDurableObject>
+}
 
-  async fetch(): Promise<Response> {
-    const value = (await this.state.storage.get<number>('value')) ?? 0
-    await this.state.storage.put('value', value + 1)
-    return Response.json({ value })
+class CounterDurableObject extends DurableObject<Env> {
+  async increment(): Promise<number> {
+    const value = ((await this.ctx.storage.get<number>('value')) ?? 0) + 1
+    await this.ctx.storage.put('value', value)
+    logfire.info('counter incremented to {value}', { value })
+    return value
   }
 }
 
+// Export the wrapped class under the `class_name` from your Wrangler configuration.
 export const Counter = instrumentDO(CounterDurableObject, {
   service: {
     name: 'counter-do',
@@ -103,10 +113,10 @@ export const Counter = instrumentDO(CounterDurableObject, {
 export default instrument(
   {
     async fetch(request, env): Promise<Response> {
-      const id = env.Counter.idFromName('global')
-      return env.Counter.get(id).fetch(request)
+      const value = await env.COUNTER.getByName('global').increment()
+      return Response.json({ value })
     },
-  },
+  } satisfies ExportedHandler<Env>,
   {
     service: {
       name: 'checkout-worker',
@@ -116,6 +126,13 @@ export default instrument(
   }
 )
 ```
+
+`instrumentDO()` creates a span for `fetch`, `alarm`, and each RPC method or
+WebSocket handler call, with child spans for `ctx.storage` operations. Classes
+that implement the `DurableObject` interface and receive `state` in the
+constructor work the same way. RPC calls do not carry trace context, so each
+RPC method call starts a new trace; `fetch` calls through a stub continue the
+caller's trace.
 
 ## Tail Workers
 
