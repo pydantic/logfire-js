@@ -130,9 +130,19 @@ export default instrument(
 `instrumentDO()` creates a span for `fetch`, `alarm`, and each RPC method or
 WebSocket handler call, with child spans for `ctx.storage` operations. Classes
 that implement the `DurableObject` interface and receive `state` in the
-constructor work the same way. RPC calls do not carry trace context, so each
-RPC method call starts a new trace; `fetch` calls through a stub continue the
-caller's trace.
+constructor work the same way.
+
+- RPC calls do not carry trace context, so each RPC method call starts a new
+  trace. `fetch` calls through a stub from `get()` or `getByName()` continue
+  the caller's trace.
+- In a class that extends `DurableObject`, the constructor receives the
+  runtime's own `ctx` and `env`; the instrumented versions replace them after
+  the constructor returns. Storage calls made in the constructor, and
+  references it keeps such as `this.storage = ctx.storage`, are not traced.
+  Read `this.ctx.storage` in your methods instead.
+- Methods run with the uninstrumented object as `this`, so a method that
+  calls `this.fetch()` or `this.alarm()` records that work inside its own span
+  instead of a separate `fetch` or `alarm` span.
 
 ## Tail Workers
 

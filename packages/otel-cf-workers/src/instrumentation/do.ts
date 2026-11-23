@@ -41,8 +41,10 @@ function instrumentBindingStub(stub: DurableObjectStub, nsName: string): Durable
   return wrap(stub, stubHandler)
 }
 
-function instrumentBindingGet(getFn: DurableObjectNamespace['get'], nsName: string): DurableObjectNamespace['get'] {
-  const getHandler: ProxyHandler<DurableObjectNamespace['get']> = {
+type StubGetter = DurableObjectNamespace['get'] | DurableObjectNamespace['getByName']
+
+function instrumentBindingGet<F extends StubGetter>(getFn: F, nsName: string): F {
+  const getHandler: ProxyHandler<F> = {
     apply(target, thisArg, argArray) {
       const stub: DurableObjectStub = Reflect.apply(target, thisArg, argArray)
       return instrumentBindingStub(stub, nsName)
@@ -54,8 +56,8 @@ function instrumentBindingGet(getFn: DurableObjectNamespace['get'], nsName: stri
 export function instrumentDOBinding(ns: DurableObjectNamespace, nsName: string): DurableObjectNamespace {
   const nsHandler: ProxyHandler<typeof ns> = {
     get(target, prop) {
-      if (prop === 'get') {
-        const fn = Reflect.get(ns, prop)
+      if (prop === 'get' || prop === 'getByName') {
+        const fn: StubGetter = Reflect.get(ns, prop)
         return instrumentBindingGet(fn, nsName)
       } else {
         return passthroughGet(target, prop)

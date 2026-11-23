@@ -8,8 +8,8 @@ import { AsyncLocalStorageContextManager } from '../../src/context'
 import type { SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import type { ResolvedTraceConfig } from '../../src/types'
 import type { DOClass } from '../../src/instrumentation/do'
-import { executeDOFetch, instrumentDOClass } from '../../src/instrumentation/do'
-import { unwrap } from '../../src/wrap'
+import { executeDOFetch, instrumentDOBinding, instrumentDOClass } from '../../src/instrumentation/do'
+import { isWrapped, unwrap } from '../../src/wrap'
 
 apiContext.setGlobalContextManager(new AsyncLocalStorageContextManager())
 
@@ -130,7 +130,7 @@ interface CustomMethodDurableObjectInstance extends DurableObject {
 }
 
 describe('instrumentDOClass', () => {
-  it('binds custom Durable Object methods to the instrumented object', async () => {
+  it('runs custom Durable Object methods against the uninstrumented object, each in its own invocation', async () => {
     const consoleError = vitest.spyOn(console, 'error').mockImplementation(() => undefined)
     const durableObjectState = createDurableObjectState()
     const InstrumentedDurableObject = instrumentDOClass(CustomMethodDurableObject, () => resolvedConfig)
@@ -288,6 +288,23 @@ describe('instrumentDOClass span export', () => {
     } finally {
       vitest.unstubAllGlobals()
     }
+  })
+})
+
+describe('instrumentDOBinding', () => {
+  it('instruments stubs from both get and getByName so their fetch calls carry trace context', () => {
+    const stub = { id: durableObjectId, fetch: () => new Response() }
+    const namespace = {
+      idFromName: () => durableObjectId,
+      get: () => stub,
+      getByName: () => stub,
+    } as unknown as DurableObjectNamespace
+
+    const binding = instrumentDOBinding(namespace, 'COUNTER')
+
+    expect(isWrapped(binding.get(durableObjectId))).toBe(true)
+    expect(isWrapped(binding.getByName('test-object'))).toBe(true)
+    expect(unwrap(binding.getByName('test-object'))).toBe(stub)
   })
 })
 

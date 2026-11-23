@@ -104,7 +104,7 @@ const TestOtelDO = instrumentDO(OtelDO, config)
 export { TestOtelDO }
 ```
 
-Classes that extend `DurableObject` from `cloudflare:workers` and classes that implement the `DurableObject` interface are both supported. `fetch`, `alarm`, RPC methods and WebSocket handlers each run in their own span, and `this.ctx.storage` calls are traced. Spans started in a Durable Object class that is not wrapped with `instrumentDO` are dropped with a one-time warning.
+Classes that extend `DurableObject` from `cloudflare:workers` and classes that implement the `DurableObject` interface are both supported. `fetch`, `alarm`, RPC methods and WebSocket handlers each run in their own span, and `this.ctx.storage` calls in methods are traced. In a class that extends `DurableObject`, the constructor receives the runtime's own `ctx` and `env`, so storage calls made there, or references to `ctx.storage` kept from there, are not traced. Spans started in a Durable Object class that is not wrapped with `instrumentDO` are dropped with a one-time warning.
 
 ## Creating custom spans
 
