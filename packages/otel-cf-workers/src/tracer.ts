@@ -1,5 +1,5 @@
 import type { Attributes, Context, Span, SpanOptions, Tracer } from '@opentelemetry/api'
-import { SpanKind, TraceFlags, context as api_context, trace } from '@opentelemetry/api'
+import { INVALID_SPAN_CONTEXT, SpanKind, TraceFlags, context as api_context, trace } from '@opentelemetry/api'
 import { sanitizeAttributes } from '@opentelemetry/core'
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base'
 import { SamplingDecision } from '@opentelemetry/sdk-trace-base'
@@ -8,12 +8,21 @@ import { getConfig } from './config.js'
 import { SpanImpl } from './span.js'
 
 let withNextSpanAttributes: Attributes
+let warnedMissingConfig = false
 
 export class WorkerTracer implements Tracer {
   startSpan(name: string, options: SpanOptions = {}, context: Context = api_context.active()): Span {
     const config = getConfig(context)
     if (!config) {
-      throw new Error('Config is undefined. This is a bug in the instrumentation logic')
+      // Code that is not wrapped by `instrument` or `instrumentDO`, such as a Durable Object class
+      // exported as is, has no config to export with. Telemetry must not take the application down.
+      if (!warnedMissingConfig) {
+        warnedMissingConfig = true
+        console.warn(
+          `Logfire: span "${name}" was dropped because it started outside an instrumented handler. Wrap the Worker handler with instrument() and each Durable Object class with instrumentDO().`
+        )
+      }
+      return trace.wrapSpanContext(INVALID_SPAN_CONTEXT)
     }
     // Captured at start so onEnd reaches the same processors that saw onStart.
     const { spanProcessors, resource, scope, idGenerator } = config
