@@ -292,19 +292,24 @@ describe('instrumentDOClass span export', () => {
 })
 
 describe('instrumentDOBinding', () => {
-  it('instruments stubs from both get and getByName so their fetch calls carry trace context', () => {
-    const stub = { id: durableObjectId, fetch: () => new Response() }
+  it('instruments fetch on stubs from both get and getByName and leaves the stub itself unwrapped', () => {
+    // Stands in for a workerd RpcProperty, which only resolves the remote value when awaited.
+    const rpcProperty = () => undefined
+    Object.defineProperty(rpcProperty, 'constructor', { value: { name: 'RpcProperty' } })
+    const createStub = () => ({ id: durableObjectId, fetch: () => new Response(), value: rpcProperty })
     const namespace = {
       idFromName: () => durableObjectId,
-      get: () => stub,
-      getByName: () => stub,
+      get: createStub,
+      getByName: createStub,
     } as unknown as DurableObjectNamespace
 
     const binding = instrumentDOBinding(namespace, 'COUNTER')
 
-    expect(isWrapped(binding.get(durableObjectId))).toBe(true)
-    expect(isWrapped(binding.getByName('test-object'))).toBe(true)
-    expect(unwrap(binding.getByName('test-object'))).toBe(stub)
+    for (const stub of [binding.get(durableObjectId), binding.getByName('test-object')]) {
+      expect(isWrapped(stub)).toBe(false)
+      expect(isWrapped(Reflect.get(stub, 'fetch'))).toBe(true)
+      expect(Reflect.get(stub, 'value')).toBe(rpcProperty)
+    }
   })
 })
 

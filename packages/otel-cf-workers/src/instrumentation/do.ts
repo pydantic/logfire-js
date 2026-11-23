@@ -21,24 +21,22 @@ type FetchFn = DurableObject['fetch']
 type AlarmFn = DurableObject['alarm']
 type Env = Record<string, unknown>
 
+// The stub stays the runtime's own object, with only `fetch` replaced: a Proxy around it turns
+// RPC property reads (`await stub.value`) into functions and is not serializable as a stub.
 function instrumentBindingStub(stub: DurableObjectStub, nsName: string): DurableObjectStub {
-  const stubHandler: ProxyHandler<typeof stub> = {
-    get(target, prop) {
-      if (prop === 'fetch') {
-        const fetcher = Reflect.get(target, prop)
-        const attrs = {
-          name: `Durable Object ${nsName}`,
-          'do.namespace': nsName,
-          'do.id': target.id.toString(),
-          'do.id.name': target.id.name,
-        }
-        return instrumentClientFetch(fetcher, (config) => ({ ...config.fetch, includeTraceContext: true }), attrs)
-      } else {
-        return passthroughGet(target, prop)
-      }
-    },
+  const attrs = {
+    name: `Durable Object ${nsName}`,
+    'do.namespace': nsName,
+    'do.id': stub.id.toString(),
+    'do.id.name': stub.id.name,
   }
-  return wrap(stub, stubHandler)
+  const fetcher = instrumentClientFetch(stub.fetch, (config) => ({ ...config.fetch, includeTraceContext: true }), attrs)
+  try {
+    Object.defineProperty(stub, 'fetch', { configurable: true, value: fetcher, writable: true })
+  } catch {
+    // Keeps the uninstrumented fetch: the call still works, only its client span is lost.
+  }
+  return stub
 }
 
 type StubGetter = DurableObjectNamespace['get'] | DurableObjectNamespace['getByName']
