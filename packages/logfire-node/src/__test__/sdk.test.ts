@@ -447,6 +447,7 @@ describe('sdk lifecycle helpers', () => {
       distributedTracing: true,
       instrumentations: [],
       metrics: undefined,
+      processHooks: true,
       resourceAttributes: {},
       sampling: undefined,
       serviceName: undefined,
@@ -845,6 +846,52 @@ describe('sdk lifecycle helpers', () => {
       'uncaughtExceptionMonitor',
       'unhandledRejection',
     ])
+  })
+
+  it('removes the listeners when a reconfigure turns processHooks off, and installs them when one turns it back on', async () => {
+    const events = (calls: unknown[][]): unknown[] => calls.map(([event]) => event)
+    const allEvents = ['beforeExit', 'SIGTERM', 'uncaughtExceptionMonitor', 'unhandledRejection']
+
+    start()
+    expect(events(processOnSpy.mock.calls)).toEqual(allEvents)
+
+    Object.assign(logfireConfig, { processHooks: false })
+    start()
+    await waitForBackgroundLifecycle()
+    expect(events(processRemoveListenerSpy.mock.calls)).toEqual(allEvents)
+    expect(allEvents.map((event) => process.listeners(event as NodeJS.Signals).length)).toEqual([0, 0, 0, 0])
+
+    Object.assign(logfireConfig, { processHooks: true })
+    start()
+    await waitForBackgroundLifecycle()
+    expect(events(processOnSpy.mock.calls)).toEqual([...allEvents, ...allEvents])
+    expect(allEvents.map((event) => process.listeners(event as NodeJS.Signals).length)).toEqual([1, 1, 1, 1])
+  })
+
+  it('installs no process listeners with processHooks off, on reconfigure too, and shutdown still flushes and releases', async () => {
+    Object.assign(logfireConfig, { processHooks: false })
+    start()
+    const first = mocks.nodeSdkInstances[0]
+    if (first === undefined) {
+      throw new Error('expected first NodeSDK mock instance')
+    }
+
+    start()
+    await waitForBackgroundLifecycle()
+    const second = mocks.nodeSdkInstances[1]
+    if (second === undefined) {
+      throw new Error('expected second NodeSDK mock instance')
+    }
+    expect(first.shutdownCalls).toBe(1)
+    const flushesBeforeShutdown = mocks.traceForceFlushCalls
+
+    await shutdown()
+
+    expect(processOnSpy).not.toHaveBeenCalled()
+    expect(processRemoveListenerSpy).not.toHaveBeenCalled()
+    expect(mocks.traceForceFlushCalls).toBe(flushesBeforeShutdown + 1)
+    expect(second.shutdownCalls).toBe(1)
+    expect(mocks.shutdownVariablesCalls).toBe(1)
   })
 
   it('pending shutdown from a previous runtime cannot clear a new runtime', async () => {

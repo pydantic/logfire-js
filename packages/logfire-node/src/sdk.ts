@@ -590,10 +590,11 @@ export function start(): void {
       }
     },
   }
-  runtime.processListeners = listeners
-
-  process.on('beforeExit', listeners.beforeExit)
-  process.on('SIGTERM', listeners.SIGTERM)
-  process.on('uncaughtExceptionMonitor', listeners.uncaughtExceptionMonitor)
-  process.on('unhandledRejection', listeners.unhandledRejection)
+  if (logfireConfig.processHooks) {
+    runtime.processListeners = listeners
+    process.on('beforeExit', listeners.beforeExit)
+    process.on('SIGTERM', listeners.SIGTERM)
+    process.on('uncaughtExceptionMonitor', listeners.uncaughtExceptionMonitor)
+    process.on('unhandledRejection', listeners.unhandledRejection)
+  }
 }
