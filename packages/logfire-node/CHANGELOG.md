@@ -1,5 +1,12 @@
 # logfire
 
+## 0.26.0
+
+### Minor Changes
+
+- 6e86b32: Let applications turn off single process listeners. `advanced.processHooks` now also takes an object with `beforeExit`, `sigterm`, `uncaughtException` and `unhandledRejection` keys, and a key that is left out stays on. For example, `{ sigterm: false }` lets the application's own `SIGTERM` handler drain work and export what it records, while Logfire keeps reporting uncaught exceptions and unhandled rejections. `true` and `false` keep their meaning.
+- 569d99e: Keep telemetry running while an application's `SIGTERM` handler drains work. When the application has its own `SIGTERM` listener, the SDK's listener now flushes instead of shutting the SDK down, so spans the handler records after waiting for timers or I/O are exported. The application owns shutdown: call `shutdown()` at the end of the handler before `process.exit()`, or let the event loop empty so `beforeExit` shuts the SDK down. When the SDK's listener is the only one, it still shuts down and re-emits the signal.
+
 ## 0.25.0
 
 ### Minor Changes
