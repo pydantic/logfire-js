@@ -201,11 +201,18 @@ Logfire installs process hooks for `beforeExit`, `SIGTERM`,
 `uncaughtExceptionMonitor`, and `unhandledRejection`.
 
 On `beforeExit`, Logfire runs a bounded best-effort shutdown. On `SIGTERM`,
-Logfire also runs bounded best-effort shutdown. If Logfire's listener is the
-only `SIGTERM` listener, it then re-emits the signal with
-`process.kill(process.pid, 'SIGTERM')` so Node keeps signal-style termination.
-If your application installs its own `SIGTERM` handler, Logfire leaves process
-termination to that application-level lifecycle code.
+if Logfire's listener is the only `SIGTERM` listener, Logfire runs the same
+shutdown and then re-emits the signal with `process.kill(process.pid, 'SIGTERM')`
+so Node keeps signal-style termination.
+
+If your application installs its own `SIGTERM` handler, Logfire only flushes on
+`SIGTERM` and leaves shutdown and process termination to that handler. The SDK
+keeps running, so spans the handler records while it drains work are exported.
+End the handler with `await logfire.shutdown()`, after the last span it
+records. This matters most when the handler calls `process.exit()`: `beforeExit`
+does not run then, so spans recorded after the flush are otherwise lost. If the
+handler lets the event loop empty instead, `beforeExit` shuts Logfire down as a
+fallback.
 
 Logfire does not install a `SIGINT` handler and does not hook `process.on('exit',
 ...)`, because async telemetry flush cannot complete from the synchronous
@@ -226,10 +233,7 @@ logfire.configure({ advanced: { processHooks: false } })
 With `processHooks: false`, `configure()` installs none of these listeners and
 removes the ones an earlier call installed. The option applies to each call:
 pass it every time you call `configure()`, because a call without it installs
-the listeners again. Logfire's `SIGTERM` listener otherwise runs before a
-handler registered after `configure()` and shuts the SDK down while that
-handler is still draining work, so spans it records after waiting for timers
-or I/O are lost. With the hooks off, the application must:
+the listeners again. With the hooks off, the application must:
 
 - call `await logfire.shutdown()` at the end of its own shutdown, after the
   last span it records. It flushes and releases everything as usual;
