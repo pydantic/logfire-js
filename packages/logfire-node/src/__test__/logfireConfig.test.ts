@@ -598,14 +598,41 @@ describe('logfire config', () => {
   })
 
   describe('process hooks', () => {
-    it('defaults to true', () => {
+    const allOn = { beforeExit: true, sigterm: true, uncaughtException: true, unhandledRejection: true }
+    const allOff = { beforeExit: false, sigterm: false, uncaughtException: false, unhandledRejection: false }
+
+    it('defaults to all listeners on', () => {
       configure({ sendToLogfire: false })
-      expect(logfireConfig.processHooks).toBe(true)
+      expect(logfireConfig.processHooks).toEqual(allOn)
     })
 
-    it('is false when advanced.processHooks is false', () => {
+    it('turns all listeners on with true', () => {
+      configure({ advanced: { processHooks: true }, sendToLogfire: false })
+      expect(logfireConfig.processHooks).toEqual(allOn)
+    })
+
+    it('turns all listeners off with false', () => {
       configure({ advanced: { processHooks: false }, sendToLogfire: false })
-      expect(logfireConfig.processHooks).toBe(false)
+      expect(logfireConfig.processHooks).toEqual(allOff)
+    })
+
+    it('treats a missing key in the object form as on', () => {
+      configure({ advanced: { processHooks: { sigterm: false } }, sendToLogfire: false })
+      expect(logfireConfig.processHooks).toEqual({ ...allOn, sigterm: false })
+    })
+
+    it('keeps each key of the object form', () => {
+      configure({
+        advanced: { processHooks: { beforeExit: false, sigterm: true, uncaughtException: false, unhandledRejection: true } },
+        sendToLogfire: false,
+      })
+      expect(logfireConfig.processHooks).toEqual({ beforeExit: false, sigterm: true, uncaughtException: false, unhandledRejection: true })
+    })
+
+    it('applies only the value of the latest configure call', () => {
+      configure({ advanced: { processHooks: { sigterm: false } }, sendToLogfire: false })
+      configure({ advanced: { processHooks: { unhandledRejection: false } }, sendToLogfire: false })
+      expect(logfireConfig.processHooks).toEqual({ ...allOn, unhandledRejection: false })
     })
   })
 

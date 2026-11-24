@@ -265,6 +265,31 @@ or I/O are lost. With the hooks off, the application must:
   with exit code 1, and Logfire does not report it;
 - report uncaught exceptions itself, if it wants them in Logfire.
 
+To turn off single listeners, pass an object instead. A key you leave out
+stays on. This keeps the exception reporting and turns off only the `SIGTERM`
+listener, so your own `SIGTERM` handler owns that shutdown:
+
+```ts
+logfire.configure({ advanced: { processHooks: { sigterm: false } } })
+```
+
+Each key you set to `false` hands one duty to the application:
+
+- `beforeExit: false`: call `await logfire.shutdown()` before the process
+  exits on its own, or pending spans are lost;
+- `sigterm: false`: handle `SIGTERM`, call `await logfire.shutdown()` after the
+  last span, and exit;
+- `uncaughtException: false`: report uncaught exceptions itself, if it wants
+  them in Logfire;
+- `unhandledRejection: false`: handle `unhandledRejection` if the process must
+  keep running. Node's default crashes the process with exit code 1. If the
+  `uncaughtException` listener is still on, Logfire records the rejection as an
+  uncaught error, but the process usually exits before that record is exported,
+  so do not rely on it reaching Logfire.
+
+Like `false`, the object applies to each call, so pass it every time you call
+`configure()`.
+
 ## Source Maps
 
 If your service ships its `.map` files next to the built code, `enableSourceMaps`

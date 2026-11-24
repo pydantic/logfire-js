@@ -327,6 +327,10 @@ let processRemoveListenerSpy: MockInstance<typeof process.removeListener>
 const processListenerRegistry = new Map<string | symbol, AnyProcessListener[]>()
 const originalOtelResourceAttributes = process.env['OTEL_RESOURCE_ATTRIBUTES']
 
+function processHooks(on: boolean, overrides: Partial<typeof logfireConfig.processHooks> = {}): typeof logfireConfig.processHooks {
+  return { beforeExit: on, sigterm: on, uncaughtException: on, unhandledRejection: on, ...overrides }
+}
+
 function getProcessListeners(event: string | symbol): AnyProcessListener[] {
   return processListenerRegistry.get(event) ?? []
 }
@@ -447,7 +451,7 @@ describe('sdk lifecycle helpers', () => {
       distributedTracing: true,
       instrumentations: [],
       metrics: undefined,
-      processHooks: true,
+      processHooks: processHooks(true),
       resourceAttributes: {},
       sampling: undefined,
       serviceName: undefined,
@@ -855,21 +859,54 @@ describe('sdk lifecycle helpers', () => {
     start()
     expect(events(processOnSpy.mock.calls)).toEqual(allEvents)
 
-    Object.assign(logfireConfig, { processHooks: false })
+    Object.assign(logfireConfig, { processHooks: processHooks(false) })
     start()
     await waitForBackgroundLifecycle()
     expect(events(processRemoveListenerSpy.mock.calls)).toEqual(allEvents)
     expect(allEvents.map((event) => process.listeners(event as NodeJS.Signals).length)).toEqual([0, 0, 0, 0])
 
-    Object.assign(logfireConfig, { processHooks: true })
+    Object.assign(logfireConfig, { processHooks: processHooks(true) })
     start()
     await waitForBackgroundLifecycle()
     expect(events(processOnSpy.mock.calls)).toEqual([...allEvents, ...allEvents])
     expect(allEvents.map((event) => process.listeners(event as NodeJS.Signals).length)).toEqual([1, 1, 1, 1])
   })
 
+  it('installs only the process listeners the object form leaves on', () => {
+    Object.assign(logfireConfig, { processHooks: processHooks(true, { sigterm: false }) })
+    start()
+
+    expect(processOnSpy.mock.calls.map(([event]) => event)).toEqual(['beforeExit', 'uncaughtExceptionMonitor', 'unhandledRejection'])
+    expect(process.listeners('SIGTERM')).toEqual([])
+  })
+
+  it('removes only the listeners an earlier call installed, and applies the new flags on reconfigure', async () => {
+    const events = (calls: unknown[][]): unknown[] => calls.map(([event]) => event)
+    const allEvents = ['beforeExit', 'SIGTERM', 'uncaughtExceptionMonitor', 'unhandledRejection']
+
+    Object.assign(logfireConfig, { processHooks: processHooks(true, { sigterm: false }) })
+    start()
+    const firstSIGTERMListeners = process.listeners('SIGTERM').length
+
+    Object.assign(logfireConfig, { processHooks: processHooks(true, { unhandledRejection: false }) })
+    start()
+    await waitForBackgroundLifecycle()
+
+    expect(firstSIGTERMListeners).toBe(0)
+    expect(events(processRemoveListenerSpy.mock.calls)).toEqual(['beforeExit', 'uncaughtExceptionMonitor', 'unhandledRejection'])
+    expect(events(processOnSpy.mock.calls)).toEqual([
+      'beforeExit',
+      'uncaughtExceptionMonitor',
+      'unhandledRejection',
+      'beforeExit',
+      'SIGTERM',
+      'uncaughtExceptionMonitor',
+    ])
+    expect(allEvents.map((event) => process.listeners(event as NodeJS.Signals).length)).toEqual([1, 1, 1, 0])
+  })
+
   it('installs no process listeners with processHooks off, on reconfigure too, and shutdown still flushes and releases', async () => {
-    Object.assign(logfireConfig, { processHooks: false })
+    Object.assign(logfireConfig, { processHooks: processHooks(false) })
     start()
     const first = mocks.nodeSdkInstances[0]
     if (first === undefined) {

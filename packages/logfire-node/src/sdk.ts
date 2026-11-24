@@ -64,6 +64,8 @@ interface ProcessListeners {
   unhandledRejection: (reason: unknown) => void
 }
 
+const PROCESS_LISTENER_EVENTS = ['beforeExit', 'SIGTERM', 'uncaughtExceptionMonitor', 'unhandledRejection'] as const
+
 type LogfireSignalListenerState = 'logfire-only' | 'user-listeners-present' | 'logfire-missing-no-others' | 'logfire-missing-with-others'
 
 interface ActiveRuntime {
@@ -71,7 +73,7 @@ interface ActiveRuntime {
   instrumentations: Instrumentation[]
   logRecordProcessors: LogRecordProcessor[]
   metricReaders: MetricReader[]
-  processListeners: ProcessListeners | undefined
+  processListeners: Partial<ProcessListeners> | undefined
   sdk: NodeSDK
   shutdownPromise: Promise<void> | undefined
   spanProcessors: SpanProcessor[]
@@ -166,10 +168,12 @@ function removeProcessListeners(runtime: ActiveRuntime): void {
   if (listeners === undefined) {
     return
   }
-  process.removeListener('beforeExit', listeners.beforeExit)
-  process.removeListener('SIGTERM', listeners.SIGTERM)
-  process.removeListener('uncaughtExceptionMonitor', listeners.uncaughtExceptionMonitor)
-  process.removeListener('unhandledRejection', listeners.unhandledRejection)
+  for (const event of PROCESS_LISTENER_EVENTS) {
+    const listener = listeners[event]
+    if (listener !== undefined) {
+      process.removeListener(event, listener)
+    }
+  }
   runtime.processListeners = undefined
 }
 
@@ -590,11 +594,21 @@ export function start(): void {
       }
     },
   }
-  if (logfireConfig.processHooks) {
-    runtime.processListeners = listeners
-    process.on('beforeExit', listeners.beforeExit)
-    process.on('SIGTERM', listeners.SIGTERM)
-    process.on('uncaughtExceptionMonitor', listeners.uncaughtExceptionMonitor)
-    process.on('unhandledRejection', listeners.unhandledRejection)
+  const hooks = logfireConfig.processHooks
+  const enabled: Record<keyof ProcessListeners, boolean> = {
+    beforeExit: hooks.beforeExit,
+    SIGTERM: hooks.sigterm,
+    uncaughtExceptionMonitor: hooks.uncaughtException,
+    unhandledRejection: hooks.unhandledRejection,
+  }
+  const installed: Partial<ProcessListeners> = {}
+  for (const event of PROCESS_LISTENER_EVENTS) {
+    if (enabled[event]) {
+      Object.assign(installed, { [event]: listeners[event] })
+      process.on(event, listeners[event])
+    }
+  }
+  if (Object.keys(installed).length > 0) {
+    runtime.processListeners = installed
   }
 }
