@@ -1,5 +1,13 @@
 # @pydantic/logfire-ai-sdk-code-mode
 
+## 0.2.3
+
+### Patch Changes
+
+- Updated dependencies [4a5cc45]
+  - logfire@0.26.4
+  - @pydantic/logfire-agent-sandboxes@0.2.6
+
 ## 0.2.2
 
 ### Patch Changes
