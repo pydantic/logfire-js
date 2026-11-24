@@ -190,6 +190,7 @@ export interface LogfireConfigOptions {
   metrics?: false | MetricsOptions
   /**
    * The node auto instrumentations to use. See [Node Auto Instrumentations](https://opentelemetry.io/docs/languages/js/libraries/#registration) for more information.
+   * Logfire sets `maskStatement: true` for `@opentelemetry/instrumentation-mysql2` unless this map sets it.
    */
   nodeAutoInstrumentations?: InstrumentationConfigMap
   /**
@@ -252,6 +253,22 @@ const DEFAULT_AUTO_INSTRUMENTATION_CONFIG: InstrumentationConfigMap = {
   '@opentelemetry/instrumentation-fs': {
     enabled: false,
   },
+}
+
+const MYSQL2_INSTRUMENTATION = '@opentelemetry/instrumentation-mysql2'
+
+/**
+ * mysql2 can format bound parameter values into `db.query.text`, and the scrubber treats that
+ * attribute as safe so SQL text survives. Masking literals keeps parameter values out of it.
+ * This default merges into a user-supplied map, unlike the others, so passing any map does not
+ * silently turn masking off; an explicit `maskStatement: false` still wins.
+ */
+function resolveNodeAutoInstrumentations(config: InstrumentationConfigMap | undefined): InstrumentationConfigMap {
+  const resolved = config ?? DEFAULT_AUTO_INSTRUMENTATION_CONFIG
+  return {
+    ...resolved,
+    [MYSQL2_INSTRUMENTATION]: { maskStatement: true, ...resolved[MYSQL2_INSTRUMENTATION] },
+  }
 }
 
 /**
@@ -452,7 +469,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
     metricExporterUrl: `${baseUrl}/${METRIC_ENDPOINT_PATH}`,
     metrics: cnf.metrics,
     minLevel: logfireConfig.minLevel,
-    nodeAutoInstrumentations: cnf.nodeAutoInstrumentations ?? DEFAULT_AUTO_INSTRUMENTATION_CONFIG,
+    nodeAutoInstrumentations: resolveNodeAutoInstrumentations(cnf.nodeAutoInstrumentations),
     resourceAttributes: cnf.resourceAttributes ?? {},
     sampling: resolveSampling(sampling),
     sendToLogfire,

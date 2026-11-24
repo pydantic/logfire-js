@@ -89,6 +89,24 @@ logfire.configure({
 })
 ```
 
+Logfire keeps SQL text in `db.query.text` unscrubbed, so the mysql2
+instrumentation runs with `maskStatement: true` by default. Quoted strings and
+numbers in mysql2 statements show as `?`, which keeps bound parameter values out
+of the span. The default applies even when you pass your own
+`nodeAutoInstrumentations` map. Set it to `false` to see literals, or pass a
+`maskStatementHook` for custom masking:
+
+```ts
+logfire.configure({
+  nodeAutoInstrumentations: {
+    '@opentelemetry/instrumentation-mysql2': { maskStatement: false },
+  },
+})
+```
+
+Instrumentation instances that you pass through `instrumentations` use their
+own configuration and do not get this default.
+
 ## Manual API
 
 The package re-exports `logfire`, so you can use the same import for setup and spans:
