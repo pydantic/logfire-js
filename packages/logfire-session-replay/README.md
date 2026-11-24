@@ -357,12 +357,13 @@ nothing from the network. A reference to an element of the page, such as
 `url(#blur)`, is recorded as `#blur`. In a linked stylesheet, rrweb resolves
 such a reference against the stylesheet address, so the recorder masks it. A
 comment that could hold a URL is emptied. The recorder reads the text nodes of one
-`<style>` element as one stylesheet, and records a text node that holds only
-part of an image URL as empty. A linked stylesheet that rrweb cannot
+`<style>` element as one stylesheet, so an image URL split across two text
+nodes is still replaced. A linked stylesheet that rrweb cannot
 read, such as a cross-origin one without CORS, stays a link to its address,
-and playback loads it with its image URLs. A string that a custom property holds,
-such as `--avatar: "/a.png"`, is kept, because the recorder cannot tell that
-an `image-set(var(--avatar) 1x)` elsewhere uses it as a URL.
+and playback loads it with its image URLs. A string that a custom property holds, such as `--avatar: "/a.png"`,
+can become an image URL through `var()` in a rule that the recorder does not
+see. So a custom property string that looks like a URL, a path, or an image
+file name is masked, in stylesheets and in inline styles.
 
 Not covered: `<video>`, `<audio>`, and `<source>` `src`, `<object>`, and
 `<embed>`; block them with `blockSelector` when their URLs are private. Set

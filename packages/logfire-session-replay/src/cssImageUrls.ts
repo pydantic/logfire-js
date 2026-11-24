@@ -5,6 +5,11 @@ const STRING_URL_FUNCTIONS = new Set(['-webkit-image-set', 'image-set', 'src'])
 // The browser puts the fallback of these functions in their place, so a string in a fallback is an
 // argument of the function around them.
 const SUBSTITUTION_FUNCTIONS = new Set(['attr', 'env', 'var'])
+// A string that a custom property holds can become an image URL through `var()` in a rule that the
+// recorder does not see. So a custom property string that looks like a URL is masked: an absolute
+// URL, a path, or a value with a query or an image file extension. A bare `/` names no resource.
+const URL_LIKE_STRING_PATTERN =
+  /^(?:(?:https?|blob):\S*|\.{0,2}\/\S+)$|^[^\s"']*(?:\?|\.(?:apng|avif|bmp|gif|ico|jpe?g|png|svg|webp)(?:[#?]|$))/iu
 const FONT_FACE_PRELUDE_PATTERN = /^\s*@font-face\s*$/iu
 // `@import` and `@namespace` load a stylesheet or name a namespace. Neither loads an image.
 const NON_IMAGE_AT_RULE_PATTERN = /^\s*@(?:import|namespace)(?![\w-])/iu
@@ -43,7 +48,18 @@ export interface CssReplacement {
 
 /** The replacements that `maskCssImageUrls()` applies to `css`, in text order. */
 export function findCssReplacements(css: string, placeholder: string, elementReference: ElementReference): CssReplacement[] {
-  return mayReferenceCssUrl(css) ? new CssImageUrlScanner(css, placeholder, elementReference).scan() : []
+  return mayHoldCssImageUrl(css) ? new CssImageUrlScanner(css, placeholder, elementReference).scan() : []
+}
+
+/** Replace each image URL in the value of one declaration, such as a `style.setProperty()` change. */
+export function maskCssDeclarationValue(property: string, value: string, placeholder: string, elementReference: ElementReference): string {
+  const prefix = `${property}:`
+  return maskCssImageUrls(prefix + value, placeholder, elementReference).slice(prefix.length)
+}
+
+/** Whether CSS text could hold an image URL: a URL token, or a string in a custom property. */
+export function mayHoldCssImageUrl(css: string): boolean {
+  return mayReferenceCssUrl(css) || (css.includes('--') && (css.includes('"') || css.includes("'")))
 }
 
 function applyCssReplacements(css: string, replacements: readonly CssReplacement[]): string {
@@ -156,7 +172,10 @@ class CssImageUrlScanner {
     const start = this.position
     const value = this.consumeString()
     const enclosing = this.enclosingFunction()
-    if (enclosing === undefined || !STRING_URL_FUNCTIONS.has(enclosing)) {
+    const isUrlArgument = enclosing !== undefined && STRING_URL_FUNCTIONS.has(enclosing)
+    const isCustomPropertyUrl =
+      this.declarationName?.startsWith('--') === true && URL_LIKE_STRING_PATTERN.test(trimUrlWhitespace(value.text))
+    if (!isUrlArgument && !isCustomPropertyUrl) {
       return
     }
     const kept = this.keptUrl(value.text, value.terminated)
@@ -216,7 +235,8 @@ class CssImageUrlScanner {
     if (!terminated) {
       return undefined
     }
-    if (DATA_URL_PATTERN.test(trimUrlWhitespace(value))) {
+    // CSS reads U+0000 as U+FFFD, so a NUL before `data:` makes a relative path.
+    if (DATA_URL_PATTERN.test(trimUrlWhitespace(value.split('\0').join('\uFFFD')))) {
       return value
     }
     const reference = this.elementReference(value)

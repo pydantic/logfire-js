@@ -50,6 +50,20 @@ describe('maskCssImageUrls', () => {
     expect(mask('.a{background:url( data:image/png;base64,AA== )}')).toBe('.a{background:url( data:image/png;base64,AA== )}')
   })
 
+  it('masks a custom property string that looks like a URL, because var() can make it one', () => {
+    expect(mask('.a{--avatar:"/avatar?token=secret"}')).toBe('.a{--avatar:"MASKED"}')
+    expect(mask(':root{--bg:\'https://cdn.test/a.png\';--icon:image-set("icons/a.svg" 1x)}')).toBe(
+      ':root{--bg:"MASKED";--icon:image-set("MASKED" 1x)}'
+    )
+    expect(mask(':root{--icon:"icons/a.svg";--logo:"logo.png?v=2"}')).toBe(':root{--icon:"MASKED";--logo:"MASKED"}')
+    const kept = ':root{--label:"Loading...";--font:"Inter";--sep:" / ";--icon:"data:image/png;base64,AA=="}'
+    expect(mask(kept)).toBe(kept)
+  })
+
+  it('reads a NUL before data: as U+FFFD, which makes a relative path', () => {
+    expect(mask('.a{background:url("\u0000data:/avatar?token=secret")}')).toBe(`.a{background:${masked}}`)
+  })
+
   it('keeps strings that do not load a URL', () => {
     const css = '.a{content:"url(a.png)";font-family:"image-set(x)"}'
     expect(mask(css)).toBe(css)

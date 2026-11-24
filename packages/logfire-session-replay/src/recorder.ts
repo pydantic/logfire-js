@@ -1,6 +1,6 @@
 import { record } from '@rrweb/record'
 
-import { findCssReplacements, maskCssImageUrls } from './cssImageUrls'
+import { findCssReplacements, maskCssDeclarationValue, maskCssImageUrls, mayHoldCssImageUrl } from './cssImageUrls'
 import type { CssReplacement } from './cssImageUrls'
 import {
   cssElementReference,
@@ -679,7 +679,7 @@ function isTextAttribute(name: string, value: string): boolean {
 // style as a map of changed properties, where a value with a priority is a `[value, priority]` pair.
 function sanitizeStyle(value: unknown): unknown {
   if (typeof value === 'string') {
-    return mayReferenceCssUrl(value) ? '' : value
+    return mayReferenceCssUrl(value) || maskStylesheet(value) !== value ? '' : value
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return value
@@ -688,13 +688,21 @@ function sanitizeStyle(value: unknown): unknown {
   const sanitized: Record<string, unknown> = {}
   for (const [property, propertyValue] of Object.entries(value as Record<string, unknown>)) {
     const propertyText = Array.isArray(propertyValue) ? (propertyValue as unknown[])[0] : propertyValue
-    const next = typeof propertyText === 'string' && mayReferenceCssUrl(propertyText) ? '' : propertyValue
+    const next =
+      typeof propertyText === 'string' && (mayReferenceCssUrl(propertyText) || maskDeclaration(property, propertyText) !== propertyText)
+        ? ''
+        : propertyValue
     if (next !== propertyValue) {
       changed = true
     }
     sanitized[property] = next
   }
   return changed ? sanitized : value
+}
+
+function maskDeclaration(property: string, value: string): string {
+  const pageUrl = window.location.href
+  return maskCssDeclarationValue(property, value, MASKED_IMAGE_SOURCE, (url) => cssElementReference(url, pageUrl))
 }
 
 function maskStylesheet(value: unknown): unknown {
@@ -712,7 +720,7 @@ function maskStyleText(value: unknown, id: unknown, options: SanitizeOptions): u
   if (typeof value !== 'string' || value === '') {
     return value
   }
-  const maskAlone = (): string => (mayReferenceCssUrl(value) ? (maskStylesheet(value) as string) : value)
+  const maskAlone = (): string => (mayHoldCssImageUrl(value) ? (maskStylesheet(value) as string) : value)
   const live = typeof id === 'number' ? options.findNode(id) : undefined
   if (live === undefined) {
     return maskAlone()
@@ -731,8 +739,9 @@ function maskStyleText(value: unknown, id: unknown, options: SanitizeOptions): u
 
 // Playback joins the text nodes of a `<style>` element, so a URL can start in one text node and end
 // in the next, and neither part alone looks like a URL. The recorder scans the joined text and maps
-// each replacement onto the text node that holds it. A text node that holds part of a replacement is
-// recorded empty. Returns undefined when no replacement falls in this text node.
+// each replacement onto the text nodes that it spans. The text node where a replacement starts holds
+// its new text, and the next text nodes leave out the rest of it. Returns undefined when no
+// replacement falls in this text node.
 function maskStyleTextPart(value: string, data: string, start: number, style: StyleText): string | undefined {
   // rrweb masks the text itself when all text is masked, and masked text holds no URL.
   if (MASKED_TEXT_PATTERN.test(value)) {
@@ -741,17 +750,18 @@ function maskStyleTextPart(value: string, data: string, start: number, style: St
   const end = start + data.length
   let result = ''
   let copiedUntil = start
+  let matched = false
   for (const replacement of style.replacements) {
     if (replacement.end <= start || replacement.start >= end) {
       continue
     }
-    if (replacement.start < start || replacement.end > end) {
-      return ''
+    if (replacement.start >= start) {
+      result += style.text.slice(copiedUntil, replacement.start) + replacement.text
     }
-    result += style.text.slice(copiedUntil, replacement.start) + replacement.text
-    copiedUntil = replacement.end
+    copiedUntil = Math.min(end, replacement.end)
+    matched = true
   }
-  return copiedUntil === start ? undefined : result + style.text.slice(copiedUntil, end)
+  return matched ? result + style.text.slice(copiedUntil, end) : undefined
 }
 
 function readStyleText(style: Node, options: SanitizeOptions): StyleText {
@@ -791,7 +801,7 @@ function sanitizeStylesheetData(data: Record<string, unknown>): Record<string, u
     adds: mapArray(data['adds'], maskRule),
     replace: maskStylesheet(data['replace']),
     replaceSync: maskStylesheet(data['replaceSync']),
-    set: replaceField(data['set'], 'value', maskStylesheet),
+    set: maskDeclarationChange(data['set']),
     styles: mapArray(data['styles'], (style) => replaceField(style, 'rules', (rules) => mapArray(rules, maskRule))),
   }
   let sanitized: Record<string, unknown> | undefined
@@ -802,6 +812,13 @@ function sanitizeStylesheetData(data: Record<string, unknown>): Record<string, u
     }
   }
   return sanitized ?? data
+}
+
+function maskDeclarationChange(set: unknown): unknown {
+  const property = typeof set === 'object' && set !== null ? (set as Record<string, unknown>)['property'] : undefined
+  return replaceField(set, 'value', (value) =>
+    typeof property === 'string' && typeof value === 'string' ? maskDeclaration(property, value) : maskStylesheet(value)
+  )
 }
 
 function replaceField(value: unknown, key: string, map: (field: unknown) => unknown): unknown {

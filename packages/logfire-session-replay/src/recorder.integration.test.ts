@@ -402,9 +402,10 @@ describe('image masking with rrweb', () => {
           : []
       )
       .map((add) => add.node.textContent)
-    // The two parts of the split URL are recorded empty, and the whole URL is replaced in place. rrweb
-    // emits added nodes last first.
-    expect(addedTexts).toEqual([`.c{color:blue;background-image:url(${JSON.stringify(MASKED_IMAGE_SOURCE)})}`, '', ''])
+    // The text node where the split URL starts holds the placeholder, and the next one leaves out the
+    // rest of the URL. rrweb emits added nodes last first.
+    const placeholder = `url(${JSON.stringify(MASKED_IMAGE_SOURCE)})`
+    expect(addedTexts).toEqual([`.c{color:blue;background-image:${placeholder}}`, '}', `.a{color:red}.b{background-image:${placeholder}`])
     expect(collectStrings(events).filter((text) => text.includes('/users/jane'))).toEqual([])
   })
 })

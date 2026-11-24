@@ -542,11 +542,49 @@ describe('stylesheet image masking', () => {
 
     expect(split).toEqual(
       mutation([
-        { id: 2, value: '' },
-        { id: 3, value: '' },
+        { id: 2, value: `.a{background:${placeholderUrl}` },
+        { id: 3, value: '}' },
       ])
     )
     expect(masked).toEqual(mutation([{ id: 3, value: '**********' }]))
+  })
+
+  it('removes inline styles and masks declaration changes that set a URL-like custom property', () => {
+    const snapshot = {
+      type: EventType.FullSnapshot,
+      data: { node: element('div', { style: '--avatar: "/a.png"; color: red' }, { id: 1 }) },
+      timestamp: 1,
+    } satisfies RrwebEvent
+    const attributeMutation = incremental(IncrementalSource.Mutation, {
+      texts: [],
+      removes: [],
+      adds: [],
+      attributes: [{ id: 1, attributes: { style: { '--avatar': '"/b.png"', color: 'red' } } }],
+    })
+    const declaration = incremental(IncrementalSource.StyleDeclaration, {
+      id: 1,
+      index: [0],
+      set: { property: '--avatar', value: '"/c.png"', priority: '' },
+    })
+
+    const [maskedSnapshot, maskedAttributes, maskedDeclaration] = record(true, [snapshot, attributeMutation, declaration])
+
+    expect(maskedSnapshot).toEqual({ ...snapshot, data: { node: element('div', { style: '' }, { id: 1 }) } })
+    expect(maskedAttributes).toEqual(
+      incremental(IncrementalSource.Mutation, {
+        texts: [],
+        removes: [],
+        adds: [],
+        attributes: [{ id: 1, attributes: { style: { '--avatar': '', color: 'red' } } }],
+      })
+    )
+    expect(maskedDeclaration).toEqual(
+      incremental(IncrementalSource.StyleDeclaration, {
+        id: 1,
+        index: [0],
+        set: { property: '--avatar', value: JSON.stringify(MASKED_IMAGE_SOURCE), priority: '' },
+      })
+    )
   })
 
   it('returns stylesheet events unchanged when they hold no image URL', () => {
