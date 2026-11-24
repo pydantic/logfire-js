@@ -91,6 +91,12 @@ describe('maskCssImageUrls', () => {
     expect(mask('/* url(a.png) */.a{color:red}/* rr_split */.b{}')).toBe('/**/.a{color:red}/* rr_split */.b{}')
   })
 
+  it('reads CRLF as one newline after an escape', () => {
+    expect(mask('.a{background:u\\72\r\nl(/avatar?token=secret)}')).toBe(`.a{background:${masked}}`)
+    expect(mask('.a{background:image-set("a\\\r\nb.png" 1x)}')).toBe('.a{background:image-set("MASKED" 1x)}')
+    expect(mask('@font-face{src:url("a\\\r\nb.woff")}')).toBe('@font-face{src:url("a\\\r\nb.woff")}')
+  })
+
   it('masks unterminated URLs and strings', () => {
     expect(mask('.a{background:url(a.png')).toBe(`.a{background:${masked}`)
     expect(mask('.a{background:url("a.png')).toBe(`.a{background:${masked}`)

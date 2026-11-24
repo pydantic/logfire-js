@@ -213,7 +213,7 @@ class CssImageUrlScanner {
       if (char === '\\') {
         const next = css[this.position + 1]
         if (next === '\n' || next === '\r' || next === '\f') {
-          this.position += 2
+          this.position += 1 + this.newlineLength(this.position + 1)
           continue
         }
         text += this.consumeEscape()
@@ -324,7 +324,7 @@ class CssImageUrlScanner {
       return char
     }
     if (WHITESPACE_PATTERN.test(css[this.position] ?? '')) {
-      this.position++
+      this.position += this.newlineLength(this.position) || 1
     }
     const codePoint = Number.parseInt(hex, 16)
     return codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff) ? '�' : String.fromCodePoint(codePoint)
@@ -333,6 +333,15 @@ class CssImageUrlScanner {
   private startsIdentifierAt(position: number): boolean {
     const char = this.css[position] ?? ''
     return isNameStart(char) || char === '-' || (char === '\\' && !isNewline(this.css[position + 1]))
+  }
+
+  // CSS reads CRLF as one newline, so an escape that ends in a newline consumes both characters.
+  private newlineLength(position: number): number {
+    const char = this.css[position]
+    if (char === '\r') {
+      return this.css[position + 1] === '\n' ? 2 : 1
+    }
+    return isNewline(char) ? 1 : 0
   }
 
   private skipWhitespace(): void {
