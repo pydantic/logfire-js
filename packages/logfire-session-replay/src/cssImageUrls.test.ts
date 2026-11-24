@@ -58,6 +58,12 @@ describe('maskCssImageUrls', () => {
     expect(mask('.a{mask:url(https://app.test/#icon)}')).toBe(`.a{mask:${masked}}`)
   })
 
+  it('empties comments that could hold a URL among the modifiers of a kept url()', () => {
+    expect(mask('@font-face{src:url("a.woff" /* url(secret.png) */ /* ok */)}')).toBe('@font-face{src:url("a.woff" /**/ /* ok */)}')
+    expect(mask('.a{background:url("a.png" /* url(secret.png) */)}')).toBe(`.a{background:${masked}}`)
+    expect(mask('@font-face{src:url("a.woff" /* url(secret.png)')).toBe(`@font-face{src:${masked}/**/`)
+  })
+
   it('keeps @font-face sources only in the src descriptor of that rule', () => {
     const fontFace = '@font-face{font-family:Inter;SRC:url(/inter.woff2) format("woff2"),url(inter.woff)}'
     expect(mask(fontFace)).toBe(fontFace)

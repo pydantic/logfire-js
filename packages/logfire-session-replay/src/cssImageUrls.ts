@@ -157,10 +157,11 @@ class CssImageUrlScanner {
     const quote = this.css[this.position]
     let value: string
     let terminated: boolean
+    const urlComments: [start: number, end: number][] = []
     if (quote === '"' || quote === "'") {
       const string = this.consumeString()
       value = string.text
-      terminated = string.terminated && this.skipToClosingParenthesis()
+      terminated = string.terminated && this.skipToClosingParenthesis(urlComments)
     } else {
       const unquoted = this.consumeUnquotedUrl()
       value = unquoted.text.trim()
@@ -169,6 +170,10 @@ class CssImageUrlScanner {
     const kept = this.keptUrl(value, terminated)
     if (kept !== value) {
       this.replace(start, this.position, `url(${JSON.stringify(kept ?? this.placeholder)})`)
+      return
+    }
+    for (const [commentStart, commentEnd] of urlComments) {
+      this.replace(commentStart, commentEnd, '/**/')
     }
   }
 
@@ -239,12 +244,26 @@ class CssImageUrlScanner {
     return { text, terminated: false }
   }
 
-  // Skips the modifiers after a quoted `url()` string, with their own strings and parentheses.
-  private skipToClosingParenthesis(): boolean {
+  // Skips the modifiers after a quoted `url()` string, with their own strings and parentheses. A kept
+  // `url()` is recorded as written, so the comments among its modifiers that could hold a URL are
+  // added to `urlComments` for the caller to empty.
+  private skipToClosingParenthesis(urlComments: [start: number, end: number][]): boolean {
     const { css } = this
     let depth = 0
     while (this.position < css.length) {
       const char = css[this.position] ?? ''
+      if (char === '/' && css[this.position + 1] === '*') {
+        const commentStart = this.position
+        const end = css.indexOf('*/', commentStart + 2)
+        if (end === -1) {
+          return false
+        }
+        this.position = end + 2
+        if (mayReferenceCssUrl(css.slice(commentStart + 2, end))) {
+          urlComments.push([commentStart, this.position])
+        }
+        continue
+      }
       if (char === '"' || char === "'") {
         if (!this.consumeString().terminated) {
           return false
