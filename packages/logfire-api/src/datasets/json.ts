@@ -12,6 +12,64 @@ export function normalizeHostedJsonValue(
   return normalizeValue(value, context, serializeValue, new WeakSet(), new Set())
 }
 
+export interface CaseJsonValueContext {
+  field: 'expectedOutput' | 'inputs' | 'metadata'
+  method: 'addCases' | 'updateCase'
+  path: string
+}
+
+/**
+ * Reject the case field values a plain `JSON.stringify` body would change without an error
+ * (Maps, Sets, non-finite numbers, bigints, symbols, functions and circular references) by
+ * throwing a `DatasetSerializationError` naming the field and path. Unlike
+ * `normalizeHostedJsonValue`, `undefined` and class instances keep working, so calls that
+ * succeed today still succeed.
+ */
+export function assertCaseJsonValue(value: unknown, context: CaseJsonValueContext): void {
+  checkCaseJsonValue(value, context, new WeakSet())
+}
+
+function checkCaseJsonValue(value: unknown, context: CaseJsonValueContext, ancestors: WeakSet<object>): void {
+  if (value === null || value === undefined || typeof value === 'string' || typeof value === 'boolean') {
+    return
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      throw new DatasetSerializationError(`${formatCaseContext(context)} contains unsupported non-finite number value`)
+    }
+    return
+  }
+  if (typeof value !== 'object' || value instanceof Map || value instanceof Set) {
+    throw new DatasetSerializationError(`${formatCaseContext(context)} contains unsupported ${describeUnsupportedValue(value)}`)
+  }
+  if (ancestors.has(value)) {
+    throw new DatasetSerializationError(`${formatCaseContext(context)} contains a circular ${Array.isArray(value) ? 'array' : 'object'}`)
+  }
+  // A `toJSON` method wins over own properties in JSON.stringify, so a value that defines one
+  // serializes through it alone and there is nothing reliable to check inside.
+  if (typeof (value as { toJSON?: unknown }).toJSON === 'function') {
+    return
+  }
+  ancestors.add(value)
+  try {
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => {
+        checkCaseJsonValue(item, { ...context, path: `${context.path}[${index.toString()}]` }, ancestors)
+      })
+    } else {
+      for (const [key, item] of Object.entries(value)) {
+        checkCaseJsonValue(item, { ...context, path: objectPath(context.path, key) }, ancestors)
+      }
+    }
+  } finally {
+    ancestors.delete(value)
+  }
+}
+
+function formatCaseContext(context: CaseJsonValueContext): string {
+  return `${context.method} ${context.field} at ${context.path}`
+}
+
 function normalizeValue(
   value: unknown,
   context: EvaluationDatasetValueContext,
