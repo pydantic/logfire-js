@@ -80,15 +80,34 @@ const DEFAULT_PATTERNS = [
 // case-insensitive DEFAULT_PATTERNS cannot tell `userIdToken` from `paid_token` or `invalid_token`.
 const CAMEL_CASE_ID_TOKEN_PATTERN = /I[Dd][._ -]?[Tt]oken/u
 
-// Should be kept roughly in sync with `logfire._internal.scrubbing.BaseScrubber.SAFE_KEYS`
+// Should be kept roughly in sync with `logfire._internal.scrubbing.BaseScrubber.SAFE_KEYS`.
+// JS-only differences: `exception.message` is scrubbed, like the message lines of `exception.stacktrace`.
+// Python's KEY_ONLY_KEYS (gen_ai messages, system instructions) are left out, because this scrubber
+// cannot match nested keys while it skips patterns for values. `gen_ai.tool.definitions` is left out
+// because tool descriptions are prose.
 const SAFE_KEYS = new Set([
   'code.filepath',
   'code.function',
   'code.lineno',
   'db.plan',
+  'db.query.text',
   'db.statement',
+  'error.type',
+  'event.name',
   'exception.stacktrace',
   'exception.type',
+  'gen_ai.conversation.id',
+  'gen_ai.provider.name',
+  'gen_ai.request.model',
+  'gen_ai.response.model',
+  'gen_ai.system',
+  'gen_ai.tool.call.id',
+  'gen_ai.tool.name',
+  'gen_ai.usage.cache_creation.input_tokens',
+  'gen_ai.usage.cache_read.input_tokens',
+  'gen_ai.usage.input_tokens',
+  'gen_ai.usage.output_tokens',
+  'gen_ai.usage.raw',
   'http.method',
   'http.route',
   'http.scheme',
@@ -109,6 +128,7 @@ const SAFE_KEYS = new Set([
   'logfire.scrubbed',
   'logfire.span_type',
   'logfire.tags',
+  'rpc.method',
   'schema.url',
   'url.full',
   'url.path',
