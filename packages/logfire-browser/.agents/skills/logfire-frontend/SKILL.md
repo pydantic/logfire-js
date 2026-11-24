@@ -27,6 +27,14 @@ write token, server environment variable, or `.logfire` credential is unsuitable
 for browser code. The frontend application owns service identity. If no supported
 public API/tool can manage it, use the UI; do not invent a private endpoint.
 
+If the restricted token is missing, finish the checks that can run without it.
+Before verifying ingestion, ask the user to open the selected application's
+**Browser setup** section and click **Copy token**. The token is public by
+design, so it can go in tracked configuration like the other frontend options.
+If the application already keeps per-environment values in the framework's
+browser-exposed environment configuration, follow that pattern and name the
+exact variable and the local file or deployment setting where it goes.
+
 ## Match capture to the request
 
 Read [browser setup](./references/setup.md), then the applicable section of
