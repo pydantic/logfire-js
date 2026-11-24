@@ -522,6 +522,33 @@ describe('stylesheet image masking', () => {
     expect(unmasked.every((event, index) => event === events[index])).toBe(true)
   })
 
+  it('masks a URL split across the text nodes of a style in text mutations, and keeps masked text', () => {
+    const style = document.createElement('style')
+    const first = document.createTextNode('.a{background:ur')
+    const second = document.createTextNode('l(/a.png)}')
+    style.append(first, second)
+    mirrorNodes.set(2, first)
+    mirrorNodes.set(3, second)
+    const mutation = (texts: { id: number; value: string }[]) =>
+      incremental(IncrementalSource.Mutation, { texts, removes: [], adds: [], attributes: [] })
+
+    const [split, masked] = record(true, [
+      mutation([
+        { id: 2, value: '.a{background:ur' },
+        { id: 3, value: 'l(/a.png)}' },
+      ]),
+      mutation([{ id: 3, value: '**********' }]),
+    ])
+
+    expect(split).toEqual(
+      mutation([
+        { id: 2, value: '' },
+        { id: 3, value: '' },
+      ])
+    )
+    expect(masked).toEqual(mutation([{ id: 3, value: '**********' }]))
+  })
+
   it('returns stylesheet events unchanged when they hold no image URL', () => {
     const event = incremental(IncrementalSource.StyleSheetRule, { id: 1, adds: [{ rule: '.a{color:red}', index: 0 }] })
 

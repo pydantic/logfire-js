@@ -356,7 +356,9 @@ and `@namespace` URLs, which load no image, and `data:` URLs, which load
 nothing from the network. A reference to an element of the page, such as
 `url(#blur)`, is recorded as `#blur`. In a linked stylesheet, rrweb resolves
 such a reference against the stylesheet address, so the recorder masks it. A
-comment that could hold a URL is emptied. A linked stylesheet that rrweb cannot
+comment that could hold a URL is emptied. The recorder reads the text nodes of one
+`<style>` element as one stylesheet, and records a text node that holds only
+part of an image URL as empty. A linked stylesheet that rrweb cannot
 read, such as a cross-origin one without CORS, stays a link to its address,
 and playback loads it with its image URLs. A string that a custom property holds,
 such as `--avatar: "/a.png"`, is kept, because the recorder cannot tell that

@@ -1,6 +1,7 @@
 import { record } from '@rrweb/record'
 
-import { maskCssImageUrls } from './cssImageUrls'
+import { findCssReplacements, maskCssImageUrls } from './cssImageUrls'
+import type { CssReplacement } from './cssImageUrls'
 import {
   cssElementReference,
   cutText,
@@ -154,6 +155,16 @@ interface SanitizeOptions {
   recordsElementId: (elementId: string) => boolean
   /** Send a sized placeholder for a masked image once it loads. */
   sizeOnLoad: (image: HTMLImageElement) => void
+  /** The text of each `<style>` element that the current event records, read once per event. */
+  styleTexts: Map<Node, StyleText>
+}
+
+interface StyleText {
+  text: string
+  /** Where the text of each child text node starts in `text`. */
+  offsets: Map<Node, number>
+  /** The image URL replacements in `text`, found only when the element has more than one text node. */
+  replacements: CssReplacement[]
 }
 
 /** What image masking needs to know about the element that carries a set of attributes. */
@@ -209,6 +220,7 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
     sizeOnLoad: (image) => {
       sizeOnLoad(image)
     },
+    styleTexts: new Map(),
   }
   // A masked image that loads after it was recorded, such as a lazy image or one a script adds, has
   // no natural size until then. Its sized placeholder reaches playback as a `src` mutation on load.
@@ -363,6 +375,7 @@ function sanitizeRecorderEvent(event: RrwebEvent, options: SanitizeOptions): Rrw
   if (typeof event.data !== 'object' || event.data === null) {
     return event
   }
+  options.styleTexts.clear()
 
   const data = event.data as Record<string, unknown>
   if (event.type === EventType.Custom) {
@@ -696,13 +709,69 @@ function maskStylesheet(value: unknown): unknown {
 // that its parent is a `<style>`, so the recorder looks at the live node. A text node that rrweb no
 // longer maps is masked, because it may be stylesheet text.
 function maskStyleText(value: unknown, id: unknown, options: SanitizeOptions): unknown {
-  if (typeof value !== 'string' || !mayReferenceCssUrl(value)) {
+  if (typeof value !== 'string' || value === '') {
     return value
   }
+  const maskAlone = (): string => (mayReferenceCssUrl(value) ? (maskStylesheet(value) as string) : value)
   const live = typeof id === 'number' ? options.findNode(id) : undefined
-  const parent = live === undefined ? undefined : live.parentNode
-  const isStyleText = live === undefined || (parent?.nodeType === 1 && (parent as Element).localName.toLowerCase() === 'style')
-  return isStyleText ? maskStylesheet(value) : value
+  if (live === undefined) {
+    return maskAlone()
+  }
+  const parent = live.parentNode
+  if (parent?.nodeType !== 1 || (parent as Element).localName.toLowerCase() !== 'style') {
+    return value
+  }
+  const style = readStyleText(parent, options)
+  const start = style.offsets.get(live)
+  if (start === undefined || style.offsets.size === 1) {
+    return maskAlone()
+  }
+  return maskStyleTextPart(value, (live as CharacterData).data, start, style) ?? maskAlone()
+}
+
+// Playback joins the text nodes of a `<style>` element, so a URL can start in one text node and end
+// in the next, and neither part alone looks like a URL. The recorder scans the joined text and maps
+// each replacement onto the text node that holds it. A text node that holds part of a replacement is
+// recorded empty. Returns undefined when no replacement falls in this text node.
+function maskStyleTextPart(value: string, data: string, start: number, style: StyleText): string | undefined {
+  // rrweb masks the text itself when all text is masked, and masked text holds no URL.
+  if (MASKED_TEXT_PATTERN.test(value)) {
+    return value
+  }
+  const end = start + data.length
+  let result = ''
+  let copiedUntil = start
+  for (const replacement of style.replacements) {
+    if (replacement.end <= start || replacement.start >= end) {
+      continue
+    }
+    if (replacement.start < start || replacement.end > end) {
+      return ''
+    }
+    result += style.text.slice(copiedUntil, replacement.start) + replacement.text
+    copiedUntil = replacement.end
+  }
+  return copiedUntil === start ? undefined : result + style.text.slice(copiedUntil, end)
+}
+
+function readStyleText(style: Node, options: SanitizeOptions): StyleText {
+  const cached = options.styleTexts.get(style)
+  if (cached !== undefined) {
+    return cached
+  }
+  let text = ''
+  const offsets = new Map<Node, number>()
+  for (const child of Array.from(style.childNodes)) {
+    if (child.nodeType === 3) {
+      offsets.set(child, text.length)
+      text += (child as CharacterData).data
+    }
+  }
+  const pageUrl = window.location.href
+  const replacements = offsets.size > 1 ? findCssReplacements(text, MASKED_IMAGE_SOURCE, (url) => cssElementReference(url, pageUrl)) : []
+  const styleText = { offsets, replacements, text }
+  options.styleTexts.set(style, styleText)
+  return styleText
 }
 
 function maskTextMutation(value: unknown, options: SanitizeOptions): unknown {
@@ -752,6 +821,8 @@ function mapPreservingIdentity(items: unknown[], map: (item: unknown) => unknown
   const mapped = items.map(map)
   return mapped.some((item, index) => item !== items[index]) ? mapped : items
 }
+
+const MASKED_TEXT_PATTERN = /^[\s*]*$/u
 
 // Matches rrweb's text masking, which keeps whitespace so masked layout stays close to the original.
 function maskText(value: unknown): unknown {

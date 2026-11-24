@@ -31,7 +31,32 @@ export type ElementReference = (url: string) => string | undefined
  * Returns `css` itself when it has no image URL.
  */
 export function maskCssImageUrls(css: string, placeholder: string, elementReference: ElementReference): string {
-  return mayReferenceCssUrl(css) ? new CssImageUrlScanner(css, placeholder, elementReference).scan() : css
+  return applyCssReplacements(css, findCssReplacements(css, placeholder, elementReference))
+}
+
+/** A range of stylesheet text, from `start` up to `end`, and the text that replaces it. */
+export interface CssReplacement {
+  start: number
+  end: number
+  text: string
+}
+
+/** The replacements that `maskCssImageUrls()` applies to `css`, in text order. */
+export function findCssReplacements(css: string, placeholder: string, elementReference: ElementReference): CssReplacement[] {
+  return mayReferenceCssUrl(css) ? new CssImageUrlScanner(css, placeholder, elementReference).scan() : []
+}
+
+function applyCssReplacements(css: string, replacements: readonly CssReplacement[]): string {
+  if (replacements.length === 0) {
+    return css
+  }
+  let result = ''
+  let copiedUntil = 0
+  for (const { start, end, text } of replacements) {
+    result += css.slice(copiedUntil, start) + text
+    copiedUntil = end
+  }
+  return result + css.slice(copiedUntil)
 }
 
 // A small CSS tokenizer after CSS Syntax Level 3. It knows strings, comments, escapes, blocks, and
@@ -39,8 +64,7 @@ export function maskCssImageUrls(css: string, placeholder: string, elementRefere
 // to a context that it identifies exactly. Text that it cannot classify, such as an unterminated
 // `url(` or an escaped at-rule name, is masked.
 class CssImageUrlScanner {
-  private readonly chunks: string[] = []
-  private copiedUntil = 0
+  private readonly replacements: CssReplacement[] = []
   private position = 0
   private readonly blocks: Block[] = []
   private readonly functions: string[] = []
@@ -57,7 +81,7 @@ class CssImageUrlScanner {
     this.elementReference = elementReference
   }
 
-  scan(): string {
+  scan(): CssReplacement[] {
     const { css } = this
     while (this.position < css.length) {
       const char = css[this.position] ?? ''
@@ -72,11 +96,7 @@ class CssImageUrlScanner {
         this.position++
       }
     }
-    if (this.chunks.length === 0) {
-      return css
-    }
-    this.chunks.push(css.slice(this.copiedUntil))
-    return this.chunks.join('')
+    return this.replacements
   }
 
   private scanPunctuation(char: string): void {
@@ -363,9 +383,8 @@ class CssImageUrlScanner {
     }
   }
 
-  private replace(start: number, end: number, replacement: string): void {
-    this.chunks.push(this.css.slice(this.copiedUntil, start), replacement)
-    this.copiedUntil = end
+  private replace(start: number, end: number, text: string): void {
+    this.replacements.push({ start, end, text })
   }
 }
 

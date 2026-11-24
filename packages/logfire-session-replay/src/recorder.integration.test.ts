@@ -364,4 +364,47 @@ describe('image masking with rrweb', () => {
       _cssText: '.a { filter: url("#blur"); }.b { mask: url("#icon"); }',
     })
   })
+
+  it('masks a URL that starts in one text node of a style and ends in the next', async () => {
+    document.head.innerHTML = '<style id="split"></style>'
+    const events: RrwebEvent[] = []
+    const recorder = startRecording({
+      emit: (event) => {
+        events.push(event)
+      },
+      maskAllImages: true,
+      maskAllInputs: true,
+      maskAllText: true,
+      redactUrlPatterns: [],
+    })
+    stopRecording = () => {
+      recorder.stop()
+      document.head.replaceChildren()
+    }
+
+    const style = document.getElementById('split')
+    style?.append(
+      document.createTextNode('.a{color:red}.b{background-image:ur'),
+      document.createTextNode('l(/users/jane/split.png)}'),
+      document.createTextNode('.c{color:blue;background-image:url(/users/jane/whole.png)}')
+    )
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0)
+    })
+
+    expect(style?.textContent).toBe(
+      '.a{color:red}.b{background-image:url(/users/jane/split.png)}.c{color:blue;background-image:url(/users/jane/whole.png)}'
+    )
+    const addedTexts = events
+      .flatMap((event) =>
+        event.type === EventType.IncrementalSnapshot && (event.data as { source?: unknown }).source === IncrementalSource.Mutation
+          ? ((event.data as { adds?: { node: { textContent?: unknown } }[] }).adds ?? [])
+          : []
+      )
+      .map((add) => add.node.textContent)
+    // The two parts of the split URL are recorded empty, and the whole URL is replaced in place. rrweb
+    // emits added nodes last first.
+    expect(addedTexts).toEqual([`.c{color:blue;background-image:url(${JSON.stringify(MASKED_IMAGE_SOURCE)})}`, '', ''])
+    expect(collectStrings(events).filter((text) => text.includes('/users/jane'))).toEqual([])
+  })
 })
