@@ -55,7 +55,9 @@ Tail sampling buffers spans until a decision can be made. Be conservative in bro
 
 In Node.js, pending-span placeholders respect tail-sampling decisions: accepted
 traces can emit pending placeholders for still-open spans, while dropped traces
-do not export pending placeholders. Set `advanced.pendingSpans: false` to stop
+do not export pending placeholders. A trace continued from a remote parent, such
+as a request with a `traceparent` header, is not tail-sampled: its spans are
+exported with their pending placeholders. Set `advanced.pendingSpans: false` to stop
 sending pending placeholders to Logfire; see
 [Pending Spans](configuration.md#pending-spans).
 

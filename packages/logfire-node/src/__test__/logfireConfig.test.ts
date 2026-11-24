@@ -597,6 +597,18 @@ describe('logfire config', () => {
     }).toThrow('Remote variables require an API key')
   })
 
+  describe('process hooks', () => {
+    it('defaults to true', () => {
+      configure({ sendToLogfire: false })
+      expect(logfireConfig.processHooks).toBe(true)
+    })
+
+    it('is false when advanced.processHooks is false', () => {
+      configure({ advanced: { processHooks: false }, sendToLogfire: false })
+      expect(logfireConfig.processHooks).toBe(false)
+    })
+  })
+
   describe('pending spans', () => {
     it('defaults to true when neither the option nor the environment variable is set', () => {
       configure({ sendToLogfire: false })

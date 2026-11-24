@@ -767,7 +767,7 @@ describe('TailSamplingProcessor', () => {
     expect(getPendingSpanNames(downstream.calls)).toEqual(['manual root'])
   })
 
-  test('does not emit pending spans for children that start after accepted root end', () => {
+  test('emits a pending span for a child that starts after its accepted root ended', () => {
     const downstream = makeProcessor()
     const processor = new TailSamplingProcessor(downstream, () => 1.0, {
       deferredProcessor: new PendingSpanProcessor(downstream, { idGenerator: makeIdGenerator() }),
@@ -780,6 +780,7 @@ describe('TailSamplingProcessor', () => {
     root.setRecording(false)
     processor.onEnd(root)
 
+    // The kept trace is no longer buffered, so the late child is exported unconditionally and gets its pending span.
     const lateChild = makeSpan({
       attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'span' },
       name: 'late child',
@@ -788,8 +789,47 @@ describe('TailSamplingProcessor', () => {
       startTime: [1001, 0],
     })
     processor.onStart(lateChild, ROOT_CONTEXT)
-    expect(getPendingSpanNames(downstream.calls)).toEqual(['root'])
-    expect(downstream.calls[downstream.calls.length - 1]).toEqual({ event: 'start', span: lateChild })
+    expect(getPendingSpanNames(downstream.calls)).toEqual(['root', 'late child'])
+  })
+
+  test('bypasses the tail callback for a remote parent and emits pending spans for the span and its children', () => {
+    const downstream = makeProcessor()
+    const tail = vi.fn<() => number>(() => 0.0)
+    const processor = new TailSamplingProcessor(downstream, tail, {
+      deferredProcessor: new PendingSpanProcessor(downstream, { idGenerator: makeIdGenerator() }),
+    })
+    const remoteParent = {
+      isRemote: true,
+      spanId: 'remote0000000000',
+      traceFlags: TraceFlags.SAMPLED,
+      traceId: 'b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0',
+    }
+
+    const entry = makeSpan({
+      attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'span' },
+      name: 'entry',
+      parentSpanContext: remoteParent,
+      spanId: 'entry00000000000',
+      traceId: remoteParent.traceId,
+    })
+    processor.onStart(entry, ROOT_CONTEXT)
+    const child = makeSpan({
+      attributes: { [ATTRIBUTES_SPAN_TYPE_KEY]: 'span' },
+      name: 'child',
+      parentSpanContext: entry.spanContext(),
+      spanId: 'child00000000000',
+      traceId: remoteParent.traceId,
+    })
+    processor.onStart(child, ROOT_CONTEXT)
+    processor.onEnd(child)
+    processor.onEnd(entry)
+
+    expect(tail).not.toHaveBeenCalled()
+    expect(getPendingSpanNames(downstream.calls)).toEqual(['entry', 'child'])
+    expect(downstream.calls.filter(({ event }) => event === 'start').map(({ span }) => (span as ReadableSpan).name)).toEqual([
+      'entry',
+      'child',
+    ])
   })
 
   test('applies pending-span skip rules through deferred replay', () => {

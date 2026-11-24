@@ -217,6 +217,28 @@ hook is best-effort only. `unhandledRejection` observes, reports, and flushes on
 the current Logfire path; this SDK does not restore Node's default fatal
 unhandled-rejection behavior.
 
+To own process shutdown yourself, turn the hooks off:
+
+```ts
+logfire.configure({ advanced: { processHooks: false } })
+```
+
+With `processHooks: false`, `configure()` installs none of these listeners and
+removes the ones an earlier call installed. The option applies to each call:
+pass it every time you call `configure()`, because a call without it installs
+the listeners again. Logfire's `SIGTERM` listener otherwise runs before a
+handler registered after `configure()` and shuts the SDK down while that
+handler is still draining work, so spans it records after waiting for timers
+or I/O are lost. With the hooks off, the application must:
+
+- call `await logfire.shutdown()` at the end of its own shutdown, after the
+  last span it records. It flushes and releases everything as usual;
+- handle `SIGTERM`, and exit when its shutdown is done;
+- handle `unhandledRejection` if the process must keep running. Without that
+  handler, Node's default applies: an unhandled rejection crashes the process
+  with exit code 1, and Logfire does not report it;
+- report uncaught exceptions itself, if it wants them in Logfire.
+
 ## Evaluations
 
 `logfire/evals` provides offline and online evaluation primitives that emit

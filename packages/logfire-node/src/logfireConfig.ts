@@ -34,6 +34,19 @@ export interface AdvancedLogfireConfigOptions {
    * Defaults to the `LOGFIRE_PENDING_SPANS` environment variable, or `true`.
    */
   pendingSpans?: boolean
+  /**
+   * Whether `configure()` installs process listeners for `beforeExit`, `SIGTERM`, `uncaughtExceptionMonitor`
+   * and `unhandledRejection`. They shut the SDK down on exit or `SIGTERM`, and report uncaught errors.
+   *
+   * Set to `false` when the application owns its shutdown. It must then call `shutdown()` at the end of its own
+   * shutdown, after the last span it records. Without the `unhandledRejection` listener, Node's default applies:
+   * an unhandled rejection crashes the process.
+   *
+   * Each `configure()` call applies its own value, so pass `false` on every call to keep the listeners off.
+   *
+   * Defaults to `true`.
+   */
+  processHooks?: boolean
 }
 
 export interface CodeSource {
@@ -264,6 +277,7 @@ export interface LogfireConfig {
   distributedTracing: boolean
   dataDir: string
   pendingSpans: boolean
+  processHooks: boolean
   idGenerator: IdGenerator
   instrumentations: Instrumentation[]
   jsonSchema: JsonSchemaMode
@@ -299,6 +313,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   distributedTracing: true,
   dataDir: '.logfire',
   pendingSpans: true,
+  processHooks: true,
   idGenerator: new logfireApi.ULIDGenerator(),
   instrumentations: [],
   jsonSchema: 'rich',
@@ -406,6 +421,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),
     idGenerator: cnf.advanced?.idGenerator ?? new logfireApi.ULIDGenerator(),
     pendingSpans: resolvePendingSpans(cnf.advanced?.pendingSpans),
+    processHooks: cnf.advanced?.processHooks ?? true,
     instrumentations: cnf.instrumentations ?? [],
     jsonSchema: jsonSchema ?? logfireConfig.jsonSchema,
     logsExporterUrl: `${baseUrl}/${LOGS_ENDPOINT_PATH}`,
