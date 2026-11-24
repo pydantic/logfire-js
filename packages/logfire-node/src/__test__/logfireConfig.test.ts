@@ -208,6 +208,20 @@ describe('logfire config', () => {
     })
   })
 
+  it('treats an undefined mysql2 maskStatement as unset', () => {
+    // A JavaScript caller can forward an unset option, which `exactOptionalPropertyTypes` rejects.
+    const forwardedConfig = { maskStatement: undefined } as unknown as { maskStatement?: boolean }
+    configure({
+      nodeAutoInstrumentations: {
+        '@opentelemetry/instrumentation-mysql2': forwardedConfig,
+      },
+    })
+
+    expect(logfireConfig.nodeAutoInstrumentations).toEqual({
+      '@opentelemetry/instrumentation-mysql2': { maskStatement: true },
+    })
+  })
+
   it('lets the auto-instrumentation map turn mysql2 masking off', () => {
     configure({
       nodeAutoInstrumentations: {

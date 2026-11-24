@@ -261,13 +261,15 @@ const MYSQL2_INSTRUMENTATION = '@opentelemetry/instrumentation-mysql2'
  * mysql2 can format bound parameter values into `db.query.text`, and the scrubber treats that
  * attribute as safe so SQL text survives. Masking literals keeps parameter values out of it.
  * This default merges into a user-supplied map, unlike the others, so passing any map does not
- * silently turn masking off; an explicit `maskStatement: false` still wins.
+ * silently turn masking off; an explicit `maskStatement: false` still wins. `undefined` counts as
+ * unset, because the instrumentation reads it as `false`.
  */
 function resolveNodeAutoInstrumentations(config: InstrumentationConfigMap | undefined): InstrumentationConfigMap {
   const resolved = config ?? DEFAULT_AUTO_INSTRUMENTATION_CONFIG
+  const mysql2Config = resolved[MYSQL2_INSTRUMENTATION]
   return {
     ...resolved,
-    [MYSQL2_INSTRUMENTATION]: { maskStatement: true, ...resolved[MYSQL2_INSTRUMENTATION] },
+    [MYSQL2_INSTRUMENTATION]: { ...mysql2Config, maskStatement: mysql2Config?.maskStatement ?? true },
   }
 }
 
