@@ -2,8 +2,71 @@
 import { gunzipSync } from 'node:zlib'
 
 const scenario = process.argv[2]
-assert(scenario === 'default' || scenario === 'opt-in', 'usage: verify.mjs default|opt-in')
+assert(scenario === 'default' || scenario === 'images-only' || scenario === 'opt-in', 'usage: verify.mjs default|images-only|opt-in')
 const snapshot = await pollForEvidence(Date.now() + 10_000)
+
+// Each stylesheet marker names the rrweb path that must carry it. A marker that rrweb never recorded
+// fails the opt-in check, so a masked scenario cannot pass because a path was not exercised.
+const stylesheetMarkerPaths = {
+  css_added_sheet_secret: 'mutation',
+  css_added_text_secret: 'mutation',
+  css_adopted_secret: 'adopted',
+  css_declaration_secret: 'declaration',
+  css_inserted_rule_secret: 'rule',
+  css_late_link_secret: 'mutation',
+  css_linked_secret: 'snapshot',
+  css_replace_async_secret: 'rule',
+  css_replace_sync_secret: 'rule',
+  css_snapshot_secret: 'snapshot',
+  css_text_mutation_secret: 'mutation',
+}
+const eventSourcePaths = { 0: 'mutation', 8: 'rule', 13: 'declaration', 15: 'adopted' }
+const eventPath = (event) => (event?.type === 2 ? 'snapshot' : (eventSourcePaths[event?.data?.source] ?? 'other'))
+const pathsWith = (predicate) =>
+  [...new Set(snapshot.events.filter((event) => collectStrings(event).some(predicate)).map(eventPath))].sort()
+const stylesheetPlaceholder =
+  'url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4cuUGAAUAAoG6haGKAAAAAElFTkSuQmCC")'
+const keptStylesheetValues = ['font_kept=visible', 'url("#fixture-filter")', "xmlns='http://www.w3.org/2000/svg'/%3E"]
+if (scenario === 'opt-in') {
+  for (const [marker, path] of Object.entries(stylesheetMarkerPaths)) {
+    assertDeepEqual(
+      `${marker} paths`,
+      pathsWith((text) => text.includes(marker)),
+      [path]
+    )
+  }
+} else {
+  for (const marker of Object.keys(stylesheetMarkerPaths)) {
+    assertDeepEqual(
+      `${marker} paths`,
+      pathsWith((text) => text.includes(marker)),
+      []
+    )
+  }
+  assertDeepEqual(
+    'stylesheet placeholder paths',
+    pathsWith((text) => text.includes(stylesheetPlaceholder)),
+    ['adopted', 'declaration', 'mutation', 'rule', 'snapshot']
+  )
+  for (const value of keptStylesheetValues) {
+    assertDeepEqual(
+      `${value} paths`,
+      pathsWith((text) => text.includes(value)),
+      ['snapshot']
+    )
+  }
+}
+if (scenario === 'images-only') {
+  // rrweb masks a text mutation itself when all text is masked, so only this scenario reaches the
+  // recorder with stylesheet text in `texts`.
+  const maskedTexts = snapshot.events
+    .filter((event) => event?.type === 3 && event?.data?.source === 0)
+    .flatMap((event) => event.data.texts ?? [])
+    .filter((text) => typeof text.value === 'string' && text.value.includes(stylesheetPlaceholder))
+  assertEqual('masked stylesheet text mutations', maskedTexts.length, 1)
+  console.log(JSON.stringify({ replayReceipts: snapshot.replays.length, scenario }, null, 2))
+  process.exit(0)
+}
 const expectedBase = `http://127.0.0.1:4178/${scenario}/`
 const rawPage = `${expectedBase}?page_secret=${scenario}-page-secret#${scenario}-fragment-secret`
 const expectedPage = scenario === 'default' ? expectedBase : rawPage
@@ -157,6 +220,21 @@ async function readSnapshot() {
     ),
     traces,
   }
+}
+
+function collectStrings(value, into = []) {
+  if (typeof value === 'string') {
+    into.push(value)
+  } else if (Array.isArray(value)) {
+    for (const item of value) {
+      collectStrings(item, into)
+    }
+  } else if (value !== null && typeof value === 'object') {
+    for (const item of Object.values(value)) {
+      collectStrings(item, into)
+    }
+  }
+  return into
 }
 
 function collectText(events) {

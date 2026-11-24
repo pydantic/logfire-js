@@ -1,6 +1,6 @@
 import * as logfire from '../../dist/index.js'
 
-type Scenario = 'default' | 'opt-in'
+type Scenario = 'default' | 'images-only' | 'opt-in'
 type Phase = 'starting' | 'running' | 'complete' | 'failed'
 
 interface AcceptanceState {
@@ -15,7 +15,11 @@ declare global {
   }
 }
 
-const scenario: Scenario = window.location.pathname.startsWith('/opt-in/') ? 'opt-in' : 'default'
+const scenario: Scenario = window.location.pathname.startsWith('/opt-in/')
+  ? 'opt-in'
+  : window.location.pathname.startsWith('/images-only/')
+    ? 'images-only'
+    : 'default'
 const state: AcceptanceState = { phase: 'starting', scenario }
 Reflect.set(window, '__logfirePrivacyDefaults', state)
 
@@ -43,7 +47,9 @@ const cleanup = logfire.configure({
           maskAllText: false,
           redactUrlPatterns: [],
         }
-      : {}),
+      : scenario === 'images-only'
+        ? { maskAllImages: true, maskAllText: false }
+        : {}),
     flushIntervalMs: 60_000,
     ignoreUrlPatterns: [/\/receipts(?:\/|$)/u],
     minSessionDurationMs: 0,
@@ -117,6 +123,8 @@ async function run(): Promise<void> {
   lateImage.setAttribute('width', '8')
   await delay(50)
 
+  await changeStylesheets()
+
   console.warn('privacy-console-secret', { scenario })
   await fetch('/api/fetch?fetch_secret=visible#fetch_fragment=visible')
   await xhr('/api/xhr?xhr_secret=visible#xhr_fragment=visible')
@@ -132,6 +140,61 @@ async function run(): Promise<void> {
   await cleanup()
   state.phase = 'complete'
   setStatus('complete')
+}
+
+// Each change reaches the recording through a different rrweb path, and carries its own marker.
+async function changeStylesheets(): Promise<void> {
+  const mutableStyle = document.querySelector('#mutable-style')
+  if (mutableStyle === null) {
+    throw new Error('missing mutable style')
+  }
+  mutableStyle.textContent = '.added-text-image { background-image: url("/api/image?css_added_text_secret=visible"); }'
+  await delay(50)
+  const text = mutableStyle.firstChild
+  if (!(text instanceof Text)) {
+    throw new Error('missing mutable style text')
+  }
+  text.data = '.text-mutation-image { background-image: url("/api/image?css_text_mutation_secret=visible"); }'
+  await delay(50)
+
+  // A stylesheet that a script links later, such as a lazy CSS chunk, reaches rrweb once it loads.
+  const lateLink = document.createElement('link')
+  lateLink.rel = 'stylesheet'
+  lateLink.href = '/late-styles.css'
+  const lateLinkLoaded = new Promise((resolve, reject) => {
+    lateLink.addEventListener('load', resolve)
+    lateLink.addEventListener('error', reject)
+  })
+  document.head.appendChild(lateLink)
+  await lateLinkLoaded
+  await delay(50)
+
+  const addedStyle = document.createElement('style')
+  addedStyle.textContent = '.added-sheet-image { background-image: url("/api/image?css_added_sheet_secret=visible"); }'
+  document.head.appendChild(addedStyle)
+  await delay(50)
+  const sheet = addedStyle.sheet
+  if (sheet === null) {
+    throw new Error('missing added stylesheet')
+  }
+  sheet.insertRule('.inserted-rule-image { background-image: url("/api/image?css_inserted_rule_secret=visible"); color: rgb(7, 8, 9); }', 0)
+  const insertedRule = sheet.cssRules[0]
+  if (!(insertedRule instanceof CSSStyleRule)) {
+    throw new Error('missing inserted rule')
+  }
+  insertedRule.style.setProperty('background-image', 'url("/api/image?css_declaration_secret=visible")')
+  await delay(50)
+
+  const adopted = new CSSStyleSheet()
+  adopted.replaceSync('.adopted-image { background-image: url("/api/image?css_adopted_secret=visible"); }')
+  document.adoptedStyleSheets = [...document.adoptedStyleSheets, adopted]
+  await delay(50)
+  adopted.replaceSync('.replaced-image { background-image: url("/api/image?css_replace_sync_secret=visible"); }')
+  await delay(50)
+  await adopted.replace(
+    '.replaced-image { background-image: url("/api/image?css_replace_async_secret=visible"); } #adopted-target { color: rgb(4, 5, 6); }'
+  )
+  await delay(50)
 }
 
 async function traverseBack(): Promise<void> {

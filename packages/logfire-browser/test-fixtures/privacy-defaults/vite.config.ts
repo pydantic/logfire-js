@@ -61,6 +61,17 @@ export default defineConfig({
             response.end('{}')
             return
           }
+          // Served here rather than by Vite, which would rewrite the URL in the rule.
+          if (request.method === 'GET' && url.pathname === '/private-styles.css') {
+            response.setHeader('content-type', 'text/css')
+            response.end('.linked-style-image { background-image: url("/api/image?css_linked_secret=visible"); }')
+            return
+          }
+          if (request.method === 'GET' && url.pathname === '/late-styles.css') {
+            response.setHeader('content-type', 'text/css')
+            response.end('.late-link-image { background-image: url("/api/image?css_late_link_secret=visible"); }')
+            return
+          }
 
           const kind = endpointKind(url.pathname)
           if (request.method !== 'POST' || kind === undefined) {

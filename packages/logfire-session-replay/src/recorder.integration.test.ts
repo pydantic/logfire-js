@@ -3,7 +3,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { startRecording } from './recorder'
+import { MASKED_IMAGE_SOURCE, startRecording } from './recorder'
 import { EventType, IncrementalSource } from './types'
 import type { RrwebEvent } from './types'
 
@@ -292,5 +292,76 @@ describe('image masking with rrweb', () => {
       )
     ).toBe(true)
     expect(collectStrings(events).filter((text) => text.includes('/users/jane'))).toEqual([])
+  })
+
+  // jsdom drops `@font-face` sources and has no constructable stylesheets, so the browser privacy
+  // test covers those paths.
+  it('uploads no stylesheet image URL from inlined rules, added styles, or CSSOM changes', async () => {
+    document.head.innerHTML = '<style>.a{background:url(/users/jane/snapshot.png)}</style>'
+    const events: RrwebEvent[] = []
+    const recorder = startRecording({
+      emit: (event) => {
+        events.push(event)
+      },
+      maskAllImages: true,
+      maskAllInputs: true,
+      maskAllText: true,
+      redactUrlPatterns: [],
+    })
+    stopRecording = () => {
+      recorder.stop()
+      document.head.replaceChildren()
+    }
+
+    const added = document.createElement('style')
+    added.textContent = '.b{background:url(/users/jane/added.png)}'
+    document.head.append(added)
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    added.sheet?.insertRule('.c{background:url(/users/jane/rule.png)}', 0)
+    const rule = added.sheet?.cssRules[0]
+    if (!(rule instanceof CSSStyleRule)) {
+      throw new Error('expected the inserted style rule')
+    }
+    rule.style.setProperty('background', 'url(/users/jane/declaration.png)')
+
+    const placeholder = `url(${JSON.stringify(MASKED_IMAGE_SOURCE)})`
+    const sourcesWithPlaceholder = events
+      .filter((event) => collectStrings(event.data).some((text) => text.includes(placeholder)))
+      .map((event) => (event.type === EventType.FullSnapshot ? 'snapshot' : (event.data as { source?: unknown }).source))
+    expect(sourcesWithPlaceholder).toEqual([
+      'snapshot',
+      IncrementalSource.Mutation,
+      IncrementalSource.StyleSheetRule,
+      IncrementalSource.StyleDeclaration,
+    ])
+    expect(collectStrings(events).filter((text) => text.includes('/users/jane'))).toEqual([])
+  })
+
+  it('records a stylesheet reference to an element of the page as its id', () => {
+    window.history.replaceState(null, '', '/org/live?token=secret')
+    document.head.innerHTML = '<style id="filters">.a{filter:url(#blur)}.b{mask:url(/org/#icon)}</style>'
+    const events: RrwebEvent[] = []
+    const recorder = startRecording({
+      emit: (event) => {
+        events.push(event)
+      },
+      maskAllImages: true,
+      maskAllInputs: true,
+      maskAllText: true,
+      redactUrlPatterns: [],
+    })
+    stopRecording = () => {
+      recorder.stop()
+      document.head.replaceChildren()
+      window.history.replaceState(null, '', '/')
+    }
+
+    const snapshot = events.find((event) => event.type === EventType.FullSnapshot)
+    expect(attributesOf(snapshot?.data, 'filters')).toEqual({
+      id: 'filters',
+      _cssText: '.a { filter: url("#blur"); }.b { mask: url("#icon"); }',
+    })
   })
 })
