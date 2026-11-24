@@ -11,7 +11,7 @@ const SDK_ENTRYPOINT = resolve(PACKAGE_ROOT, 'dist/index.js')
 const isWindows = process.platform === 'win32'
 const PROCESS_EVENTS = ['beforeExit', 'SIGTERM', 'uncaughtExceptionMonitor', 'unhandledRejection']
 
-type Scenario = 'sigterm' | 'unhandled-rejection'
+type Scenario = 'sigterm' | 'sigterm-drain' | 'unhandled-rejection'
 
 interface ChildRecord {
   after?: Record<string, number>
@@ -59,13 +59,23 @@ function childScript(scenario: Scenario, processHooks: boolean | undefined): str
     if (${JSON.stringify(scenario)} === 'sigterm') {
       process.on('SIGTERM', async () => {
         info('handler started')
-        // Outlasts the SDK's own SIGTERM shutdown, like an application draining connections.
+        // Outlasts the SDK's own SIGTERM flush, like an application draining connections.
         await new Promise((resolve) => setTimeout(resolve, 500))
         info('drain finished')
         await shutdown()
         process.exit(7)
       })
       setInterval(() => undefined, 1_000)
+      record({ ready: true })
+    } else if (${JSON.stringify(scenario)} === 'sigterm-drain') {
+      // The application neither calls shutdown() nor exits: it closes its handles and lets the event loop empty.
+      const server = setInterval(() => undefined, 1_000)
+      process.on('SIGTERM', async () => {
+        info('handler started')
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        info('drain finished')
+        clearInterval(server)
+      })
       record({ ready: true })
     } else {
       Promise.reject(new Error('nobody handles this'))
@@ -110,7 +120,7 @@ async function runChild(scenario: Scenario, processHooks: boolean | undefined): 
     }
   }
 
-  if (scenario === 'sigterm') {
+  if (scenario !== 'unhandled-rejection') {
     await new Promise<void>((resolveReady, rejectReady) => {
       const readyBy = Date.now() + 20_000
       const poll = setInterval(() => {
@@ -150,14 +160,25 @@ describe('process hooks in a Node process', () => {
   })
 
   it.skipIf(isWindows)(
-    'with the default hooks, loses the spans an application SIGTERM handler records after the SDK shut down',
+    'with the default hooks, exports the spans an application SIGTERM handler records while it drains',
     async () => {
       const result = await runChild('sigterm', undefined)
 
       expect(listenerCounts(result)).toEqual({ after: SDK_LISTENERS, before: NO_LISTENERS })
-      // The SDK's listener runs first and shuts the SDK down while the handler waits on a timer. Only the span recorded before that wait reaches the exporter.
-      expect(exportedNames(result)).toEqual(['handler started'])
+      // The SDK's listener runs first and only flushes, so the span recorded after the handler's wait is still exported.
+      expect(exportedNames(result)).toEqual(['handler started', 'drain finished'])
       expect(result.code).toBe(7)
+    },
+    30_000
+  )
+
+  it.skipIf(isWindows)(
+    'with the default hooks, shuts down on beforeExit when an application SIGTERM handler lets the event loop empty',
+    async () => {
+      const result = await runChild('sigterm-drain', undefined)
+
+      expect(exportedNames(result)).toEqual(['handler started', 'drain finished'])
+      expect(result.code).toBe(0)
     },
     30_000
   )

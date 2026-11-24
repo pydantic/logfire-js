@@ -36,7 +36,9 @@ export interface AdvancedLogfireConfigOptions {
   pendingSpans?: boolean
   /**
    * Whether `configure()` installs process listeners for `beforeExit`, `SIGTERM`, `uncaughtExceptionMonitor`
-   * and `unhandledRejection`. They shut the SDK down on exit or `SIGTERM`, and report uncaught errors.
+   * and `unhandledRejection`. They shut the SDK down on exit, and report uncaught errors. On
+   * `SIGTERM` they shut the SDK down when no other `SIGTERM` listener exists, and otherwise only flush and leave
+   * shutdown to the application.
    *
    * Set to `false` when the application owns its shutdown. It must then call `shutdown()` at the end of its own
    * shutdown, after the last span it records. Without the `unhandledRejection` listener, Node's default applies:

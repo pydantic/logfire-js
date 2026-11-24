@@ -1056,7 +1056,7 @@ describe('sdk lifecycle helpers', () => {
     expect(processEmitSpy.mock.calls.some(([event]) => (event as unknown) === 'SIGTERM')).toBe(false)
   })
 
-  it('SIGTERM shuts down but does not re-emit when user SIGTERM listeners are present', async () => {
+  it('SIGTERM flushes without shutting down or re-emitting when user SIGTERM listeners are present', async () => {
     start()
     const instance = mocks.nodeSdkInstances[0]
     if (instance === undefined) {
@@ -1068,8 +1068,18 @@ describe('sdk lifecycle helpers', () => {
     logfireListener()
     await waitForBackgroundLifecycle()
 
-    expect(instance.shutdownCalls).toBe(1)
+    expect(mocks.traceForceFlushCalls).toBe(1)
+    expect(mocks.logForceFlushCalls).toBe(1)
+    expect(mocks.metricReaderForceFlushCalls).toBe(1)
+    expect(instance.shutdownCalls).toBe(0)
+    expect(mocks.shutdownVariablesCalls).toBe(0)
+    expect(getProcessListeners('SIGTERM')).toContain(logfireListener)
     expect(processKillSpy).not.toHaveBeenCalled()
+
+    getLatestProcessListener('beforeExit')()
+    await waitForBackgroundLifecycle()
+
+    expect(instance.shutdownCalls).toBe(1)
   })
 
   it('SIGTERM re-emits when Logfire was already removed and no user SIGTERM listener remains', async () => {

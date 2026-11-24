@@ -270,12 +270,16 @@ function shouldReemitSignal(listenerState: LogfireSignalListenerState): boolean 
 async function handleSIGTERM(runtime: ActiveRuntime, listener: () => void): Promise<void> {
   const listenerState = getLogfireSignalListenerState('SIGTERM', listener)
 
-  await shutdownBestEffort(runtime, 'SIGTERM')
-
   if (!shouldReemitSignal(listenerState)) {
-    diag.debug('logfire SDK: leaving SIGTERM termination to application handlers', listenerState)
+    // Another handler owns termination and may still record spans while it drains work, so the
+    // SDK stays up for it; its shutdown() call, or beforeExit, shuts the SDK down.
+    diag.debug('logfire SDK: flushing on SIGTERM and leaving shutdown to application handlers', listenerState)
+    await forceFlushBestEffort(runtime, 'SIGTERM')
     return
   }
+
+  await shutdownBestEffort(runtime, 'SIGTERM')
+  diag.info('logfire SDK: shutting down')
 
   try {
     process.kill(process.pid, 'SIGTERM')
@@ -554,7 +558,6 @@ export function start(): void {
     SIGTERM: () => {
       runProcessHookBestEffort(async () => {
         await handleSIGTERM(runtime, listeners.SIGTERM)
-        diag.info('logfire SDK: shutting down')
       }, 'logfire SDK: error handling SIGTERM')
     },
     uncaughtExceptionMonitor: (error: unknown) => {
