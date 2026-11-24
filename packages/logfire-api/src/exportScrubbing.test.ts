@@ -127,6 +127,39 @@ describe('scrubSpanForExport', () => {
     })
   })
 
+  test('keeps SQL text whose table name matches a pattern and records no scrubbed note', () => {
+    const span = fakeSpan({ attributes: { 'db.query.text': 'SELECT * FROM llm_credentials' } })
+
+    scrubSpanForExport(span)
+
+    expect(span.attributes).toEqual({ 'db.query.text': 'SELECT * FROM llm_credentials' })
+  })
+
+  test('keeps SQL text, error types, and gen_ai identifiers whose values match the patterns', () => {
+    const span = fakeSpan({
+      attributes: {
+        'app.query': 'SELECT * FROM llm_credentials',
+        'db.query.text': 'SELECT * FROM llm_credentials',
+        'error.type': 'AuthenticationError',
+        'gen_ai.request.model': 'secret-model',
+        'gen_ai.tool.call.id': 'call_session_1',
+        'gen_ai.tool.name': 'get_auth_status',
+      },
+    })
+
+    scrubSpanForExport(span)
+
+    expect(span.attributes).toEqual({
+      'app.query': "[Scrubbed due to 'credential']",
+      'db.query.text': 'SELECT * FROM llm_credentials',
+      'error.type': 'AuthenticationError',
+      'gen_ai.request.model': 'secret-model',
+      'gen_ai.tool.call.id': 'call_session_1',
+      'gen_ai.tool.name': 'get_auth_status',
+      [ATTRIBUTES_SCRUBBED_KEY]: JSON.stringify([{ matched_substring: 'credential', path: ['attributes', 'app.query'] }]),
+    })
+  })
+
   test('keeps only lines with a full stack-frame shape', () => {
     const stack = [
       'Error: Authentication failed for user@example.com:10:5',
