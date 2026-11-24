@@ -185,6 +185,55 @@ describe('logfire config', () => {
     expect(logfireConfig.resourceAttributes).toBe(resourceAttributes)
   })
 
+  it('masks mysql2 statement literals by default', () => {
+    configure({})
+
+    expect(logfireConfig.nodeAutoInstrumentations).toEqual({
+      '@opentelemetry/instrumentation-fs': { enabled: false },
+      '@opentelemetry/instrumentation-mysql2': { maskStatement: true },
+    })
+  })
+
+  it('keeps mysql2 masking when a custom auto-instrumentation map omits it', () => {
+    configure({
+      nodeAutoInstrumentations: {
+        '@opentelemetry/instrumentation-http': { enabled: false },
+        '@opentelemetry/instrumentation-mysql2': { enabled: true },
+      },
+    })
+
+    expect(logfireConfig.nodeAutoInstrumentations).toEqual({
+      '@opentelemetry/instrumentation-http': { enabled: false },
+      '@opentelemetry/instrumentation-mysql2': { enabled: true, maskStatement: true },
+    })
+  })
+
+  it('treats an undefined mysql2 maskStatement as unset', () => {
+    // A JavaScript caller can forward an unset option, which `exactOptionalPropertyTypes` rejects.
+    const forwardedConfig = { maskStatement: undefined } as unknown as { maskStatement?: boolean }
+    configure({
+      nodeAutoInstrumentations: {
+        '@opentelemetry/instrumentation-mysql2': forwardedConfig,
+      },
+    })
+
+    expect(logfireConfig.nodeAutoInstrumentations).toEqual({
+      '@opentelemetry/instrumentation-mysql2': { maskStatement: true },
+    })
+  })
+
+  it('lets the auto-instrumentation map turn mysql2 masking off', () => {
+    configure({
+      nodeAutoInstrumentations: {
+        '@opentelemetry/instrumentation-mysql2': { maskStatement: false },
+      },
+    })
+
+    expect(logfireConfig.nodeAutoInstrumentations).toEqual({
+      '@opentelemetry/instrumentation-mysql2': { maskStatement: false },
+    })
+  })
+
   it('passes jsonSchema config to the shared API', () => {
     configure({ jsonSchema: 'basic' })
 
