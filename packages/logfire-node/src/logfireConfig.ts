@@ -40,15 +40,37 @@ export interface AdvancedLogfireConfigOptions {
    * `SIGTERM` they shut the SDK down when no other `SIGTERM` listener exists, and otherwise only flush and leave
    * shutdown to the application.
    *
-   * Set to `false` when the application owns its shutdown. It must then call `shutdown()` at the end of its own
-   * shutdown, after the last span it records. Without the `unhandledRejection` listener, Node's default applies:
-   * an unhandled rejection crashes the process.
+   * Set to `false` to install none of them, or pass an object to turn off single listeners. A key that is
+   * missing from the object means on, so `{ sigterm: false }` leaves only the `SIGTERM` handling to the
+   * application and keeps the other three listeners.
    *
-   * Each `configure()` call applies its own value, so pass `false` on every call to keep the listeners off.
+   * When the application owns its shutdown, it must call `shutdown()` at the end of its own shutdown, after the
+   * last span it records. Without the `unhandledRejection` listener, Node's default applies: an unhandled
+   * rejection crashes the process.
+   *
+   * Each `configure()` call applies its own value, so pass the same value on every call to keep listeners off.
    *
    * Defaults to `true`.
    */
-  processHooks?: boolean
+  processHooks?: boolean | ProcessHooksOptions
+}
+
+/**
+ * Turns single process listeners on or off. A missing key means on.
+ */
+export interface ProcessHooksOptions {
+  /** Shut the SDK down, which flushes pending data, on `beforeExit`. */
+  beforeExit?: boolean
+  /** Shut the SDK down on `SIGTERM`, then re-raise the signal when no other `SIGTERM` listener exists. */
+  sigterm?: boolean
+  /** Report an uncaught exception from an `uncaughtExceptionMonitor` listener. Node still crashes. */
+  uncaughtException?: boolean
+  /**
+   * Report an unhandled rejection. The listener also stops Node from crashing on it. When it is off, Node crashes.
+   * The `uncaughtException` listener, if on, records the rejection, but the process usually exits before the record
+   * is exported.
+   */
+  unhandledRejection?: boolean
 }
 
 export interface CodeSource {
@@ -279,7 +301,7 @@ export interface LogfireConfig {
   distributedTracing: boolean
   dataDir: string
   pendingSpans: boolean
-  processHooks: boolean
+  processHooks: Required<ProcessHooksOptions>
   idGenerator: IdGenerator
   instrumentations: Instrumentation[]
   jsonSchema: JsonSchemaMode
@@ -315,7 +337,7 @@ const DEFAULT_LOGFIRE_CONFIG: LogfireConfig = {
   distributedTracing: true,
   dataDir: '.logfire',
   pendingSpans: true,
-  processHooks: true,
+  processHooks: resolveProcessHooks(true),
   idGenerator: new logfireApi.ULIDGenerator(),
   instrumentations: [],
   jsonSchema: 'rich',
@@ -423,7 +445,7 @@ export function configure(config: LogfireConfigOptions = {}): void {
     distributedTracing: resolveDistributedTracing(cnf.distributedTracing),
     idGenerator: cnf.advanced?.idGenerator ?? new logfireApi.ULIDGenerator(),
     pendingSpans: resolvePendingSpans(cnf.advanced?.pendingSpans),
-    processHooks: cnf.advanced?.processHooks ?? true,
+    processHooks: resolveProcessHooks(cnf.advanced?.processHooks ?? true),
     instrumentations: cnf.instrumentations ?? [],
     jsonSchema: jsonSchema ?? logfireConfig.jsonSchema,
     logsExporterUrl: `${baseUrl}/${LOGS_ENDPOINT_PATH}`,
@@ -563,6 +585,18 @@ function resolvePendingSpans(option: AdvancedLogfireConfigOptions['pendingSpans'
     return parseBooleanEnv(envPendingSpans, 'LOGFIRE_PENDING_SPANS')
   }
   return true
+}
+
+function resolveProcessHooks(option: boolean | ProcessHooksOptions): Required<ProcessHooksOptions> {
+  if (typeof option === 'boolean') {
+    return { beforeExit: option, sigterm: option, uncaughtException: option, unhandledRejection: option }
+  }
+  return {
+    beforeExit: option.beforeExit ?? true,
+    sigterm: option.sigterm ?? true,
+    uncaughtException: option.uncaughtException ?? true,
+    unhandledRejection: option.unhandledRejection ?? true,
+  }
 }
 
 function requiresRemoteVariables(options: VariablesConfigOptions): boolean {

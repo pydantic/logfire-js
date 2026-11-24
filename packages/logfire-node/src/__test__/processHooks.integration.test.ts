@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vite-plus/test'
 
+import type { ProcessHooksOptions } from '../logfireConfig'
+
 const PACKAGE_ROOT = resolve(import.meta.dirname, '../..')
 const SDK_ENTRYPOINT = resolve(PACKAGE_ROOT, 'dist/index.js')
 // Windows has no SIGTERM handlers: kill() ends the child before any listener runs.
@@ -26,8 +28,8 @@ interface ChildResult {
 }
 
 // Each record goes to a file with appendFileSync: stdout to a pipe is asynchronous on macOS, and the child calls process.exit().
-function childScript(scenario: Scenario, processHooks: boolean | undefined): string {
-  const advanced = processHooks === undefined ? '{}' : `{ processHooks: ${String(processHooks)} }`
+function childScript(scenario: Scenario, processHooks: boolean | ProcessHooksOptions | undefined): string {
+  const advanced = processHooks === undefined ? '{}' : `{ processHooks: ${JSON.stringify(processHooks)} }`
   return `
     import { appendFileSync } from 'node:fs'
     import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base'
@@ -85,7 +87,7 @@ function childScript(scenario: Scenario, processHooks: boolean | undefined): str
 
 const tempDirs: string[] = []
 
-async function runChild(scenario: Scenario, processHooks: boolean | undefined): Promise<ChildResult> {
+async function runChild(scenario: Scenario, processHooks: boolean | ProcessHooksOptions | undefined): Promise<ChildResult> {
   const dir = mkdtempSync(join(tmpdir(), 'logfire-node-process-hooks-'))
   tempDirs.push(dir)
   const recordsPath = join(dir, 'records.jsonl')
@@ -150,6 +152,7 @@ function listenerCounts(result: ChildResult): ChildRecord | undefined {
 
 const NO_LISTENERS = { SIGTERM: 0, beforeExit: 0, uncaughtExceptionMonitor: 0, unhandledRejection: 0 }
 const SDK_LISTENERS = { SIGTERM: 1, beforeExit: 1, uncaughtExceptionMonitor: 1, unhandledRejection: 1 }
+const SDK_LISTENERS_WITHOUT_SIGTERM = { ...SDK_LISTENERS, SIGTERM: 0 }
 
 // Each child process loads the whole SDK, which takes about a second.
 describe('process hooks in a Node process', () => {
@@ -194,6 +197,35 @@ describe('process hooks in a Node process', () => {
     },
     30_000
   )
+
+  it.skipIf(isWindows)(
+    'with only the SIGTERM hook off, keeps the other listeners and exports what the application SIGTERM handler records',
+    async () => {
+      const result = await runChild('sigterm', { sigterm: false })
+
+      expect(listenerCounts(result)).toEqual({ after: SDK_LISTENERS_WITHOUT_SIGTERM, before: NO_LISTENERS })
+      expect(exportedNames(result)).toEqual(['handler started', 'drain finished'])
+      expect(result.code).toBe(7)
+    },
+    30_000
+  )
+
+  it('with only the SIGTERM hook off, still reports an unhandled rejection and keeps the process alive', async () => {
+    const result = await runChild('unhandled-rejection', { sigterm: false })
+
+    expect(listenerCounts(result)).toEqual({ after: SDK_LISTENERS_WITHOUT_SIGTERM, before: NO_LISTENERS })
+    expect(exportedNames(result)).toEqual(['nobody handles this'])
+    expect(result.code).toBe(0)
+  }, 30_000)
+
+  it('with only the unhandledRejection hook off, crashes on an unhandled rejection and records it through the uncaught exception hook', async () => {
+    const result = await runChild('unhandled-rejection', { unhandledRejection: false })
+    // The test exporter writes synchronously inside export(); a network exporter would usually lose this record to the crash.
+
+    expect(listenerCounts(result)).toEqual({ after: { ...SDK_LISTENERS, unhandledRejection: 0 }, before: NO_LISTENERS })
+    expect(exportedNames(result)).toEqual(['nobody handles this'])
+    expect(result.code).toBe(1)
+  }, 30_000)
 
   it('with the default hooks, keeps the process alive after an unhandled rejection', async () => {
     const result = await runChild('unhandled-rejection', undefined)
