@@ -1,6 +1,9 @@
 import { record } from '@rrweb/record'
 
+import { findCssReplacements, maskCssDeclarationValue, maskCssImageUrls, mayHoldCssImageUrl } from './cssImageUrls'
+import type { CssReplacement } from './cssImageUrls'
 import {
+  cssElementReference,
   cutText,
   isElementIdReference,
   mayReferenceCssUrl,
@@ -84,8 +87,15 @@ function imagePlaceholder(image: HTMLImageElement): string {
   }
 }
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
-// rrweb's serialized node type for an element.
+// rrweb's serialized node types for an element and a text node.
 const SERIALIZED_ELEMENT_NODE_TYPE = 2
+const SERIALIZED_TEXT_NODE_TYPE = 3
+// rrweb records stylesheet text that a script adds or changes through the CSSOM in these events.
+const STYLESHEET_SOURCES = new Set<unknown>([
+  IncrementalSource.StyleSheetRule,
+  IncrementalSource.StyleDeclaration,
+  IncrementalSource.AdoptedStyleSheet,
+])
 const MAX_ERROR_MESSAGE_LENGTH = 1024
 const MAX_ERROR_STACK_LENGTH = 8192
 // One inaccessible node can make rrweb throw on every mutation, so each distinct message is reported
@@ -145,6 +155,16 @@ interface SanitizeOptions {
   recordsElementId: (elementId: string) => boolean
   /** Send a sized placeholder for a masked image once it loads. */
   sizeOnLoad: (image: HTMLImageElement) => void
+  /** The text of each `<style>` element that the current event records, read once per event. */
+  styleTexts: Map<Node, StyleText>
+}
+
+interface StyleText {
+  text: string
+  /** Where the text of each child text node starts in `text`. */
+  offsets: Map<Node, number>
+  /** The image URL replacements in `text`, found only when the element has more than one text node. */
+  replacements: CssReplacement[]
 }
 
 /** What image masking needs to know about the element that carries a set of attributes. */
@@ -200,6 +220,7 @@ export function startRecording(options: RecorderOptions): RecorderHandle {
     sizeOnLoad: (image) => {
       sizeOnLoad(image)
     },
+    styleTexts: new Map(),
   }
   // A masked image that loads after it was recorded, such as a lazy image or one a script adds, has
   // no natural size until then. Its sized placeholder reaches playback as a `src` mutation on load.
@@ -354,6 +375,7 @@ function sanitizeRecorderEvent(event: RrwebEvent, options: SanitizeOptions): Rrw
   if (typeof event.data !== 'object' || event.data === null) {
     return event
   }
+  options.styleTexts.clear()
 
   const data = event.data as Record<string, unknown>
   if (event.type === EventType.Custom) {
@@ -366,6 +388,11 @@ function sanitizeRecorderEvent(event: RrwebEvent, options: SanitizeOptions): Rrw
 
     const href = redactUrl(data['href'], options.patterns, window.location.href, options.transformUrl)
     return href === data['href'] ? event : { ...event, data: { ...data, href } }
+  }
+
+  if (event.type === EventType.IncrementalSnapshot && options.maskImages && STYLESHEET_SOURCES.has(data['source'])) {
+    const sanitizedData = sanitizeStylesheetData(data)
+    return sanitizedData === data ? event : { ...event, data: sanitizedData }
   }
 
   if (
@@ -443,10 +470,16 @@ function sanitizeSnapshotValue(value: unknown, options: SanitizeOptions): unknow
   let changed = false
   const sanitized: Record<string, unknown> = {}
   for (const [key, item] of Object.entries(node)) {
-    const next =
-      key === 'attributes' && !Array.isArray(item)
-        ? sanitizeAttributes(item, options, options.maskImages ? describeElement(node, item, options) : undefined)
-        : sanitizeSnapshotValue(item, options)
+    let next: unknown
+    if (key === 'attributes' && !Array.isArray(item)) {
+      next = sanitizeAttributes(item, options, options.maskImages ? describeElement(node, item, options) : undefined)
+    } else if (options.maskImages && key === 'textContent' && node['type'] === SERIALIZED_TEXT_NODE_TYPE) {
+      next = maskStyleText(item, node['id'], options)
+    } else if (options.maskImages && key === 'texts' && Array.isArray(item)) {
+      next = mapPreservingIdentity(item, (text) => maskTextMutation(text, options))
+    } else {
+      next = sanitizeSnapshotValue(item, options)
+    }
     if (next !== item) {
       changed = true
     }
@@ -496,6 +529,10 @@ function sanitizeAttribute(name: string, value: unknown, options: SanitizeOption
     // `redactUrlPatterns: []` without a transform keeps raw URLs, so styles are kept too, unless
     // images are masked: a style URL can load a background image.
     return options.maskImages || options.patterns.length > 0 || options.transformUrl !== undefined ? sanitizeStyle(value) : value
+  }
+  // rrweb inlines the rules of a `<style>` element and of a readable linked stylesheet here.
+  if (name === '_csstext') {
+    return options.maskImages ? maskStylesheet(value) : value
   }
   if (typeof value !== 'string') {
     return value
@@ -642,7 +679,7 @@ function isTextAttribute(name: string, value: string): boolean {
 // style as a map of changed properties, where a value with a priority is a `[value, priority]` pair.
 function sanitizeStyle(value: unknown): unknown {
   if (typeof value === 'string') {
-    return mayReferenceCssUrl(value) ? '' : value
+    return mayReferenceCssUrl(value) || maskStylesheet(value) !== value ? '' : value
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return value
@@ -651,7 +688,10 @@ function sanitizeStyle(value: unknown): unknown {
   const sanitized: Record<string, unknown> = {}
   for (const [property, propertyValue] of Object.entries(value as Record<string, unknown>)) {
     const propertyText = Array.isArray(propertyValue) ? (propertyValue as unknown[])[0] : propertyValue
-    const next = typeof propertyText === 'string' && mayReferenceCssUrl(propertyText) ? '' : propertyValue
+    const next =
+      typeof propertyText === 'string' && (mayReferenceCssUrl(propertyText) || maskDeclaration(property, propertyText) !== propertyText)
+        ? ''
+        : propertyValue
     if (next !== propertyValue) {
       changed = true
     }
@@ -659,6 +699,147 @@ function sanitizeStyle(value: unknown): unknown {
   }
   return changed ? sanitized : value
 }
+
+function maskDeclaration(property: string, value: string): string {
+  const pageUrl = window.location.href
+  return maskCssDeclarationValue(property, value, MASKED_IMAGE_SOURCE, (url) => cssElementReference(url, pageUrl))
+}
+
+function maskStylesheet(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value
+  }
+  const pageUrl = window.location.href
+  return maskCssImageUrls(value, MASKED_IMAGE_SOURCE, (url) => cssElementReference(url, pageUrl))
+}
+
+// rrweb records the text of a `<style>` element as a text node. Its serialized form does not say
+// that its parent is a `<style>`, so the recorder looks at the live node. A text node that rrweb no
+// longer maps is masked, because it may be stylesheet text.
+function maskStyleText(value: unknown, id: unknown, options: SanitizeOptions): unknown {
+  if (typeof value !== 'string' || value === '') {
+    return value
+  }
+  const maskAlone = (): string => (mayHoldCssImageUrl(value) ? (maskStylesheet(value) as string) : value)
+  const live = typeof id === 'number' ? options.findNode(id) : undefined
+  if (live === undefined) {
+    return maskAlone()
+  }
+  const parent = live.parentNode
+  if (parent?.nodeType !== 1 || (parent as Element).localName.toLowerCase() !== 'style') {
+    return value
+  }
+  const style = readStyleText(parent, options)
+  const start = style.offsets.get(live)
+  if (start === undefined || style.offsets.size === 1) {
+    return maskAlone()
+  }
+  return maskStyleTextPart(value, (live as CharacterData).data, start, style) ?? maskAlone()
+}
+
+// Playback joins the text nodes of a `<style>` element, so a URL can start in one text node and end
+// in the next, and neither part alone looks like a URL. The recorder scans the joined text and maps
+// each replacement onto the text nodes that it spans. The text node where a replacement starts holds
+// its new text, and the next text nodes leave out the rest of it. Returns undefined when no
+// replacement falls in this text node.
+function maskStyleTextPart(value: string, data: string, start: number, style: StyleText): string | undefined {
+  // rrweb masks the text itself when all text is masked, and masked text holds no URL.
+  if (MASKED_TEXT_PATTERN.test(value)) {
+    return value
+  }
+  const end = start + data.length
+  let result = ''
+  let copiedUntil = start
+  let matched = false
+  for (const replacement of style.replacements) {
+    if (replacement.end <= start || replacement.start >= end) {
+      continue
+    }
+    if (replacement.start >= start) {
+      result += style.text.slice(copiedUntil, replacement.start) + replacement.text
+    }
+    copiedUntil = Math.min(end, replacement.end)
+    matched = true
+  }
+  return matched ? result + style.text.slice(copiedUntil, end) : undefined
+}
+
+function readStyleText(style: Node, options: SanitizeOptions): StyleText {
+  const cached = options.styleTexts.get(style)
+  if (cached !== undefined) {
+    return cached
+  }
+  let text = ''
+  const offsets = new Map<Node, number>()
+  for (const child of Array.from(style.childNodes)) {
+    if (child.nodeType === 3) {
+      offsets.set(child, text.length)
+      text += (child as CharacterData).data
+    }
+  }
+  const pageUrl = window.location.href
+  const replacements = offsets.size > 1 ? findCssReplacements(text, MASKED_IMAGE_SOURCE, (url) => cssElementReference(url, pageUrl)) : []
+  const styleText = { offsets, replacements, text }
+  options.styleTexts.set(style, styleText)
+  return styleText
+}
+
+function maskTextMutation(value: unknown, options: SanitizeOptions): unknown {
+  if (typeof value !== 'object' || value === null) {
+    return value
+  }
+  const text = value as Record<string, unknown>
+  const masked = maskStyleText(text['value'], text['id'], options)
+  return masked === text['value'] ? value : { ...text, value: masked }
+}
+
+// A rule change carries no context of the rule that holds it, so a `src` set on an `@font-face`
+// rule through `style.setProperty()` is masked like any other URL.
+function sanitizeStylesheetData(data: Record<string, unknown>): Record<string, unknown> {
+  const maskRule = (value: unknown): unknown => replaceField(value, 'rule', maskStylesheet)
+  const next: Record<string, unknown> = {
+    adds: mapArray(data['adds'], maskRule),
+    replace: maskStylesheet(data['replace']),
+    replaceSync: maskStylesheet(data['replaceSync']),
+    set: maskDeclarationChange(data['set']),
+    styles: mapArray(data['styles'], (style) => replaceField(style, 'rules', (rules) => mapArray(rules, maskRule))),
+  }
+  let sanitized: Record<string, unknown> | undefined
+  for (const [key, value] of Object.entries(next)) {
+    if (value !== data[key]) {
+      sanitized ??= { ...data }
+      sanitized[key] = value
+    }
+  }
+  return sanitized ?? data
+}
+
+function maskDeclarationChange(set: unknown): unknown {
+  const property = typeof set === 'object' && set !== null ? (set as Record<string, unknown>)['property'] : undefined
+  return replaceField(set, 'value', (value) =>
+    typeof property === 'string' && typeof value === 'string' ? maskDeclaration(property, value) : maskStylesheet(value)
+  )
+}
+
+function replaceField(value: unknown, key: string, map: (field: unknown) => unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return value
+  }
+  const record = value as Record<string, unknown>
+  const field = map(record[key])
+  return field === record[key] ? value : { ...record, [key]: field }
+}
+
+function mapArray(value: unknown, map: (item: unknown) => unknown): unknown {
+  return Array.isArray(value) ? mapPreservingIdentity(value, map) : value
+}
+
+function mapPreservingIdentity(items: unknown[], map: (item: unknown) => unknown): unknown[] {
+  const mapped = items.map(map)
+  return mapped.some((item, index) => item !== items[index]) ? mapped : items
+}
+
+const MASKED_TEXT_PATTERN = /^[\s*]*$/u
 
 // Matches rrweb's text masking, which keeps whitespace so masked layout stays close to the original.
 function maskText(value: unknown): unknown {

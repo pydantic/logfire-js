@@ -85,9 +85,12 @@ later DOM changes. A masked image has the natural size of the image it
 replaces, including one that loads after it was recorded, so playback lays it
 out as the page did, and later size changes still apply. Inline styles that could reference a URL,
 such as a CSS background, are removed whole, even with `redactUrlPatterns: []`.
-Stylesheets, video and audio sources, `<object>`, and `<embed>` are not
-covered, so their URLs are recorded and load in playback; use `blockSelector`
-for them. Set `maskAllImages: false` to record image URLs while text stays
+In stylesheets, each image URL is replaced with the placeholder and the rest of
+the rule is kept. Stylesheets keep `@font-face` sources, `@import` and
+`@namespace` URLs, and `data:` URLs. A cross-origin stylesheet that the page
+cannot read is recorded as a link, so playback loads it with its image URLs.
+Video and audio sources, `<object>`, and `<embed>` are not covered, so their
+URLs are recorded and load in playback; use `blockSelector` for them. Set `maskAllImages: false` to record image URLs while text stays
 masked.
 
 Input masking also covers hidden inputs. Text masking also covers the

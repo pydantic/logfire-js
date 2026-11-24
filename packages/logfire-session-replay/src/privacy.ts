@@ -40,6 +40,26 @@ export function sameDocumentFragment(url: string, pageUrl: string): string | und
   }
 }
 
+/**
+ * The `#id` form of a stylesheet URL that names an element of the page at `pageUrl`. rrweb resolves
+ * `url(#blur)` in a `<style>` element as it resolves a relative path. So on the page
+ * `/app/live?tab=1` it records `/app/#blur`, without the page name and query.
+ */
+export function cssElementReference(url: string, pageUrl: string): string | undefined {
+  if (isElementIdReference(url)) {
+    return url
+  }
+  try {
+    const target = new URL(url, pageUrl)
+    const page = new URL(pageUrl)
+    const pageDirectory = page.pathname.slice(0, page.pathname.lastIndexOf('/') + 1)
+    const samePage = target.origin === page.origin && (target.pathname === page.pathname || target.pathname === pageDirectory)
+    return samePage && target.hash !== '' && isElementIdReference(target.hash) ? target.hash : undefined
+  } catch {
+    return undefined
+  }
+}
+
 // A failing transform keeps the built-in result, so a bug in it never restores a stripped query.
 function applyUrlTransform(url: string, transformUrl: UrlTransform): string {
   try {

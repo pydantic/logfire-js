@@ -12,6 +12,28 @@
         height: 30px;
       }
     </style>
+    <style id="stylesheet-text">
+      @font-face {
+        font-family: FixtureFont;
+        src: url('/fonts/fixture.woff2?font_kept=visible') format('woff2');
+      }
+      .snapshot-style-image {
+        background-image: url('/api/image?css_snapshot_secret=visible');
+      }
+      .after-masked-rule {
+        color: rgb(1, 2, 3);
+        filter: url(#fixture-filter);
+      }
+      .inline-icon {
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E");
+      }
+    </style>
+    <style id="mutable-style">
+      .mutable-placeholder {
+        color: inherit;
+      }
+    </style>
+    <link rel="stylesheet" href="/private-styles.css" />
   </head>
   <body>
     <main>
@@ -30,6 +52,12 @@
         srcset="/api/image?srcset_secret=visible 1x"
         style="background-image: url('/api/image?style_secret=visible')"
       />
+      <p id="after-masked" class="snapshot-style-image after-masked-rule inline-icon linked-style-image">styled</p>
+      <p id="inserted-target" class="inserted-rule-image">inserted</p>
+      <p id="adopted-target">adopted</p>
+      <svg width="0" height="0">
+        <filter id="fixture-filter"><feGaussianBlur stdDeviation="0" /></filter>
+      </svg>
       <p id="status">starting</p>
     </main>
     <script type="module" src="/main.ts"></script>

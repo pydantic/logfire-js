@@ -3,7 +3,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { startRecording } from './recorder'
+import { MASKED_IMAGE_SOURCE, startRecording } from './recorder'
 import { EventType, IncrementalSource } from './types'
 import type { RrwebEvent } from './types'
 
@@ -291,6 +291,121 @@ describe('image masking with rrweb', () => {
           event.data.source === IncrementalSource.Mutation
       )
     ).toBe(true)
+    expect(collectStrings(events).filter((text) => text.includes('/users/jane'))).toEqual([])
+  })
+
+  // jsdom drops `@font-face` sources and has no constructable stylesheets, so the browser privacy
+  // test covers those paths.
+  it('uploads no stylesheet image URL from inlined rules, added styles, or CSSOM changes', async () => {
+    document.head.innerHTML = '<style>.a{background:url(/users/jane/snapshot.png)}</style>'
+    const events: RrwebEvent[] = []
+    const recorder = startRecording({
+      emit: (event) => {
+        events.push(event)
+      },
+      maskAllImages: true,
+      maskAllInputs: true,
+      maskAllText: true,
+      redactUrlPatterns: [],
+    })
+    stopRecording = () => {
+      recorder.stop()
+      document.head.replaceChildren()
+    }
+
+    const added = document.createElement('style')
+    added.textContent = '.b{background:url(/users/jane/added.png)}'
+    document.head.append(added)
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    added.sheet?.insertRule('.c{background:url(/users/jane/rule.png)}', 0)
+    const rule = added.sheet?.cssRules[0]
+    if (!(rule instanceof CSSStyleRule)) {
+      throw new Error('expected the inserted style rule')
+    }
+    rule.style.setProperty('background', 'url(/users/jane/declaration.png)')
+
+    const placeholder = `url(${JSON.stringify(MASKED_IMAGE_SOURCE)})`
+    const sourcesWithPlaceholder = events
+      .filter((event) => collectStrings(event.data).some((text) => text.includes(placeholder)))
+      .map((event) => (event.type === EventType.FullSnapshot ? 'snapshot' : (event.data as { source?: unknown }).source))
+    expect(sourcesWithPlaceholder).toEqual([
+      'snapshot',
+      IncrementalSource.Mutation,
+      IncrementalSource.StyleSheetRule,
+      IncrementalSource.StyleDeclaration,
+    ])
+    expect(collectStrings(events).filter((text) => text.includes('/users/jane'))).toEqual([])
+  })
+
+  it('records a stylesheet reference to an element of the page as its id', () => {
+    window.history.replaceState(null, '', '/org/live?token=secret')
+    document.head.innerHTML = '<style id="filters">.a{filter:url(#blur)}.b{mask:url(/org/#icon)}</style>'
+    const events: RrwebEvent[] = []
+    const recorder = startRecording({
+      emit: (event) => {
+        events.push(event)
+      },
+      maskAllImages: true,
+      maskAllInputs: true,
+      maskAllText: true,
+      redactUrlPatterns: [],
+    })
+    stopRecording = () => {
+      recorder.stop()
+      document.head.replaceChildren()
+      window.history.replaceState(null, '', '/')
+    }
+
+    const snapshot = events.find((event) => event.type === EventType.FullSnapshot)
+    expect(attributesOf(snapshot?.data, 'filters')).toEqual({
+      id: 'filters',
+      _cssText: '.a { filter: url("#blur"); }.b { mask: url("#icon"); }',
+    })
+  })
+
+  it('masks a URL that starts in one text node of a style and ends in the next', async () => {
+    document.head.innerHTML = '<style id="split"></style>'
+    const events: RrwebEvent[] = []
+    const recorder = startRecording({
+      emit: (event) => {
+        events.push(event)
+      },
+      maskAllImages: true,
+      maskAllInputs: true,
+      maskAllText: true,
+      redactUrlPatterns: [],
+    })
+    stopRecording = () => {
+      recorder.stop()
+      document.head.replaceChildren()
+    }
+
+    const style = document.getElementById('split')
+    style?.append(
+      document.createTextNode('.a{color:red}.b{background-image:ur'),
+      document.createTextNode('l(/users/jane/split.png)}'),
+      document.createTextNode('.c{color:blue;background-image:url(/users/jane/whole.png)}')
+    )
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0)
+    })
+
+    expect(style?.textContent).toBe(
+      '.a{color:red}.b{background-image:url(/users/jane/split.png)}.c{color:blue;background-image:url(/users/jane/whole.png)}'
+    )
+    const addedTexts = events
+      .flatMap((event) =>
+        event.type === EventType.IncrementalSnapshot && (event.data as { source?: unknown }).source === IncrementalSource.Mutation
+          ? ((event.data as { adds?: { node: { textContent?: unknown } }[] }).adds ?? [])
+          : []
+      )
+      .map((add) => add.node.textContent)
+    // The text node where the split URL starts holds the placeholder, and the next one leaves out the
+    // rest of the URL. rrweb emits added nodes last first.
+    const placeholder = `url(${JSON.stringify(MASKED_IMAGE_SOURCE)})`
+    expect(addedTexts).toEqual([`.c{color:blue;background-image:${placeholder}}`, '}', `.a{color:red}.b{background-image:${placeholder}`])
     expect(collectStrings(events).filter((text) => text.includes('/users/jane'))).toEqual([])
   })
 })

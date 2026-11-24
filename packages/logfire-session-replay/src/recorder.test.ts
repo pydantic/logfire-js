@@ -348,6 +348,254 @@ describe('image masking', () => {
   })
 })
 
+describe('stylesheet image masking', () => {
+  const placeholderUrl = `url(${JSON.stringify(MASKED_IMAGE_SOURCE)})`
+
+  function record(maskAllImages: boolean, events: RrwebEvent[]): RrwebEvent[] {
+    const emitted: RrwebEvent[] = []
+    startRecordingForTest({ emit: (event) => emitted.push(event), maskAllImages })
+    for (const event of events) {
+      emitFromRrweb(event)
+    }
+    return emitted
+  }
+
+  function textIn(parentTag: string, id: number): void {
+    const parent = document.createElement(parentTag)
+    const text = document.createTextNode('')
+    parent.append(text)
+    mirrorNodes.set(id, text)
+  }
+
+  function incremental(source: number, data: Record<string, unknown>): RrwebEvent {
+    return { type: EventType.IncrementalSnapshot, timestamp: 1, data: { source, ...data } }
+  }
+
+  it('masks image URLs in inlined stylesheet text and keeps font sources', () => {
+    const css = '@font-face{src:url(/font.woff2)}.a{background:url(/avatar.png)}'
+    const snapshot = {
+      type: EventType.FullSnapshot,
+      data: { node: element('style', { _cssText: css }, { id: 1 }) },
+      timestamp: 1,
+    } satisfies RrwebEvent
+    const mutation = incremental(IncrementalSource.Mutation, {
+      texts: [],
+      removes: [],
+      adds: [],
+      attributes: [{ id: 2, attributes: { _cssText: css } }],
+    })
+
+    const [maskedSnapshot, maskedMutation] = record(true, [snapshot, mutation])
+    const [unmasked] = record(false, [snapshot])
+
+    const maskedCss = `@font-face{src:url(/font.woff2)}.a{background:${placeholderUrl}}`
+    expect(maskedSnapshot).toEqual({ ...snapshot, data: { node: element('style', { _cssText: maskedCss }, { id: 1 }) } })
+    expect(maskedMutation).toEqual(
+      incremental(IncrementalSource.Mutation, {
+        texts: [],
+        removes: [],
+        adds: [],
+        attributes: [{ id: 2, attributes: { _cssText: maskedCss } }],
+      })
+    )
+    expect(unmasked).toBe(snapshot)
+  })
+
+  it('masks style text in snapshots, added nodes, and text mutations, and keeps other text', () => {
+    textIn('style', 2)
+    textIn('p', 3)
+    textIn('style', 4)
+    const css = '.a{background:url(/a.png)}'
+    const snapshot = {
+      type: EventType.FullSnapshot,
+      data: {
+        node: element(
+          'div',
+          {},
+          {
+            id: 1,
+            childNodes: [
+              { type: 3, id: 2, textContent: css },
+              { type: 3, id: 3, textContent: css },
+            ],
+          }
+        ),
+      },
+      timestamp: 1,
+    } satisfies RrwebEvent
+    const mutation = incremental(IncrementalSource.Mutation, {
+      texts: [
+        { id: 2, value: css },
+        { id: 3, value: css },
+      ],
+      removes: [],
+      adds: [{ parentId: 5, nextId: null, node: { type: 3, id: 4, textContent: css } }],
+      attributes: [],
+    })
+
+    const [maskedSnapshot, maskedMutation] = record(true, [snapshot, mutation])
+
+    const maskedCss = `.a{background:${placeholderUrl}}`
+    expect(maskedSnapshot).toEqual({
+      ...snapshot,
+      data: {
+        node: element(
+          'div',
+          {},
+          {
+            id: 1,
+            childNodes: [
+              { type: 3, id: 2, textContent: maskedCss },
+              { type: 3, id: 3, textContent: css },
+            ],
+          }
+        ),
+      },
+    })
+    expect(maskedMutation).toEqual(
+      incremental(IncrementalSource.Mutation, {
+        texts: [
+          { id: 2, value: maskedCss },
+          { id: 3, value: css },
+        ],
+        removes: [],
+        adds: [{ parentId: 5, nextId: null, node: { type: 3, id: 4, textContent: maskedCss } }],
+        attributes: [],
+      })
+    )
+  })
+
+  it('masks text that rrweb no longer maps, because it may be stylesheet text', () => {
+    const mutation = incremental(IncrementalSource.Mutation, {
+      texts: [{ id: 9, value: '.a{background:url(/a.png)}' }],
+      removes: [],
+      adds: [],
+      attributes: [],
+    })
+
+    const [masked] = record(true, [mutation])
+
+    expect(masked).toEqual(
+      incremental(IncrementalSource.Mutation, {
+        texts: [{ id: 9, value: `.a{background:${placeholderUrl}}` }],
+        removes: [],
+        adds: [],
+        attributes: [],
+      })
+    )
+  })
+
+  it('masks rules added through the CSSOM, declarations, and adopted stylesheets', () => {
+    const rule = '.a{background:url(/a.png)}'
+    const maskedRule = `.a{background:${placeholderUrl}}`
+    const events = [
+      incremental(IncrementalSource.StyleSheetRule, { id: 1, adds: [{ rule, index: 0 }], removes: [{ index: 1 }] }),
+      incremental(IncrementalSource.StyleSheetRule, { styleId: 1, replace: rule }),
+      incremental(IncrementalSource.StyleSheetRule, { styleId: 1, replaceSync: rule }),
+      incremental(IncrementalSource.StyleDeclaration, {
+        id: 1,
+        index: [0],
+        set: { property: 'background', value: 'url(/a.png)', priority: '' },
+      }),
+      incremental(IncrementalSource.AdoptedStyleSheet, { id: 1, styleIds: [1], styles: [{ styleId: 1, rules: [{ rule, index: 0 }] }] }),
+    ]
+
+    const masked = record(true, events)
+    const unmasked = record(false, events)
+
+    expect(masked).toEqual([
+      incremental(IncrementalSource.StyleSheetRule, { id: 1, adds: [{ rule: maskedRule, index: 0 }], removes: [{ index: 1 }] }),
+      incremental(IncrementalSource.StyleSheetRule, { styleId: 1, replace: maskedRule }),
+      incremental(IncrementalSource.StyleSheetRule, { styleId: 1, replaceSync: maskedRule }),
+      incremental(IncrementalSource.StyleDeclaration, {
+        id: 1,
+        index: [0],
+        set: { property: 'background', value: placeholderUrl, priority: '' },
+      }),
+      incremental(IncrementalSource.AdoptedStyleSheet, {
+        id: 1,
+        styleIds: [1],
+        styles: [{ styleId: 1, rules: [{ rule: maskedRule, index: 0 }] }],
+      }),
+    ])
+    expect(unmasked).toEqual(events)
+    expect(unmasked.every((event, index) => event === events[index])).toBe(true)
+  })
+
+  it('masks a URL split across the text nodes of a style in text mutations, and keeps masked text', () => {
+    const style = document.createElement('style')
+    const first = document.createTextNode('.a{background:ur')
+    const second = document.createTextNode('l(/a.png)}')
+    style.append(first, second)
+    mirrorNodes.set(2, first)
+    mirrorNodes.set(3, second)
+    const mutation = (texts: { id: number; value: string }[]) =>
+      incremental(IncrementalSource.Mutation, { texts, removes: [], adds: [], attributes: [] })
+
+    const [split, masked] = record(true, [
+      mutation([
+        { id: 2, value: '.a{background:ur' },
+        { id: 3, value: 'l(/a.png)}' },
+      ]),
+      mutation([{ id: 3, value: '**********' }]),
+    ])
+
+    expect(split).toEqual(
+      mutation([
+        { id: 2, value: `.a{background:${placeholderUrl}` },
+        { id: 3, value: '}' },
+      ])
+    )
+    expect(masked).toEqual(mutation([{ id: 3, value: '**********' }]))
+  })
+
+  it('removes inline styles and masks declaration changes that set a URL-like custom property', () => {
+    const snapshot = {
+      type: EventType.FullSnapshot,
+      data: { node: element('div', { style: '--avatar: "/a.png"; color: red' }, { id: 1 }) },
+      timestamp: 1,
+    } satisfies RrwebEvent
+    const attributeMutation = incremental(IncrementalSource.Mutation, {
+      texts: [],
+      removes: [],
+      adds: [],
+      attributes: [{ id: 1, attributes: { style: { '--avatar': '"/b.png"', color: 'red' } } }],
+    })
+    const declaration = incremental(IncrementalSource.StyleDeclaration, {
+      id: 1,
+      index: [0],
+      set: { property: '--avatar', value: '"/c.png"', priority: '' },
+    })
+
+    const [maskedSnapshot, maskedAttributes, maskedDeclaration] = record(true, [snapshot, attributeMutation, declaration])
+
+    expect(maskedSnapshot).toEqual({ ...snapshot, data: { node: element('div', { style: '' }, { id: 1 }) } })
+    expect(maskedAttributes).toEqual(
+      incremental(IncrementalSource.Mutation, {
+        texts: [],
+        removes: [],
+        adds: [],
+        attributes: [{ id: 1, attributes: { style: { '--avatar': '', color: 'red' } } }],
+      })
+    )
+    expect(maskedDeclaration).toEqual(
+      incremental(IncrementalSource.StyleDeclaration, {
+        id: 1,
+        index: [0],
+        set: { property: '--avatar', value: JSON.stringify(MASKED_IMAGE_SOURCE), priority: '' },
+      })
+    )
+  })
+
+  it('returns stylesheet events unchanged when they hold no image URL', () => {
+    const event = incremental(IncrementalSource.StyleSheetRule, { id: 1, adds: [{ rule: '.a{color:red}', index: 0 }] })
+
+    const [emitted] = record(true, [event])
+
+    expect(emitted).toBe(event)
+  })
+})
+
 describe('startRecording', () => {
   it('passes conservative privacy and performance options to rrweb', () => {
     startRecordingForTest({ emit: () => {}, maskAllInputs: true, maskAllText: true })

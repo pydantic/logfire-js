@@ -23,8 +23,11 @@ export const IncrementalSource = {
   Input: 5,
   TouchMove: 6,
   MediaInteraction: 7,
+  StyleSheetRule: 8,
   Drag: 12,
+  StyleDeclaration: 13,
   Selection: 14,
+  AdoptedStyleSheet: 15,
 } as const
 
 export const MouseInteractions = {
@@ -159,9 +162,10 @@ export interface SessionReplayConfig {
   /**
    * Replace image sources with a gray placeholder before upload, so playback loads no recorded
    * image. Covers `img` and `input type="image"` sources, `srcset`, `<picture>` sources, SVG
-   * `<image>` links, video posters, `background` attributes, image preload links, and inline styles
-   * that could reference a URL. Stylesheets, video and audio sources, `<object>`, and `<embed>` are
-   * not covered. Defaults to the value of `maskAllText`.
+   * `<image>` links, video posters, `background` attributes, image preload links, inline styles
+   * that could reference a URL, and image URLs in readable stylesheets. Stylesheets keep
+   * `@font-face` sources, `@import` and `@namespace` URLs, and `data:` URLs. Video and audio
+   * sources, `<object>`, and `<embed>` are not covered. Defaults to the value of `maskAllText`.
    */
   maskAllImages?: boolean
   maskTextSelector?: string

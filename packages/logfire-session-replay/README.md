@@ -343,11 +343,32 @@ placeholders are always the 1x1 PNG; an SVG `<image>` is sized by its own
 `width` and `height` attributes.
 
 With `maskAllImages`, an inline `style` that could reference a URL is removed
-whole, as described below, even with `redactUrlPatterns: []`. Not covered:
-stylesheets (including `<style>` elements), `<video>`, `<audio>`, and `<source>`
-`src`, `<object>`, and `<embed>`; block them with `blockSelector` when their
-URLs are private. Set `maskAllImages: false` to keep image URLs (still subject
-to `redactUrlPatterns`) while text stays masked.
+whole, as described below, even with `redactUrlPatterns: []`.
+
+In stylesheets, the recorder replaces each image URL with the gray PNG
+placeholder and keeps the rest of the rule, so its other declarations still
+apply in playback. An image URL is a `url()` value, or a string in
+`image-set()` or `src()`. This covers `<style>` elements, linked stylesheets
+that rrweb can read and inline, and rules that a script changes through the
+CSSOM: `insertRule()`, `replace()`, `replaceSync()`, `style.setProperty()`,
+and adopted stylesheets. Stylesheets keep `@font-face` sources and `@import`
+and `@namespace` URLs, which load no image, and `data:` URLs, which load
+nothing from the network. A reference to an element of the page, such as
+`url(#blur)`, is recorded as `#blur`. In a linked stylesheet, rrweb resolves
+such a reference against the stylesheet address, so the recorder masks it. A
+comment that could hold a URL is emptied. The recorder reads the text nodes of one
+`<style>` element as one stylesheet, so an image URL split across two text
+nodes is still replaced. A linked stylesheet that rrweb cannot
+read, such as a cross-origin one without CORS, stays a link to its address,
+and playback loads it with its image URLs. A string that a custom property holds, such as `--avatar: "/a.png"`,
+can become an image URL through `var()` in a rule that the recorder does not
+see. So a custom property string that looks like a URL, a path, or an image
+file name is masked, in stylesheets and in inline styles.
+
+Not covered: `<video>`, `<audio>`, and `<source>` `src`, `<object>`, and
+`<embed>`; block them with `blockSelector` when their URLs are private. Set
+`maskAllImages: false` to keep image URLs (still subject to
+`redactUrlPatterns`) while text stays masked.
 
 Paths can also carry private values, such as reset tokens or email addresses.
 Use `transformUrl` to rewrite them. It runs after `redactUrlPatterns` on page

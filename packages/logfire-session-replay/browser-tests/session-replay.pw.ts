@@ -508,7 +508,7 @@ test.describe('session replay delivery', () => {
 })
 
 test.describe('session replay privacy', () => {
-  for (const scenario of ['default', 'opt-in'] as const) {
+  for (const scenario of ['default', 'images-only', 'opt-in'] as const) {
     test(scenario, async ({ page }, testInfo) => {
       const secret = `${scenario}-page-secret`
       await page.goto(`http://127.0.0.1:4178/${scenario}/?page_secret=${secret}#${scenario}-fragment-secret`)
@@ -519,20 +519,7 @@ test.describe('session replay privacy', () => {
   }
 
   test('masked images keep their recorded size in playback', async ({ page, context, request }) => {
-    await page.goto('http://127.0.0.1:4178/default/')
-    await expect(page.locator('#status')).toHaveText('complete')
-    const response = await request.get('http://127.0.0.1:4178/receipts')
-    const { receipts } = parseRecord(await response.text(), 'privacy receipts') as { receipts: unknown[] }
-    const envelopes = receipts
-      .filter((receipt) => isRecord(receipt) && receipt['kind'] === 'replay' && typeof receipt['body'] === 'string')
-      .map((receipt) =>
-        parseRecord(gunzipSync(Buffer.from(String((receipt as Record<string, unknown>)['body']), 'base64')).toString('utf8'), 'envelope')
-      )
-      .sort(
-        (left, right) =>
-          Number((left['meta'] as Record<string, unknown>)['seq']) - Number((right['meta'] as Record<string, unknown>)['seq'])
-      )
-    const events = envelopes.flatMap((envelope) => (Array.isArray(envelope['events']) ? (envelope['events'] as unknown[]) : []))
+    const events = await recordDefaultPrivacyPage(page, request)
     const playback = await context.newPage()
     try {
       await playback.goto('http://127.0.0.1:4177/playback.html')
@@ -557,7 +544,50 @@ test.describe('session replay privacy', () => {
       await playback.close()
     }
   })
+
+  // A masked rule that playback could not parse would drop its other declarations, and would shift
+  // the index of each rule that a later CSSOM change names.
+  test('masked stylesheet rules still apply in playback', async ({ page, context, request }) => {
+    const events = await recordDefaultPrivacyPage(page, request)
+    const playback = await context.newPage()
+    try {
+      await playback.goto('http://127.0.0.1:4177/playback.html')
+      await playback.evaluate(async (recordedEvents) => window.logfireReplayPlayback.load(recordedEvents), events)
+      const frame = playback.frameLocator('iframe')
+      const placeholder = 'url("data:image/png;base64,'
+      for (const [selector, color, maskedBackground] of [
+        ['#after-masked', 'rgb(1, 2, 3)', true],
+        ['#inserted-target', 'rgb(7, 8, 9)', true],
+        ['#adopted-target', 'rgb(4, 5, 6)', false],
+      ] as const) {
+        // eslint-disable-next-line no-await-in-loop -- each element is measured on the same played-back page.
+        const rendered = await frame.locator(selector).evaluate((element) => {
+          const style = getComputedStyle(element)
+          return { backgroundImage: style.backgroundImage.slice(0, 27), color: style.color }
+        })
+        expect(rendered).toEqual({ backgroundImage: maskedBackground ? placeholder : 'none', color })
+      }
+    } finally {
+      await playback.close()
+    }
+  })
 })
+
+async function recordDefaultPrivacyPage(page: Page, request: APIRequestContext): Promise<unknown[]> {
+  await page.goto('http://127.0.0.1:4178/default/')
+  await expect(page.locator('#status')).toHaveText('complete')
+  const response = await request.get('http://127.0.0.1:4178/receipts')
+  const { receipts } = parseRecord(await response.text(), 'privacy receipts') as { receipts: unknown[] }
+  const envelopes = receipts
+    .filter((receipt) => isRecord(receipt) && receipt['kind'] === 'replay' && typeof receipt['body'] === 'string')
+    .map((receipt) =>
+      parseRecord(gunzipSync(Buffer.from(String((receipt as Record<string, unknown>)['body']), 'base64')).toString('utf8'), 'envelope')
+    )
+    .sort(
+      (left, right) => Number((left['meta'] as Record<string, unknown>)['seq']) - Number((right['meta'] as Record<string, unknown>)['seq'])
+    )
+  return envelopes.flatMap((envelope) => (Array.isArray(envelope['events']) ? (envelope['events'] as unknown[]) : []))
+}
 
 function replayEvents(serializedEvidence: string): unknown[] {
   const evidence = parseRecord(serializedEvidence, 'delivery evidence')
