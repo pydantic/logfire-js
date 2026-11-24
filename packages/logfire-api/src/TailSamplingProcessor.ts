@@ -120,6 +120,7 @@ export class TailSamplingProcessor implements SpanProcessor {
 
     if (entry === undefined) {
       this.wrapped.onEnd(span)
+      this.deferredProcessor?.onEnd(span)
       return
     }
 
@@ -191,8 +192,11 @@ export class TailSamplingProcessor implements SpanProcessor {
       return
     }
 
-    // No buffer and not root — trace started before this processor was active
+    // No buffer and not root: a trace continued from a remote parent, a late span of a kept trace,
+    // or a trace started before this processor was active. It is exported unconditionally, so it
+    // gets its pending span too, as a span in a flushed trace does.
     this.wrapped.onStart(span, parentContext)
+    this.deferredProcessor?.onStart(span, parentContext)
   }
 
   async shutdown(): Promise<void> {
