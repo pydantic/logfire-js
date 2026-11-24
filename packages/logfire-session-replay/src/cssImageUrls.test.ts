@@ -35,6 +35,21 @@ describe('maskCssImageUrls', () => {
     expect(mask('.a{background:src("a.png")}')).toBe('.a{background:src("MASKED")}')
   })
 
+  it('replaces string URLs in the fallback of var(), env(), and attr()', () => {
+    expect(mask('.a{background:image-set(var(--avatar, "/avatar?token=secret") 1x)}')).toBe(
+      '.a{background:image-set(var(--avatar, "MASKED") 1x)}'
+    )
+    expect(mask('.a{background:image-set(env(x, var(--y, "a.png")) 1x)}')).toBe('.a{background:image-set(env(x, var(--y, "MASKED")) 1x)}')
+    expect(mask('.a{background:image-set(attr(data-x, "a.png") 1x)}')).toBe('.a{background:image-set(attr(data-x, "MASKED") 1x)}')
+    expect(mask('.a{content:var(--label, "a.png")}')).toBe('.a{content:var(--label, "a.png")}')
+  })
+
+  it('treats a URL with Unicode space before data: as a path, not a data URL', () => {
+    expect(mask('.a{background:image-set("\\a0 data:/avatar?token=secret" 1x)}')).toBe('.a{background:image-set("MASKED" 1x)}')
+    expect(mask('.a{background:url(\\a0 data:/avatar?token=secret)}')).toBe(`.a{background:${masked}}`)
+    expect(mask('.a{background:url( data:image/png;base64,AA== )}')).toBe('.a{background:url( data:image/png;base64,AA== )}')
+  })
+
   it('keeps strings that do not load a URL', () => {
     const css = '.a{content:"url(a.png)";font-family:"image-set(x)"}'
     expect(mask(css)).toBe(css)

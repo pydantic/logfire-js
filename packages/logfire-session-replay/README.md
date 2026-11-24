@@ -358,7 +358,9 @@ nothing from the network. A reference to an element of the page, such as
 such a reference against the stylesheet address, so the recorder masks it. A
 comment that could hold a URL is emptied. A linked stylesheet that rrweb cannot
 read, such as a cross-origin one without CORS, stays a link to its address,
-and playback loads it with its image URLs.
+and playback loads it with its image URLs. A string that a custom property holds,
+such as `--avatar: "/a.png"`, is kept, because the recorder cannot tell that
+an `image-set(var(--avatar) 1x)` elsewhere uses it as a URL.
 
 Not covered: `<video>`, `<audio>`, and `<source>` `src`, `<object>`, and
 `<embed>`; block them with `blockSelector` when their URLs are private. Set

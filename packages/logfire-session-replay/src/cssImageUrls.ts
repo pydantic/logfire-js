@@ -2,6 +2,9 @@ import { mayReferenceCssUrl } from './privacy'
 
 // Functions whose string arguments are image URLs, as `url()` is. `src()` also takes a string.
 const STRING_URL_FUNCTIONS = new Set(['-webkit-image-set', 'image-set', 'src'])
+// The browser puts the fallback of these functions in their place, so a string in a fallback is an
+// argument of the function around them.
+const SUBSTITUTION_FUNCTIONS = new Set(['attr', 'env', 'var'])
 const FONT_FACE_PRELUDE_PATTERN = /^\s*@font-face\s*$/iu
 // `@import` and `@namespace` load a stylesheet or name a namespace. Neither loads an image.
 const NON_IMAGE_AT_RULE_PATTERN = /^\s*@(?:import|namespace)(?![\w-])/iu
@@ -99,6 +102,16 @@ class CssImageUrlScanner {
     }
   }
 
+  private enclosingFunction(): string | undefined {
+    for (let index = this.functions.length - 1; index >= 0; index--) {
+      const name = this.functions[index] ?? ''
+      if (!SUBSTITUTION_FUNCTIONS.has(name)) {
+        return name
+      }
+    }
+    return undefined
+  }
+
   private startStatement(position: number): void {
     this.statementStart = position
     this.declarationName = undefined
@@ -122,7 +135,7 @@ class CssImageUrlScanner {
   private scanString(): void {
     const start = this.position
     const value = this.consumeString()
-    const enclosing = this.functions.at(-1)
+    const enclosing = this.enclosingFunction()
     if (enclosing === undefined || !STRING_URL_FUNCTIONS.has(enclosing)) {
       return
     }
@@ -164,7 +177,7 @@ class CssImageUrlScanner {
       terminated = string.terminated && this.skipToClosingParenthesis(urlComments)
     } else {
       const unquoted = this.consumeUnquotedUrl()
-      value = unquoted.text.trim()
+      value = trimCssWhitespace(unquoted.text)
       terminated = unquoted.terminated
     }
     const kept = this.keptUrl(value, terminated)
@@ -183,7 +196,7 @@ class CssImageUrlScanner {
     if (!terminated) {
       return undefined
     }
-    if (DATA_URL_PATTERN.test(value.trim())) {
+    if (DATA_URL_PATTERN.test(trimUrlWhitespace(value))) {
       return value
     }
     const reference = this.elementReference(value)
@@ -365,6 +378,34 @@ function isNameStart(char: string): boolean {
 function isNameChar(char: string): boolean {
   const code = char.charCodeAt(0)
   return isNameStart(char) || (code >= 0x30 && code <= 0x39) || code === 0x2d
+}
+
+// CSS removes only its own whitespace around an unquoted URL. `String.prototype.trim()` also
+// removes Unicode spaces such as U+00A0, which are part of the URL.
+function trimCssWhitespace(text: string): string {
+  let start = 0
+  let end = text.length
+  while (start < end && WHITESPACE_PATTERN.test(text[start] ?? '')) {
+    start++
+  }
+  while (end > start && WHITESPACE_PATTERN.test(text[end - 1] ?? '')) {
+    end--
+  }
+  return text.slice(start, end)
+}
+
+// The URL parser removes C0 controls and spaces around a URL, and nothing else. So `\a0 data:` is a
+// relative path, not a `data:` URL.
+function trimUrlWhitespace(text: string): string {
+  let start = 0
+  let end = text.length
+  while (start < end && text.charCodeAt(start) <= 0x20) {
+    start++
+  }
+  while (end > start && text.charCodeAt(end - 1) <= 0x20) {
+    end--
+  }
+  return text.slice(start, end)
 }
 
 function isNewline(char: string | undefined): boolean {
