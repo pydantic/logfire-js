@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import type { ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
+import type { StandardSchemaV1 } from '@standard-schema/spec'
 import { context, propagation, trace, TraceFlags } from '@opentelemetry/api'
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { defineVar, getVariableProvider, variablesBuildConfig, variablesClear } from 'logfire/vars'
@@ -10,6 +11,7 @@ import type { VariableConfig, LocalVariableProvider } from 'logfire/vars'
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vite-plus/test'
 
 import { defineFlag, withFeatureContext } from '../featureFlags'
+import type { Flag, FlagDetails } from '../featureFlags'
 import { configure, shutdown, span } from '../index'
 
 const base = { console: false as const, metrics: false as const, sendToLogfire: false }
@@ -48,6 +50,48 @@ describe('experimental feature flags', () => {
     vi.restoreAllMocks()
     await shutdown()
     variablesClear()
+  })
+
+  it('infers transformed outputs from the schema and checks defaults and overrides against its input', async () => {
+    const schema: StandardSchemaV1<string, { length: number }> = {
+      '~standard': {
+        version: 1,
+        vendor: 'test',
+        validate: (input) =>
+          typeof input === 'string' ? { value: { length: input.length } } : { issues: [{ message: 'Expected string' }] },
+      },
+    }
+    const options = { default: 'blue', schema }
+    const flag = defineFlag('transformed', options)
+    expectTypeOf(flag).toEqualTypeOf<Flag<{ length: number }, string>>()
+    expect(await flag.value()).toEqual({ length: 4 })
+    expect(await flag.override('yellow', async () => flag.value())).toEqual({ length: 6 })
+
+    expectTypeOf(() => {
+      const invalid = { default: 42, schema }
+      // @ts-expect-error Passing options through a variable must still reject an invalid default.
+      return defineFlag('invalid', invalid)
+    }).toBeFunction()
+    expectTypeOf(() => {
+      // @ts-expect-error Overrides accept schema inputs, not transformed outputs.
+      flag.override({ length: 9 }, () => undefined)
+    }).toBeFunction()
+  })
+
+  it('keeps primitive overrides type-safe and narrows error details', () => {
+    const flag = defineFlag('primitive', { default: 'blue' })
+    expectTypeOf(flag).toEqualTypeOf<Flag<string>>()
+    expectTypeOf((): Flag<string | number> => {
+      // @ts-expect-error A string-only flag cannot accept numeric overrides.
+      return flag
+    }).toBeFunction()
+    expectTypeOf((result: FlagDetails<string>) => {
+      if (result.reason === 'error') {
+        expectTypeOf(result.errorCode).toEqualTypeOf<NonNullable<FlagDetails<string>['errorCode']>>()
+      } else {
+        expectTypeOf(result.errorCode).toEqualTypeOf<undefined>()
+      }
+    }).toBeFunction()
   })
 
   // The Python column was generated with Python's Random(repr(name) + ':' + repr(key)).

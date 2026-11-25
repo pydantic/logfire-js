@@ -21,7 +21,7 @@ export interface Flag<T, Input = T> {
   readonly description: string | undefined
   value(options?: FeatureContext): Promise<T>
   details(options?: FeatureContext): Promise<FlagDetails<T>>
-  override<R>(value: Input, callback: () => R): R
+  readonly override: <R>(value: Input, callback: () => R) => R
 }
 
 type Primitive = boolean | number | string
@@ -31,23 +31,26 @@ interface FlagOptions<Input> {
   description?: string
 }
 
-interface TypedFlagOptions<Input, Output> extends FlagOptions<Input> {
+type PrimitiveFlagOptions<T extends Primitive> = FlagOptions<T> & { schema?: never }
+
+interface TypedFlagOptions<Input, Output> extends FlagOptions<NoInfer<Input>> {
   schema: StandardSchemaV1<Input, Output> & {
     '~standard': Partial<Pick<StandardJSONSchemaV1<Input, Output>['~standard'], 'jsonSchema'>>
   }
 }
 
-export function defineFlag(name: string, options: FlagOptions<boolean>): Flag<boolean>
-export function defineFlag(name: string, options: FlagOptions<number>): Flag<number>
-export function defineFlag(name: string, options: FlagOptions<string>): Flag<string>
+export function defineFlag(name: string, options: PrimitiveFlagOptions<boolean>): Flag<boolean>
+export function defineFlag(name: string, options: PrimitiveFlagOptions<number>): Flag<number>
+export function defineFlag(name: string, options: PrimitiveFlagOptions<string>): Flag<string>
 export function defineFlag<Input, Output>(name: string, options: TypedFlagOptions<Input, Output>): Flag<Output, Input>
 export function defineFlag<Input, Output>(
   name: string,
-  options: FlagOptions<Primitive> | TypedFlagOptions<Input, Output>
-): Flag<Output | Primitive, Input | Primitive> {
-  const validate = 'schema' in options ? schemaValidator(options.schema) : primitiveValidator(options.default)
+  options: PrimitiveFlagOptions<Primitive> | TypedFlagOptions<Input, Output>
+): Flag<Output | Primitive, unknown> {
+  const schema = options.schema
+  const validate = schema === undefined ? primitiveValidator(options.default) : schemaValidator(schema)
   const defaultValue = validate(options.default)
-  const jsonSchema = 'schema' in options ? getJsonSchema(options.schema) : { type: typeof defaultValue }
+  const jsonSchema = schema === undefined ? { type: typeof defaultValue } : getJsonSchema(schema)
   const variable = registerFeatureFlag(name, {
     codec: { parse: validate, ...(jsonSchema === undefined ? {} : { jsonSchema }) },
     default: defaultValue,
@@ -99,7 +102,7 @@ export function defineFlag<Input, Output>(
   }
 }
 
-function primitiveValidator(defaultValue: Primitive): (value: unknown) => Primitive {
+function primitiveValidator(defaultValue: unknown): (value: unknown) => Primitive {
   const type = typeof defaultValue
   if (type !== 'boolean' && type !== 'number' && type !== 'string') {
     throw new TypeError('Structured feature flags require a schema')

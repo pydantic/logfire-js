@@ -1,16 +1,22 @@
 import type { FlagProviderState, ResolvedVariable } from 'logfire/vars'
 
-export interface FlagDetails<T> {
+type FlagErrorCode = 'flag_not_found' | 'general' | 'provider_not_ready' | 'targeting_key_missing' | 'type_mismatch'
+
+export type FlagDetails<T> = {
   flagKey: string
   value: T
-  reason: 'context_override' | 'default' | 'error' | 'split' | 'stale' | 'static' | 'targeting_match'
-  variant?: string
-  errorCode?: 'flag_not_found' | 'general' | 'provider_not_ready' | 'targeting_key_missing' | 'type_mismatch'
-  valueVersion?: number
-}
+} & (
+  | { reason: 'error'; errorCode: FlagErrorCode; variant?: never; valueVersion?: never }
+  | {
+      reason: 'context_override' | 'default' | 'split' | 'stale' | 'static' | 'targeting_match'
+      errorCode?: never
+      variant?: string
+      valueVersion?: number
+    }
+)
 
 export function toFlagDetails<T>(result: ResolvedVariable<T>, state: FlagProviderState): FlagDetails<T> {
-  const details: FlagDetails<T> = { flagKey: result.name, reason: 'default', value: structuredClone(result.value) }
+  const details = { flagKey: result.name, value: structuredClone(result.value) }
   if (result.reason === 'context_override') {
     return { ...details, reason: 'context_override' }
   }
@@ -18,21 +24,15 @@ export function toFlagDetails<T>(result: ResolvedVariable<T>, state: FlagProvide
   if (errorCode !== undefined) {
     return { ...details, reason: 'error', errorCode }
   }
-  if (state === 'stale') {
-    details.reason = 'stale'
-  } else if (result.reason === 'resolved') {
-    details.reason = result.ruleReason ?? 'static'
+  return {
+    ...details,
+    reason: state === 'stale' ? 'stale' : result.reason === 'resolved' ? (result.ruleReason ?? 'static') : 'default',
+    ...(result.label === undefined ? {} : { variant: result.label }),
+    ...(result.version === undefined ? {} : { valueVersion: result.version }),
   }
-  if (result.label !== undefined) {
-    details.variant = result.label
-  }
-  if (result.version !== undefined) {
-    details.valueVersion = result.version
-  }
-  return details
 }
 
-function errorForResolution(result: ResolvedVariable<unknown>, state: FlagProviderState): FlagDetails<unknown>['errorCode'] {
+function errorForResolution(result: ResolvedVariable<unknown>, state: FlagProviderState): FlagErrorCode | undefined {
   if (state === 'not_ready') {
     return 'provider_not_ready'
   }

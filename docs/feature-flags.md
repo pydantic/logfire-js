@@ -24,6 +24,8 @@ await shutdown()
 
 To read remote configuration, create a project API key with the `project:read_variables` scope in **Project → Settings → API Keys**. Set `LOGFIRE_API_KEY` and remove `variables: false`. The SDK keeps a configuration snapshot in memory and updates it in the background. Evaluations use that snapshot after the first load. Enable telemetry with a write token from the same project if you also want to record decisions.
 
+The first evaluation can wait for the initial configuration request. To serve the code default immediately while that request runs, configure `variables: { blockBeforeFirstResolve: false }`. For remote variables, `timeoutMs` defaults to 10,000 ms.
+
 `details()` returns the value, the reason, and any variant, value version, or error code. A selected variant can use the code default and still count as an assignment to that variant. An invalid configured value returns the code default and reports an error. A failed refresh after a successful load can still serve the cached value with reason `stale`.
 
 With telemetry enabled, Logfire records a `feature_flag.evaluation` span. A first-use declaration includes the available input schema and, for boolean flags, the code default. Schema defaults and examples are omitted. Keep flag names, descriptions, and schema constraints such as enum values safe to share. To start a rollout, create the flag and publish a value in Logfire.
@@ -48,7 +50,7 @@ const policy = await assistantPolicy.value()
 console.log(policy.maxDocuments)
 ```
 
-The SDK validates the default and overrides when you supply them. Schema validation can transform the input into a different JSON value. Return plain objects, arrays, strings, finite numbers, booleans, or `null`. Configured references resolve from the same snapshot before validation. Defaults and overrides are literal values.
+The default and overrides take the schema's input type. `value()` and `details()` return the validated output, which can differ when the schema transforms its input. Return plain objects, arrays, strings, finite numbers, booleans, or `null`. Configured references resolve from the same snapshot before validation. Defaults and overrides are literal values.
 
 ## Set targeting for one request
 
