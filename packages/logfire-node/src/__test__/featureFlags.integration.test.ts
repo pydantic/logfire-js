@@ -5,8 +5,8 @@ import type { AddressInfo } from 'node:net'
 
 import { context, propagation, trace, TraceFlags } from '@opentelemetry/api'
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base'
-import { defineVar, getVariableProvider, LocalVariableProvider, variablesClear } from 'logfire/vars'
-import type { VariableConfig } from 'logfire/vars'
+import { defineVar, getVariableProvider, variablesBuildConfig, variablesClear } from 'logfire/vars'
+import type { VariableConfig, LocalVariableProvider } from 'logfire/vars'
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vite-plus/test'
 
 import { defineFlag, withFeatureContext } from '../featureFlags'
@@ -96,6 +96,75 @@ describe('experimental feature flags', () => {
     })
   })
 
+  it('preserves assignment metadata when the selected variant uses the code default', async () => {
+    const evaluations: ReadableSpan[] = []
+    configureLocal(
+      [
+        {
+          ...checkout,
+          labels: { ...checkout.labels, off: { ref: 'code_default' } },
+        },
+      ],
+      {
+        forceFlush: async () => Promise.resolve(),
+        onStart: () => undefined,
+        onEnd: (span) => {
+          if (span.name === 'feature_flag.evaluation') {
+            evaluations.push(span)
+          }
+        },
+        shutdown: async () => Promise.resolve(),
+      }
+    )
+    const flag = defineFlag('checkout', { default: true })
+    expect(await flag.details({ targetingKey: 'account-3' })).toEqual({
+      flagKey: 'checkout',
+      reason: 'split',
+      value: true,
+      variant: 'off',
+    })
+    expect(evaluations.at(-1)?.attributes['logfire.feature_flag.experiment_revision']).toBe('fixture-revision')
+  })
+
+  it('rejects schema output that would lose its type when cloned', () => {
+    class Policy {
+      limit() {
+        return 1
+      }
+    }
+
+    expect(() =>
+      defineFlag('class_output', {
+        default: 'input',
+        schema: { '~standard': { version: 1, vendor: 'test', validate: () => ({ value: new Policy() }) } },
+      })
+    ).toThrow('Feature flag schemas must return JSON values')
+  })
+
+  it('keeps experimental declarations out of legacy bulk config exports', () => {
+    defineVar('legacy', { default: 'published example' })
+    defineFlag('private_policy', { default: 'private snippet' })
+
+    const { variables } = variablesBuildConfig()
+    expect(Object.keys(variables)).toEqual(['legacy'])
+    expect(variables['legacy']?.example).toBe('"published example"')
+  })
+
+  it('resolves a composed value against the snapshot that supplied its root', async () => {
+    configureLocal([singleValue('message', 'Before: @{brand_alias}@'), { ...singleValue('brand', 'Acme'), aliases: ['brand_alias'] }])
+    const message = defineFlag('message', { default: 'fallback' })
+    const provider = getVariableProvider() as LocalVariableProvider
+
+    const inFlight = message.value()
+    provider.batchUpdate({
+      message: singleValue('message', 'After: @{brand_alias}@'),
+      brand: undefined,
+      replacement: { ...singleValue('replacement', 'Globex'), aliases: ['brand_alias'] },
+    })
+    expect(await inFlight).toBe('Before: Acme')
+    expect(await message.value()).toBe('After: Globex')
+  })
+
   it('uses the declared default when a split has neither a targeting key nor an active scope', async () => {
     configureLocal([checkout, singleValue('banner', true)])
     const flag = defineFlag('checkout', { default: true })
@@ -105,6 +174,10 @@ describe('experimental feature flags', () => {
       errorCode: 'targeting_key_missing',
       value: true,
     })
+    expect((await flag.details({ targetingKey: '' })).errorCode).toBe('targeting_key_missing')
+    await withFeatureContext({ targetingKey: 'account-3' }, async () => {
+      expect(await flag.value({ targetingKey: '' })).toBe(false)
+    })
     expect(await defineFlag('banner', { default: false }).value()).toBe(true)
   })
 
@@ -112,7 +185,20 @@ describe('experimental feature flags', () => {
     configureLocal([checkout, singleValue('prompt', 'Enabled: @{checkout}@')])
     const checkoutFlag = defineFlag('checkout', { default: false })
     const prompt = defineFlag('prompt', { default: '' })
-    const lookups = vi.spyOn(LocalVariableProvider.prototype, 'getSerializedValue')
+    const keys: (string | undefined)[] = []
+    const provider = getVariableProvider() as LocalVariableProvider
+    const snapshot = provider.getFlagSnapshot.bind(provider)
+    vi.spyOn(provider, 'getFlagSnapshot').mockImplementation(() => {
+      const captured = snapshot()
+      const lookup = captured.reader.getSerializedValue.bind(captured.reader)
+      captured.reader.getSerializedValue = async (name, key, attributes) => {
+        if (name === 'checkout') {
+          keys.push(key)
+        }
+        return await lookup(name, key, attributes)
+      }
+      return captured
+    })
     const remoteParent = {
       traceId: '00000000000000000000000000000001',
       spanId: '0000000000000001',
@@ -133,7 +219,6 @@ describe('experimental feature flags', () => {
     }
     await context.with(inbound, async () => span('request', { callback: read }))
     await context.with(inbound, async () => span('another request', { callback: read }))
-    const keys = lookups.mock.calls.filter(([name]) => name === 'checkout').map(([, key]) => key)
     expect(keys).toHaveLength(8)
     expect(keys[0]).toMatch(/^anonymous:/u)
     expect(new Set(keys.slice(0, 4)).size).toBe(1)
@@ -230,6 +315,38 @@ describe('experimental feature flags', () => {
     expect(() => defineFlag('bad_default', { default: { brand: 'Acme', limit: 0 }, schema })).toThrow(TypeError)
   })
 
+  it('applies the same validation and scope overrides through canonical names and aliases', async () => {
+    configureLocal([
+      { ...singleValue('policy', { limit: 999 }), aliases: ['policy_alias'] },
+      singleValue('parent', '@{policy.limit}@'),
+      singleValue('alias_parent', '@{policy_alias.limit}@'),
+    ])
+    const policy = defineFlag('policy_alias', {
+      default: 1,
+      schema: {
+        '~standard': {
+          version: 1,
+          vendor: 'test',
+          validate(input: unknown) {
+            if (typeof input === 'number' && input < 5) {
+              return { value: { limit: input } }
+            }
+            return { issues: [{ message: 'invalid limit' }] }
+          },
+        },
+      },
+    })
+    const parent = defineFlag('parent', { default: 'safe' })
+    const aliasParent = defineFlag('alias_parent', { default: 'safe' })
+    expect(await policy.value()).toEqual({ limit: 1 })
+    expect(await parent.value()).toBe('safe')
+    expect(await aliasParent.value()).toBe('safe')
+    await policy.override(2, async () => {
+      expect(await parent.value()).toBe('2')
+      expect(await aliasParent.value()).toBe('2')
+    })
+  })
+
   it('records bounded declarations and eligible evaluations without exporting the context', async () => {
     const spans: ReadableSpan[] = []
     configureLocal([checkout], {
@@ -258,10 +375,83 @@ describe('experimental feature flags', () => {
     expect(JSON.stringify(evaluations.map((item) => item.attributes))).not.toMatch(/account-3|should-not-leave-process|anonymous:/u)
   })
 
+  it.each(['start', 'end'] as const)('still evaluates once when a span processor throws on %s', async (phase) => {
+    const fail = vi.fn<() => never>(() => {
+      throw new Error('broken span processor')
+    })
+    configureLocal([singleValue('policy', { limit: 2 })], {
+      forceFlush: async () => Promise.resolve(),
+      onStart: (span) => {
+        if (phase === 'start' && span.name === 'feature_flag.evaluation') {
+          fail()
+        }
+      },
+      onEnd: (span) => {
+        if (phase === 'end' && span.name === 'feature_flag.evaluation') {
+          fail()
+        }
+      },
+      shutdown: async () => Promise.resolve(),
+    })
+    const validate = vi.fn<(input: unknown) => { value: { limit: number } }>((input) => ({ value: input as { limit: number } }))
+    const policy = defineFlag('policy', {
+      default: { limit: 1 },
+      schema: { '~standard': { version: 1, vendor: 'test', validate } },
+    })
+    validate.mockClear()
+
+    expect(await policy.value()).toEqual({ limit: 2 })
+    expect(fail).toHaveBeenCalledOnce()
+    expect(validate).toHaveBeenCalledExactlyOnceWith({ limit: 2 })
+  })
+
+  it('removes schema examples and defaults without changing property names or enum values', async () => {
+    const declarations: ReadableSpan[] = []
+    configureLocal([], {
+      forceFlush: async () => Promise.resolve(),
+      onStart: () => undefined,
+      onEnd: (span) => {
+        if (span.name === 'Declare variable policy') {
+          declarations.push(span)
+        }
+      },
+      shutdown: async () => Promise.resolve(),
+    })
+    const policy = defineFlag('policy', {
+      default: { default: 'fallback' },
+      schema: {
+        '~standard': {
+          version: 1,
+          vendor: 'test',
+          validate: (input) => ({ value: input }),
+          jsonSchema: {
+            input: () => ({
+              type: 'object',
+              default: { default: 'sensitive-default' },
+              properties: {
+                default: { type: 'string', default: 'sensitive-child-default' },
+                mode: { enum: [{ default: 'keep-enum-value' }], examples: ['sensitive-example'] },
+              },
+            }),
+            output: () => ({ type: 'object' }),
+          },
+        },
+      },
+    })
+    await policy.value()
+
+    expect(declarations).toHaveLength(1)
+    expect(JSON.parse(declarations[0]?.attributes['logfire.variable.schema'] as string)).toEqual({
+      type: 'object',
+      properties: { default: { type: 'string' }, mode: { enum: [{ default: 'keep-enum-value' }] } },
+    })
+  })
+
   it('loads remote flags over HTTP and picks up SSE updates and refresh recovery', async () => {
     let config = singleValue('published', true)
     let requests = 0
     let status = 503
+    let ifNoneMatch: string | undefined
     let eventStream: ServerResponse | undefined
     const server = createServer((request, response) => {
       if (request.url === '/v1/variable-updates/') {
@@ -271,7 +461,11 @@ describe('experimental feature flags', () => {
         return
       }
       requests++
-      response.writeHead(status, { 'Content-Type': 'application/json' })
+      ifNoneMatch = request.headers['if-none-match']
+      response.writeHead(status, {
+        'Content-Type': 'application/json',
+        ...(status === 200 ? { ETag: '"snapshot"' } : {}),
+      })
       response.end(JSON.stringify(status === 200 ? { variables: { published: config } } : { error: 'Unavailable' }))
     })
     server.listen(0, '127.0.0.1')
@@ -299,6 +493,10 @@ describe('experimental feature flags', () => {
       const provider = getVariableProvider()
       await expect(provider.refresh?.(true)).rejects.toThrow(/503/u)
       expect(await flag.details()).toMatchObject({ reason: 'stale', value: true })
+      status = 304
+      await provider.refresh?.(true)
+      expect(ifNoneMatch).toBe('"snapshot"')
+      expect(await flag.details()).toMatchObject({ reason: 'static', value: true })
       status = 200
       config = singleValue('published', 'invalid')
       await provider.refresh?.(true)
@@ -306,6 +504,11 @@ describe('experimental feature flags', () => {
       config = singleValue('published', true)
       await provider.refresh?.(true)
       expect(await flag.details()).toMatchObject({ reason: 'static', value: true })
+      await provider.shutdown?.()
+      expect(await flag.details()).toMatchObject({ reason: 'error', errorCode: 'provider_not_ready', value: false })
+      await flag.override(true, async () => {
+        expect(await flag.details()).toMatchObject({ reason: 'context_override', value: true })
+      })
     } finally {
       await shutdown()
       eventStream?.end()

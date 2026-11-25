@@ -1,4 +1,4 @@
-import type { ResolvedVariable } from 'logfire/vars'
+import type { FlagProviderState, ResolvedVariable } from 'logfire/vars'
 
 export interface FlagDetails<T> {
   flagKey: string
@@ -9,12 +9,12 @@ export interface FlagDetails<T> {
   valueVersion?: number
 }
 
-export function toFlagDetails<T>(result: ResolvedVariable<T>, state: 'ready' | 'stale' | 'not_ready' | 'error'): FlagDetails<T> {
+export function toFlagDetails<T>(result: ResolvedVariable<T>, state: FlagProviderState): FlagDetails<T> {
   const details: FlagDetails<T> = { flagKey: result.name, reason: 'default', value: structuredClone(result.value) }
   if (result.reason === 'context_override') {
     return { ...details, reason: 'context_override' }
   }
-  const errorCode = errorForResolution(result.reason, state)
+  const errorCode = errorForResolution(result, state)
   if (errorCode !== undefined) {
     return { ...details, reason: 'error', errorCode }
   }
@@ -32,21 +32,24 @@ export function toFlagDetails<T>(result: ResolvedVariable<T>, state: 'ready' | '
   return details
 }
 
-function errorForResolution(reason: ResolvedVariable<unknown>['reason'], state: string): FlagDetails<unknown>['errorCode'] {
+function errorForResolution(result: ResolvedVariable<unknown>, state: FlagProviderState): FlagDetails<unknown>['errorCode'] {
   if (state === 'not_ready') {
     return 'provider_not_ready'
   }
-  if (state === 'error' || reason === 'other_error') {
+  if (state === 'error') {
     return 'general'
   }
-  if (reason === 'validation_error') {
+  if (result.targetingKeyMissing) {
+    return 'targeting_key_missing'
+  }
+  if (result.reason === 'other_error') {
+    return 'general'
+  }
+  if (result.reason === 'validation_error') {
     return 'type_mismatch'
   }
-  if (reason === 'unrecognized_variable') {
+  if (result.reason === 'unrecognized_variable') {
     return 'flag_not_found'
-  }
-  if (reason === 'missing_targeting_key') {
-    return 'targeting_key_missing'
   }
   return undefined
 }

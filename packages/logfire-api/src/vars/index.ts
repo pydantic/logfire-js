@@ -69,6 +69,8 @@ export interface ResolvedVariableInit<T> {
   reason: VariableResolutionReason
   ruleReason?: 'split' | 'static' | 'targeting_match'
   serializedValue?: string
+  /** @internal */
+  targetingKeyMissing?: true
   value: T
   version?: number
 }
@@ -77,7 +79,6 @@ export type VariableResolutionReason =
   | 'code_default'
   | 'context_override'
   | 'missing_config'
-  | 'missing_targeting_key'
   | 'no_provider'
   | 'other_error'
   | 'resolved'
@@ -94,6 +95,8 @@ export class ResolvedVariable<T> {
   reason: VariableResolutionReason
   readonly ruleReason: ResolvedVariableInit<T>['ruleReason']
   serializedValue: string | undefined
+  /** @internal */
+  readonly targetingKeyMissing?: true
   value: T
   version: number | undefined
 
@@ -107,6 +110,9 @@ export class ResolvedVariable<T> {
     this.reason = init.reason
     this.ruleReason = init.ruleReason
     this.serializedValue = init.serializedValue
+    if (init.targetingKeyMissing === true) {
+      this.targetingKeyMissing = true
+    }
     this.value = init.value
     this.version = init.version
   }
@@ -268,6 +274,14 @@ export type VariablePushBlockReason =
 
 export type MaybePromise<T> = T | Promise<T>
 
+/** @internal */
+export type FlagProviderState = 'ready' | 'stale' | 'not_ready' | 'error'
+
+interface FlagProviderSnapshot {
+  reader: VariableProvider
+  state: FlagProviderState
+}
+
 export interface VariableProvider {
   batchUpdate?(updates: Record<string, VariableConfig | undefined>): MaybePromise<void>
   createVariable?(config: VariableConfig): MaybePromise<VariableConfig>
@@ -276,12 +290,12 @@ export interface VariableProvider {
   getSerializedValue(
     variableName: string,
     targetingKey?: string,
-    attributes?: Record<string, unknown>,
-    mode?: 'flag'
+    attributes?: Record<string, unknown>
   ): MaybePromise<SerializedResolvedVariable>
   getSerializedValueForLabel?(variableName: string, label: string): MaybePromise<SerializedResolvedVariable>
   getVariableConfig?(name: string): MaybePromise<VariableConfig | undefined>
-  getFlagProviderState?(): 'ready' | 'stale' | 'not_ready' | 'error'
+  /** @internal */
+  getFlagSnapshot?(): MaybePromise<FlagProviderSnapshot>
   listVariableTypes?(): MaybePromise<Record<string, VariableTypeConfig>>
   refresh?(force?: boolean): MaybePromise<void>
   shutdown?(): MaybePromise<void>
@@ -366,13 +380,13 @@ export class LocalVariableProvider implements VariableProvider {
     this.config = normalizeVariablesConfig(config)
   }
 
-  getSerializedValue(
-    variableName: string,
-    targetingKey?: string,
-    attributes?: Record<string, unknown>,
-    mode?: 'flag'
-  ): SerializedResolvedVariable {
-    return resolveSerializedValue(this.config, variableName, targetingKey, attributes, mode)
+  /** @internal */
+  getFlagSnapshot(): FlagProviderSnapshot {
+    return { reader: flagSnapshotReader(this.config), state: 'ready' }
+  }
+
+  getSerializedValue(variableName: string, targetingKey?: string, attributes?: Record<string, unknown>): SerializedResolvedVariable {
+    return resolveSerializedValue(this.config, variableName, targetingKey, attributes)
   }
 
   getSerializedValueForLabel(variableName: string, label: string): SerializedResolvedVariable {
@@ -567,12 +581,7 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
     await this.refresh(true)
   }
 
-  async getSerializedValue(
-    variableName: string,
-    targetingKey?: string,
-    attributes?: Record<string, unknown>,
-    mode?: 'flag'
-  ): Promise<SerializedResolvedVariable> {
+  private async loadInitialConfig(): Promise<void> {
     this.start()
     if (!this.hasAttemptedFetch && this.blockBeforeFirstResolve) {
       try {
@@ -583,11 +592,18 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
     } else if (!this.hasAttemptedFetch) {
       this.refresh().catch(ignoreBackgroundError)
     }
+  }
 
+  async getSerializedValue(
+    variableName: string,
+    targetingKey?: string,
+    attributes?: Record<string, unknown>
+  ): Promise<SerializedResolvedVariable> {
+    await this.loadInitialConfig()
     if (this.config === undefined) {
       return new SerializedResolvedVariable({ name: variableName, reason: 'missing_config', value: undefined })
     }
-    return resolveSerializedValue(this.config, variableName, targetingKey, attributes, mode)
+    return resolveSerializedValue(this.config, variableName, targetingKey, attributes)
   }
 
   async getSerializedValueForLabel(variableName: string, label: string): Promise<SerializedResolvedVariable> {
@@ -606,14 +622,16 @@ export class LogfireRemoteVariableProvider implements VariableProvider {
   }
 
   /** @internal */
-  getFlagProviderState(): 'ready' | 'stale' | 'not_ready' | 'error' {
+  async getFlagSnapshot(): Promise<FlagProviderSnapshot> {
+    if (!this.shutdownRequested) {
+      await this.loadInitialConfig()
+    }
     if (this.shutdownRequested) {
-      return 'not_ready'
+      return { reader: flagSnapshotReader(undefined), state: 'not_ready' }
     }
-    if (this.config === undefined) {
-      return this.lastRefreshFailed ? 'error' : 'not_ready'
-    }
-    return this.lastRefreshFailed ? 'stale' : 'ready'
+    const config = this.config
+    const state = this.lastRefreshFailed ? (config === undefined ? 'error' : 'stale') : config === undefined ? 'not_ready' : 'ready'
+    return { reader: flagSnapshotReader(config), state }
   }
 
   getVariableConfig(name: string): VariableConfig | undefined {
@@ -962,14 +980,14 @@ export class Variable<T> {
     targetingKey: string | undefined,
     attributes: Record<string, unknown>,
     label: string | undefined,
-    flagOverrides?: ReadonlyMap<object, unknown>
+    flagContext?: { overrides: ReadonlyMap<object, unknown>; provider: VariableProvider }
   ): Promise<ResolvedVariable<T>> {
     const context: ResolutionContext = {
       attributes,
       defaultCache: new Map(),
-      provider: getVariableProvider(),
+      provider: flagContext?.provider ?? getVariableProvider(),
       targetingKey,
-      ...(flagOverrides === undefined ? {} : { flagOverrides }),
+      ...(flagContext === undefined ? {} : { flagOverrides: flagContext.overrides }),
     }
     return await this.resolveInner(context, label)
   }
@@ -986,12 +1004,25 @@ export class Variable<T> {
         return await this.resolveContextOverride(overrides[this.name] as ResolveFunction<T> | T, context)
       }
 
-      serialized = await this.lookupSerialized(this.name, context, label)
+      const lookup = await this.lookupSerialized(this.name, context, label)
+      serialized = lookup.serialized
 
       if (isFlag && serialized.value === undefined) {
+        if (serialized.reason === 'code_default' && serialized.label !== undefined) {
+          const { label, ruleReason, experimentRevision } = serialized
+          return new ResolvedVariable<T>({
+            name: serialized.name,
+            label,
+            reason: 'resolved',
+            ...(ruleReason === undefined ? {} : { ruleReason }),
+            ...(experimentRevision === undefined ? {} : { experimentRevision }),
+            value: this.defaultValue as T,
+          })
+        }
         return new ResolvedVariable<T>({
           name: serialized.name,
           reason: serialized.reason === 'resolved' ? 'code_default' : serialized.reason,
+          ...(serialized.targetingKeyMissing === true ? { targetingKeyMissing: true } : {}),
           value: this.defaultValue as T,
         })
       }
@@ -1087,63 +1118,80 @@ export class Variable<T> {
     })
   }
 
-  private async lookupSerialized(name: string, context: ResolutionContext, label?: string): Promise<SerializedResolvedVariable> {
+  private async lookupSerialized(
+    name: string,
+    context: ResolutionContext,
+    label?: string
+  ): Promise<{ serialized: SerializedResolvedVariable; definition: VariableDefinition | undefined }> {
     const provider = context.provider
     const mode = context.flagOverrides === undefined ? undefined : 'flag'
     const registered = registeredVariables.get(name)
     const overrides = mode === undefined ? getOverrideContext() : {}
-    if (registered instanceof FeatureFlagVariable && context.flagOverrides?.has(registered) === true) {
-      return new SerializedResolvedVariable({
-        name,
-        reason: 'context_override',
-        value: JSON.stringify(context.flagOverrides.get(registered)),
-      })
-    }
     if (registered instanceof Variable && !(registered instanceof FeatureFlagVariable) && Object.hasOwn(overrides, name)) {
       const overrideValue = await resolveMaybeFunction(overrides[name], context.targetingKey, context.attributes)
       const serialized = trySerializeWithCodec(registered.codec, overrideValue)
       if (serialized !== undefined) {
-        return new SerializedResolvedVariable({ name, reason: 'context_override', value: serialized })
+        return {
+          serialized: new SerializedResolvedVariable({ name, reason: 'context_override', value: serialized }),
+          definition: registered,
+        }
       }
       emitResolutionWarning(
         `Context override for variable '${name}' could not be serialized while resolving '${this.name}' composition; falling through to provider/code default.`
       )
     }
 
-    let providerResult =
+    let serialized =
       label === undefined
-        ? await provider.getSerializedValue(name, context.targetingKey, context.attributes, mode)
+        ? await provider.getSerializedValue(name, context.targetingKey, context.attributes)
         : await getSerializedValueForLabel(provider, name, label)
 
-    if (label !== undefined && providerResult.value === undefined && providerResult.label === undefined) {
-      providerResult = await provider.getSerializedValue(name, context.targetingKey, context.attributes, mode)
+    if (label !== undefined && serialized.value === undefined && serialized.label === undefined) {
+      serialized = await provider.getSerializedValue(name, context.targetingKey, context.attributes)
     }
-    const definition = mode === 'flag' ? (registeredVariables.get(providerResult.name) ?? registered) : registered
-    if (this.name !== name && definition instanceof FeatureFlagVariable && context.flagOverrides?.has(definition) === true) {
-      return new SerializedResolvedVariable({
-        name: definition.name,
-        reason: 'context_override',
-        value: JSON.stringify(context.flagOverrides.get(definition)),
+
+    let definition = registeredVariables.get(serialized.name) ?? registered
+    if (mode === 'flag' && registered instanceof FeatureFlagVariable) {
+      definition = registered
+    }
+    if (mode === 'flag' && !(definition instanceof FeatureFlagVariable) && name !== this.name) {
+      const config = await provider.getVariableConfig?.(serialized.name)
+      const aliasedFlags = (config?.aliases ?? []).flatMap((alias) => {
+        const flag = registeredVariables.get(alias)
+        return flag instanceof FeatureFlagVariable ? [flag] : []
       })
+      if (aliasedFlags.length > 1) {
+        throw new VariableCompositionError(`More than one feature flag declaration matches '${serialized.name}'.`)
+      }
+      definition = aliasedFlags[0] ?? definition
     }
-    if (providerResult.value !== undefined) {
-      return providerResult
-    }
-    if (this instanceof FeatureFlagVariable && this.name === name) {
-      return providerResult
-    }
-    if (definition instanceof Variable) {
-      const serializedDefault = await definition.getSerializedDefault(context)
-      if (serializedDefault !== undefined) {
-        return new SerializedResolvedVariable({
-          exception: providerResult.exception,
-          name: definition instanceof FeatureFlagVariable ? definition.name : name,
-          reason: 'code_default',
-          value: serializedDefault,
-        })
+
+    if (name !== this.name && definition instanceof FeatureFlagVariable && context.flagOverrides?.has(definition) === true) {
+      return {
+        serialized: new SerializedResolvedVariable({
+          name: definition.name,
+          reason: 'context_override',
+          value: JSON.stringify(context.flagOverrides.get(definition)),
+        }),
+        definition,
       }
     }
-    return providerResult
+    if (serialized.value === undefined && !(this instanceof FeatureFlagVariable && this.name === name)) {
+      // Legacy variables have always taken a referenced default from the exact name.
+      const defaultDefinition = mode === 'flag' ? definition : registered
+      if (defaultDefinition instanceof Variable) {
+        const value = await defaultDefinition.getSerializedDefault(context)
+        if (value !== undefined) {
+          serialized = new SerializedResolvedVariable({
+            exception: serialized.exception,
+            name: defaultDefinition instanceof FeatureFlagVariable ? defaultDefinition.name : name,
+            reason: 'code_default',
+            value,
+          })
+        }
+      }
+    }
+    return { serialized, definition }
   }
 
   private async tryResolveSerialized(
@@ -1161,9 +1209,8 @@ export class Variable<T> {
       const expanded = await expandReferences(
         serializedValue,
         async (name): Promise<ResolvedReference> => {
-          const result = await this.lookupSerialized(name, context)
+          const { serialized: result, definition } = await this.lookupSerialized(name, context)
           const reference = serializedResolvedToReference(result)
-          const definition = registeredVariables.get(result.name) ?? registeredVariables.get(name)
           if (definition instanceof FeatureFlagVariable && result.reason === 'resolved') {
             reference.validate = (value) => definition.codec.parse(value)
           }
@@ -1572,8 +1619,15 @@ export class FeatureFlagVariable<T> extends Variable<T> {
     targetingKey: string | undefined,
     attributes: Record<string, unknown> | undefined,
     overrides: ReadonlyMap<object, unknown>
-  ): Promise<ResolvedVariable<T>> {
-    return this.resolve(targetingKey, getMergedAttributes(attributes, false), undefined, overrides)
+  ): Promise<{ result: ResolvedVariable<T>; state: FlagProviderState }> {
+    const merged = getMergedAttributes(attributes, false)
+    const provider = getVariableProvider()
+    const snapshot = overrides.has(this) ? undefined : await provider.getFlagSnapshot?.()
+    const result = await this.resolve(targetingKey, merged, undefined, {
+      overrides,
+      provider: snapshot?.reader ?? provider,
+    })
+    return { result, state: snapshot?.state ?? 'ready' }
   }
 }
 
@@ -1624,7 +1678,7 @@ function warnOnTemplateInputsCompositionMismatch(variable: VariableDefinition): 
 }
 
 function staticCompositionRefs(variable: VariableDefinition): string[] {
-  if (!(variable instanceof Variable) || typeof variable.defaultValue === 'function') {
+  if (!(variable instanceof Variable) || variable instanceof FeatureFlagVariable || typeof variable.defaultValue === 'function') {
     return []
   }
   const serialized = trySerializeWithCodec(variable.codec, variable.defaultValue)
@@ -1645,7 +1699,9 @@ export function variablesClear(): void {
 }
 
 export function variablesGet(): VariableDefinition[] {
-  return [...registeredVariables.values()]
+  // Experimental flags are discovered through telemetry. Legacy bulk exports
+  // should not publish their string or structured code defaults as examples.
+  return [...registeredVariables.values()].filter((variable) => !(variable instanceof FeatureFlagVariable))
 }
 
 export function variablesBuildConfig(variables: VariableDefinition[] = variablesGet()): VariablesConfig {
@@ -2610,6 +2666,17 @@ function variableToConfig<T>(variable: Variable<T>): VariableConfig {
   }
 }
 
+function flagSnapshotReader(config: VariablesConfig | undefined): VariableProvider {
+  return {
+    getSerializedValue(name, targetingKey, attributes) {
+      return config === undefined
+        ? new SerializedResolvedVariable({ name, reason: 'missing_config', value: undefined })
+        : resolveSerializedValue(config, name, targetingKey, attributes, 'flag')
+    },
+    getVariableConfig: (name) => (config === undefined ? undefined : getVariableConfig(config, name)),
+  }
+}
+
 function resolveSerializedValue(
   config: VariablesConfig,
   name: string,
@@ -2626,7 +2693,12 @@ function resolveSerializedValue(
     const weights = Object.values(rollout.labels)
     const canSplit = weights.filter((weight) => weight > 0).length + Number(weights.reduce((sum, weight) => sum + weight, 0) < 1) > 1
     if (canSplit && targetingKey === undefined) {
-      return new SerializedResolvedVariable({ name: variableConfig.name, reason: 'missing_targeting_key', value: undefined })
+      return new SerializedResolvedVariable({
+        name: variableConfig.name,
+        reason: 'other_error',
+        targetingKeyMissing: true,
+        value: undefined,
+      })
     }
     return serializedResolvedFromValue(variableConfig.name, {
       ...resolveValue(variableConfig, targetingKey, attributes, rollout),
@@ -2666,12 +2738,13 @@ function serializedResolvedFromValue(
     serializedValue: string | undefined
     version: number | undefined
     ruleReason?: ResolvedVariableInit<unknown>['ruleReason']
+    usesCodeDefault?: boolean
     experimentRevision?: string
   }
 ): SerializedResolvedVariable {
   const init: SerializedResolvedVariableInit = {
     name,
-    reason: 'resolved',
+    reason: resolved.ruleReason !== undefined && resolved.usesCodeDefault === true ? 'code_default' : 'resolved',
     value: resolved.serializedValue,
     ...(resolved.ruleReason === undefined ? {} : { ruleReason: resolved.ruleReason }),
     ...(resolved.experimentRevision === undefined ? {} : { experimentRevision: resolved.experimentRevision }),
@@ -2690,13 +2763,12 @@ function resolveValue(
   targetingKey?: string,
   attributes: Record<string, unknown> = {},
   rollout: Rollout = selectRollout(config, attributes).rollout
-): { label: string | undefined; serializedValue: string | undefined; version: number | undefined } {
+): { label: string | undefined } & LabelValue {
   const selectedLabel = selectRolloutLabel(rollout, targetingKey === undefined ? undefined : `${config.name}:${targetingKey}`)
   if (selectedLabel !== undefined) {
     const labeled = getOwn(config.labels, selectedLabel)
     if (labeled !== undefined) {
-      const followed = followRef(config, labeled)
-      return { label: selectedLabel, serializedValue: followed.serializedValue, version: followed.version }
+      return { label: selectedLabel, ...followRef(config, labeled) }
     }
   }
   return { label: undefined, serializedValue: undefined, version: undefined }
@@ -2732,16 +2804,18 @@ function seededRandom(seed: string): number {
   return Number.parseInt(hash, 16) / 0x10000000000000
 }
 
-function followRef(
-  config: VariableConfig,
-  labeled: LabelRef | LabeledValue,
-  visited: Set<string> = new Set<string>()
-): { serializedValue: string | undefined; version: number | undefined } {
+interface LabelValue {
+  serializedValue: string | undefined
+  version: number | undefined
+  usesCodeDefault?: boolean
+}
+
+function followRef(config: VariableConfig, labeled: LabelRef | LabeledValue, visited: Set<string> = new Set<string>()): LabelValue {
   if (isLabeledValue(labeled)) {
     return { serializedValue: labeled.serialized_value, version: labeled.version }
   }
   if (labeled.ref === 'code_default') {
-    return { serializedValue: undefined, version: undefined }
+    return { serializedValue: undefined, version: undefined, usesCodeDefault: true }
   }
   if (labeled.ref === 'latest') {
     return {

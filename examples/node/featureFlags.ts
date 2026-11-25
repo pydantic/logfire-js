@@ -9,10 +9,16 @@ configure({
   variables: {
     config: {
       variables: {
+        assistant_model: {
+          name: 'assistant_model',
+          labels: { stable: { serialized_value: '"large"', version: 1 } },
+          rollout: { labels: { stable: 1 } },
+          overrides: [],
+        },
         assistant_policy: {
           name: 'assistant_policy',
           labels: {
-            team: { serialized_value: '{"model":"large","maxDocuments":4}', version: 1 },
+            team: { serialized_value: '{"model":"@{assistant_model}@","maxDocuments":4}', version: 1 },
           },
           rollout: { labels: {} },
           overrides: [

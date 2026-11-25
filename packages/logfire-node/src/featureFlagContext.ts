@@ -41,7 +41,7 @@ export function featureFlagSpanProcessor(): SpanProcessor {
 
 export function withFeatureContext<R>(context: FeatureContext, callback: () => R): R {
   const previous = scopes.getStore() ?? rootScope
-  const targetingKey = context.targetingKey ?? previous.context.targetingKey
+  const targetingKey = nonemptyTargetingKey(context.targetingKey) ?? previous.context.targetingKey
   return scopes.run(
     {
       assignment: previous.assignment ?? {},
@@ -68,7 +68,7 @@ export function getFlagEvaluationInputs(options: FeatureContext): {
   overrides: ReadonlyMap<object, unknown>
 } {
   const scope = scopes.getStore() ?? rootScope
-  const explicitKey = options.targetingKey ?? scope.context.targetingKey
+  const explicitKey = nonemptyTargetingKey(options.targetingKey) ?? scope.context.targetingKey
   const span = trace.getActiveSpan()
   const traceScope = span === undefined ? undefined : spanScopes.get(span)
   const assignment = traceScope?.root.isRecording() === true ? traceScope.assignment : scope.assignment
@@ -82,4 +82,8 @@ export function getFlagEvaluationInputs(options: FeatureContext): {
     anonymous,
     overrides: scope.overrides,
   }
+}
+
+function nonemptyTargetingKey(key: string | undefined): string | undefined {
+  return key === '' ? undefined : key
 }

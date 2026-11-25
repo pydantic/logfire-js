@@ -24,9 +24,9 @@ await shutdown()
 
 To read remote configuration, create a project API key with the `project:read_variables` scope in **Project → Settings → API Keys**. Set `LOGFIRE_API_KEY` and remove `variables: false`. The SDK keeps a configuration snapshot in memory and updates it in the background. Evaluations use that snapshot after the first load. Enable telemetry with a write token from the same project if you also want to record decisions.
 
-`details()` returns the value, the reason, and any variant, value version, or error code. An invalid configured value returns the code default and reports an error. A failed refresh after a successful load can still serve the cached value with reason `stale`.
+`details()` returns the value, the reason, and any variant, value version, or error code. A selected variant can use the code default and still count as an assignment to that variant. An invalid configured value returns the code default and reports an error. A failed refresh after a successful load can still serve the cached value with reason `stale`.
 
-With telemetry enabled, Logfire records a `feature_flag.evaluation` span. A first-use declaration records the flag's name and available schema for discovery. To start a rollout, still create the flag and publish a value in Logfire.
+With telemetry enabled, Logfire records a `feature_flag.evaluation` span. A first-use declaration includes the available input schema and, for boolean flags, the code default. Schema defaults and examples are omitted. Keep flag names, descriptions, and schema constraints such as enum values safe to share. To start a rollout, create the flag and publish a value in Logfire.
 
 ## Validate structured values
 
@@ -48,7 +48,7 @@ const policy = await assistantPolicy.value()
 console.log(policy.maxDocuments)
 ```
 
-The SDK validates the default and overrides when you supply them. It expands references in configured values before validating them. Defaults and overrides are literal values.
+The SDK validates the default and overrides when you supply them. Schema validation can transform the input into a different JSON value. Return plain objects, arrays, strings, finite numbers, booleans, or `null`. Configured references resolve from the same snapshot before validation. Defaults and overrides are literal values.
 
 ## Set targeting for one request
 
@@ -60,7 +60,7 @@ const newCheckout = defineFlag('new_checkout', { default: false })
 const enabled = await withFeatureContext({ targetingKey: 'account-123', attributes: { plan: 'team' } }, async () => newCheckout.value())
 ```
 
-Use a stable user or account ID for a consistent assignment across requests. Arguments to `value()` or `details()` take precedence over the current scope. Pass attributes through this API so your code chooses which request data can affect targeting.
+Use a stable user or account ID for a consistent assignment across requests. Arguments to `value()` or `details()` take precedence over the current scope. An empty targeting key is treated as absent. Pass attributes through this API so your code chooses which request data can affect targeting.
 
 Within a local recording trace or an explicit `withFeatureContext({}, callback)` scope, evaluations without a key share a locally generated anonymous key. If there is no scope or key, split rollouts return the code default with `targeting_key_missing`.
 
@@ -82,4 +82,4 @@ Connect an [OpenFeature Web provider](https://openfeature.dev/docs/reference/oth
 
 ## Try the local example
 
-From a built `logfire-js` checkout, run `pnpm --dir examples/node run feature-flags`. The example prints the typed policy selected for a team account and the checkout preview before, during, and after a scoped override. It runs without credentials or network calls.
+From a built `logfire-js` checkout, run `pnpm --dir examples/node run feature-flags`. The example prints a typed policy composed from another configured value and the checkout preview before, during, and after a scoped override. It runs without credentials or network calls.

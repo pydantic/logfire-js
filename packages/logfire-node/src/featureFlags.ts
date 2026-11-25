@@ -1,5 +1,6 @@
-import { startSpan, span } from 'logfire'
-import { getVariableProvider, registerFeatureFlag, shouldInstrumentFeatureFlags } from 'logfire/vars'
+import { startSpan } from 'logfire'
+import type { Span } from '@opentelemetry/api'
+import { registerFeatureFlag, shouldInstrumentFeatureFlags } from 'logfire/vars'
 import type { FeatureFlagVariable, JsonSchema } from 'logfire/vars'
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from '@standard-schema/spec'
 
@@ -7,6 +8,8 @@ import { toFlagDetails } from './featureFlagDetails'
 import type { FlagDetails } from './featureFlagDetails'
 import { getFlagEvaluationInputs, withFlagOverride } from './featureFlagContext'
 import type { FeatureContext } from './featureFlagContext'
+import { schemaForDiscovery } from './featureFlagSchema'
+import { cloneSchemaOutput } from './featureFlagValue'
 
 export { withFeatureContext } from './featureFlagContext'
 export type { FeatureContext } from './featureFlagContext'
@@ -54,51 +57,33 @@ export function defineFlag<Input, Output>(
 
   async function details(context: FeatureContext = {}): Promise<FlagDetails<Output | Primitive>> {
     const inputs = getFlagEvaluationInputs(context)
-    const evaluate = async () => {
-      const provider = getVariableProvider()
-      const result = await variable.evaluate(inputs.targetingKey, inputs.attributes, inputs.overrides)
-      return { result, details: toFlagDetails(result, provider.getFlagProviderState?.() ?? 'ready') }
-    }
-    if (!shouldInstrumentFeatureFlags()) {
-      return (await evaluate()).details
-    }
-    return span('feature_flag.evaluation', {
-      attributes: { 'feature_flag.key': name, 'feature_flag.provider.name': 'logfire' },
-      async callback(evaluationSpan) {
-        if (!declared && evaluationSpan.isRecording()) {
-          declared = true
-          try {
-            declared = declareFlag(variable, jsonSchema)
-          } catch {
-            // Declaration telemetry is best effort.
-          }
+    const evaluationSpan = shouldInstrumentFeatureFlags() ? startEvaluationSpan(name) : undefined
+    try {
+      if (!declared && evaluationSpan !== undefined) {
+        declared = true
+        try {
+          declared = declareFlag(variable, jsonSchema, evaluationSpan)
+        } catch {
+          declared = false
         }
-        const { result, details: evaluated } = await evaluate()
-        evaluationSpan.setAttribute('feature_flag.key', evaluated.flagKey)
-        evaluationSpan.setAttribute('feature_flag.result.reason', evaluated.reason)
-        if (evaluated.errorCode !== undefined) {
-          evaluationSpan.setAttribute('error.type', evaluated.errorCode)
-        }
-        if (evaluated.variant !== undefined) {
-          evaluationSpan.setAttribute('feature_flag.result.variant', evaluated.variant)
-        }
-        if (evaluated.valueVersion !== undefined) {
-          evaluationSpan.setAttribute('logfire.feature_flag.value_version', evaluated.valueVersion)
-        }
-        if (
+      }
+      const { result, state } = await variable.evaluate(inputs.targetingKey, inputs.attributes, inputs.overrides)
+      const evaluated = toFlagDetails(result, state)
+      if (evaluationSpan !== undefined) {
+        const hasExposure =
           (evaluated.reason === 'static' || evaluated.reason === 'split' || evaluated.reason === 'targeting_match') &&
           !inputs.anonymous &&
-          result.experimentRevision !== undefined &&
           inputs.targetingKey !== undefined
-        ) {
-          evaluationSpan.setAttribute('logfire.feature_flag.experiment_revision', result.experimentRevision)
-        }
-        if (evaluated.errorCode === undefined && typeof evaluated.value === 'boolean') {
-          evaluationSpan.setAttribute('feature_flag.result.value', evaluated.value)
-        }
-        return evaluated
-      },
-    })
+        recordEvaluation(evaluationSpan, evaluated, hasExposure ? result.experimentRevision : undefined)
+      }
+      return evaluated
+    } finally {
+      try {
+        evaluationSpan?.end()
+      } catch {
+        // A span processor must not replace the application's result.
+      }
+    }
   }
 
   return {
@@ -138,7 +123,7 @@ function schemaValidator<T>(schema: StandardSchemaV1<unknown, T>): (value: unkno
     if (valid.issues !== undefined) {
       throw new TypeError('Value does not match the feature flag schema')
     }
-    return structuredClone(valid.value)
+    return cloneSchemaOutput(valid.value)
   }
 }
 
@@ -150,7 +135,36 @@ function getJsonSchema(schema: TypedFlagOptions<unknown, unknown>['schema']): Js
   }
 }
 
-function declareFlag<T>(variable: FeatureFlagVariable<T>, schema: JsonSchema | undefined): boolean {
+function startEvaluationSpan(name: string): Span | undefined {
+  try {
+    const span = startSpan('feature_flag.evaluation', { 'feature_flag.key': name, 'feature_flag.provider.name': 'logfire' })
+    if (span.isRecording()) {
+      return span
+    }
+    span.end()
+  } catch {
+    // A tracer or span processor must not prevent evaluation.
+  }
+  return undefined
+}
+
+function recordEvaluation<T>(span: Span, result: FlagDetails<T>, experimentRevision: string | undefined): void {
+  try {
+    span.setAttributes({
+      'feature_flag.key': result.flagKey,
+      'feature_flag.result.reason': result.reason,
+      ...(result.errorCode === undefined ? {} : { 'error.type': result.errorCode }),
+      ...(result.variant === undefined ? {} : { 'feature_flag.result.variant': result.variant }),
+      ...(result.valueVersion === undefined ? {} : { 'logfire.feature_flag.value_version': result.valueVersion }),
+      ...(experimentRevision === undefined ? {} : { 'logfire.feature_flag.experiment_revision': experimentRevision }),
+      ...(result.errorCode === undefined && typeof result.value === 'boolean' ? { 'feature_flag.result.value': result.value } : {}),
+    })
+  } catch {
+    // Evaluation telemetry is best effort.
+  }
+}
+
+function declareFlag<T>(variable: FeatureFlagVariable<T>, schema: JsonSchema | undefined, parentSpan: Span): boolean {
   // Use the same event shape as Python. Structured defaults can contain sensitive
   // values, so this declaration includes only boolean defaults.
   const attributes: Record<string, unknown> = {
@@ -166,20 +180,11 @@ function declareFlag<T>(variable: FeatureFlagVariable<T>, schema: JsonSchema | u
   if (typeof variable.defaultValue === 'boolean') {
     attributes['logfire.variable.code_default'] = JSON.stringify(variable.defaultValue)
   }
-  try {
-    const serialized =
-      schema === undefined
-        ? undefined
-        : JSON.stringify(schema, (key, value: unknown) =>
-            key === 'default' || key === 'examples' || key === 'example' ? undefined : value
-          )
-    if (serialized !== undefined && new TextEncoder().encode(serialized).length <= 16_384) {
-      attributes['logfire.variable.schema'] = serialized
-    }
-  } catch {
-    // A schema that cannot be serialized should not prevent evaluating the flag.
+  const serialized = schemaForDiscovery(schema)
+  if (serialized !== undefined) {
+    attributes['logfire.variable.schema'] = serialized
   }
-  const declaration = startSpan(`Declare variable ${variable.name}`, attributes)
+  const declaration = startSpan(`Declare variable ${variable.name}`, attributes, { parentSpan })
   const recording = declaration.isRecording()
   declaration.end()
   return recording
