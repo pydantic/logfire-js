@@ -38,6 +38,7 @@
       },
       "require": {
         "types": "./dist/index.d.cts",
+        "module-sync": "./dist/index.js",
         "default": "./dist/index.cjs"
       }
     },
@@ -48,6 +49,7 @@
       },
       "require": {
         "types": "./dist/datasets.d.cts",
+        "module-sync": "./dist/datasets.js",
         "default": "./dist/datasets.cjs"
       }
     },
@@ -58,6 +60,7 @@
       },
       "require": {
         "types": "./dist/experimental/feature-flags.d.cts",
+        "module-sync": "./dist/experimental/feature-flags.js",
         "default": "./dist/experimental/feature-flags.cjs"
       }
     },
@@ -68,6 +71,7 @@
       },
       "require": {
         "types": "./dist/vars.d.cts",
+        "module-sync": "./dist/vars.js",
         "default": "./dist/vars.cjs"
       }
     }

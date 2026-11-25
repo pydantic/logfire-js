@@ -4,7 +4,7 @@ import type { ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import type { StandardSchemaV1 } from '@standard-schema/spec'
-import { context, propagation, trace, TraceFlags } from '@opentelemetry/api'
+import { context, propagation } from '@opentelemetry/api'
 import type { ReadableSpan, SpanProcessor } from '@opentelemetry/sdk-trace-base'
 import { defineVar, getVariableProvider, variablesBuildConfig, variablesClear } from 'logfire/vars'
 import type { VariableConfig, LocalVariableProvider } from 'logfire/vars'
@@ -225,7 +225,7 @@ describe('experimental feature flags', () => {
     expect(await defineFlag('banner', { default: false }).value()).toBe(true)
   })
 
-  it('keeps unkeyed reads and typed references on one key inside local root spans', async () => {
+  it('keeps unkeyed reads and typed references on one key inside each request scope', async () => {
     configureLocal([checkout, singleValue('prompt', 'Enabled: @{checkout}@')])
     const checkoutFlag = defineFlag('checkout', { default: false })
     const prompt = defineFlag('prompt', { default: '' })
@@ -243,13 +243,6 @@ describe('experimental feature flags', () => {
       }
       return captured
     })
-    const remoteParent = {
-      traceId: '00000000000000000000000000000001',
-      spanId: '0000000000000001',
-      traceFlags: TraceFlags.SAMPLED,
-      isRemote: true,
-    }
-    const inbound = trace.setSpanContext(context.active(), remoteParent)
     const read = async () => {
       const [first, second, third, composed] = await Promise.all([
         withFeatureContext({}, async () => checkoutFlag.value()),
@@ -261,8 +254,8 @@ describe('experimental feature flags', () => {
       expect(third).toBe(first)
       expect(composed).toBe(`Enabled: ${String(first)}`)
     }
-    await context.with(inbound, async () => span('request', { callback: read }))
-    await context.with(inbound, async () => span('another request', { callback: read }))
+    await withFeatureContext({}, read)
+    await withFeatureContext({}, read)
     expect(keys).toHaveLength(8)
     expect(keys[0]).toMatch(/^anonymous:/u)
     expect(new Set(keys.slice(0, 4)).size).toBe(1)
@@ -364,6 +357,8 @@ describe('experimental feature flags', () => {
       { ...singleValue('policy', { limit: 999 }), aliases: ['policy_alias'] },
       singleValue('parent', '@{policy.limit}@'),
       singleValue('alias_parent', '@{policy_alias.limit}@'),
+      singleValue('legacy_parent', '@{policy.limit}@'),
+      singleValue('legacy_alias_parent', '@{policy_alias.limit}@'),
     ])
     const policy = defineFlag('policy_alias', {
       default: 1,
@@ -382,13 +377,35 @@ describe('experimental feature flags', () => {
     })
     const parent = defineFlag('parent', { default: 'safe' })
     const aliasParent = defineFlag('alias_parent', { default: 'safe' })
+    const legacyParent = defineVar('legacy_parent', { default: 'safe' })
+    const legacyAliasParent = defineVar('legacy_alias_parent', { default: 'safe' })
     expect(await policy.value()).toEqual({ limit: 1 })
     expect(await parent.value()).toBe('safe')
     expect(await aliasParent.value()).toBe('safe')
+    expect((await legacyParent.get()).value).toBe('safe')
+    expect((await legacyAliasParent.get()).value).toBe('safe')
     await policy.override(2, async () => {
       expect(await parent.value()).toBe('2')
       expect(await aliasParent.value()).toBe('2')
     })
+  })
+
+  it('validates a legacy reference with the aliases that accompanied its value', async () => {
+    configureLocal([{ ...singleValue('policy', 'invalid'), aliases: ['policy_alias'] }, singleValue('legacy_parent', '@{policy}@')])
+    defineFlag('policy_alias', { default: 1 })
+    const parent = defineVar('legacy_parent', { default: 'safe' })
+    const provider = getVariableProvider() as LocalVariableProvider
+    const lookup = provider.getSerializedValue.bind(provider)
+    vi.spyOn(provider, 'getSerializedValue').mockImplementation((name, key, attributes) => {
+      const result = lookup(name, key, attributes)
+      if (name === 'policy') {
+        provider.updateVariable('policy', singleValue('policy', 2))
+      }
+      return result
+    })
+
+    expect((await parent.get()).value).toBe('safe')
+    expect((await parent.get()).value).toBe('2')
   })
 
   it('records bounded declarations and eligible evaluations without exporting the context', async () => {
@@ -404,7 +421,7 @@ describe('experimental feature flags', () => {
     const flag = defineFlag('checkout', { default: false })
     await flag.details({ targetingKey: 'account-3', attributes: { identity: 'should-not-leave-process' } })
     await flag.override(true, async () => flag.details({ targetingKey: 'account-3' }))
-    await span('anonymous', { callback: async () => flag.value() })
+    await withFeatureContext({}, async () => flag.value())
     const recorded = spans.filter((item) => item.attributes['logfire.span_type'] !== 'pending_span')
     const declarations = recorded.filter((item) => item.name === 'Declare variable checkout')
     expect(declarations).toHaveLength(1)

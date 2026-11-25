@@ -64,7 +64,7 @@ const enabled = await withFeatureContext({ targetingKey: 'account-123', attribut
 
 Use a stable user or account ID for a consistent assignment across requests. Arguments to `value()` or `details()` take precedence over the current scope. An empty targeting key is treated as absent. Pass attributes through this API so your code chooses which request data can affect targeting.
 
-Within a local recording trace or an explicit `withFeatureContext({}, callback)` scope, evaluations without a key share a locally generated anonymous key. If there is no scope or key, split rollouts return the code default with `targeting_key_missing`.
+Wrap a request in `withFeatureContext({}, callback)` to share a locally generated anonymous key across its flag reads. This works with tracing enabled or disabled. If there is no scope or key, split rollouts return the code default with `targeting_key_missing`.
 
 JavaScript and Python currently use different rollout algorithms. Evaluate a shared experiment through one evaluator, such as Logfire's OFREP endpoint, to keep assignments consistent across languages.
 
@@ -84,4 +84,8 @@ Connect an [OpenFeature Web provider](https://openfeature.dev/docs/reference/oth
 
 ## Try the local example
 
-From a built `logfire-js` checkout, run `pnpm --dir examples/node run feature-flags`. The example prints a typed policy composed from another configured value and the checkout preview before, during, and after a scoped override. It runs without credentials or network calls.
+From a built `logfire-js` checkout, run `pnpm --dir examples/node run feature-flags:serve` and open the printed URL. Try `plan=team`, `plan=invalid`, and `preview=1` to see targeted configuration, validation fallback, and an override scoped to one request. The sample uses local configuration and listens on loopback.
+
+Run `pnpm --dir examples/node run feature-flags` to send the sample requests automatically. The smoke test exercises mixed ESM and CommonJS imports and runs with and without trace sampling.
+
+Node versions that support the `module-sync` export condition use the same SDK state for both import styles. On older runtimes, use one import style throughout the application.

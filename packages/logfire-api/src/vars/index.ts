@@ -134,7 +134,15 @@ export class ResolvedVariable<T> {
 
 export type SerializedResolvedVariableInit = ResolvedVariableInit<string | undefined>
 
-export class SerializedResolvedVariable extends ResolvedVariable<string | undefined> {}
+export class SerializedResolvedVariable extends ResolvedVariable<string | undefined> {
+  /** @internal Alias names from the configuration that supplied this value. */
+  readonly aliases: readonly string[] | undefined
+
+  constructor(init: SerializedResolvedVariableInit, aliases?: readonly string[]) {
+    super(init)
+    this.aliases = aliases
+  }
+}
 
 export interface LabeledValue {
   serialized_value: string
@@ -1151,12 +1159,11 @@ export class Variable<T> {
     }
 
     let definition = registeredVariables.get(serialized.name) ?? registered
-    if (mode === 'flag' && registered instanceof FeatureFlagVariable) {
+    if (registered instanceof FeatureFlagVariable) {
       definition = registered
     }
-    if (mode === 'flag' && !(definition instanceof FeatureFlagVariable) && name !== this.name) {
-      const config = await provider.getVariableConfig?.(serialized.name)
-      const aliasedFlags = (config?.aliases ?? []).flatMap((alias) => {
+    if (!(definition instanceof FeatureFlagVariable) && name !== this.name) {
+      const aliasedFlags = (serialized.aliases ?? []).flatMap((alias) => {
         const flag = registeredVariables.get(alias)
         return flag instanceof FeatureFlagVariable ? [flag] : []
       })
@@ -1177,8 +1184,9 @@ export class Variable<T> {
       }
     }
     if (serialized.value === undefined && !(this instanceof FeatureFlagVariable && this.name === name)) {
-      // Legacy variables have always taken a referenced default from the exact name.
-      const defaultDefinition = mode === 'flag' ? definition : registered
+      // Keep exact-name defaults for legacy children. A typed child owns its
+      // validated literal default regardless of the spelling of the reference.
+      const defaultDefinition = mode === 'flag' || definition instanceof FeatureFlagVariable ? definition : registered
       if (defaultDefinition instanceof Variable) {
         const value = await defaultDefinition.getSerializedDefault(context)
         if (value !== undefined) {
@@ -2673,7 +2681,6 @@ function flagSnapshotReader(config: VariablesConfig | undefined): VariableProvid
         ? new SerializedResolvedVariable({ name, reason: 'missing_config', value: undefined })
         : resolveSerializedValue(config, name, targetingKey, attributes, 'flag')
     },
-    getVariableConfig: (name) => (config === undefined ? undefined : getVariableConfig(config, name)),
   }
 }
 
@@ -2693,21 +2700,19 @@ function resolveSerializedValue(
     const weights = Object.values(rollout.labels)
     const canSplit = weights.filter((weight) => weight > 0).length + Number(weights.reduce((sum, weight) => sum + weight, 0) < 1) > 1
     if (canSplit && targetingKey === undefined) {
-      return new SerializedResolvedVariable({
-        name: variableConfig.name,
-        reason: 'other_error',
-        targetingKeyMissing: true,
-        value: undefined,
-      })
+      return new SerializedResolvedVariable(
+        { name: variableConfig.name, reason: 'other_error', targetingKeyMissing: true, value: undefined },
+        variableConfig.aliases ?? undefined
+      )
     }
-    return serializedResolvedFromValue(variableConfig.name, {
+    return serializedResolvedFromValue(variableConfig, {
       ...resolveValue(variableConfig, targetingKey, attributes, rollout),
       ruleReason: canSplit ? 'split' : matched ? 'targeting_match' : 'static',
       ...(typeof variableConfig.experiment_revision === 'string' ? { experimentRevision: variableConfig.experiment_revision } : {}),
     })
   }
   const resolved = resolveValue(variableConfig, targetingKey, attributes)
-  return serializedResolvedFromValue(variableConfig.name, resolved)
+  return serializedResolvedFromValue(variableConfig, resolved)
 }
 
 function resolveSerializedValueForLabel(config: VariablesConfig, name: string, label: string): SerializedResolvedVariable {
@@ -2721,10 +2726,10 @@ function resolveSerializedValueForLabel(config: VariablesConfig, name: string, l
 function resolveVariableConfigForLabel(config: VariableConfig, label: string): SerializedResolvedVariable {
   const labeled = getOwn(config.labels, label)
   if (labeled === undefined) {
-    return new SerializedResolvedVariable({ name: config.name, reason: 'resolved', value: undefined })
+    return new SerializedResolvedVariable({ name: config.name, reason: 'resolved', value: undefined }, config.aliases ?? undefined)
   }
   const followed = followRef(config, labeled)
-  return serializedResolvedFromValue(config.name, {
+  return serializedResolvedFromValue(config, {
     label,
     serializedValue: followed.serializedValue,
     version: followed.version,
@@ -2732,7 +2737,7 @@ function resolveVariableConfigForLabel(config: VariableConfig, label: string): S
 }
 
 function serializedResolvedFromValue(
-  name: string,
+  config: VariableConfig,
   resolved: {
     label: string | undefined
     serializedValue: string | undefined
@@ -2743,7 +2748,7 @@ function serializedResolvedFromValue(
   }
 ): SerializedResolvedVariable {
   const init: SerializedResolvedVariableInit = {
-    name,
+    name: config.name,
     reason: resolved.ruleReason !== undefined && resolved.usesCodeDefault === true ? 'code_default' : 'resolved',
     value: resolved.serializedValue,
     ...(resolved.ruleReason === undefined ? {} : { ruleReason: resolved.ruleReason }),
@@ -2755,7 +2760,7 @@ function serializedResolvedFromValue(
   if (resolved.version !== undefined) {
     init.version = resolved.version
   }
-  return new SerializedResolvedVariable(init)
+  return new SerializedResolvedVariable(init, config.aliases ?? undefined)
 }
 
 function resolveValue(
