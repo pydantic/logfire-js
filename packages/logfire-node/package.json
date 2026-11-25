@@ -51,6 +51,16 @@
         "default": "./dist/datasets.cjs"
       }
     },
+    "./experimental/feature-flags": {
+      "import": {
+        "types": "./dist/experimental/feature-flags.d.ts",
+        "default": "./dist/experimental/feature-flags.js"
+      },
+      "require": {
+        "types": "./dist/experimental/feature-flags.d.cts",
+        "default": "./dist/experimental/feature-flags.cjs"
+      }
+    },
     "./vars": {
       "import": {
         "types": "./dist/vars.d.ts",
@@ -73,6 +83,7 @@
     "test": "vp test --passWithNoTests"
   },
   "dependencies": {
+    "@standard-schema/spec": "^1.1.0",
     "logfire": "workspace:*",
     "picocolors": "^1.1.1"
   },

@@ -1,4 +1,5 @@
 import { VariableCompositionCycleError, VariableCompositionDepthError, VariableCompositionError } from './errors'
+import { setOwn } from '../ownRecord'
 import { findReferencesAndErrorsInString, hasCompositionReferences, renderOnce } from './referenceSyntax'
 import type { ReferenceSyntaxError } from './referenceSyntax'
 import type { VariableResolutionReason } from './index'
@@ -22,6 +23,8 @@ export interface ResolvedReference {
   reason: VariableResolutionReason
   value: string | undefined
   version?: number
+  literal?: boolean
+  validate?: (value: unknown) => unknown
 }
 
 export type ResolveReference = (name: string) => Promise<ResolvedReference> | ResolvedReference
@@ -222,7 +225,7 @@ async function expandString(
   for (const resolved of resolvedReferences) {
     composedFrom.push(resolved.reference)
     if (resolved.value !== undefined) {
-      context[resolved.reference.name] = resolved.value
+      setOwn(context, resolved.reference.name, resolved.value)
     }
   }
 
@@ -279,16 +282,38 @@ async function expandNamedReference(
     return { reference, value: undefined }
   }
 
-  const nested = await expandReferenceSerializedValue(name, resolved.value, resolveReference, stack, depth, strict)
+  const nested = await expandReferenceSerializedValue(
+    name,
+    resolved.value,
+    resolveReference,
+    stack,
+    depth,
+    strict,
+    resolved.literal === true
+  )
   if (nested.error !== undefined) {
     reference.error = nested.error
     return { reference, value: undefined }
   }
-  reference.value = nested.serializedValue
+  let value = nested.value
+  try {
+    if (resolved.validate !== undefined) {
+      if (hasCompositionError(nested.composedFrom, { includeSoft: true })) {
+        reference.composedFrom = nested.composedFrom
+        return { reference, value: undefined }
+      }
+      value = resolved.validate(value)
+    }
+    reference.value = resolved.validate === undefined ? nested.serializedValue : JSON.stringify(value)
+  } catch {
+    // A typed child that failed validation cannot be consumed as raw provider data.
+    reference.error = `Referenced flag '${name}' failed validation.`
+    return { reference, value: undefined }
+  }
   if (nested.composedFrom.length > 0) {
     reference.composedFrom = nested.composedFrom
   }
-  return { reference, value: nested.value }
+  return { reference, value }
 }
 
 async function expandReferenceSerializedValue(
@@ -297,7 +322,8 @@ async function expandReferenceSerializedValue(
   resolveReference: ResolveReference,
   stack: string[],
   depth: number,
-  strict: boolean
+  strict: boolean,
+  literal: boolean
 ): Promise<{ composedFrom: ComposedReference[]; error?: string; serializedValue: string; value?: unknown }> {
   let parsed: unknown
   try {
@@ -310,7 +336,7 @@ async function expandReferenceSerializedValue(
     }
   }
 
-  if (!hasReferences(parsed)) {
+  if (literal || !hasReferences(parsed)) {
     return { composedFrom: [], serializedValue, value: parsed }
   }
 

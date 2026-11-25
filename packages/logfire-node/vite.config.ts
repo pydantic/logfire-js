@@ -10,17 +10,27 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
     define: defines,
     dts: true,
     deps: {
-      neverBundle: [/^@opentelemetry/u, /^node:/u, 'logfire', 'logfire/datasets', 'logfire/evals', 'logfire/vars', 'picocolors'],
+      neverBundle: [
+        /^@opentelemetry/u,
+        /^node:/u,
+        '@standard-schema/spec',
+        'logfire',
+        'logfire/datasets',
+        'logfire/evals',
+        'logfire/vars',
+        'picocolors',
+      ],
     },
     entry: {
       datasets: 'src/datasets.ts',
+      'experimental/feature-flags': 'src/featureFlags.ts',
       index: 'src/index.ts',
       vars: 'src/vars.ts',
     },
     format: ['esm', 'cjs'],
     hooks: {
       'build:done': () => {
-        copyCjsDeclarations(['datasets', 'index', 'vars'])
+        copyCjsDeclarations(['datasets', 'experimental/feature-flags', 'index', 'vars'])
       },
     },
     minify: true,

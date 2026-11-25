@@ -31,6 +31,7 @@ import { configureVariables, shutdownVariables } from 'logfire/vars'
 
 import type { FleetHook } from './fleet'
 
+import { featureFlagSpanProcessor } from './featureFlagContext'
 import { fleetTarget, loadFleet, samplerFromEnv, warnFleetOptionsKept, warnUnmanaged } from './fleet'
 import { logfireConfig } from './logfireConfig'
 import { logfireLogRecordProcessor } from './logsExporter'
@@ -457,7 +458,7 @@ export function start(): void {
     spanProcessors.push(primarySpanProcessor, new PendingSpanProcessor(primarySpanProcessor))
   }
   const evalsSpanProcessor = getEvalsSpanProcessor()
-  spanProcessors.push(evalsSpanProcessor, ...logfireConfig.additionalSpanProcessors)
+  spanProcessors.push(evalsSpanProcessor, featureFlagSpanProcessor(), ...logfireConfig.additionalSpanProcessors)
 
   const headRate = logfireConfig.sampling?.head
   const headSampler =

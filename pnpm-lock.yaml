@@ -517,6 +517,9 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
 
   examples/react-router:
     dependencies:
@@ -804,6 +807,9 @@ importers:
 
   packages/logfire-node:
     dependencies:
+      '@standard-schema/spec':
+        specifier: ^1.1.0
+        version: 1.1.0
       logfire:
         specifier: workspace:*
         version: link:../logfire-api
