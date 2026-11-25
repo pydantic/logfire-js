@@ -22,13 +22,15 @@ console.log(await newCheckout.value()) // false
 await shutdown()
 ```
 
-To read remote configuration, create a project API key with the `project:read_variables` scope in **Project → Settings → API Keys**. Set `LOGFIRE_API_KEY` and remove `variables: false`. The SDK keeps a configuration snapshot in memory and updates it in the background. Evaluations use that snapshot after the first load. Enable telemetry with a write token from the same project if you also want to record decisions.
+Flag keys use ASCII letters, digits, and underscores. Start the key with a letter or underscore and use the same key in Logfire.
+
+To read remote configuration, create a project API key with the `project:read_variables` scope in **Project → Settings → API Keys**. Set `LOGFIRE_API_KEY` and remove `variables: false`, or pass the key as `variables.apiKey` in `configure()`. The SDK keeps a configuration snapshot in memory and updates it in the background. Evaluations use that snapshot after the first load. Enable telemetry with a write token from the same project if you also want to record decisions.
 
 The first evaluation can wait for the initial configuration request. To serve the code default immediately while that request runs, configure `variables: { blockBeforeFirstResolve: false }`. For remote variables, `timeoutMs` defaults to 10,000 ms.
 
 `details()` returns the value, the reason, and any variant, value version, or error code. A selected variant can use the code default and still count as an assignment to that variant. An invalid configured value returns the code default and reports an error. A failed refresh after a successful load can still serve the cached value with reason `stale`.
 
-With telemetry enabled, Logfire records a `feature_flag.evaluation` span. A first-use declaration includes the available input schema and, for boolean flags, the code default. Schema defaults and examples are omitted. Keep flag names, descriptions, and schema constraints such as enum values safe to share. To start a rollout, create the flag and publish a value in Logfire.
+With telemetry enabled, `value()` and `details()` both record evaluations and can count toward experiment exposure for an eligible assignment. A first-use declaration includes the available input schema and, for boolean flags, the code default. Schema defaults and examples are omitted. Keep flag names, descriptions, and schema constraints such as enum values safe to share. To start a rollout, create the flag and publish a value in Logfire.
 
 ## Validate structured values
 
@@ -62,7 +64,7 @@ const newCheckout = defineFlag('new_checkout', { default: false })
 const enabled = await withFeatureContext({ targetingKey: 'account-123', attributes: { plan: 'team' } }, async () => newCheckout.value())
 ```
 
-Use a stable user or account ID for a consistent assignment across requests. Arguments to `value()` or `details()` take precedence over the current scope. An empty targeting key is treated as absent. Pass attributes through this API so your code chooses which request data can affect targeting.
+Use a stable user or account ID for a consistent assignment across requests. For signed-out visitors, pass your application's existing visitor or session ID if assignments should persist across requests. Arguments to `value()` or `details()` take precedence over the current scope. An empty targeting key is treated as absent. Pass attributes through this API so your code chooses which request data can affect targeting.
 
 Wrap a request in `withFeatureContext({}, callback)` to share a locally generated anonymous key across its flag reads. This works with tracing enabled or disabled. If there is no scope or key, split rollouts return the code default with `targeting_key_missing`.
 

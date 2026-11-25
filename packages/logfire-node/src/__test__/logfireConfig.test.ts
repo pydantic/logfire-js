@@ -159,6 +159,17 @@ describe('logfire config', () => {
     expect(logfireConfig.variablesBaseUrl).toBe('https://example.com')
   })
 
+  it('uses the remote provider key for validation and region selection', () => {
+    const variables = { apiKey: 'pylf_v1_eu_key', polling: false, sse: false }
+    configure({ variables })
+    expect(logfireConfig.variables).toEqual(variables)
+    expect(logfireConfig.variablesBaseUrl).toBe('https://logfire-eu.pydantic.dev')
+
+    configure({ apiKey: 'pylf_v1_us_key', variables })
+    expect(logfireConfig.apiKey).toBe('pylf_v1_us_key')
+    expect(logfireConfig.variablesBaseUrl).toBe('https://logfire-eu.pydantic.dev')
+  })
+
   it('stores local and disabled variables config explicitly', () => {
     const localVariables = {
       config: {

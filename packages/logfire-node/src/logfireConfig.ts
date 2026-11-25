@@ -1,5 +1,5 @@
 import type { BaggageOptions, JsonSchemaMode, LogFireLevel, MinLevel, SamplingOptions } from 'logfire'
-import type { VariablesConfigOptions } from 'logfire/vars'
+import type { VariablesConfigOptions, VariablesOptions } from 'logfire/vars'
 
 import type { Attributes, DiagLogLevel } from '@opentelemetry/api'
 import type { InstrumentationConfigMap } from '@opentelemetry/auto-instrumentations-node'
@@ -441,10 +441,14 @@ export function configure(config: LogfireConfigOptions = {}): void {
   const deploymentEnvironment = cnf.environment ?? env['LOGFIRE_ENVIRONMENT']
   const serviceName = cnf.serviceName ?? readServiceNameEnv(env)
   const serviceVersion = cnf.serviceVersion ?? readServiceVersionEnv(env) ?? logfireApi.readInjectedRelease()
+  const remoteVariables = isRemoteVariables(cnf.variables) ? cnf.variables : undefined
+  const variablesApiKey = remoteVariables?.apiKey ?? apiKey
+  const hasVariablesApiKey = variablesApiKey !== undefined && variablesApiKey !== ''
   const variablesBaseUrl =
-    apiKey !== undefined && apiKey !== '' ? logfireApi.resolveBaseUrl(process.env, cnf.advanced?.baseUrl, apiKey) : cnf.advanced?.baseUrl
-  if (requiresRemoteVariables(cnf.variables) && (apiKey === undefined || apiKey === '')) {
-    throw new Error('Remote variables require an API key. Set LOGFIRE_API_KEY or pass apiKey to configure().')
+    remoteVariables?.baseUrl ??
+    (hasVariablesApiKey ? logfireApi.resolveBaseUrl(env, cnf.advanced?.baseUrl, variablesApiKey) : cnf.advanced?.baseUrl)
+  if (remoteVariables !== undefined && !hasVariablesApiKey) {
+    throw new Error('Remote variables require an API key. Set LOGFIRE_API_KEY or pass apiKey or variables.apiKey to configure().')
   }
 
   const fleet = cnf.fleet ?? parseBooleanEnv(env['LOGFIRE_FLEET'], 'LOGFIRE_FLEET')
@@ -618,6 +622,6 @@ function resolveProcessHooks(option: boolean | ProcessHooksOptions): Required<Pr
   }
 }
 
-function requiresRemoteVariables(options: VariablesConfigOptions): boolean {
+function isRemoteVariables(options: VariablesConfigOptions): options is VariablesOptions {
   return options !== undefined && options !== false && !('config' in options)
 }

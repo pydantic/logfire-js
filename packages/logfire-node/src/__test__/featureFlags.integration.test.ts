@@ -513,6 +513,7 @@ describe('experimental feature flags', () => {
     let requests = 0
     let status = 503
     let ifNoneMatch: string | undefined
+    let authorization: string | undefined
     let eventStream: ServerResponse | undefined
     const server = createServer((request, response) => {
       if (request.url === '/v1/variable-updates/') {
@@ -523,6 +524,7 @@ describe('experimental feature flags', () => {
       }
       requests++
       ifNoneMatch = request.headers['if-none-match']
+      authorization = request.headers.authorization
       response.writeHead(status, {
         'Content-Type': 'application/json',
         ...(status === 200 ? { ETag: '"snapshot"' } : {}),
@@ -534,11 +536,12 @@ describe('experimental feature flags', () => {
     try {
       const address = server.address() as AddressInfo
       const baseUrl = `http://127.0.0.1:${String(address.port)}`
-      configure({ ...base, apiKey: 'test-read-key', advanced: { baseUrl }, variables: { polling: false } })
+      configure({ ...base, variables: { apiKey: 'test-read-key', baseUrl, polling: false } })
       const flag = defineFlag('published', { default: false })
       const missing = await Promise.all([flag.details(), flag.details(), flag.details()])
       expect(missing.map((item) => item.errorCode)).toEqual(['general', 'general', 'general'])
       expect(requests).toBe(1)
+      expect(authorization).toBe('bearer test-read-key')
       status = 200
       await vi.waitFor(() => {
         expect(eventStream).toBeDefined()
