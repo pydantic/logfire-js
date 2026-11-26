@@ -2,4 +2,4 @@
 'logfire': patch
 ---
 
-Prevent OpenTelemetry baggage keys under `logfire.*` from becoming online evaluation log attributes, while preserving `logfire.variables.*` labels.
+Prevent OpenTelemetry baggage from setting reserved online evaluation and Logfire log attributes, while preserving `logfire.variables.*` labels.
