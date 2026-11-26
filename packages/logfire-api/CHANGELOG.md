@@ -1,5 +1,11 @@
 # @pydantic/logfire-api
 
+## 0.26.5
+
+### Patch Changes
+
+- c7e5fcc: Prevent OpenTelemetry baggage from setting reserved online evaluation and Logfire log attributes, while preserving `logfire.variables.*` labels.
+
 ## 0.26.4
 
 ### Patch Changes

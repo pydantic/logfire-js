@@ -1,5 +1,12 @@
 # @pydantic/logfire-agent-sandboxes
 
+## 0.2.7
+
+### Patch Changes
+
+- Updated dependencies [c7e5fcc]
+  - logfire@0.26.5
+
 ## 0.2.6
 
 ### Patch Changes
