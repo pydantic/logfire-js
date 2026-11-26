@@ -12,7 +12,7 @@ import {
   resolveEvaluationDatasetName,
 } from './evaluation'
 import type { GetEvaluationDatasetOptions, PushEvaluationDatasetOptions } from './evaluation'
-import { DatasetSerializationError } from './json'
+import { assertCaseJsonValue, DatasetSerializationError } from './json'
 
 export type {
   EvaluationDatasetValueContext,
@@ -269,7 +269,7 @@ export class LogfireAPIClient {
 
   async addCases(datasetIdOrName: string, cases: readonly CreateCaseOptions[], options: AddCasesOptions = {}): Promise<HostedCase[]> {
     return (await this.request(`/v1/datasets/${encodePathSegment(datasetIdOrName)}/import/`, {
-      body: { cases: cases.map(caseCreateBody) },
+      body: { cases: cases.map((caseOptions, caseIndex) => caseCreateBody(caseOptions, caseIndex)) },
       method: 'POST',
       query: { on_conflict: options.onConflict ?? 'update' },
     })) as HostedCase[]
@@ -333,7 +333,37 @@ function datasetUpdateBody(options: UpdateDatasetOptions): JsonObject {
   })
 }
 
-function caseCreateBody(options: CreateCaseOptions): JsonObject {
+const CASE_JSON_FIELDS = { expectedOutput: 'expected_output', inputs: 'inputs', metadata: 'metadata' } as const
+
+/**
+ * The case write bodies go through a plain `JSON.stringify`, so values JSON cannot represent
+ * are changed or rejected with an opaque error. Check them the same way
+ * `pushEvaluationDataset` does, but keep `undefined` and `toJSON` values working.
+ */
+function assertCaseJsonValues(
+  method: 'addCases' | 'updateCase',
+  options: CreateCaseOptions | UpdateCaseOptions,
+  caseIndex: number | undefined
+): void {
+  for (const [field, wireKey] of Object.entries(CASE_JSON_FIELDS) as [keyof typeof CASE_JSON_FIELDS, string][]) {
+    const value = options[field]
+    if (value === undefined) {
+      continue
+    }
+    const path = caseIndex === undefined ? `$.${wireKey}` : `$.cases[${caseIndex.toString()}].${wireKey}`
+    try {
+      assertCaseJsonValue(value, { field, method, path })
+    } catch (error) {
+      if (error instanceof DatasetSerializationError) {
+        throw new DatasetConfigurationError(error.message)
+      }
+      throw error
+    }
+  }
+}
+
+function caseCreateBody(options: CreateCaseOptions, caseIndex: number): JsonObject {
+  assertCaseJsonValues('addCases', options, caseIndex)
   return omitUndefined({
     evaluators: options.evaluators,
     expected_output: options.expectedOutput,
@@ -345,6 +375,7 @@ function caseCreateBody(options: CreateCaseOptions): JsonObject {
 }
 
 function caseUpdateBody(options: UpdateCaseOptions): JsonObject {
+  assertCaseJsonValues('updateCase', options, undefined)
   return omitUndefined({
     evaluators: options.evaluators,
     expected_output: options.expectedOutput,

@@ -219,6 +219,40 @@ describe('hosted datasets API client', () => {
     expect(calls[0]?.url).toBe('https://example.com/v1/datasets/test-dataset/import/?on_conflict=update')
   })
 
+  it('rejects case values JSON cannot represent before any request is sent', async () => {
+    const calls: CapturedRequest[] = []
+    const fetchImpl = fetchSequence(calls, [])
+    const client = new LogfireAPIClient({ apiKey: 'lf-api-key', baseUrl: 'https://example.com', fetch: fetchImpl })
+
+    await expect(client.addCases('test-dataset', [{ inputs: { tags: new Set(['a', 'b']) } }])).rejects.toThrow(
+      new DatasetConfigurationError('addCases inputs at $.cases[0].inputs.tags contains unsupported Set value')
+    )
+    await expect(
+      client.addCases('test-dataset', [{ inputs: { question: 'q' }, expectedOutput: { lookup: new Map([['k', 1]]) } }])
+    ).rejects.toThrow(
+      new DatasetConfigurationError('addCases expectedOutput at $.cases[0].expected_output.lookup contains unsupported Map value')
+    )
+    await expect(client.updateCase('test-dataset', 'case-456', { inputs: { score: NaN } })).rejects.toThrow(
+      new DatasetConfigurationError('updateCase inputs at $.inputs.score contains unsupported non-finite number value')
+    )
+    await expect(client.updateCase('test-dataset', 'case-456', { metadata: { seq: 1n } })).rejects.toThrow(
+      new DatasetConfigurationError('updateCase metadata at $.metadata.seq contains unsupported bigint value')
+    )
+    expect(calls).toEqual([])
+  })
+
+  it('keeps undefined and toJSON values working in case writes', async () => {
+    const calls: CapturedRequest[] = []
+    const fetchImpl = fetchSequence(calls, [jsonResponse([hostedCase]), jsonResponse(hostedCase)])
+    const client = new LogfireAPIClient({ apiKey: 'lf-api-key', baseUrl: 'https://example.com', fetch: fetchImpl })
+
+    await client.addCases('test-dataset', [{ inputs: { optional: undefined, question: 'q' } }])
+    await client.updateCase('test-dataset', 'case-456', { metadata: { stamp: new Date('2026-01-02T03:04:05Z') } })
+
+    expect(calls[0]?.body).toEqual({ cases: [{ inputs: { question: 'q' } }] })
+    expect(calls[1]?.body).toEqual({ metadata: { stamp: '2026-01-02T03:04:05.000Z' } })
+  })
+
   it('supports dataset deletes', async () => {
     const calls: CapturedRequest[] = []
     const fetchImpl = fetchSequence(calls, [new Response(null, { status: 204 })])
