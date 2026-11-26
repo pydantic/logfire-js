@@ -688,6 +688,10 @@ importers:
       vitest:
         specifier: 5.0.1
         version: 5.0.1(@opentelemetry/api@1.9.1)(@types/node@22.19.5)(@vitest/browser-preview@5.0.1)(@vitest/ui@5.0.1)(esbuild@0.28.1)(jsdom@29.1.1)(tsx@4.22.4)(typescript@7.0.2)(yaml@2.9.0)
+    optionalDependencies:
+      logfire-cli:
+        specifier: ^0.1.20
+        version: 0.1.20
 
   packages/logfire-browser:
     dependencies:
@@ -3042,6 +3046,50 @@ packages:
   '@protobufjs/utf8@1.1.1':
     resolution: {integrity: sha512-oOAWABowe8EAbMyWKM0tYDKi8Yaox52D+HWZhAIJqQXbqe0xI/GV7FhLWqlEKreMkfDjshR5FKgi3mnle0h6Eg==}
 
+  '@pydantic/logfire-cli-darwin-arm64@0.1.20':
+    resolution: {integrity: sha512-VZARN1QbFH7VYsxupAHSfVr0R/40T2WvfGyR79ouD+B5JHQ5c2hXVgzdag9kDVF7GjjVjuR75imbIWKPGXqGyA==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@pydantic/logfire-cli-darwin-x64@0.1.20':
+    resolution: {integrity: sha512-MIY+v4JG1CXUjLZVzkp4w/Bphk6UM86zVW/fSWuemeI4EZGBkKYnly2JLbD8Ahzm7WRQsER+6MQEK8B78hXdGw==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@pydantic/logfire-cli-linux-arm64-musl@0.1.20':
+    resolution: {integrity: sha512-PRqo25LBGAnitfJ6m5v+6D35bpFseRj/ybCb6SLYTueoQrZv7OE3DKlPu50JEDfWq3OPY3TclRf1YK8HNew0eA==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@pydantic/logfire-cli-linux-arm64@0.1.20':
+    resolution: {integrity: sha512-mkq9d/dbi1h5EfDgxWXySVqnh0QXTs1lObXR+gcUL6ho4JZ8jZckEXlLUTKPYcrfKL/wCZK0BDYxje+UzFgprw==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@pydantic/logfire-cli-linux-x64-musl@0.1.20':
+    resolution: {integrity: sha512-Y0yJy6XuNLqZhSMnAST1S4Fds3Kv0mhdxpMNAYlWauZLvomUEOTP+1QtvbSi/gm3u87C8A5viGtiLlWcb6rLww==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@pydantic/logfire-cli-linux-x64@0.1.20':
+    resolution: {integrity: sha512-Kyll0kTCNus9H7zn9PZzaUWeU8wqx8juSP9eKMPznI6BGhCu6lSPoCAJAOwVTR3iK/DHAplAiawrqkd7ZBPzqw==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@pydantic/logfire-cli-win32-arm64@0.1.20':
+    resolution: {integrity: sha512-PzCrZodFnhhUHn+KRGiuwHTqG1hSa2416fmJ0DiXX4L2IpZrUmBxAEcCNEkhleRSnpkv43SqlRl9WjAm5t5Frw==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@pydantic/logfire-cli-win32-x64@0.1.20':
+    resolution: {integrity: sha512-YScmeyZbELrNzERTk959T6z0KOJhDZaoUFYmLbGpIMcvc500Mu/MhCTFnBUw45z6s5do8/j9FbYcBeqfnPsliA==}
+    cpu: [x64]
+    os: [win32]
+
   '@pydantic/monty-darwin-arm64@1.5.0':
     resolution: {integrity: sha512-WbffCrpYehMYyf9yyLE8AOiGIfwBQu8oIIZXq+wEjnjN3S4+exniCF+kRQ6Q5I+2LfMuipWvlmw4wkzCHLSgPA==}
     engines: {node: '>= 20'}
@@ -4543,6 +4591,13 @@ packages:
 
   lodash.groupby@4.6.0:
     resolution: {integrity: sha512-5dcWxm23+VAoz+awKmBaiBvzox8+RqMgFhi7UvX9DHZr2HdxHXM/Wrf8cfKpsW37RNrvtPn6hSwNqurSILbmJw==}
+
+  logfire-cli@0.1.20:
+    resolution: {integrity: sha512-lxtJVvlWKDGmLraryiCZsBlo32HDN7NFUg4Svi/P+cEi9lfqSvh3j3RMO8yziYxPhuAsd00m8u7b0PXF8HQ9NQ==}
+    engines: {node: '>=14.18.0', npm: '>=6'}
+    cpu: [arm64, x64]
+    os: [darwin, linux, win32]
+    hasBin: true
 
   long@5.3.2:
     resolution: {integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==}
@@ -7798,6 +7853,30 @@ snapshots:
 
   '@protobufjs/utf8@1.1.1': {}
 
+  '@pydantic/logfire-cli-darwin-arm64@0.1.20':
+    optional: true
+
+  '@pydantic/logfire-cli-darwin-x64@0.1.20':
+    optional: true
+
+  '@pydantic/logfire-cli-linux-arm64-musl@0.1.20':
+    optional: true
+
+  '@pydantic/logfire-cli-linux-arm64@0.1.20':
+    optional: true
+
+  '@pydantic/logfire-cli-linux-x64-musl@0.1.20':
+    optional: true
+
+  '@pydantic/logfire-cli-linux-x64@0.1.20':
+    optional: true
+
+  '@pydantic/logfire-cli-win32-arm64@0.1.20':
+    optional: true
+
+  '@pydantic/logfire-cli-win32-x64@0.1.20':
+    optional: true
+
   '@pydantic/monty-darwin-arm64@1.5.0':
     optional: true
 
@@ -9250,6 +9329,18 @@ snapshots:
   lodash.camelcase@4.3.0: {}
 
   lodash.groupby@4.6.0: {}
+
+  logfire-cli@0.1.20:
+    optionalDependencies:
+      '@pydantic/logfire-cli-darwin-arm64': 0.1.20
+      '@pydantic/logfire-cli-darwin-x64': 0.1.20
+      '@pydantic/logfire-cli-linux-arm64': 0.1.20
+      '@pydantic/logfire-cli-linux-arm64-musl': 0.1.20
+      '@pydantic/logfire-cli-linux-x64': 0.1.20
+      '@pydantic/logfire-cli-linux-x64-musl': 0.1.20
+      '@pydantic/logfire-cli-win32-arm64': 0.1.20
+      '@pydantic/logfire-cli-win32-x64': 0.1.20
+    optional: true
 
   long@5.3.2: {}
 
