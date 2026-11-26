@@ -761,12 +761,19 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
     }
 
     const fn = withOnlineEvaluation(answer, {
-      evaluators: [new AlwaysPass()],
+      evaluators: [new CategoryLabel()],
       extractArgs: true,
       recordReturn: true,
       target: 'argument-target',
     })
-    const baggage = propagation.createBaggage({ tenant: { value: 'acme' } })
+    const baggage = propagation.createBaggage({
+      tenant: { value: 'acme' },
+      'logfire.sample_rate': { value: '1' },
+      'logfire.scrubbed': { value: '1' },
+      'logfire.variables.feature': { value: 'candidate' },
+      'gen_ai.evaluation.score.value': { value: '1.0' },
+      'error.type': { value: 'ValueError' },
+    })
 
     const { logs, spans } = await withMemoryLogExporter(async () =>
       ContextAPI.with(propagation.setBaggage(ContextAPI.active(), baggage), async () => {
@@ -783,6 +790,11 @@ describe('online evals — gen_ai.evaluation.result emission', () => {
       target: 'argument-target',
     })
     expect(logs[0]?.attributes['tenant']).toBe('acme')
+    expect(logs[0]?.attributes['logfire.variables.feature']).toBe('candidate')
+    expect(logs[0]?.attributes).not.toHaveProperty('logfire.sample_rate')
+    expect(logs[0]?.attributes).not.toHaveProperty('logfire.scrubbed')
+    expect(logs[0]?.attributes).not.toHaveProperty(GEN_AI_SCORE_VALUE)
+    expect(logs[0]?.attributes).not.toHaveProperty(ERROR_TYPE)
   })
 
   it('records a return value containing a BigInt field', async () => {

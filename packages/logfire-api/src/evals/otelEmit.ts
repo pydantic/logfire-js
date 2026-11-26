@@ -274,6 +274,9 @@ function applyBaggage(attrs: Record<string, unknown>, baggage: Record<string, un
   // baggage key that happens to name an inherited member, `toString` for one, is not mistaken
   // for a conflict and dropped.
   for (const [k, v] of Object.entries(baggage)) {
+    if ((k.startsWith('logfire.') && !k.startsWith('logfire.variables.')) || k.startsWith('gen_ai.evaluation.') || k === 'error.type') {
+      continue
+    }
     if (!Object.hasOwn(attrs, k)) {
       attrs[k] = v
     }
