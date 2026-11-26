@@ -1,0 +1,23 @@
+packages/logfire-api/src/evals/otelEmit.ts
+  s_4b293c82ccde6c::t_fe7e5b3b5af341 277
+.changeset/clean-eval-baggage.md
+  s_4b293c82ccde6c::t_fe7e5b3b5af341 5
+packages/logfire-api/src/evals/__test__/online.test.ts
+  s_4b293c82ccde6c::t_fe7e5b3b5af341 764,774-775,796-797
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "02240bfa2e4c38e426107b8f1e83e5ea90adcad9",
+  "prompts": {},
+  "sessions": {
+    "s_4b293c82ccde6c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a2175e-7d9a-7d63-aede-4d946b740940",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Alex Hall <alex.mojaki@gmail.com>"
+    }
+  }
+}
