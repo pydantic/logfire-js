@@ -7,6 +7,8 @@ description: Use logfire/vars and @pydantic/logfire-node/vars for local and remo
 
 Managed variables let code resolve runtime configuration from local config or the Logfire Variables API.
 
+See [Feature Flags in Node.js](feature-flags.md) for the experimental typed flag API.
+
 Use `@pydantic/logfire-node/vars` in Node.js projects and `logfire/vars` in runtime-agnostic code.
 
 ## Local Variables

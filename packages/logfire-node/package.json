@@ -38,6 +38,7 @@
       },
       "require": {
         "types": "./dist/index.d.cts",
+        "module-sync": "./dist/index.js",
         "default": "./dist/index.cjs"
       }
     },
@@ -48,7 +49,19 @@
       },
       "require": {
         "types": "./dist/datasets.d.cts",
+        "module-sync": "./dist/datasets.js",
         "default": "./dist/datasets.cjs"
+      }
+    },
+    "./experimental/feature-flags": {
+      "import": {
+        "types": "./dist/experimental/feature-flags.d.ts",
+        "default": "./dist/experimental/feature-flags.js"
+      },
+      "require": {
+        "types": "./dist/experimental/feature-flags.d.cts",
+        "module-sync": "./dist/experimental/feature-flags.js",
+        "default": "./dist/experimental/feature-flags.cjs"
       }
     },
     "./vars": {
@@ -58,6 +71,7 @@
       },
       "require": {
         "types": "./dist/vars.d.cts",
+        "module-sync": "./dist/vars.js",
         "default": "./dist/vars.cjs"
       }
     }
@@ -73,6 +87,7 @@
     "test": "vp test --passWithNoTests"
   },
   "dependencies": {
+    "@standard-schema/spec": "^1.1.0",
     "logfire": "workspace:*",
     "picocolors": "^1.1.1"
   },
