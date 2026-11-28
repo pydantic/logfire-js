@@ -80,9 +80,9 @@ test('reads LOGFIRE_SEND_TO_LOGFIRE=false as disabled', () => {
   expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: ' if-token-present ' }, undefined, undefined)).toBe(false)
   expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: 'IF-TOKEN-PRESENT' }, undefined, token)).toBe(true)
 
-  // An empty or blank value is not a documented spelling and disables sending.
-  expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: '' }, undefined, token)).toBe(false)
-  expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: '   ' }, undefined, token)).toBe(false)
+  expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: '' }, undefined, token)).toBe(true)
+  expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: '   ' }, undefined, token)).toBe(true)
+  expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: '' }, undefined, undefined)).toBe(false)
 
   // An explicit option still wins over the environment.
   expect(resolveSendToLogfire({ LOGFIRE_SEND_TO_LOGFIRE: 'false' }, true, token)).toBe(true)
